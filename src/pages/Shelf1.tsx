@@ -183,7 +183,7 @@ export default function Shelf1() {
               </div>
               <div className="mt-6 flex flex-wrap gap-2">
                 <Button asChild variant="mono" size="mono">
-                  <Link to="/shelf">Browse the shelves</Link>
+                  <Link to="/coverage">See what is covered</Link>
                 </Button>
                 <Button asChild variant="monoMuted" size="mono">
                   <Link to="/pricing">See per-open pricing</Link>

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, ArrowRight, Check, CornerDownLeft, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { CATEGORY_BY_ID } from '@/data/categories'
+import { AGE_BANDS, HOUSEHOLDS, REGIONS } from '@/data/onboarding'
 import { MAIN_GUIDANCE, warmupsFor, type Warmup } from '@/data/survey'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
@@ -295,6 +297,8 @@ function MainQuestion({
         </span>
       </div>
 
+      <Identity />
+
       <h1 className="mt-3 font-display text-[23px] font-medium leading-snug sm:text-[27px]">
         {order.question}
       </h1>
@@ -326,5 +330,37 @@ function MainQuestion({
         </ul>
       </div>
     </div>
+  )
+}
+
+/**
+ * What the buyer will see attached to this passage. Shown while writing, not
+ * after, so the register is obvious: a nurse answering a nurse question is
+ * exactly what the buyer is paying for, and a stranger to the field can see
+ * they are one before they start typing.
+ */
+function Identity() {
+  const { profile } = useUi()
+  if (!profile) {
+    return (
+      <p className="mt-3 flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+        Answering anonymously —{' '}
+        <Link to="/onboarding" className="underline underline-offset-2">
+          set up a profile
+        </Link>{' '}
+        so buyers can tell this came from someone who was there
+      </p>
+    )
+  }
+  const label = (list: { value: string; label: string }[], v: string) =>
+    list.find((o) => o.value === v)?.label ?? v
+  return (
+    <p className="mt-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+      Answering as{' '}
+      <span className="text-foreground">{profile.handle}</span> ·{' '}
+      {label(AGE_BANDS, profile.ageBand)} · {label(REGIONS, profile.region)} ·{' '}
+      {label(HOUSEHOLDS, profile.household)} ·{' '}
+      {CATEGORY_BY_ID[profile.field]?.label}
+    </p>
   )
 }

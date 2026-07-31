@@ -143,10 +143,10 @@ export function SourceTicker() {
                 </button>
               ))}
               <Link
-                to="/shelf"
+                to="/coverage"
                 className="flex shrink-0 items-center justify-center rounded-[3px] bg-white/12 px-2 py-1 font-mono text-xs font-medium uppercase text-white/85 transition-colors hover:bg-white/20"
               >
-                All shelves
+                See coverage
               </Link>
             </div>
           </div>

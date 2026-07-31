@@ -26,7 +26,7 @@ export type Section = {
 }
 
 export const HERO = {
-  eyebrow: 'SHELF-1',
+  eyebrow: 'Whitepaper · SHELF-1',
   title: 'An agent that searches people instead of the web',
   standfirst:
     'Every crawler in production today reads for free. SHELF-1 pays. This is what changes when the document on the other end has an author who gets a cut.',
@@ -34,6 +34,7 @@ export const HERO = {
     { label: 'Published', value: 'July 31, 2026' },
     { label: 'By', value: 'The OPENSHELF team' },
     { label: 'Reading', value: '8 min' },
+    { label: 'Version', value: 'v0.1 · draft' },
   ],
 }
 

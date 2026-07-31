@@ -1,36 +1,126 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Check, Clock, Coins } from 'lucide-react'
+import { Check, ChevronDown, Clock, Coins, UserRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/primitives'
+import {
+  Badge,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/primitives'
+import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from '@/data/categories'
 import { cn } from '@/lib/utils'
-import { useUi } from '@/state/ui'
+import { useUi, type Order } from '@/state/ui'
 
 /**
  * Screen 02 — Dashboard. The answerer's screen.
  * Open calls arrive with a price per question; you pick one, answer, get paid.
  * This is the open-survey slot, except the unit is one question, not a form.
  */
+
+type SortId = 'top' | 'pay' | 'new' | 'closing'
+
+const SORTS: Array<{ id: SortId; label: string; hint: string }> = [
+  { id: 'top', label: 'Top', hint: 'Pay, discounted by how long it has sat' },
+  { id: 'pay', label: 'Highest pay', hint: 'Most per answer, however old' },
+  { id: 'new', label: 'Newest', hint: 'Just posted, whatever it pays' },
+  { id: 'closing', label: 'Closing soon', hint: 'Fewest slots left' },
+]
+
+/**
+ * The default ranking.
+ *
+ * Sorting purely by price freezes the board — one ₩1,500 call from three days
+ * ago outranks everything forever while a fresh ₩600 call is never seen, and it
+ * is the asker waiting on that one who gives up on us. Sorting purely by time
+ * buries the calls actually worth answering. So: pay, halved for every day it
+ * has sat, nudged up when there is still room to get in.
+ */
+function topScore(o: Order) {
+  const hours = (Date.now() - o.createdAt) / 3600000
+  const freshness = 1 / (1 + hours / 24)
+  const room = 1 + ((o.target - o.answered) / o.target) * 0.5
+  return o.unitPrice * freshness * room
+}
+
+const MIN_PAY: Array<{ value: number; label: string }> = [
+  { value: 0, label: 'Any pay' },
+  { value: 500, label: '₩500+' },
+  { value: 1000, label: '₩1,000+' },
+]
+
 export default function Dashboard() {
-  const { orders, memory } = useUi()
+  const { orders, memory, profile } = useUi()
   const navigate = useNavigate()
+
   const [tab, setTab] = useState<'open' | 'mine'>('open')
+  const [category, setCategory] = useState<CategoryId | 'all'>('all')
+  const [sort, setSort] = useState<SortId>('top')
+  const [minPay, setMinPay] = useState(0)
+  const [fitsMe, setFitsMe] = useState(false)
+  const [hideFilled, setHideFilled] = useState(true)
   const [opening, setOpening] = useState<string | null>(null)
 
-  const open = useMemo(
-    () => orders.filter((o) => !o.mine && o.answered < o.target),
+  const base = useMemo(
+    () => orders.filter((o) => (tab === 'mine' ? o.mine : !o.mine)),
+    [orders, tab],
+  )
+
+  /** Everything except the category tab, so the tab counts stay honest. */
+  const preCategory = useMemo(
+    () =>
+      base.filter((o) => {
+        if (o.unitPrice < minPay) return false
+        if (hideFilled && o.answered >= o.target) return false
+        if (fitsMe && profile && !profile.speaksTo.includes(o.category))
+          return false
+        return true
+      }),
+    [base, minPay, hideFilled, fitsMe, profile],
+  )
+
+  const counts = useMemo(() => {
+    const map = new Map<CategoryId, number>()
+    for (const o of preCategory) map.set(o.category, (map.get(o.category) ?? 0) + 1)
+    return map
+  }, [preCategory])
+
+  const list = useMemo(() => {
+    const rows = preCategory.filter(
+      (o) => category === 'all' || o.category === category,
+    )
+    const sorted = [...rows]
+    if (sort === 'top') sorted.sort((a, b) => topScore(b) - topScore(a))
+    if (sort === 'pay')
+      sorted.sort(
+        (a, b) => b.unitPrice - a.unitPrice || b.createdAt - a.createdAt,
+      )
+    if (sort === 'new') sorted.sort((a, b) => b.createdAt - a.createdAt)
+    if (sort === 'closing')
+      sorted.sort(
+        (a, b) =>
+          a.target - a.answered - (b.target - b.answered) ||
+          b.unitPrice - a.unitPrice,
+      )
+    return sorted
+  }, [preCategory, category, sort])
+
+  const openCount = useMemo(
+    () => orders.filter((o) => !o.mine && o.answered < o.target).length,
     [orders],
   )
-  const mine = useMemo(() => orders.filter((o) => o.mine), [orders])
-  const list = tab === 'open' ? open : mine
+  const mineCount = useMemo(() => orders.filter((o) => o.mine).length, [orders])
 
   const earnedToday = memory
     .filter((m) => Date.now() - m.createdAt < 1000 * 60 * 60 * 24)
     .reduce((s, m) => s + m.earned, 0)
 
+  const activeSort = SORTS.find((s) => s.id === sort) ?? SORTS[0]
+
   return (
     <div className="page-enter flex-1 overflow-y-auto">
-      <div className="space-y-6 p-4 sm:p-6">
+      <div className="space-y-5 p-4 sm:p-6">
         <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
           <h1 className="font-sans text-base font-medium">Dashboard</h1>
           <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
@@ -42,48 +132,139 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
+        {/* tab + sort ---------------------------------------------------- */}
+        <div className="flex flex-wrap items-center gap-2">
+          <SegTab
+            active={tab === 'open'}
             onClick={() => setTab('open')}
-            className={cn(
-              'flex h-9 cursor-pointer items-center gap-2 rounded-[2px] px-3 font-mono text-xs font-medium uppercase tracking-[1px] transition-colors',
-              tab === 'open'
-                ? 'border border-foreground/80 bg-foreground/85 text-background'
-                : 'border border-transparent text-muted-foreground hover:bg-muted hover:text-foreground',
-            )}
-          >
-            Open to answer
-            <Badge>{open.length}</Badge>
-          </button>
-          <button
-            type="button"
+            label="Open to answer"
+            count={openCount}
+          />
+          <SegTab
+            active={tab === 'mine'}
             onClick={() => setTab('mine')}
-            className={cn(
-              'flex h-9 cursor-pointer items-center gap-2 rounded-[2px] px-3 font-mono text-xs font-medium uppercase tracking-[1px] transition-colors',
-              tab === 'mine'
-                ? 'border border-foreground/80 bg-foreground/85 text-background'
-                : 'border border-transparent text-muted-foreground hover:bg-muted hover:text-foreground',
-            )}
-          >
-            Posted by me
-            <Badge>{mine.length}</Badge>
-          </button>
+            label="Posted by me"
+            count={mineCount}
+          />
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="ml-auto flex h-9 cursor-pointer items-center gap-2 rounded-[2px] border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                Sort
+                <span className="text-foreground">{activeSort.label}</span>
+                <ChevronDown className="size-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-[248px]">
+              {SORTS.map((s) => (
+                <DropdownMenuItem
+                  key={s.id}
+                  onClick={() => setSort(s.id)}
+                  className="flex-col items-start gap-0.5"
+                >
+                  <span className="flex w-full items-center gap-2 text-sm">
+                    {s.label}
+                    {sort === s.id ? (
+                      <Check className="ml-auto size-3.5" />
+                    ) : null}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {s.hint}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
+        {/* category tabs ------------------------------------------------- */}
+        <div className="-mx-4 overflow-x-auto px-4 sm:-mx-6 sm:px-6">
+          <div className="flex w-max items-center gap-1 border-b border-border pb-px">
+            <CatTab
+              active={category === 'all'}
+              onClick={() => setCategory('all')}
+              label="All"
+              count={preCategory.length}
+            />
+            {CATEGORIES.map((c) => (
+              <CatTab
+                key={c.id}
+                active={category === c.id}
+                onClick={() => setCategory(c.id)}
+                label={c.label}
+                count={counts.get(c.id) ?? 0}
+                accent={c.accent}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* filters ------------------------------------------------------- */}
+        <div className="flex flex-wrap items-center gap-2">
+          {MIN_PAY.map((p) => (
+            <FilterChip
+              key={p.value}
+              active={minPay === p.value}
+              onClick={() => setMinPay(p.value)}
+              label={p.label}
+            />
+          ))}
+          <span className="mx-1 h-4 w-px bg-border" />
+          <FilterChip
+            active={hideFilled}
+            onClick={() => setHideFilled((v) => !v)}
+            label="Hide filled"
+          />
+          <FilterChip
+            active={fitsMe}
+            onClick={() => {
+              if (!profile) navigate('/onboarding')
+              else setFitsMe((v) => !v)
+            }}
+            label="Fits me"
+            muted={!profile}
+          />
+          <span className="ml-auto font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+            {list.length} {list.length === 1 ? 'call' : 'calls'}
+          </span>
+        </div>
+
+        {!profile && tab === 'open' ? (
+          <div className="flex flex-wrap items-center gap-3 rounded-[6px] border border-border bg-foreground/[0.03] px-4 py-3">
+            <UserRound className="size-4 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              You are browsing signed out. Set up a profile and calls in your
+              fields sort to the top.
+            </p>
+            <Button
+              asChild
+              variant="monoMuted"
+              size="monoSm"
+              className="ml-auto"
+            >
+              <Link to="/onboarding">Temp sign-in</Link>
+            </Button>
+          </div>
+        ) : null}
+
         {list.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-[22vh] text-center">
+          <div className="flex flex-col items-center justify-center gap-3 py-[16vh] text-center">
             <h2 className="font-sans text-lg font-medium">
-              {tab === 'open' ? 'No open calls right now' : 'You have not posted anything'}
-            </h2>
-            <p className="max-w-[320px] text-sm leading-relaxed text-muted-foreground">
               {tab === 'open'
-                ? 'Calls that match you show up here. With enough memory, some match automatically without a call at all.'
+                ? 'Nothing open here right now'
+                : 'You have not posted anything'}
+            </h2>
+            <p className="max-w-[340px] text-sm leading-relaxed text-muted-foreground">
+              {tab === 'open'
+                ? 'No call matches these filters. Widen the category, or look at where the shelves are thin.'
                 : 'Ask something in chat, and if the shelves come up empty you can post a call right there.'}
             </p>
             <Button asChild variant="mono" size="mono" className="mt-2">
-              <Link to={tab === 'open' ? '/memory' : '/'}>
-                {tab === 'open' ? 'Open my memory' : 'Ask something'}
+              <Link to={tab === 'open' ? '/coverage' : '/'}>
+                {tab === 'open' ? 'See coverage' : 'Ask something'}
               </Link>
             </Button>
           </div>
@@ -91,6 +272,8 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {list.map((order) => {
               const done = order.answered >= order.target
+              const cat = CATEGORY_BY_ID[order.category]
+              const fits = profile?.speaksTo.includes(order.category)
               return (
                 <div
                   key={order.id}
@@ -98,13 +281,23 @@ export default function Dashboard() {
                     'flex flex-col rounded-[6px] border border-border bg-card p-5 transition-all duration-500',
                     opening && opening !== order.id && 'scale-[0.99] opacity-30',
                     opening === order.id && 'border-foreground/40 shadow-lg',
+                    done && 'opacity-70',
                   )}
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <Badge className="px-1.5 py-0 uppercase tracking-[1px]">
-                      {order.shelf}
-                    </Badge>
-                    <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span
+                        className="size-2 shrink-0 rounded-[1px]"
+                        style={{ backgroundColor: cat?.accent }}
+                      />
+                      <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                        {cat?.label}
+                      </span>
+                      <Badge className="truncate px-1.5 py-0 uppercase tracking-[1px]">
+                        {order.shelf}
+                      </Badge>
+                    </span>
+                    <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
                       Per answer{' '}
                       <span className="text-foreground">
                         {order.unitPrice === 0
@@ -138,6 +331,15 @@ export default function Dashboard() {
                     {done ? (
                       <span className="ml-auto inline-flex items-center gap-1 text-[#0F766E]">
                         <Check className="size-3" /> Filled
+                      </span>
+                    ) : profile && tab === 'open' ? (
+                      <span
+                        className={cn(
+                          'ml-auto',
+                          fits ? 'text-[#0F766E]' : 'text-muted-foreground/70',
+                        )}
+                      >
+                        {fits ? 'Fits you' : 'Outside your fields'}
                       </span>
                     ) : null}
                   </div>
@@ -177,6 +379,104 @@ export default function Dashboard() {
         )}
       </div>
     </div>
+  )
+}
+
+function SegTab({
+  active,
+  onClick,
+  label,
+  count,
+}: {
+  active: boolean
+  onClick: () => void
+  label: string
+  count: number
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'flex h-9 cursor-pointer items-center gap-2 rounded-[2px] px-3 font-mono text-xs font-medium uppercase tracking-[1px] transition-colors',
+        active
+          ? 'border border-foreground/80 bg-foreground/85 text-background'
+          : 'border border-transparent text-muted-foreground hover:bg-muted hover:text-foreground',
+      )}
+    >
+      {label}
+      <Badge>{count}</Badge>
+    </button>
+  )
+}
+
+function CatTab({
+  active,
+  onClick,
+  label,
+  count,
+  accent,
+}: {
+  active: boolean
+  onClick: () => void
+  label: string
+  count: number
+  accent?: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'relative flex cursor-pointer items-center gap-1.5 whitespace-nowrap px-3 pb-2.5 pt-1 text-sm transition-colors',
+        active
+          ? 'font-medium text-foreground'
+          : 'text-muted-foreground hover:text-foreground',
+        count === 0 && !active && 'opacity-40',
+      )}
+    >
+      {accent ? (
+        <span
+          className="size-1.5 rounded-[1px]"
+          style={{ backgroundColor: accent }}
+        />
+      ) : null}
+      {label}
+      <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+        {count}
+      </span>
+      {active ? (
+        <span className="absolute inset-x-2 -bottom-px h-0.5 bg-foreground" />
+      ) : null}
+    </button>
+  )
+}
+
+function FilterChip({
+  active,
+  onClick,
+  label,
+  muted,
+}: {
+  active: boolean
+  onClick: () => void
+  label: string
+  muted?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'h-7 cursor-pointer rounded-full border px-3 font-mono text-[11px] uppercase tracking-[1px] transition-colors',
+        active
+          ? 'border-foreground/70 bg-foreground/[0.06] text-foreground'
+          : 'border-border text-muted-foreground hover:border-foreground/25 hover:text-foreground',
+        muted && 'opacity-60',
+      )}
+    >
+      {label}
+    </button>
   )
 }
 

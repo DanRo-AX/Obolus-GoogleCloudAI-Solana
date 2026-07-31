@@ -64,7 +64,7 @@ export function ReliabilitySection() {
 
           <div className="mt-10">
             <Button asChild variant="monoMuted" size="mono">
-              <Link to="/shelf-1">About SHELF-1</Link>
+              <Link to="/whitepaper">Read the whitepaper</Link>
             </Button>
           </div>
         </div>

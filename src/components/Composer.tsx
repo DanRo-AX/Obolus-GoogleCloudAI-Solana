@@ -87,7 +87,7 @@ export function Composer({
       />
       <div className="flex items-center justify-between px-2.5 pb-2.5 pt-1">
         <Link
-          to="/shelf-1"
+          to="/whitepaper"
           aria-label="SHELF-1 model"
           className={cn(
             'group flex h-8 items-center rounded-[2px] px-2 transition-colors',

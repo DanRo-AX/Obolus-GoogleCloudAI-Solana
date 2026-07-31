@@ -6,6 +6,7 @@ import {
   useMemo,
   useState,
 } from 'react'
+import { categoryFor, type CategoryId } from '@/data/categories'
 
 /** One quoted MD. Once the open is confirmed it becomes the settlement unit. */
 export type Citation = {
@@ -53,6 +54,30 @@ export type Order = {
   /** Mine, or someone else's. */
   mine: boolean
   shelf: string
+  /** Broad field, for the dashboard tabs. Derived when a caller omits it. */
+  category: CategoryId
+}
+
+/**
+ * What a buyer knows about the person behind a passage.
+ *
+ * Bands, never values — "35–44 · Seoul · with kids at home" is enough to judge
+ * whether an answer about first-grade costs came from someone who paid them.
+ * Nothing here is financial and nothing identifies a person.
+ */
+export type Profile = {
+  handle: string
+  ageBand: string
+  region: string
+  household: string
+  /** Their own line of work. */
+  field: CategoryId
+  years: string
+  /** Fields they agreed to take calls in. This is the matching key. */
+  speaksTo: CategoryId[]
+  /** Conduct strikes. Three suspends the account. */
+  strikes: number
+  agreedAt: number
 }
 
 /** One line of the memory stream. Recent entries carry more weight. */
@@ -78,6 +103,10 @@ type UiValue = {
   chats: Chat[]
   orders: Order[]
   memory: MemoryEntry[]
+  /** null until onboarding completes. Temp sign-in is what creates it. */
+  profile: Profile | null
+  saveProfile: (p: Omit<Profile, 'strikes' | 'agreedAt'>) => void
+  signOut: () => void
   createChat: (prompt: string) => string
   appendAssistant: (chatId: string, message: ChatMessage) => void
   patchMessage: (
@@ -85,7 +114,11 @@ type UiValue = {
     messageId: string,
     patch: Partial<ChatMessage>,
   ) => void
-  placeOrder: (order: Omit<Order, 'id' | 'createdAt' | 'answered'>) => string
+  placeOrder: (
+    order: Omit<Order, 'id' | 'createdAt' | 'answered' | 'category'> & {
+      category?: CategoryId
+    },
+  ) => string
   answerOrder: (orderId: string, answer: string) => void
   clearAll: () => void
 }
@@ -93,57 +126,56 @@ type UiValue = {
 const UiContext = createContext<UiValue | null>(null)
 const STORAGE_KEY = 'openshelf:v1'
 
+const HOUR = 1000 * 60 * 60
+
+type Seed = [
+  id: string,
+  category: CategoryId,
+  shelf: string,
+  question: string,
+  unitPrice: number,
+  target: number,
+  answered: number,
+  agedHours: number,
+]
+
+const SEEDS: Seed[] = [
+  ['o_seed_1', 'life', 'Seongsu daily life', 'Weekday lunch in Seongsu with no queue and under 15 minutes — where do you actually go?', 300, 7, 4, 0.7],
+  ['o_seed_2', 'family', 'Primary school parents', 'Getting a kid ready for first grade — what actually cost the most? Especially the things you did not see coming.', 500, 12, 9, 5],
+  ['o_seed_3', 'business', 'Small shop owners', 'If you have run a shop for 3+ years: setting delivery-app fees aside, what actually ate your margin?', 800, 10, 2, 26],
+  ['o_seed_4', 'travel', 'Living in Paris', 'Lived in Paris a year or more: a dinner spot tourists never reach that you go back to.', 400, 8, 8, 50],
+  ['o_seed_5', 'engineering', 'Small-team infra', 'You carry the pager for a team under ten. What actually wakes you up, and what did you manage to automate away?', 900, 6, 1, 2],
+  ['o_seed_6', 'sales', 'B2B sales', 'B2B outbound in Korea: what gets you a first meeting now that cold email does not?', 1200, 8, 3, 11],
+  ['o_seed_7', 'education', 'Public school teachers', 'A class of 30 with one tablet each — what broke in the first month, and what did you stop doing?', 700, 9, 5, 30],
+  ['o_seed_8', 'sports', 'Amateur endurance', 'Training for a first sub-4 marathon around a full-time job: what did an ordinary week actually look like?', 600, 10, 6, 8],
+  ['o_seed_9', 'money', 'Retail investing', 'You moved a chunk of savings into an index fund during a down month. What did you do in the first week?', 1100, 7, 1, 3],
+  ['o_seed_10', 'health', 'Shift workers', 'Two years into shift work — what did you change about sleep that actually held?', 1000, 8, 2, 19],
+  ['o_seed_11', 'food', 'Kitchen crews', 'Running a kitchen with two people: which prep did you give up on, and what replaced it?', 750, 6, 4, 40],
+  ['o_seed_12', 'engineering', 'Backend migrations', 'Moved a production service off a managed database — what did the bill and the pager look like three months later?', 1400, 5, 0, 0.4],
+  ['o_seed_13', 'life', 'Leaving the capital', 'Left Seoul and kept the same job. What got worse that nobody warned you about?', 450, 12, 7, 60],
+  ['o_seed_14', 'business', 'Franchise owners', 'First year as a franchise owner: which number in the pitch turned out to be wrong?', 1500, 6, 1, 6],
+  ['o_seed_15', 'sales', 'Showroom floor', 'Car showroom: what do you say in the first thirty seconds that changes the rest of it?', 650, 9, 9, 70],
+]
+
 /**
  * Demo seed. "An empty shelf leaves the librarian nothing to do" was the biggest
  * open problem in the meeting, and a 3-minute demo cannot open on an empty
- * dashboard, so a few live open calls ship pre-loaded.
+ * dashboard, so a spread of live open calls ships pre-loaded — wide enough that
+ * the category tabs and the sort are actually doing something.
  */
-const SEED_ORDERS: Order[] = [
-  {
-    id: 'o_seed_1',
-    question:
-      'Weekday lunch in Seongsu with no queue and under 15 minutes — where do you actually go?',
-    unitPrice: 300,
-    target: 7,
-    answered: 4,
-    createdAt: Date.now() - 1000 * 60 * 42,
+const SEED_ORDERS: Order[] = SEEDS.map(
+  ([id, category, shelf, question, unitPrice, target, answered, agedHours]) => ({
+    id,
+    category,
+    shelf,
+    question,
+    unitPrice,
+    target,
+    answered,
+    createdAt: Date.now() - agedHours * HOUR,
     mine: false,
-    shelf: 'Seongsu daily life',
-  },
-  {
-    id: 'o_seed_2',
-    question:
-      'Getting a kid ready for first grade — what actually cost the most? Especially the things you did not see coming.',
-    unitPrice: 500,
-    target: 12,
-    answered: 9,
-    createdAt: Date.now() - 1000 * 60 * 60 * 5,
-    mine: false,
-    shelf: 'Primary school parents',
-  },
-  {
-    id: 'o_seed_3',
-    question:
-      'If you have run a shop for 3+ years: setting delivery-app fees aside, what actually ate your margin?',
-    unitPrice: 800,
-    target: 10,
-    answered: 2,
-    createdAt: Date.now() - 1000 * 60 * 60 * 26,
-    mine: false,
-    shelf: 'Small shop owners',
-  },
-  {
-    id: 'o_seed_4',
-    question:
-      'Lived in Paris a year or more: a dinner spot tourists never reach that you go back to.',
-    unitPrice: 400,
-    target: 8,
-    answered: 8,
-    createdAt: Date.now() - 1000 * 60 * 60 * 50,
-    mine: false,
-    shelf: 'Living in Paris',
-  },
-]
+  }),
+)
 
 const SEED_MEMORY: MemoryEntry[] = [
   {
@@ -182,8 +214,16 @@ type Persisted = {
   chats: Chat[]
   orders: Order[]
   memory: MemoryEntry[]
+  profile: Profile | null
   agents: boolean
   autoMatch: boolean
+}
+
+/** Orders stored before the taxonomy existed get a category on the way in. */
+function normalise(orders: Order[]): Order[] {
+  return orders.map((o) =>
+    o.category ? o : { ...o, category: categoryFor(o.shelf, o.question) },
+  )
 }
 
 function load(): Persisted {
@@ -191,6 +231,7 @@ function load(): Persisted {
     chats: [],
     orders: SEED_ORDERS,
     memory: SEED_MEMORY,
+    profile: null,
     agents: false,
     autoMatch: true,
   }
@@ -201,8 +242,9 @@ function load(): Persisted {
     const parsed = JSON.parse(raw) as Partial<Persisted>
     return {
       chats: parsed.chats ?? [],
-      orders: parsed.orders ?? SEED_ORDERS,
+      orders: parsed.orders ? normalise(parsed.orders) : SEED_ORDERS,
       memory: parsed.memory ?? SEED_MEMORY,
+      profile: parsed.profile ?? null,
       agents: parsed.agents ?? false,
       autoMatch: parsed.autoMatch ?? true,
     }
@@ -220,17 +262,18 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
   const [chats, setChats] = useState<Chat[]>(initial.chats)
   const [orders, setOrders] = useState<Order[]>(initial.orders)
   const [memory, setMemory] = useState<MemoryEntry[]>(initial.memory)
+  const [profile, setProfile] = useState<Profile | null>(initial.profile)
 
   useEffect(() => {
     try {
       window.localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ chats, orders, memory, agents, autoMatch }),
+        JSON.stringify({ chats, orders, memory, profile, agents, autoMatch }),
       )
     } catch {
       /* storage disabled — the app still works, it just won't persist */
     }
-  }, [chats, orders, memory, agents, autoMatch])
+  }, [chats, orders, memory, profile, agents, autoMatch])
 
   const createChat = useCallback((prompt: string) => {
     const id = `c_${Date.now().toString(36)}${Math.random()
@@ -276,12 +319,22 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
   )
 
   const placeOrder = useCallback(
-    (order: Omit<Order, 'id' | 'createdAt' | 'answered'>) => {
+    (
+      order: Omit<Order, 'id' | 'createdAt' | 'answered' | 'category'> & {
+        category?: CategoryId
+      },
+    ) => {
       const id = `o_${Date.now().toString(36)}${Math.random()
         .toString(36)
         .slice(2, 5)}`
       setOrders((prev) => [
-        { ...order, id, createdAt: Date.now(), answered: 0 },
+        {
+          ...order,
+          category: order.category ?? categoryFor(order.shelf, order.question),
+          id,
+          createdAt: Date.now(),
+          answered: 0,
+        },
         ...prev,
       ])
       return id
@@ -324,6 +377,20 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     [orders],
   )
 
+  /**
+   * Completing onboarding is what creates the account in this build. Strikes
+   * start at zero and the conduct agreement is stamped, because the ladder is
+   * only fair if the person saw it before they answered anything.
+   */
+  const saveProfile = useCallback(
+    (p: Omit<Profile, 'strikes' | 'agreedAt'>) => {
+      setProfile({ ...p, strikes: 0, agreedAt: Date.now() })
+    },
+    [],
+  )
+
+  const signOut = useCallback(() => setProfile(null), [])
+
   const clearAll = useCallback(() => {
     setChats([])
     setOrders(SEED_ORDERS)
@@ -343,6 +410,9 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       chats,
       orders,
       memory,
+      profile,
+      saveProfile,
+      signOut,
       createChat,
       appendAssistant,
       patchMessage,
@@ -358,6 +428,9 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       chats,
       orders,
       memory,
+      profile,
+      saveProfile,
+      signOut,
       createChat,
       appendAssistant,
       patchMessage,

@@ -1,27 +1,18 @@
-import { NavLink, Link, useLocation } from 'react-router-dom'
-import { ChevronsUpDown, LogIn, PanelLeft } from 'lucide-react'
+import { NavLink, Link } from 'react-router-dom'
+import { LogIn, LogOut, PanelLeft, UserRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-  Switch,
-} from '@/components/ui/primitives'
+import { Switch } from '@/components/ui/primitives'
 import { WalletButton } from '@/components/WalletButton'
+import { CATEGORY_BY_ID } from '@/data/categories'
 import { NAV_ITEMS } from '@/data/nav'
+import { STRIKE_LIMIT } from '@/data/onboarding'
 import { cn, maskStyle } from '@/lib/utils'
 import { useUi } from '@/state/ui'
 
 const MENU_BUTTON =
   'peer/menu-button flex w-full items-center gap-2 overflow-hidden text-left font-medium outline-hidden transition-[width,height,padding] focus-visible:ring-2 focus-visible:ring-sidebar-ring active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:shrink-0'
 
-/** The workspace switcher: the shelf itself, and the agent that reads it. */
-const WORKSPACES = [
-  { id: 'workspace', label: 'OPENSHELF', to: '/' },
-  { id: 'shelf-1', label: 'SHELF-1', to: '/shelf-1' },
-] as const
+
 
 function WorkspaceMark({ size = 'size-6' }: { size?: string }) {
   return (
@@ -36,11 +27,50 @@ function WorkspaceMark({ size = 'size-6' }: { size?: string }) {
   )
 }
 
+/**
+ * Signed-in state. The strike counter sits here on purpose — a three-strike
+ * rule you only ever see once, on the way in, is not a rule anybody remembers.
+ */
+function ProfileChip() {
+  const { profile, signOut } = useUi()
+  if (!profile) return null
+  const cat = CATEGORY_BY_ID[profile.field]
+  return (
+    <div className="rounded-[2px] border border-border bg-card p-2.5">
+      <div className="flex items-center gap-2">
+        <span
+          className="size-2 shrink-0 rounded-[1px]"
+          style={{ backgroundColor: cat?.accent }}
+        />
+        <span className="truncate font-mono text-[11px] tracking-[1px] text-foreground">
+          {profile.handle}
+        </span>
+        <button
+          type="button"
+          onClick={signOut}
+          aria-label="Sign out"
+          className="ml-auto cursor-pointer text-muted-foreground/60 transition-colors hover:text-foreground"
+        >
+          <LogOut className="size-3.5" />
+        </button>
+      </div>
+      <div className="mt-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+        <span className="truncate">{profile.speaksTo.length} fields</span>
+        <span
+          className={cn(
+            'tabular-nums',
+            profile.strikes > 0 && 'text-destructive',
+          )}
+        >
+          {profile.strikes}/{STRIKE_LIMIT} strikes
+        </span>
+      </div>
+    </div>
+  )
+}
+
 export function AppSidebar() {
-  const { collapsed, setCollapsed, agents, setAgents } = useUi()
-  const location = useLocation()
-  const workspace =
-    location.pathname === '/shelf-1' ? WORKSPACES[1] : WORKSPACES[0]
+  const { collapsed, setCollapsed, agents, setAgents, profile } = useUi()
 
   return (
     <div
@@ -77,42 +107,21 @@ export function AppSidebar() {
                 className="group/menu-item relative flex items-start gap-1"
               >
                 <div className="flex min-w-0 flex-1 flex-col gap-1 rounded-lg p-1">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        data-slot="sidebar-menu-button"
-                        className={cn(
-                          MENU_BUTTON,
-                          'text-sm h-9 cursor-pointer rounded-sm bg-white p-2.5 shadow-lg shadow-black/5 hover:bg-white hover:shadow-lg [&>svg]:size-3',
-                        )}
-                      >
-                        <div className="flex aspect-square size-6 items-center justify-center">
-                          <WorkspaceMark />
-                        </div>
-                        <span className="truncate text-xs font-semibold">
-                          {workspace.label}
-                        </span>
-                        <ChevronsUpDown className="ml-auto text-sidebar-foreground/60" />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      align="start"
-                      className="w-[180px]"
-                      sideOffset={6}
-                    >
-                      <DropdownMenuLabel>Workspace</DropdownMenuLabel>
-                      {WORKSPACES.map((w) => (
-                        <DropdownMenuItem key={w.id} asChild>
-                          <Link to={w.to}>
-                            <WorkspaceMark size="size-5" />
-                            <span className="text-xs font-medium">
-                              {w.label}
-                            </span>
-                          </Link>
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <Link
+                    to="/"
+                    data-slot="sidebar-menu-button"
+                    className={cn(
+                      MENU_BUTTON,
+                      'text-sm h-9 cursor-pointer rounded-sm bg-white p-2.5 shadow-lg shadow-black/5 hover:bg-white hover:shadow-lg',
+                    )}
+                  >
+                    <div className="flex aspect-square size-6 items-center justify-center">
+                      <WorkspaceMark />
+                    </div>
+                    <span className="truncate text-xs font-semibold">
+                      OPENSHELF
+                    </span>
+                  </Link>
                 </div>
                 <button
                   type="button"
@@ -178,23 +187,40 @@ export function AppSidebar() {
                 data-slot="sidebar-menu-item"
                 className="group/menu-item relative flex flex-col gap-2"
               >
-                <div className="flex gap-2">
-                  <Button
-                    asChild
-                    className="font-mono tracking-[1px] uppercase rounded-[2px] transition-all duration-300 bg-foreground/85 text-background border border-foreground/80 hover:bg-foreground/75 px-4 py-2 h-9 flex-1 text-xs"
-                  >
-                    <Link to="/login?mode=signup">Start free</Link>
-                  </Button>
-                  <Button
-                    asChild
-                    aria-label="Sign in"
-                    className="font-mono tracking-[1px] uppercase rounded-[2px] transition-all duration-300 bg-muted text-foreground hover:bg-muted/90 border border-foreground/5 h-9 w-9 p-0 text-xs"
-                  >
-                    <Link to="/login">
-                      <LogIn className="size-4" />
-                    </Link>
-                  </Button>
-                </div>
+                {profile ? (
+                  <ProfileChip />
+                ) : (
+                  <>
+                    <div className="flex gap-2">
+                      <Button
+                        asChild
+                        className="font-mono tracking-[1px] uppercase rounded-[2px] transition-all duration-300 bg-foreground/85 text-background border border-foreground/80 hover:bg-foreground/75 px-4 py-2 h-9 flex-1 text-xs"
+                      >
+                        <Link to="/login?mode=signup">Start free</Link>
+                      </Button>
+                      <Button
+                        asChild
+                        aria-label="Sign in"
+                        className="font-mono tracking-[1px] uppercase rounded-[2px] transition-all duration-300 bg-muted text-foreground hover:bg-muted/90 border border-foreground/5 h-9 w-9 p-0 text-xs"
+                      >
+                        <Link to="/login">
+                          <LogIn className="size-4" />
+                        </Link>
+                      </Button>
+                    </div>
+                    {/* Dev-only door into onboarding, since this build has no
+                        auth backend to come back from. */}
+                    <Button
+                      asChild
+                      className="font-mono tracking-[1px] uppercase rounded-[2px] transition-all duration-300 bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground border border-dashed border-foreground/20 px-4 py-2 h-9 w-full text-xs"
+                    >
+                      <Link to="/onboarding">
+                        <UserRound className="size-3.5" />
+                        Temp sign-in
+                      </Link>
+                    </Button>
+                  </>
+                )}
                 <Button
                   asChild
                   className="font-mono tracking-[1px] uppercase rounded-[2px] transition-all duration-300 bg-muted text-foreground hover:bg-muted/90 border border-foreground/5 px-4 py-2 h-9 w-full text-xs"

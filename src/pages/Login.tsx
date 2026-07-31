@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { UserRound } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 /**
@@ -142,6 +143,16 @@ export default function Login() {
             >
               {signup ? 'Sign up' : 'Sign in'}
             </button>
+
+            {/* No auth backend in this build, so this is the door that
+                actually opens: straight into onboarding. */}
+            <Link
+              to="/onboarding"
+              className="mt-3 flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-foreground/25 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <UserRound className="size-3.5" />
+              Temp sign-in (dev)
+            </Link>
 
             <p className="mt-5 text-center text-sm">
               {signup ? 'Already have an account? ' : "Don't have an account? "}
