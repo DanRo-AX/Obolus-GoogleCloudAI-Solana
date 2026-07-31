@@ -1,0 +1,330 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Navigate, useNavigate, useParams } from 'react-router-dom'
+import { ArrowLeft, ArrowRight, Check, CornerDownLeft, X } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { MAIN_GUIDANCE, warmupsFor, type Warmup } from '@/data/survey'
+import { cn } from '@/lib/utils'
+import { useUi } from '@/state/ui'
+
+/**
+ * One screen per question, the way a good survey does it. Four light warm-ups
+ * first — they set the register for the answer that actually pays — then the
+ * open call itself.
+ *
+ * Enter advances. Nothing here is required except the last screen.
+ */
+export default function Survey() {
+  const { orderId } = useParams()
+  const navigate = useNavigate()
+  const { orders, answerOrder } = useUi()
+  const order = orders.find((o) => o.id === orderId)
+
+  const warmups = useMemo(() => warmupsFor(order?.shelf ?? ''), [order?.shelf])
+  const total = warmups.length + 1
+
+  const [step, setStep] = useState(0)
+  const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [main, setMain] = useState('')
+  const [done, setDone] = useState(false)
+  const mainRef = useRef<HTMLTextAreaElement>(null)
+
+  const onLast = step === warmups.length
+  const current = warmups[step]
+
+  useEffect(() => {
+    if (onLast) mainRef.current?.focus()
+  }, [onLast])
+
+  if (!order) return <Navigate to="/dashboard" replace />
+
+  const advance = () => setStep((s) => Math.min(total - 1, s + 1))
+  const back = () => setStep((s) => Math.max(0, s - 1))
+  const set = (id: string, v: string) =>
+    setAnswers((a) => ({ ...a, [id]: v }))
+
+  const submit = () => {
+    if (!main.trim()) return
+    answerOrder(order.id, main.trim())
+    setDone(true)
+  }
+
+  if (done) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-6">
+        <div className="flex max-w-md flex-col items-center gap-4 text-center">
+          <span className="flex size-11 items-center justify-center rounded-full bg-[#0F766E]/12">
+            <Check className="size-5 text-[#0F766E]" />
+          </span>
+          <h1 className="font-display text-2xl font-medium">
+            ₩{order.unitPrice.toLocaleString()} is yours
+          </h1>
+          <p className="text-[15px] leading-7 text-muted-foreground">
+            It is in your memory now. From here it can be quoted without you
+            answering anything again — that is where the rest of the money comes
+            from.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <Button variant="mono" size="mono" onClick={() => navigate('/memory')}>
+              See my memory
+            </Button>
+            <Button
+              variant="monoMuted"
+              size="mono"
+              onClick={() => navigate('/dashboard')}
+            >
+              Next open call
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className="flex flex-1 flex-col"
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && !e.shiftKey && !onLast) {
+          e.preventDefault()
+          advance()
+        }
+      }}
+    >
+      {/* progress + exit ------------------------------------------------- */}
+      <div className="flex items-center gap-4 px-4 pt-4 sm:px-8 sm:pt-6">
+        <div className="flex flex-1 gap-1">
+          {Array.from({ length: total }, (_, i) => (
+            <span
+              key={i}
+              className={cn(
+                'h-0.5 flex-1 rounded-full transition-colors duration-300',
+                i < step
+                  ? 'bg-[#0F766E]'
+                  : i === step
+                    ? 'bg-foreground'
+                    : 'bg-foreground/12',
+              )}
+            />
+          ))}
+        </div>
+        <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+          {step + 1}/{total}
+        </span>
+        <button
+          type="button"
+          aria-label="Leave"
+          onClick={() => navigate('/dashboard')}
+          className="cursor-pointer text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <X className="size-4" />
+        </button>
+      </div>
+
+      <div className="flex flex-1 items-center justify-center px-6 py-10">
+        <div key={step} className="animate-fade-in-up w-full max-w-xl">
+          {onLast ? (
+            <MainQuestion
+              order={order}
+              value={main}
+              onChange={setMain}
+              inputRef={mainRef}
+            />
+          ) : (
+            <WarmupQuestion
+              n={step + 1}
+              warmup={current}
+              value={answers[current.id] ?? ''}
+              onChange={(v) => set(current.id, v)}
+              onPick={() => window.setTimeout(advance, 180)}
+            />
+          )}
+
+          <div className="mt-10 flex items-center gap-3">
+            {step > 0 ? (
+              <Button variant="monoGhost" size="mono" onClick={back}>
+                <ArrowLeft className="size-3.5" />
+                Back
+              </Button>
+            ) : null}
+
+            {onLast ? (
+              <Button
+                variant="mono"
+                size="monoLg"
+                disabled={!main.trim()}
+                onClick={submit}
+              >
+                Submit and take ₩{order.unitPrice.toLocaleString()}
+              </Button>
+            ) : (
+              <Button variant="monoMuted" size="mono" onClick={advance}>
+                {answers[current.id] ? 'Next' : 'Skip'}
+                <ArrowRight className="size-3.5" />
+              </Button>
+            )}
+
+            {!onLast ? (
+              <span className="ml-auto hidden items-center gap-1.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground sm:flex">
+                <CornerDownLeft className="size-3" />
+                Enter
+              </span>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* --------------------------------------------------------------- screens */
+
+function WarmupQuestion({
+  n,
+  warmup,
+  value,
+  onChange,
+  onPick,
+}: {
+  n: number
+  warmup: Warmup
+  value: string
+  onChange: (v: string) => void
+  onPick: () => void
+}) {
+  return (
+    <div>
+      <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
+        Warm-up {n} · one second each
+      </span>
+      <h1 className="mt-3 font-display text-[25px] font-medium leading-snug sm:text-[29px]">
+        {warmup.prompt}
+      </h1>
+      {warmup.hint ? (
+        <p className="mt-2 text-sm text-muted-foreground">{warmup.hint}</p>
+      ) : null}
+
+      <div className="mt-7">
+        {warmup.kind === 'choice' ? (
+          <div className="flex flex-col gap-2">
+            {warmup.options.map((opt, i) => (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => {
+                  onChange(opt)
+                  onPick()
+                }}
+                className={cn(
+                  'flex w-full cursor-pointer items-center gap-3 rounded-[4px] border px-4 py-3 text-left text-[15px] transition-colors',
+                  value === opt
+                    ? 'border-foreground bg-foreground/[0.05]'
+                    : 'border-border hover:border-foreground/30 hover:bg-foreground/[0.03]',
+                )}
+              >
+                <span className="flex size-5 shrink-0 items-center justify-center rounded-[3px] bg-foreground/[0.07] font-mono text-[10px]">
+                  {String.fromCharCode(65 + i)}
+                </span>
+                {opt}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {warmup.kind === 'scale' ? (
+          <div>
+            <div className="flex gap-1.5">
+              {[1, 2, 3, 4, 5].map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => {
+                    onChange(String(v))
+                    onPick()
+                  }}
+                  className={cn(
+                    'h-14 flex-1 cursor-pointer rounded-[4px] border font-mono text-sm transition-colors',
+                    value === String(v)
+                      ? 'border-foreground bg-foreground text-background'
+                      : 'border-border hover:border-foreground/30 hover:bg-foreground/[0.03]',
+                  )}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+            <div className="mt-2 flex justify-between text-xs text-muted-foreground">
+              <span>{warmup.low}</span>
+              <span>{warmup.high}</span>
+            </div>
+          </div>
+        ) : null}
+
+        {warmup.kind === 'short' ? (
+          <input
+            autoFocus
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={warmup.placeholder}
+            className="w-full border-b border-border bg-transparent pb-2 text-[19px] outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-foreground"
+          />
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function MainQuestion({
+  order,
+  value,
+  onChange,
+  inputRef,
+}: {
+  order: { question: string; unitPrice: number; shelf: string }
+  value: string
+  onChange: (v: string) => void
+  inputRef: React.RefObject<HTMLTextAreaElement | null>
+}) {
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-[2px] bg-[#866FF2]/12 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[1px] text-[#5B44C7]">
+          {MAIN_GUIDANCE.eyebrow}
+        </span>
+        <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+          {order.shelf} · ₩{order.unitPrice.toLocaleString()}
+        </span>
+      </div>
+
+      <h1 className="mt-3 font-display text-[23px] font-medium leading-snug sm:text-[27px]">
+        {order.question}
+      </h1>
+
+      <textarea
+        ref={inputRef}
+        rows={6}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Write it the way it happened."
+        className="mt-6 w-full resize-none rounded-[4px] border border-border bg-card p-4 text-[15px] leading-relaxed outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-foreground/40"
+      />
+
+      <div className="mt-4 rounded-[4px] border border-border bg-foreground/[0.03] p-4">
+        <ul className="flex flex-col gap-1.5">
+          {MAIN_GUIDANCE.do.map((d) => (
+            <li
+              key={d}
+              className="flex gap-2.5 text-[13px] leading-relaxed text-foreground/85"
+            >
+              <Check className="mt-0.5 size-3.5 shrink-0 text-[#0F766E]" />
+              {d}
+            </li>
+          ))}
+          <li className="flex gap-2.5 text-[13px] leading-relaxed text-muted-foreground">
+            <X className="mt-0.5 size-3.5 shrink-0" />
+            {MAIN_GUIDANCE.dont}
+          </li>
+        </ul>
+      </div>
+    </div>
+  )
+}
