@@ -1,6 +1,13 @@
 import { useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { Check, ChevronDown, Clock, Coins, UserRound } from 'lucide-react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import {
+  Check,
+  ChevronDown,
+  Clock,
+  Coins,
+  ShieldAlert,
+  UserRound,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Badge,
@@ -10,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/primitives'
 import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from '@/data/categories'
+import { STRIKE_LIMIT } from '@/data/onboarding'
 import { cn } from '@/lib/utils'
 import { useUi, type Order } from '@/state/ui'
 
@@ -51,11 +59,16 @@ const MIN_PAY: Array<{ value: number; label: string }> = [
 ]
 
 export default function Dashboard() {
-  const { orders, memory, profile } = useUi()
+  const { orders, memory, profile, suspended } = useUi()
   const navigate = useNavigate()
+  const [params] = useSearchParams()
 
   const [tab, setTab] = useState<'open' | 'mine'>('open')
-  const [category, setCategory] = useState<CategoryId | 'all'>('all')
+  // The landing links straight into a field, so honour ?category= on entry.
+  const [category, setCategory] = useState<CategoryId | 'all'>(() => {
+    const q = params.get('category')
+    return CATEGORIES.some((c) => c.id === q) ? (q as CategoryId) : 'all'
+  })
   const [sort, setSort] = useState<SortId>('top')
   const [minPay, setMinPay] = useState(0)
   const [fitsMe, setFitsMe] = useState(false)
@@ -232,6 +245,22 @@ export default function Dashboard() {
           </span>
         </div>
 
+        {suspended ? (
+          <div className="flex flex-wrap items-center gap-3 rounded-[6px] border border-destructive/30 bg-destructive/[0.05] px-4 py-3">
+            <ShieldAlert className="size-4 shrink-0 text-destructive" />
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              <span className="font-medium text-destructive">
+                Account suspended — {STRIKE_LIMIT} strikes.
+              </span>{' '}
+              You cannot pick up calls, and your documents have stopped being
+              quoted. Anything already settled is still paid out.
+            </p>
+            <Button asChild variant="monoMuted" size="monoSm" className="ml-auto">
+              <Link to="/memory">Review the strikes</Link>
+            </Button>
+          </div>
+        ) : null}
+
         {!profile && tab === 'open' ? (
           <div className="flex flex-wrap items-center gap-3 rounded-[6px] border border-border bg-foreground/[0.03] px-4 py-3">
             <UserRound className="size-4 text-muted-foreground" />
@@ -356,7 +385,7 @@ export default function Dashboard() {
                           620,
                         )
                       }}
-                      disabled={opening === order.id}
+                      disabled={opening === order.id || suspended}
                     >
                       {opening === order.id ? 'Opening…' : 'Answer'}
                     </Button>

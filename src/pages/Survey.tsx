@@ -1,10 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, ArrowRight, Check, CornerDownLeft, X } from 'lucide-react'
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  CornerDownLeft,
+  ShieldAlert,
+  X,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CATEGORY_BY_ID } from '@/data/categories'
 import { AGE_BANDS, HOUSEHOLDS, REGIONS } from '@/data/onboarding'
+import { STRIKE_LIMIT } from '@/data/onboarding'
 import { MAIN_GUIDANCE, warmupsFor, type Warmup } from '@/data/survey'
+import { assess, type Issue } from '@/lib/quality'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
 
@@ -18,7 +27,7 @@ import { useUi } from '@/state/ui'
 export default function Survey() {
   const { orderId } = useParams()
   const navigate = useNavigate()
-  const { orders, answerOrder } = useUi()
+  const { orders, answerOrder, suspended } = useUi()
   const order = orders.find((o) => o.id === orderId)
 
   const warmups = useMemo(() => warmupsFor(order?.shelf ?? ''), [order?.shelf])
@@ -28,6 +37,9 @@ export default function Survey() {
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [main, setMain] = useState('')
   const [done, setDone] = useState(false)
+  /** Set when the check flagged the draft and the person saw the warning. */
+  const [flags, setFlags] = useState<Issue[] | null>(null)
+  const [struck, setStruck] = useState(false)
   const mainRef = useRef<HTMLTextAreaElement>(null)
 
   const onLast = step === warmups.length
@@ -38,16 +50,60 @@ export default function Survey() {
   }, [onLast])
 
   if (!order) return <Navigate to="/dashboard" replace />
+  if (suspended) return <Navigate to="/dashboard" replace />
 
   const advance = () => setStep((s) => Math.min(total - 1, s + 1))
   const back = () => setStep((s) => Math.max(0, s - 1))
   const set = (id: string, v: string) =>
     setAnswers((a) => ({ ...a, [id]: v }))
 
+  /**
+   * Check before sending. First press only warns — a person who is sure their
+   * answer is fine can press again, and that is what the dispute exists for.
+   */
   const submit = () => {
-    if (!main.trim()) return
-    answerOrder(order.id, main.trim())
+    const text = main.trim()
+    if (!text) return
+    const issues = assess(order.question, text)
+    if (issues.length && !flags) {
+      setFlags(issues)
+      return
+    }
+    answerOrder(order.id, text, issues.length ? issues : undefined)
+    setStruck(issues.length > 0)
     setDone(true)
+  }
+
+  if (done && struck) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-6">
+        <div className="flex max-w-md flex-col items-center gap-4 text-center">
+          <span className="flex size-11 items-center justify-center rounded-full bg-destructive/12">
+            <ShieldAlert className="size-5 text-destructive" />
+          </span>
+          <h1 className="font-display text-2xl font-medium">
+            Strike issued — the answer was voided
+          </h1>
+          <p className="text-[15px] leading-7 text-muted-foreground">
+            The ₩{order.unitPrice.toLocaleString()} was reversed and the slot
+            stayed open. It is in your memory marked voided, and you can spend
+            your one dispute on it there.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <Button variant="mono" size="mono" onClick={() => navigate('/memory')}>
+              See the strike
+            </Button>
+            <Button
+              variant="monoMuted"
+              size="mono"
+              onClick={() => navigate('/dashboard')}
+            >
+              Back to calls
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   if (done) {
@@ -128,7 +184,10 @@ export default function Survey() {
             <MainQuestion
               order={order}
               value={main}
-              onChange={setMain}
+              onChange={(v: string) => {
+                setMain(v)
+                if (flags) setFlags(null)
+              }}
               inputRef={mainRef}
             />
           ) : (
@@ -140,6 +199,30 @@ export default function Survey() {
               onPick={() => window.setTimeout(advance, 180)}
             />
           )}
+
+          {onLast && flags ? (
+            <div className="mt-6 rounded-[6px] border border-destructive/30 bg-destructive/[0.04] p-4">
+              <p className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[1px] text-destructive">
+                <ShieldAlert className="size-3.5" />
+                This would be flagged · {flags[0].rule}
+              </p>
+              <ul className="mt-3 space-y-2">
+                {flags.map((f) => (
+                  <li
+                    key={f.detail}
+                    className="text-[13px] leading-relaxed text-muted-foreground"
+                  >
+                    {f.detail}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-3 text-[13px] leading-relaxed text-foreground/85">
+                Send it as it stands and the answer is voided, the payment is
+                reversed, and it counts as one of your {STRIKE_LIMIT} strikes.
+                Editing it clears this.
+              </p>
+            </div>
+          ) : null}
 
           <div className="mt-10 flex items-center gap-3">
             {step > 0 ? (
@@ -155,8 +238,11 @@ export default function Survey() {
                 size="monoLg"
                 disabled={!main.trim()}
                 onClick={submit}
+                className={cn(flags && 'bg-destructive hover:bg-destructive/90')}
               >
-                Submit and take ₩{order.unitPrice.toLocaleString()}
+                {flags
+                  ? 'Send it anyway'
+                  : `Submit and take ₩${order.unitPrice.toLocaleString()}`}
               </Button>
             ) : (
               <Button variant="monoMuted" size="mono" onClick={advance}>

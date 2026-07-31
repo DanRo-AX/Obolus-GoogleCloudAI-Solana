@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { Coins, Flame, Sparkles } from 'lucide-react'
+import { Coins, Flame, ShieldAlert, Sparkles, Star, Wallet } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Badge,
@@ -9,8 +9,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/primitives'
+import { STRIKE_LIMIT } from '@/data/onboarding'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
+import { shortKey } from '@/state/wallet'
 
 /**
  * Screen 03 — My memory. Everything you have answered piles up here.
@@ -18,12 +20,14 @@ import { useUi } from '@/state/ui'
  * you answering anything new. Recency weighting is shown, not hidden.
  */
 export default function Memory() {
-  const { memory, autoMatch, setAutoMatch } = useUi()
+  const { memory, autoMatch, setAutoMatch, profile, disputeStrike } = useUi()
 
-  const total = memory.reduce((s, m) => s + m.earned, 0)
-  const autoEarned = memory
+  const settled = memory.filter((m) => m.status !== 'voided')
+  const total = settled.reduce((s, m) => s + m.earned, 0)
+  const autoEarned = settled
     .filter((m) => m.via === 'Auto-match')
     .reduce((s, m) => s + m.earned, 0)
+  const voided = memory.filter((m) => m.status === 'voided')
 
   const shelves = useMemo(() => {
     const map = new Map<string, number>()
@@ -63,10 +67,55 @@ export default function Memory() {
           <Stat
             icon={<Flame className="size-3.5" />}
             label="Memory entries"
-            value={`${memory.length}`}
+            value={`${settled.length}`}
             sub={`across ${shelves.length} shelves`}
           />
         </div>
+
+        {profile ? (
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-[6px] border border-border bg-card px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <Wallet className="size-3.5" />
+              Payouts to{' '}
+              {profile.wallet ? (
+                <span className="text-foreground">
+                  {shortKey(profile.wallet)}
+                </span>
+              ) : (
+                <Link
+                  to="/onboarding"
+                  className="text-foreground underline decoration-dotted underline-offset-4"
+                >
+                  no wallet connected
+                </Link>
+              )}
+            </span>
+            <span
+              className={cn(
+                'flex items-center gap-1.5',
+                profile.strikes > 0 && 'text-destructive',
+              )}
+            >
+              <ShieldAlert className="size-3.5" />
+              {profile.strikes}/{STRIKE_LIMIT} strikes
+            </span>
+            <span className="ml-auto">
+              {profile.disputeUsed ? 'Dispute spent' : '1 dispute available'}
+            </span>
+          </div>
+        ) : null}
+
+        {voided.length ? (
+          <div className="rounded-[6px] border border-destructive/30 bg-destructive/[0.04] px-4 py-3">
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              <span className="font-medium text-destructive">
+                {voided.length} answer{voided.length > 1 ? 's' : ''} voided.
+              </span>{' '}
+              Voided entries stay in the stream so you can see what tripped, but
+              they are not quoted and they do not count toward the balance.
+            </p>
+          </div>
+        ) : null}
 
         {/* Auto-match — the line you leave in the water ------------------ */}
         <div className="flex flex-wrap items-center gap-4 rounded-[6px] border border-border bg-card p-4">
@@ -155,16 +204,68 @@ export default function Memory() {
                         >
                           {m.via}
                         </span>
-                        <span className="ml-auto font-mono text-xs tabular-nums text-muted-foreground">
+                        {m.rating ? (
+                          <span className="flex items-center gap-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
+                            <Star className="size-3 fill-current" />
+                            {m.rating}.0
+                          </span>
+                        ) : null}
+                        <span
+                          className={cn(
+                            'ml-auto font-mono text-xs tabular-nums',
+                            m.status === 'voided'
+                              ? 'text-muted-foreground/60 line-through'
+                              : 'text-muted-foreground',
+                          )}
+                        >
                           +₩{m.earned.toLocaleString()}
                         </span>
                       </div>
                       <p className="mt-1.5 text-sm text-muted-foreground">
                         {m.question}
                       </p>
-                      <p className="mt-1 text-[15px] leading-relaxed text-foreground/90">
+                      <p
+                        className={cn(
+                          'mt-1 text-[15px] leading-relaxed',
+                          m.status === 'voided'
+                            ? 'text-foreground/50'
+                            : 'text-foreground/90',
+                        )}
+                      >
                         {m.answer}
                       </p>
+
+                      {m.status === 'voided' ? (
+                        <div className="mt-3 rounded-[4px] border border-destructive/25 bg-destructive/[0.04] p-3">
+                          <p className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[1px] text-destructive">
+                            <ShieldAlert className="size-3" />
+                            Voided · {m.flags?.[0]?.rule ?? 'Low-effort answers'}
+                          </p>
+                          {m.flags?.map((f) => (
+                            <p
+                              key={f.detail}
+                              className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground"
+                            >
+                              {f.detail}
+                            </p>
+                          ))}
+                          <div className="mt-3 flex items-center gap-3">
+                            <Button
+                              variant="monoMuted"
+                              size="monoSm"
+                              disabled={profile?.disputeUsed}
+                              onClick={() => disputeStrike(m.id)}
+                            >
+                              {profile?.disputeUsed
+                                ? 'Dispute spent'
+                                : 'Dispute this'}
+                            </Button>
+                            <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                              One per account
+                            </span>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   </li>
                 )

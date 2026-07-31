@@ -7,6 +7,8 @@ import {
   useState,
 } from 'react'
 import { categoryFor, type CategoryId } from '@/data/categories'
+import { STRIKE_LIMIT } from '@/data/onboarding'
+import type { Issue } from '@/lib/quality'
 
 /** One quoted MD. Once the open is confirmed it becomes the settlement unit. */
 export type Citation = {
@@ -77,6 +79,10 @@ export type Profile = {
   speaksTo: CategoryId[]
   /** Conduct strikes. Three suspends the account. */
   strikes: number
+  /** One dispute per account, as promised on the way in. */
+  disputeUsed: boolean
+  /** Solana pubkey payouts land at. Optional — you can connect later. */
+  wallet?: string
   agreedAt: number
 }
 
@@ -89,6 +95,12 @@ export type MemoryEntry = {
   earned: number
   createdAt: number
   via: 'Open call' | 'Auto-match'
+  /** Voided entries keep the amount but stop counting toward the balance. */
+  status: 'settled' | 'voided'
+  /** Which rules the answer tripped, if any. */
+  flags?: Issue[]
+  /** Buyer rating out of 5, once someone has opened it. */
+  rating?: number
 }
 
 type UiValue = {
@@ -105,8 +117,12 @@ type UiValue = {
   memory: MemoryEntry[]
   /** null until onboarding completes. Temp sign-in is what creates it. */
   profile: Profile | null
-  saveProfile: (p: Omit<Profile, 'strikes' | 'agreedAt'>) => void
+  saveProfile: (p: Omit<Profile, 'strikes' | 'disputeUsed' | 'agreedAt'>) => void
   signOut: () => void
+  /** Three strikes. Set once the ladder runs out. */
+  suspended: boolean
+  /** Spend the one dispute on a voided answer: strike lifted, payment restored. */
+  disputeStrike: (memoryId: string) => void
   createChat: (prompt: string) => string
   appendAssistant: (chatId: string, message: ChatMessage) => void
   patchMessage: (
@@ -119,7 +135,7 @@ type UiValue = {
       category?: CategoryId
     },
   ) => string
-  answerOrder: (orderId: string, answer: string) => void
+  answerOrder: (orderId: string, answer: string, flags?: Issue[]) => void
   clearAll: () => void
 }
 
@@ -187,6 +203,8 @@ const SEED_MEMORY: MemoryEntry[] = [
     earned: 300,
     createdAt: Date.now() - 1000 * 60 * 60 * 3,
     via: 'Open call',
+    status: 'settled',
+    rating: 5,
   },
   {
     id: 'm_seed_2',
@@ -197,6 +215,8 @@ const SEED_MEMORY: MemoryEntry[] = [
     earned: 800,
     createdAt: Date.now() - 1000 * 60 * 60 * 20,
     via: 'Auto-match',
+    status: 'settled',
+    rating: 4,
   },
   {
     id: 'm_seed_3',
@@ -207,6 +227,8 @@ const SEED_MEMORY: MemoryEntry[] = [
     earned: 250,
     createdAt: Date.now() - 1000 * 60 * 60 * 46,
     via: 'Auto-match',
+    status: 'settled',
+    rating: 5,
   },
 ]
 
@@ -217,6 +239,11 @@ type Persisted = {
   profile: Profile | null
   agents: boolean
   autoMatch: boolean
+}
+
+/** Entries stored before answers could be voided default to settled. */
+function normaliseMemory(memory: MemoryEntry[]): MemoryEntry[] {
+  return memory.map((m) => (m.status ? m : { ...m, status: 'settled' as const }))
 }
 
 /** Orders stored before the taxonomy existed get a category on the way in. */
@@ -243,7 +270,7 @@ function load(): Persisted {
     return {
       chats: parsed.chats ?? [],
       orders: parsed.orders ? normalise(parsed.orders) : SEED_ORDERS,
-      memory: parsed.memory ?? SEED_MEMORY,
+      memory: parsed.memory ? normaliseMemory(parsed.memory) : SEED_MEMORY,
       profile: parsed.profile ?? null,
       agents: parsed.agents ?? false,
       autoMatch: parsed.autoMatch ?? true,
@@ -350,17 +377,21 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
    * both updaters stay pure.
    */
   const answerOrder = useCallback(
-    (orderId: string, answer: string) => {
+    (orderId: string, answer: string, flags?: Issue[]) => {
       const order = orders.find((o) => o.id === orderId)
       if (!order || order.answered >= order.target) return
+      const voided = Boolean(flags?.length)
 
-      setOrders((prev) =>
-        prev.map((o) =>
-          o.id === orderId
-            ? { ...o, answered: Math.min(o.target, o.answered + 1) }
-            : o,
-        ),
-      )
+      // A voided answer does not fill a slot. The buyer never got one.
+      if (!voided) {
+        setOrders((prev) =>
+          prev.map((o) =>
+            o.id === orderId
+              ? { ...o, answered: Math.min(o.target, o.answered + 1) }
+              : o,
+          ),
+        )
+      }
       setMemory((prev) => [
         {
           id: `m_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
@@ -370,12 +401,37 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           earned: order.unitPrice,
           createdAt: Date.now(),
           via: 'Open call' as const,
+          status: voided ? ('voided' as const) : ('settled' as const),
+          flags,
         },
         ...prev,
       ])
+      if (voided) {
+        setProfile((p) =>
+          p ? { ...p, strikes: Math.min(STRIKE_LIMIT, p.strikes + 1) } : p,
+        )
+      }
     },
     [orders],
   )
+
+  /**
+   * The one dispute. Onboarding promises it, so it has to exist: the strike is
+   * lifted and the payment goes back on. It can only be spent once, which is
+   * what stops it being a way around the ladder.
+   */
+  const disputeStrike = useCallback((memoryId: string) => {
+    setMemory((prev) =>
+      prev.map((m) =>
+        m.id === memoryId ? { ...m, status: 'settled' as const } : m,
+      ),
+    )
+    setProfile((p) =>
+      p && !p.disputeUsed
+        ? { ...p, strikes: Math.max(0, p.strikes - 1), disputeUsed: true }
+        : p,
+    )
+  }, [])
 
   /**
    * Completing onboarding is what creates the account in this build. Strikes
@@ -383,8 +439,8 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
    * only fair if the person saw it before they answered anything.
    */
   const saveProfile = useCallback(
-    (p: Omit<Profile, 'strikes' | 'agreedAt'>) => {
-      setProfile({ ...p, strikes: 0, agreedAt: Date.now() })
+    (p: Omit<Profile, 'strikes' | 'disputeUsed' | 'agreedAt'>) => {
+      setProfile({ ...p, strikes: 0, disputeUsed: false, agreedAt: Date.now() })
     },
     [],
   )
@@ -396,6 +452,8 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     setOrders(SEED_ORDERS)
     setMemory(SEED_MEMORY)
   }, [])
+
+  const suspended = (profile?.strikes ?? 0) >= STRIKE_LIMIT
 
   const value = useMemo<UiValue>(
     () => ({
@@ -413,6 +471,8 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       profile,
       saveProfile,
       signOut,
+      suspended,
+      disputeStrike,
       createChat,
       appendAssistant,
       patchMessage,
@@ -431,6 +491,8 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       profile,
       saveProfile,
       signOut,
+      suspended,
+      disputeStrike,
       createChat,
       appendAssistant,
       patchMessage,

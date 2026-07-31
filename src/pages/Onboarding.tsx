@@ -7,7 +7,9 @@ import {
   Check,
   CornerDownLeft,
   Dice5,
+  ExternalLink,
   ShieldAlert,
+  Wallet,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CATEGORIES, type CategoryId } from '@/data/categories'
@@ -25,19 +27,26 @@ import {
 } from '@/data/onboarding'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
+import {
+  DEVNET_FAUCETS,
+  PHANTOM_INSTALL_URL,
+  shortKey,
+  useWallet,
+} from '@/state/wallet'
 
 /**
- * Onboarding — five screens, in the same one-question-at-a-time register as the
+ * Onboarding — six screens, in the same one-question-at-a-time register as the
  * answer flow, because it is the same act: telling us something about yourself.
  *
  * The first four exist so a buyer can tell whether the person behind a passage
- * was actually in the situation. The fifth is the conduct ladder, shown before
- * anyone answers anything rather than buried in the terms page — a strike system
- * nobody read is not a deterrent, it is an ambush.
+ * was actually in the situation. Then the payout address. The last is the
+ * conduct ladder, shown before anyone answers anything rather than buried in the
+ * terms page — a strike system nobody read is not a deterrent, it is an ambush.
  */
 export default function Onboarding() {
   const navigate = useNavigate()
   const { saveProfile, profile } = useUi()
+  const wallet = useWallet()
 
   const [step, setStep] = useState(0)
   const [handle, setHandle] = useState(() => profile?.handle ?? suggestHandle())
@@ -50,13 +59,16 @@ export default function Onboarding() {
   const [agreed, setAgreed] = useState(false)
   const [done, setDone] = useState(false)
 
-  const TOTAL = 5
+  const TOTAL = 6
 
   const canAdvance = useMemo(() => {
     if (step === 0) return handle.trim().length >= 3
     if (step === 1) return Boolean(ageBand && region && household)
     if (step === 2) return Boolean(field && years)
     if (step === 3) return speaksTo.length > 0
+    // The wallet step is skippable — a payout address can wait, and blocking
+    // onboarding on a browser extension loses people who would have answered.
+    if (step === 4) return true
     return agreed
   }, [step, handle, ageBand, region, household, field, years, speaksTo, agreed])
 
@@ -81,6 +93,7 @@ export default function Onboarding() {
       field,
       years,
       speaksTo,
+      wallet: wallet.pubkey ?? undefined,
     })
     setDone(true)
     window.setTimeout(() => navigate('/dashboard'), 1400)
@@ -275,6 +288,88 @@ export default function Onboarding() {
           ) : null}
 
           {step === 4 ? (
+            <Screen
+              title="Where the money lands"
+              note="Settlement is USDC on Solana over x402, so a payout needs an address. You can skip this and connect later — you just cannot be paid until you do."
+            >
+              {wallet.pubkey ? (
+                <div className="flex flex-wrap items-center gap-3 rounded-[6px] border border-[#0F766E]/30 bg-[#0F766E]/[0.05] p-4">
+                  <span className="size-2 shrink-0 rounded-full bg-[#0F766E]" />
+                  <span className="font-mono text-sm">
+                    {shortKey(wallet.pubkey)}
+                  </span>
+                  <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                    devnet
+                  </span>
+                  <Button
+                    variant="monoGhost"
+                    size="monoSm"
+                    className="ml-auto"
+                    onClick={() => void wallet.disconnect()}
+                    type="button"
+                  >
+                    Disconnect
+                  </Button>
+                </div>
+              ) : (
+                <div className="rounded-[6px] border border-border p-4">
+                  {wallet.available ? (
+                    <Button
+                      variant="mono"
+                      size="mono"
+                      disabled={wallet.connecting}
+                      onClick={() => void wallet.connect()}
+                      type="button"
+                    >
+                      <Wallet className="size-3.5" />
+                      {wallet.connecting ? 'Connecting…' : 'Connect Phantom'}
+                    </Button>
+                  ) : (
+                    <a
+                      href={PHANTOM_INSTALL_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex h-9 items-center gap-2 rounded-[2px] bg-foreground px-3 font-mono text-xs uppercase tracking-[1px] text-background transition-colors hover:bg-foreground/85"
+                    >
+                      <Wallet className="size-3.5" />
+                      Install Phantom
+                      <ExternalLink className="size-3" />
+                    </a>
+                  )}
+                  {wallet.error ? (
+                    <p className="mt-3 text-sm text-destructive">
+                      {wallet.error}
+                    </p>
+                  ) : null}
+                  <p className="mt-3 text-[13px] leading-relaxed text-muted-foreground">
+                    Nothing is signed here — only the public key is read. A fresh
+                    devnet wallet has neither the SOL for fees nor the USDC to
+                    settle with:{' '}
+                    <a
+                      href={DEVNET_FAUCETS.sol}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline decoration-dotted underline-offset-4 hover:text-foreground"
+                    >
+                      SOL faucet
+                    </a>
+                    ,{' '}
+                    <a
+                      href={DEVNET_FAUCETS.usdc}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline decoration-dotted underline-offset-4 hover:text-foreground"
+                    >
+                      USDC faucet
+                    </a>
+                    .
+                  </p>
+                </div>
+              )}
+            </Screen>
+          ) : null}
+
+          {step === 5 ? (
             <Screen
               title="Three strikes and the account stops"
               note={CONDUCT_SUMMARY}

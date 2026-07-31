@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { FaqSection } from '@/components/FaqSection'
+import { FieldsSection } from '@/components/landing/FieldsSection'
 import { Hero } from '@/components/landing/Hero'
 import { LoopSection } from '@/components/landing/LoopSection'
 import { ReliabilitySection } from '@/components/landing/ReliabilitySection'
@@ -19,9 +20,10 @@ import { cn } from '@/lib/utils'
 const SECTIONS: { n: string; label: string; node: ReactNode }[] = [
   { n: '00', label: 'The loop', node: <LoopSection /> },
   { n: '01', label: 'The shelf', node: <SourceTicker /> },
-  { n: '02', label: 'The order', node: <ReliabilitySection /> },
-  { n: '03', label: 'The proof', node: <TrialSection /> },
-  { n: '04', label: 'The range', node: <UseCaseSection /> },
+  { n: '02', label: 'The fields', node: <FieldsSection /> },
+  { n: '03', label: 'The order', node: <ReliabilitySection /> },
+  { n: '04', label: 'The proof', node: <TrialSection /> },
+  { n: '05', label: 'The range', node: <UseCaseSection /> },
 ]
 
 export default function Home() {

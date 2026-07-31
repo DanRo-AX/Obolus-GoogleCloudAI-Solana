@@ -32,11 +32,18 @@ function WorkspaceMark({ size = 'size-6' }: { size?: string }) {
  * rule you only ever see once, on the way in, is not a rule anybody remembers.
  */
 function ProfileChip() {
-  const { profile, signOut } = useUi()
+  const { profile, signOut, suspended } = useUi()
   if (!profile) return null
   const cat = CATEGORY_BY_ID[profile.field]
   return (
-    <div className="rounded-[2px] border border-border bg-card p-2.5">
+    <div
+      className={cn(
+        'rounded-[2px] border p-2.5',
+        suspended
+          ? 'border-destructive/40 bg-destructive/[0.05]'
+          : 'border-border bg-card',
+      )}
+    >
       <div className="flex items-center gap-2">
         <span
           className="size-2 shrink-0 rounded-[1px]"
@@ -55,7 +62,9 @@ function ProfileChip() {
         </button>
       </div>
       <div className="mt-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-        <span className="truncate">{profile.speaksTo.length} fields</span>
+        <span className="truncate">
+          {suspended ? 'Suspended' : `${profile.speaksTo.length} fields`}
+        </span>
         <span
           className={cn(
             'tabular-nums',
