@@ -5,13 +5,14 @@ import {
   ArrowRight,
   Check,
   CornerDownLeft,
+  Loader2,
   ShieldAlert,
   X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CATEGORY_BY_ID } from '@/data/categories'
 import { AGE_BANDS, HOUSEHOLDS, REGIONS } from '@/data/onboarding'
-import { STRIKE_LIMIT } from '@/data/onboarding'
+import { AUTO_MATCH_STRIKE_LIMIT, STRIKE_LIMIT } from '@/data/onboarding'
 import { MAIN_GUIDANCE, warmupsFor, type Warmup } from '@/data/survey'
 import { assess, type Issue } from '@/lib/quality'
 import { cn } from '@/lib/utils'
@@ -27,7 +28,7 @@ import { useUi } from '@/state/ui'
 export default function Survey() {
   const { orderId } = useParams()
   const navigate = useNavigate()
-  const { orders, answerOrder, suspended } = useUi()
+  const { orders, answerOrder, profile, suspended } = useUi()
   const order = orders.find((o) => o.id === orderId)
 
   const warmups = useMemo(() => warmupsFor(order?.shelf ?? ''), [order?.shelf])
@@ -40,6 +41,8 @@ export default function Survey() {
   /** Set when the check flagged the draft and the person saw the warning. */
   const [flags, setFlags] = useState<Issue[] | null>(null)
   const [struck, setStruck] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
   const mainRef = useRef<HTMLTextAreaElement>(null)
 
   const onLast = step === warmups.length
@@ -50,6 +53,7 @@ export default function Survey() {
   }, [onLast])
 
   if (!order) return <Navigate to="/dashboard" replace />
+  if (!profile) return <Navigate to="/onboarding" replace />
   if (suspended) return <Navigate to="/dashboard" replace />
 
   const advance = () => setStep((s) => Math.min(total - 1, s + 1))
@@ -61,17 +65,32 @@ export default function Survey() {
    * Check before sending. First press only warns — a person who is sure their
    * answer is fine can press again, and that is what the dispute exists for.
    */
-  const submit = () => {
+  const submit = async () => {
     const text = main.trim()
-    if (!text) return
+    if (!text || submitting) return
     const issues = assess(order.question, text)
     if (issues.length && !flags) {
       setFlags(issues)
       return
     }
-    answerOrder(order.id, text, issues.length ? issues : undefined)
-    setStruck(issues.length > 0)
-    setDone(true)
+    setSubmitting(true)
+    setSubmitError(null)
+    try {
+      const result = await answerOrder(
+        order.id,
+        text,
+        issues.length ? issues : undefined,
+      )
+      setFlags(result.issues.length ? result.issues : null)
+      setStruck(result.voided)
+      setDone(true)
+    } catch (error) {
+      setSubmitError(
+        error instanceof Error ? error.message : 'The answer could not be saved.',
+      )
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   if (done && struck) {
@@ -107,6 +126,7 @@ export default function Survey() {
   }
 
   if (done) {
+    const held = profile.strikes >= AUTO_MATCH_STRIKE_LIMIT
     return (
       <div className="flex flex-1 items-center justify-center px-6">
         <div className="flex max-w-md flex-col items-center gap-4 text-center">
@@ -114,12 +134,14 @@ export default function Survey() {
             <Check className="size-5 text-[#0F766E]" />
           </span>
           <h1 className="font-display text-2xl font-medium">
-            ₩{order.unitPrice.toLocaleString()} is yours
+            {held
+              ? `₩${order.unitPrice.toLocaleString()} accrued · held 14 days`
+              : `₩${order.unitPrice.toLocaleString()} is yours`}
           </h1>
           <p className="text-[15px] leading-7 text-muted-foreground">
-            It is in your memory now. From here it can be quoted without you
-            answering anything again — that is where the rest of the money comes
-            from.
+            {held
+              ? 'The answer is in your memory, but the two-strike restriction pauses auto-match and holds this new payout for 14 days.'
+              : 'It is in your memory now. From here it can be quoted without you answering anything again — that is where the rest of the money comes from.'}
           </p>
           <div className="mt-2 flex gap-2">
             <Button variant="mono" size="mono" onClick={() => navigate('/memory')}>
@@ -224,6 +246,10 @@ export default function Survey() {
             </div>
           ) : null}
 
+          {submitError ? (
+            <p className="mt-4 text-sm text-destructive">{submitError}</p>
+          ) : null}
+
           <div className="mt-10 flex items-center gap-3">
             {step > 0 ? (
               <Button variant="monoGhost" size="mono" onClick={back}>
@@ -236,13 +262,20 @@ export default function Survey() {
               <Button
                 variant="mono"
                 size="monoLg"
-                disabled={!main.trim()}
-                onClick={submit}
+                disabled={!main.trim() || submitting}
+                onClick={() => void submit()}
                 className={cn(flags && 'bg-destructive hover:bg-destructive/90')}
               >
-                {flags
-                  ? 'Send it anyway'
-                  : `Submit and take ₩${order.unitPrice.toLocaleString()}`}
+                {submitting ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    Saving…
+                  </>
+                ) : flags ? (
+                  'Send it anyway'
+                ) : (
+                  `Submit and take ₩${order.unitPrice.toLocaleString()}`
+                )}
               </Button>
             ) : (
               <Button variant="monoMuted" size="mono" onClick={advance}>

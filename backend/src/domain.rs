@@ -1,0 +1,440 @@
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+pub const DEFAULT_REQUESTED_DOCUMENTS: usize = 5;
+pub const MAX_REQUESTED_DOCUMENTS: usize = 20;
+
+fn default_requested_documents() -> usize {
+    DEFAULT_REQUESTED_DOCUMENTS
+}
+
+#[derive(Debug, Clone)]
+pub struct Document {
+    pub id: String,
+    pub handle: String,
+    pub author_id: String,
+    pub shelf_id: String,
+    pub shelf: String,
+    pub category: String,
+    pub content: String,
+    pub tags: Vec<String>,
+    pub price_krw: u64,
+    pub age_days: u32,
+    pub quality_score: f32,
+    pub reliability_score: f32,
+    pub locked: bool,
+    pub demographics: Option<DemographicBands>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchFilters {
+    pub category: Option<String>,
+    pub max_unit_price_krw: Option<u64>,
+    pub age_band: Option<String>,
+    pub region: Option<String>,
+    pub household: Option<String>,
+    pub field: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DemographicBands {
+    pub age_band: String,
+    pub region: String,
+    pub household: String,
+    pub field: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveQuestionRequest {
+    pub question: String,
+    #[serde(default = "default_requested_documents")]
+    pub requested_documents: usize,
+    pub budget_krw: Option<u64>,
+    #[serde(default)]
+    pub filters: SearchFilters,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Decision {
+    Hit,
+    Miss,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionReason {
+    CoverageReady,
+    NoRelevantDocuments,
+    InsufficientCoverage,
+    BudgetTooLow,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoreBreakdown {
+    pub relevance: f32,
+    pub term_coverage: f32,
+    pub trust: f32,
+    pub freshness: f32,
+}
+
+/// Payment-safe search metadata. The paid passage is deliberately absent.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MatchedDocument {
+    pub handle: String,
+    pub shelf_id: String,
+    pub shelf: String,
+    pub category: String,
+    pub price_krw: u64,
+    pub score: f32,
+    pub score_breakdown: ScoreBreakdown,
+    pub demographics: Option<DemographicBands>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Quote {
+    pub currency: &'static str,
+    pub document_count: usize,
+    pub total_price_krw: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCallDraft {
+    pub question: String,
+    pub target_answers: usize,
+    pub existing_matches: usize,
+    pub answers_needed: usize,
+    pub suggested_unit_price_krw: u64,
+    pub suggested_budget_krw: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveQuestionResponse {
+    pub query_id: String,
+    pub decision: Decision,
+    pub reason: DecisionReason,
+    pub requested_documents: usize,
+    pub candidate_count: usize,
+    pub matches: Vec<MatchedDocument>,
+    pub quote: Option<Quote>,
+    pub open_call: Option<OpenCallDraft>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCall {
+    pub id: String,
+    pub question: String,
+    pub unit_price: u64,
+    pub target: usize,
+    pub answered: usize,
+    pub created_at: u64,
+    pub chat_id: Option<String>,
+    pub mine: bool,
+    pub shelf: String,
+    pub category: String,
+    pub filters: SearchFilters,
+    pub eligible: bool,
+    pub escrow_remaining_krw: u64,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateOpenCallRequest {
+    pub question: String,
+    pub unit_price: u64,
+    pub target: usize,
+    pub chat_id: Option<String>,
+    pub shelf: String,
+    pub category: String,
+    #[serde(default)]
+    pub filters: SearchFilters,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AnswerIssue {
+    pub rule: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitAnswerRequest {
+    pub answer: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryEntry {
+    pub id: String,
+    pub question: String,
+    pub answer: String,
+    pub shelf: String,
+    pub earned: u64,
+    pub created_at: u64,
+    pub via: String,
+    pub status: String,
+    pub flags: Vec<AnswerIssue>,
+    pub rating: Option<u8>,
+    pub dispute_status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitAnswerResponse {
+    pub order: OpenCall,
+    pub memory: MemoryEntry,
+    pub issues: Vec<AnswerIssue>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountControls {
+    pub strikes: usize,
+    pub dispute_used: bool,
+    pub suspended: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserProfile {
+    pub handle: String,
+    pub age_band: String,
+    pub region: String,
+    pub household: String,
+    pub field: String,
+    pub years: String,
+    pub speaks_to: Vec<String>,
+    pub strikes: usize,
+    pub dispute_used: bool,
+    pub suspended: bool,
+    pub wallet: Option<String>,
+    pub agreed_at: u64,
+    pub auto_match: bool,
+    pub agents: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpsertProfileRequest {
+    pub handle: String,
+    pub age_band: String,
+    pub region: String,
+    pub household: String,
+    pub field: String,
+    pub years: String,
+    pub speaks_to: Vec<String>,
+    pub wallet: Option<String>,
+    #[serde(default = "default_true")]
+    pub auto_match: bool,
+    #[serde(default)]
+    pub agents: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatePreferencesRequest {
+    pub auto_match: Option<bool>,
+    pub agents: Option<bool>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EarningEvent {
+    pub id: String,
+    pub settlement_id: Option<String>,
+    pub memory_id: Option<String>,
+    pub document_handle: Option<String>,
+    pub source: String,
+    pub amount_krw: u64,
+    pub recipient_wallet: Option<String>,
+    pub payout_status: String,
+    pub available_at: u64,
+    pub created_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EarningsSummary {
+    pub accrued_krw: u64,
+    pub held_krw: u64,
+    pub available_krw: u64,
+    pub event_count: usize,
+    pub events: Vec<EarningEvent>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Citation {
+    pub handle: String,
+    pub shelf: String,
+    pub excerpt: String,
+    pub price: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Settlement {
+    pub id: String,
+    pub count: usize,
+    pub total: u64,
+    pub tx_sig: Option<String>,
+    pub network: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenDocumentsResponse {
+    pub citations: Vec<Citation>,
+    pub settlement: Settlement,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentQuote {
+    pub id: String,
+    pub query_id: String,
+    pub document_handle: String,
+    pub pay_to: String,
+    pub network: String,
+    pub asset: String,
+    pub amount_atomic: String,
+    pub price_krw: u64,
+    pub krw_per_usdc: u64,
+    pub expires_at: u64,
+    pub resource_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaidDocument {
+    pub quote_id: String,
+    pub citation: Citation,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordChainSettlementRequest {
+    pub quote_id: String,
+    pub transaction_signature: String,
+    pub payer: String,
+    pub pay_to: String,
+    pub amount_atomic: String,
+    pub network: String,
+    #[serde(default)]
+    pub raw_response: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainSettlementReceipt {
+    pub id: String,
+    pub quote_id: String,
+    pub transaction_signature: String,
+    pub payer: String,
+    pub pay_to: String,
+    pub amount_atomic: String,
+    pub network: String,
+    pub confirmed_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserAccount {
+    pub id: String,
+    pub email: String,
+    pub role: String,
+    pub created_at: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterRequest {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginRequest {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BalanceSummary {
+    pub currency: &'static str,
+    pub available_krw: u64,
+    pub reserved_krw: u64,
+    pub held_krw: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthResponse {
+    pub user: UserAccount,
+    pub balance: BalanceSummary,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitDisputeRequest {
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisputeCase {
+    pub memory_id: String,
+    pub user_id: String,
+    pub status: String,
+    pub reason: String,
+    pub review_note: Option<String>,
+    pub created_at: u64,
+    pub reviewed_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewDisputeRequest {
+    pub decision: String,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatAnswer {
+    pub id: String,
+    pub open_call_id: String,
+    pub handle: String,
+    pub shelf: String,
+    pub excerpt: String,
+    pub price: u64,
+    pub created_at: u64,
+    pub demographics: Option<DemographicBands>,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ResolveError {
+    #[error("question must contain at least 8 non-whitespace characters")]
+    QuestionTooShort,
+    #[error("question must be 1000 characters or fewer")]
+    QuestionTooLong,
+    #[error("requestedDocuments must be between 1 and {MAX_REQUESTED_DOCUMENTS}")]
+    InvalidRequestedDocuments,
+    #[error("one or more search filters are unsupported")]
+    UnsupportedFilter,
+}

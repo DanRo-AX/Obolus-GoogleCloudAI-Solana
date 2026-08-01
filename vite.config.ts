@@ -12,6 +12,10 @@ export default defineConfig({
     port: 4319,
     strictPort: true,
     host: true,
+    proxy: {
+      '/api': 'http://127.0.0.1:8787',
+      '/healthz': 'http://127.0.0.1:8787',
+    },
   },
   preview: {
     port: 4319,

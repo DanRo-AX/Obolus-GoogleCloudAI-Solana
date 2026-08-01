@@ -11,6 +11,15 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+payment-gateway/*.ndjson
+backend/target
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+openshelf.db
+openshelf.db-shm
+openshelf.db-wal
 
 # Editor directories and files
 .vscode/*

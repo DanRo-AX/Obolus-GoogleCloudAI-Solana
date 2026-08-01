@@ -31,8 +31,9 @@ export default function Coverage() {
   const postCall = (gap: Gap) => {
     setPosting(gap.id)
     window.setTimeout(() => {
+      void (async () => {
       const chatId = createChat(gap.question)
-      placeOrder({
+      await placeOrder({
         question: gap.question,
         unitPrice: gap.suggestedPrice,
         target: 7,
@@ -42,6 +43,7 @@ export default function Coverage() {
         category: categoryFor(gap.category, gap.question),
       })
       navigate('/dashboard')
+      })()
     }, 620)
   }
 

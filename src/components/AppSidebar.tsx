@@ -1,18 +1,16 @@
 import { NavLink, Link } from 'react-router-dom'
-import { LogIn, LogOut, PanelLeft, UserRound } from 'lucide-react'
+import { LogIn, LogOut, PanelLeft, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/primitives'
 import { WalletButton } from '@/components/WalletButton'
 import { CATEGORY_BY_ID } from '@/data/categories'
 import { NAV_ITEMS } from '@/data/nav'
 import { STRIKE_LIMIT } from '@/data/onboarding'
-import { cn, maskStyle } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
 
 const MENU_BUTTON =
   'peer/menu-button flex w-full items-center gap-2 overflow-hidden text-left font-medium outline-hidden transition-[width,height,padding] focus-visible:ring-2 focus-visible:ring-sidebar-ring active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:shrink-0'
-
-
 
 function WorkspaceMark({ size = 'size-6' }: { size?: string }) {
   return (
@@ -79,7 +77,7 @@ function ProfileChip() {
 }
 
 export function AppSidebar() {
-  const { collapsed, setCollapsed, agents, setAgents, profile } = useUi()
+  const { collapsed, setCollapsed, agents, setAgents, profile, account, signOut, balance } = useUi()
 
   return (
     <div
@@ -157,7 +155,7 @@ export function AppSidebar() {
                 data-slot="sidebar-menu"
                 className="flex w-full min-w-0 flex-col gap-1"
               >
-                {NAV_ITEMS.map(({ to, label, Icon, end }) => (
+              {NAV_ITEMS.map(({ to, label, Icon, end }) => (
                   <li
                     key={to}
                     data-slot="sidebar-menu-item"
@@ -181,7 +179,24 @@ export function AppSidebar() {
                       <span>{label}</span>
                     </NavLink>
                   </li>
-                ))}
+              ))}
+              {account?.role === 'admin' ? (
+                <li className="relative">
+                  <NavLink
+                    to="/admin/disputes"
+                    className={({ isActive }) =>
+                      cn(
+                        MENU_BUTTON,
+                        'h-8 rounded-md p-2 text-sm hover:bg-sidebar-accent [&>svg]:size-4',
+                        isActive && 'bg-foreground/4',
+                      )
+                    }
+                  >
+                    <ShieldCheck className="text-muted-foreground/60" />
+                    <span>Review disputes</span>
+                  </NavLink>
+                </li>
+              ) : null}
               </ul>
             </div>
           </div>
@@ -198,6 +213,28 @@ export function AppSidebar() {
               >
                 {profile ? (
                   <ProfileChip />
+                ) : account ? (
+                  <div className="space-y-2 rounded-[2px] border border-border bg-card p-2.5">
+                    <p className="truncate font-mono text-[10px] text-muted-foreground">
+                      {account.email}
+                    </p>
+                    <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                      ₩{(balance?.availableKrw ?? 0).toLocaleString()} sandbox available
+                    </p>
+                    <div className="flex gap-2">
+                      <Button asChild variant="mono" size="monoSm" className="flex-1">
+                        <Link to="/onboarding">Set up profile</Link>
+                      </Button>
+                      <Button
+                        variant="monoMuted"
+                        size="monoSm"
+                        aria-label="Sign out"
+                        onClick={() => void signOut()}
+                      >
+                        <LogOut className="size-3.5" />
+                      </Button>
+                    </div>
+                  </div>
                 ) : (
                   <>
                     <div className="flex gap-2">
@@ -217,17 +254,6 @@ export function AppSidebar() {
                         </Link>
                       </Button>
                     </div>
-                    {/* Dev-only door into onboarding, since this build has no
-                        auth backend to come back from. */}
-                    <Button
-                      asChild
-                      className="font-mono tracking-[1px] uppercase rounded-[2px] transition-all duration-300 bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground border border-dashed border-foreground/20 px-4 py-2 h-9 w-full text-xs"
-                    >
-                      <Link to="/onboarding">
-                        <UserRound className="size-3.5" />
-                        Temp sign-in
-                      </Link>
-                    </Button>
                   </>
                 )}
                 <Button

@@ -100,6 +100,7 @@ export const STRIKE_LADDER: Array<{ n: number; title: string; body: string }> = 
 ]
 
 export const STRIKE_LIMIT = 3
+export const AUTO_MATCH_STRIKE_LIMIT = 2
 
 export const CONDUCT_SUMMARY =
   'Buyers rate every passage they open. A rating below the floor goes to review, and a confirmed one becomes a strike. Three strikes suspends the account.'

@@ -1,0 +1,848 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="OPENSHELF 사용자 시나리오와 실제 UI를 설명하는 인터랙티브 발표자료" />
+  <title>OPENSHELF — 사람의 기억을 검색하는 데이터 시장</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #121212;
+      --muted: #686a6e;
+      --line: #d9dadd;
+      --paper: #ffffff;
+      --wash: #f3f4f5;
+      --blue: #eaf5fb;
+      --teal: #0f766e;
+      --red: #b42318;
+      --shadow: 0 24px 70px rgb(20 24 28 / 12%);
+      --page-x: clamp(28px, 5vw, 76px);
+      --page-y: clamp(76px, 8vh, 104px);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { width: 100%; min-height: 100%; margin: 0; }
+
+    body {
+      overflow: hidden;
+      background: #e7e9eb;
+      color: var(--ink);
+      font-family: Inter, Pretendard, -apple-system, BlinkMacSystemFont, "Noto Sans KR", "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    button { font: inherit; }
+
+    .chrome {
+      position: fixed;
+      inset: 0 0 auto;
+      z-index: 30;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      height: 58px;
+      padding: 0 22px;
+      border-bottom: 1px solid rgb(0 0 0 / 8%);
+      background: rgb(255 255 255 / 88%);
+      backdrop-filter: blur(18px);
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-right: auto;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: .08em;
+    }
+
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 29px;
+      height: 29px;
+      border-radius: 3px;
+      background: var(--ink);
+      color: white;
+      font-family: Georgia, serif;
+      font-size: 16px;
+      letter-spacing: -.12em;
+    }
+
+    .chrome-button,
+    .nav-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 42px;
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: white;
+      color: var(--ink);
+      cursor: pointer;
+      transition: background .18s ease, border-color .18s ease, transform .18s ease;
+    }
+
+    .chrome-button { padding: 0 13px; font-size: 12px; font-weight: 700; }
+    .chrome-button:hover, .nav-button:hover { border-color: #9fa3a8; background: var(--wash); }
+    .chrome-button:active, .nav-button:active { transform: translateY(1px); }
+
+    .counter {
+      min-width: 62px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .deck {
+      position: relative;
+      width: 100vw;
+      height: 100dvh;
+      overflow: hidden;
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: clamp(16px, 2.5vh, 28px);
+      width: 100%;
+      height: 100%;
+      padding: var(--page-y) var(--page-x) clamp(72px, 8vh, 94px);
+      overflow: auto;
+      background: var(--paper);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(24px) scale(.995);
+      transition: opacity .3s ease, transform .38s cubic-bezier(.2, .8, .2, 1);
+    }
+
+    .slide.is-active {
+      z-index: 2;
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateX(0) scale(1);
+    }
+
+    .slide.was-active { transform: translateX(-24px) scale(.995); }
+
+    .slide-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      color: var(--teal);
+      font-size: clamp(11px, 1vw, 14px);
+      font-weight: 850;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .slide h1,
+    .slide h2,
+    .slide h3,
+    .slide p { margin: 0; }
+
+    .slide-title {
+      max-width: 1180px;
+      font-size: clamp(34px, 4.1vw, 64px);
+      font-weight: 720;
+      letter-spacing: -.045em;
+      line-height: 1.06;
+      word-break: keep-all;
+    }
+
+    .slide-subtitle {
+      max-width: 1050px;
+      margin-top: 14px !important;
+      color: var(--muted);
+      font-size: clamp(16px, 1.55vw, 23px);
+      line-height: 1.55;
+      word-break: keep-all;
+    }
+
+    .slide-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .slide-number { font-weight: 800; font-variant-numeric: tabular-nums; }
+
+    .cover {
+      grid-template-rows: 1fr auto;
+      align-content: center;
+      background:
+        radial-gradient(circle at 82% 18%, rgb(15 118 110 / 11%), transparent 27%),
+        linear-gradient(145deg, #fff 0%, #fff 62%, #f2f5f4 100%);
+    }
+
+    .cover-main { align-self: center; max-width: 1050px; }
+
+    .cover .eyebrow {
+      margin-bottom: clamp(34px, 6vh, 68px);
+      font-size: 18px;
+      font-weight: 850;
+      letter-spacing: .08em;
+    }
+
+    .cover-title {
+      max-width: 980px;
+      font-size: clamp(54px, 7.2vw, 112px);
+      font-weight: 560;
+      letter-spacing: -.06em;
+      line-height: .98;
+      word-break: keep-all;
+    }
+
+    .cover-subtitle {
+      max-width: 720px;
+      margin-top: clamp(28px, 5vh, 52px) !important;
+      color: #303236;
+      font-size: clamp(20px, 2vw, 31px);
+      line-height: 1.45;
+      word-break: keep-all;
+    }
+
+    .keyboard-hint {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    kbd {
+      display: inline-grid;
+      place-items: center;
+      min-width: 28px;
+      height: 26px;
+      padding: 0 7px;
+      border: 1px solid #cfd1d4;
+      border-bottom-width: 2px;
+      border-radius: 6px;
+      background: white;
+      color: #303236;
+      font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .role-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      align-content: center;
+    }
+
+    .role-card {
+      min-height: 150px;
+      padding: clamp(18px, 2vw, 28px);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: white;
+    }
+
+    .role-card strong {
+      display: block;
+      margin-bottom: 12px;
+      font-size: clamp(19px, 1.8vw, 27px);
+      letter-spacing: -.03em;
+    }
+
+    .role-card p { color: var(--muted); font-size: clamp(14px, 1.15vw, 18px); line-height: 1.5; }
+    .role-card.primary { background: var(--blue); border-color: #cfe5ef; }
+    .role-card.alert { background: #fff7f6; border-color: #f0cbc6; }
+
+    .loop {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 18px;
+      align-content: center;
+    }
+
+    .loop::before {
+      content: "";
+      position: absolute;
+      top: 42px;
+      right: 10%;
+      left: 10%;
+      height: 1px;
+      background: var(--ink);
+    }
+
+    .loop-step { position: relative; z-index: 1; padding-right: 12px; }
+    .loop-node { width: 18px; height: 18px; margin: 34px 0 34px; border: 5px solid white; border-radius: 50%; background: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+    .loop-step h3 { font-size: clamp(23px, 2.25vw, 34px); letter-spacing: -.035em; }
+    .loop-step p { margin-top: 10px; color: var(--muted); font-size: clamp(15px, 1.3vw, 20px); line-height: 1.5; word-break: keep-all; }
+    .loop-label { color: var(--teal); font-size: 12px; font-weight: 850; letter-spacing: .08em; }
+
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1.9fr) minmax(260px, .72fr);
+      gap: clamp(24px, 4vw, 58px);
+      min-height: 0;
+      align-items: center;
+    }
+
+    .split.reverse { grid-template-columns: minmax(260px, .72fr) minmax(0, 1.9fr); }
+
+    .media-frame {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: white;
+      box-shadow: 0 10px 30px rgb(20 24 28 / 7%);
+    }
+
+    .media-frame img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: white;
+    }
+
+    .media-wide { aspect-ratio: 1.97 / 1; }
+    .media-medium { aspect-ratio: 1.88 / 1; }
+
+    .copy-block h3 {
+      font-size: clamp(27px, 3vw, 44px);
+      letter-spacing: -.045em;
+      line-height: 1.1;
+      word-break: keep-all;
+    }
+
+    .copy-block p { margin-top: 18px; color: var(--muted); font-size: clamp(16px, 1.45vw, 22px); line-height: 1.55; word-break: keep-all; }
+
+    .bullet-list {
+      display: grid;
+      gap: 10px;
+      margin: 26px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .bullet-list li { display: flex; gap: 10px; color: #35373a; font-size: clamp(15px, 1.35vw, 20px); line-height: 1.45; }
+    .bullet-list li::before { content: "•"; color: var(--teal); font-weight: 900; }
+
+    .pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 28px; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      padding: 7px 13px;
+      border-radius: 7px;
+      background: var(--wash);
+      color: #303236;
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    .pill.dark { background: var(--ink); color: white; }
+    .pill.blue { background: var(--blue); }
+    .pill.red { background: #fdeceb; color: var(--red); }
+
+    .media-pair {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 42px minmax(0, 1fr);
+      gap: clamp(12px, 2vw, 26px);
+      min-height: 0;
+      align-items: center;
+    }
+
+    .media-pair.simple { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    .arrow-disc {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: var(--ink);
+      color: white;
+      font-size: 20px;
+      font-weight: 800;
+    }
+
+    .caption-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(24px, 5vw, 80px); }
+    .caption h3 { margin-top: 14px; font-size: clamp(21px, 2vw, 30px); letter-spacing: -.035em; }
+    .caption p { margin-top: 8px; color: var(--muted); font-size: clamp(14px, 1.15vw, 18px); line-height: 1.45; }
+
+    .answer-metric {
+      padding: 18px 22px;
+      border-radius: 14px;
+      background: var(--ink);
+      color: white;
+      font-size: clamp(23px, 2.5vw, 36px);
+      font-weight: 850;
+      letter-spacing: -.03em;
+    }
+
+    .trust-strip {
+      padding: 14px 18px;
+      border: 1px solid #f0cbc6;
+      border-radius: 11px;
+      background: #fff7f6;
+      color: #6d302a;
+      font-size: clamp(14px, 1.15vw, 18px);
+      line-height: 1.45;
+    }
+
+    .closing {
+      grid-template-rows: 1fr auto;
+      background:
+        linear-gradient(90deg, transparent 0 72%, rgb(15 118 110 / 8%) 72% 100%),
+        white;
+    }
+
+    .closing-main { align-self: center; }
+    .closing-title { max-width: 900px; font-size: clamp(58px, 7vw, 108px); font-weight: 560; letter-spacing: -.06em; line-height: 1; }
+    .closing-points { display: grid; gap: 8px; margin-top: 52px; color: #34363a; font-size: clamp(18px, 1.8vw, 27px); }
+
+    .controls {
+      position: fixed;
+      z-index: 40;
+      right: 22px;
+      bottom: 18px;
+      left: 22px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      pointer-events: none;
+    }
+
+    .controls > * { pointer-events: auto; }
+
+    .progress {
+      flex: 1;
+      height: 4px;
+      margin: 0 8px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgb(0 0 0 / 10%);
+    }
+
+    .progress-bar { width: 8.333%; height: 100%; border-radius: inherit; background: var(--teal); transition: width .3s ease; }
+    .nav-button { font-size: 22px; font-weight: 450; }
+    .nav-button:disabled { opacity: .35; cursor: default; }
+
+    .toc {
+      position: fixed;
+      z-index: 60;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: min(430px, 92vw);
+      padding: 84px 22px 24px;
+      overflow: auto;
+      border-left: 1px solid var(--line);
+      background: rgb(255 255 255 / 96%);
+      box-shadow: -20px 0 50px rgb(20 24 28 / 12%);
+      backdrop-filter: blur(18px);
+      transform: translateX(102%);
+      transition: transform .28s ease;
+    }
+
+    .toc.is-open { transform: translateX(0); }
+    .toc-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 18px; }
+    .toc h2 { margin: 0; font-size: 26px; }
+    .toc-close { width: 42px; height: 42px; border: 1px solid var(--line); border-radius: 50%; background: white; color: var(--ink); cursor: pointer; font-size: 24px; line-height: 1; }
+    .toc-close:hover { border-color: var(--teal); color: var(--teal); }
+    .toc-list { display: grid; gap: 6px; }
+    .toc-item { display: grid; grid-template-columns: 36px 1fr; gap: 10px; width: 100%; padding: 12px; border: 0; border-radius: 9px; background: transparent; color: var(--ink); cursor: pointer; text-align: left; }
+    .toc-item:hover, .toc-item.is-current { background: var(--wash); }
+    .toc-item span:first-child { color: var(--teal); font-size: 12px; font-weight: 850; }
+    .toc-item span:last-child { font-size: 14px; font-weight: 700; line-height: 1.35; }
+
+    .scrim { position: fixed; z-index: 50; inset: 0; background: rgb(0 0 0 / 22%); opacity: 0; pointer-events: none; transition: opacity .25s ease; }
+    .scrim.is-visible { opacity: 1; pointer-events: auto; }
+
+    @media (max-width: 900px) {
+      :root { --page-x: 24px; --page-y: 82px; }
+      body { overflow: auto; }
+      .slide { grid-template-rows: auto auto auto; align-content: start; padding-bottom: 92px; }
+      .slide-title { font-size: clamp(30px, 9vw, 46px); }
+      .slide-subtitle { font-size: 16px; }
+      .role-grid { grid-template-columns: 1fr 1fr; align-content: start; }
+      .loop { grid-template-columns: 1fr 1fr; align-content: start; }
+      .loop::before { display: none; }
+      .loop-node { margin: 16px 0; }
+      .split, .split.reverse { grid-template-columns: 1fr; align-content: start; }
+      .copy-block { order: -1; }
+      .media-pair, .media-pair.simple { grid-template-columns: 1fr; }
+      .arrow-disc { display: none; }
+      .caption-grid { grid-template-columns: 1fr; }
+      .chrome-button[data-label="fullscreen"] { display: none; }
+    }
+
+    @media (max-width: 580px) {
+      .chrome { padding: 0 12px; }
+      .brand span:last-child { display: none; }
+      .role-grid { grid-template-columns: 1fr; }
+      .slide-foot .keyboard-hint { display: none; }
+      .cover-title { font-size: 52px; }
+      .controls { right: 12px; left: 12px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
+    }
+
+    @media print {
+      @page { size: 16in 9in; margin: 0; }
+      body { overflow: visible; background: white; }
+      .chrome, .controls, .toc, .scrim { display: none !important; }
+      .deck { width: auto; height: auto; overflow: visible; }
+      .slide {
+        position: relative;
+        display: grid !important;
+        width: 16in;
+        height: 9in;
+        padding: .7in .75in .55in;
+        overflow: hidden;
+        opacity: 1 !important;
+        pointer-events: auto;
+        transform: none !important;
+        break-after: page;
+        page-break-after: always;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="chrome">
+    <div class="brand"><span class="brand-mark">▥</span><span>OPENSHELF</span></div>
+    <button class="chrome-button" id="tocButton" type="button" aria-controls="toc" aria-expanded="false">목차</button>
+    <button class="chrome-button" id="fullscreenButton" data-label="fullscreen" type="button">전체화면</button>
+    <div class="counter" id="counter" aria-live="polite">01 / 12</div>
+  </header>
+
+  <main class="deck" id="deck">
+    <section class="slide cover is-active" data-title="인터넷에 없던 답을, 사람의 기억에서 산다" aria-label="1번 슬라이드">
+      <div class="cover-main">
+        <div class="eyebrow">OPENSHELF</div>
+        <h1 class="cover-title">인터넷에 없던 답을,<br />사람의 기억에서 산다</h1>
+        <p class="cover-subtitle">질문자는 경험을 사고, 응답자는 답변을 반복 수익이 나는 메모리 자산으로 만든다.</p>
+      </div>
+      <footer class="slide-foot">
+        <span>서비스 사용자 시나리오 · 실제 UI 데모</span>
+        <span class="keyboard-hint"><kbd>←</kbd><kbd>→</kbd> 키로 이동</span>
+      </footer>
+    </section>
+
+    <section class="slide" data-title="서비스를 쓰는 여섯 가지 사용자 상태" aria-label="2번 슬라이드">
+      <header>
+        <div class="slide-kicker">WHO USES IT</div>
+        <h2 class="slide-title">서비스를 쓰는 여섯 가지 사용자 상태</h2>
+        <p class="slide-subtitle">한 사람이 질문자와 응답자를 오갈 수 있고, 제재·검토·탈퇴는 별도의 신뢰 경로로 관리된다.</p>
+      </header>
+      <div class="role-grid">
+        <article class="role-card primary"><strong>방문자</strong><p>가입 전에 기존 메모리를 검색하고, 원하는 답이 있는지 먼저 확인한다.</p></article>
+        <article class="role-card primary"><strong>질문자 · 구매자</strong><p>검색 실패 시 인원과 단가를 정해 오픈콜을 만들고, 답변과 지급 내역을 받는다.</p></article>
+        <article class="role-card"><strong>경험 제공자</strong><p>프로필에 맞는 질문만 골라 답한다. 채택된 답변은 자신의 메모리에 축적된다.</p></article>
+        <article class="role-card alert"><strong>제한 · 이의제기 사용자</strong><p>무효 사유와 스트라이크를 확인하고, 계정당 한 번 이의제기를 요청할 수 있다.</p></article>
+        <article class="role-card"><strong>검토자 · 운영자</strong><p>이의제기를 승인하거나 거절하고 문서·슬롯·지급 상태를 함께 처리한다.</p></article>
+        <article class="role-card"><strong>탈퇴 사용자</strong><p>미사용 예산을 환불받고 프로필·메모리를 삭제한다. 감사 로그는 익명화된다.</p></article>
+      </div>
+      <footer class="slide-foot"><span>사용자 역할과 계정 상태</span><span class="slide-number">02</span></footer>
+    </section>
+
+    <section class="slide" data-title="답변이 다음 검색의 공급이 된다" aria-label="3번 슬라이드">
+      <header>
+        <div class="slide-kicker">THE LOOP</div>
+        <h2 class="slide-title">한 번 묻고 끝나지 않는다 — 답변이 다음 검색의 공급이 된다</h2>
+      </header>
+      <div class="loop">
+        <article class="loop-step"><span class="loop-label">01 · SEARCH</span><div class="loop-node"></div><h3>먼저 검색</h3><p>웹이 아니라 사람들이 직접 쓴 메모리에서 답을 찾는다.</p></article>
+        <article class="loop-step"><span class="loop-label">02 · BRANCH</span><div class="loop-node"></div><h3>없으면 질문</h3><p>검색 실패를 한 질문짜리 유료 오픈콜로 전환한다.</p></article>
+        <article class="loop-step"><span class="loop-label">03 · EARN</span><div class="loop-node"></div><h3>채택 시 지급</h3><p>구체적 답변이 통과되면 예약 예산에서 즉시 정산된다.</p></article>
+        <article class="loop-step"><span class="loop-label">04 · COMPOUND</span><div class="loop-node"></div><h3>다시 인용</h3><p>메모리가 다음 질문에 맞으면 새 답변 없이도 다시 수익화된다.</p></article>
+      </div>
+      <footer class="slide-foot"><span>검색 실패 → 공급 생성 → 검색 성공률 상승</span><span class="slide-number">03</span></footer>
+    </section>
+
+    <section class="slide" data-title="방문자는 먼저 사람의 경험을 검색한다" aria-label="4번 슬라이드">
+      <header>
+        <div class="slide-kicker">01 · VISITOR → BUYER</div>
+        <h2 class="slide-title">방문자는 먼저 ‘사람의 경험’을 검색한다</h2>
+        <p class="slide-subtitle">계정이나 긴 설문보다 질문이 먼저다. 필요한 상황 밴드를 함께 지정한다.</p>
+      </header>
+      <div class="split">
+        <figure class="media-frame media-wide"><img src="assets/02-buyer-target.png" alt="구매자가 질문과 네 가지 타깃 조건을 입력한 OPENSHELF 홈 화면" /></figure>
+        <div class="copy-block">
+          <span class="slide-kicker">검색 전</span>
+          <h3>누구의 경험이 필요한지 지정</h3>
+          <ul class="bullet-list"><li>연령대</li><li>거주 지역</li><li>가구 형태</li><li>경험 분야</li></ul>
+          <div class="pill-row"><span class="pill blue">검색은 무료</span><span class="pill dark">돈이 움직일 때 가입</span></div>
+        </div>
+      </div>
+      <footer class="slide-foot"><span>낮은 진입 장벽 · 상황 기반 검색</span><span class="slide-number">04</span></footer>
+    </section>
+
+    <section class="slide" data-title="검색 실패가 질문 주문으로 바뀐다" aria-label="5번 슬라이드">
+      <header>
+        <div class="slide-kicker">02 · BUYER</div>
+        <h2 class="slide-title">검색 실패가 곧바로 ‘질문 주문’으로 바뀐다</h2>
+        <p class="slide-subtitle">결과 없음 화면에서 인원과 단가를 정하면 전체 예산이 에스크로로 예약된다.</p>
+      </header>
+      <div>
+        <div class="media-pair">
+          <figure class="media-frame media-medium"><img src="assets/03-buyer-miss.png" alt="검색 결과가 없어 Ask them 버튼을 제시하는 화면" /></figure>
+          <div class="arrow-disc" aria-hidden="true">→</div>
+          <figure class="media-frame media-medium"><img src="assets/04-buyer-posted.png" alt="3명에게 500원씩 지급하는 오픈콜이 게시된 화면" /></figure>
+        </div>
+        <div class="caption-grid">
+          <div class="caption"><span class="pill">1 · MISS 감지</span><h3>“Ask them”으로 전환</h3><p>원하지 않으면 바로 종료할 수 있다.</p></div>
+          <div class="caption"><span class="pill blue">2 · 예산 예약</span><h3>3명 × ₩500 = ₩1,500</h3><p>채택분만 지급하고 미사용분은 환불한다.</p></div>
+        </div>
+      </div>
+      <footer class="slide-foot"><span>검색과 리서치 주문이 한 대화 안에서 연결</span><span class="slide-number">05</span></footer>
+    </section>
+
+    <section class="slide" data-title="응답자는 상황과 경험으로 매칭된다" aria-label="6번 슬라이드">
+      <header>
+        <div class="slide-kicker">03 · CONTRIBUTOR</div>
+        <h2 class="slide-title">응답자는 실명 대신 ‘상황과 경험’으로 매칭된다</h2>
+        <p class="slide-subtitle">구매자에게 필요한 것은 신원 정보가 아니라, 이 답이 어떤 삶에서 나왔는지다.</p>
+      </header>
+      <div>
+        <div class="media-pair simple">
+          <figure class="media-frame media-medium"><img src="assets/05-onboarding-handle.png" alt="익명 핸들을 선택하는 응답자 온보딩 화면" /></figure>
+          <figure class="media-frame media-medium"><img src="assets/06-onboarding-bands.png" alt="연령, 지역, 가구 형태 밴드를 선택하는 온보딩 화면" /></figure>
+        </div>
+        <div class="caption-grid">
+          <div class="caption"><span class="pill dark">익명 핸들</span><h3>개인 신원은 숨긴다</h3><p>이름·이메일·사진은 구매자에게 노출되지 않는다.</p></div>
+          <div class="caption"><span class="pill blue">상황 밴드</span><h3>답변의 맥락은 남긴다</h3><p>정밀 값 대신 연령·지역·가구·분야 범주로 적합도를 판단한다.</p></div>
+        </div>
+      </div>
+      <footer class="slide-foot"><span>익명성 + 맥락 검증</span><span class="slide-number">06</span></footer>
+    </section>
+
+    <section class="slide" data-title="답할 수 있는 질문과 답하면 안 되는 질문을 구분한다" aria-label="7번 슬라이드">
+      <header>
+        <div class="slide-kicker">04 · CONTRIBUTOR</div>
+        <h2 class="slide-title">대시보드는 ‘답할 수 있는 질문’과 ‘답하면 안 되는 질문’을 구분한다</h2>
+        <p class="slide-subtitle">가격·마감·분야를 보고 고르되, 타깃이 맞지 않으면 답변 버튼 자체가 잠긴다.</p>
+      </header>
+      <div class="split">
+        <figure class="media-frame media-wide"><img src="assets/08-contributor-dashboard.png" alt="응답자에게 적합한 질문과 분야 밖 질문을 구분한 대시보드" /></figure>
+        <div class="copy-block">
+          <span class="slide-kicker">MATCHING</span>
+          <h3>Fits you</h3>
+          <p>타깃과 프로필이 모두 맞을 때만 Answer가 활성화된다.</p>
+          <h3 style="margin-top:42px;color:var(--red)">Outside your fields</h3>
+          <p>분야 밖 질문은 읽을 수 있어도 제출할 수 없다.</p>
+          <div class="pill-row"><span class="pill">가격 순</span><span class="pill">최신 순</span><span class="pill">적합도</span></div>
+        </div>
+      </div>
+      <footer class="slide-foot"><span>UI와 서버 양쪽에서 매칭 조건 검증</span><span class="slide-number">07</span></footer>
+    </section>
+
+    <section class="slide" data-title="돈을 받는 답변은 구체적 경험이어야 한다" aria-label="8번 슬라이드">
+      <header>
+        <div class="slide-kicker">05 · CONTRIBUTOR</div>
+        <h2 class="slide-title">돈을 받는 답변은 ‘구체적 경험’이어야 한다</h2>
+        <p class="slide-subtitle">장소·시간·숫자·행동이 없는 요약은 채택되지 않는다.</p>
+      </header>
+      <div class="split reverse">
+        <div class="copy-block">
+          <span class="slide-kicker">THE ONE THAT PAYS</span>
+          <h3>31일 · -27°C · 12시간</h3>
+          <p>실제 숫자가 답변을 검색 가능한 문서로 만든다.</p>
+          <ul class="bullet-list"><li>실제 장소·시간·숫자</li><li>내가 한 행동</li><li>거친 원문 그대로</li><li style="color:var(--red)">일반론과 요약은 제외</li></ul>
+          <div class="pill-row"><span class="pill dark">서버 품질 검사</span><span class="pill blue">통과 시 ₩500</span></div>
+        </div>
+        <figure class="media-frame media-wide"><img src="assets/09-answer-form.png" alt="구체적인 현장 경험과 숫자가 입력된 유료 답변 작성 화면" /></figure>
+      </div>
+      <footer class="slide-foot"><span>구체성 · 질문 반복률 · 최소 정보량 검사</span><span class="slide-number">08</span></footer>
+    </section>
+
+    <section class="slide" data-title="답변이 내 메모리에 쌓인다" aria-label="9번 슬라이드">
+      <header>
+        <div class="slide-kicker">06 · CONTRIBUTOR</div>
+        <h2 class="slide-title">정산으로 끝나지 않는다 — 답변이 ‘내 메모리’에 쌓인다</h2>
+        <p class="slide-subtitle">처음에는 오픈콜 수익, 이후에는 자동 매칭 인용 수익으로 이어진다.</p>
+      </header>
+      <div class="split reverse">
+        <div class="copy-block">
+          <figure class="media-frame media-wide"><img src="assets/10-earned.png" alt="500원 적립 완료 화면" /></figure>
+          <h3 style="margin-top:24px">즉시 적립</h3>
+          <p>예약 에스크로에서 작성자 원장으로 이동한다.</p>
+          <div class="answer-metric" style="margin-top:28px">₩500 · OPEN CALL</div>
+        </div>
+        <div>
+          <figure class="media-frame media-wide"><img src="assets/11-memory.png" alt="수익 원장과 메모리 스트림, 자동 매칭 스위치가 있는 My memory 화면" /></figure>
+          <div class="pill-row"><span class="pill blue">AUTO-MATCH ON</span><span class="pill">다음 질문에 인용되면 다시 수익</span></div>
+        </div>
+      </div>
+      <footer class="slide-foot"><span>답변 → 메모리 → 재인용 수익</span><span class="slide-number">09</span></footer>
+    </section>
+
+    <section class="slide" data-title="구매자는 답변과 지급 내역을 함께 받는다" aria-label="10번 슬라이드">
+      <header>
+        <div class="slide-kicker">07 · BUYER</div>
+        <h2 class="slide-title">구매자는 답변·상황 밴드·지급 내역을 한 화면에서 받는다</h2>
+        <p class="slide-subtitle">누가 썼는지는 익명으로, 어떤 상황에서 나온 답인지는 검증 가능하게 전달한다.</p>
+      </header>
+      <div class="split">
+        <figure class="media-frame media-wide"><img src="assets/12-buyer-answer.png" alt="익명 문서 핸들과 상황 밴드, 지급액이 표시된 구매자 답변 수신 화면" /></figure>
+        <div class="copy-block">
+          <span class="slide-kicker">DELIVERED</span>
+          <h3>답변 1건<br />₩500 지급</h3>
+          <p>함께 보이는 것</p>
+          <ul class="bullet-list"><li>익명 문서 핸들</li><li>연령·지역·가구·분야</li><li>실제 인용된 원문</li><li>지급 금액과 출처</li></ul>
+        </div>
+      </div>
+      <footer class="slide-foot"><span>익명성은 유지하고 답변 맥락은 검증</span><span class="slide-number">10</span></footer>
+    </section>
+
+    <section class="slide" data-title="제재와 이의제기, 복구 경로" aria-label="11번 슬라이드">
+      <header>
+        <div class="slide-kicker">08 · TRUST PATH</div>
+        <h2 class="slide-title">낮은 품질은 숨기지 않고, 제재·이의제기·복구 경로를 남긴다</h2>
+        <p class="slide-subtitle">응답자에게는 근거가 보이고, 검토자에게는 원자적 복구 또는 유지 권한이 있다.</p>
+      </header>
+      <div>
+        <div class="media-pair simple">
+          <figure class="media-frame media-medium"><img src="assets/14-disputant-memory.png" alt="무효 답변 사유와 스트라이크, 이의제기 상태가 표시된 응답자 메모리" /></figure>
+          <figure class="media-frame media-medium"><img src="assets/13-admin-dispute.png" alt="이의제기 사유를 검토하고 승인 또는 거절하는 관리자 화면" /></figure>
+        </div>
+        <div class="caption-grid">
+          <div class="caption"><span class="pill red">응답자</span><h3>근거를 확인하고 이의제기</h3><p>무효 사유·스트라이크·검토 상태가 메모리 스트림에 남는다.</p></div>
+          <div class="caption"><span class="pill blue">검토자</span><h3>복구하거나 제재를 유지</h3><p>승인하면 문서·슬롯·지급을 함께 복구하고, 거절하면 기존 판정을 유지한다.</p></div>
+        </div>
+        <div class="trust-strip" style="margin-top:20px">자동 판정 → 계정당 1회 이의제기 → 관리자 판정 · 탈퇴 시 프로필과 메모리는 삭제되고 감사 로그는 익명화</div>
+      </div>
+      <footer class="slide-foot"><span>품질 규칙과 사용자 구제 절차</span><span class="slide-number">11</span></footer>
+    </section>
+
+    <section class="slide closing" data-title="한 번의 경험이 두 번 수익이 된다" aria-label="12번 슬라이드">
+      <div class="closing-main">
+        <div class="slide-kicker">OPENSHELF</div>
+        <h2 class="closing-title">한 번의 경험이<br />두 번 수익이 된다</h2>
+        <div class="closing-points"><span>1 · 질문에 답할 때</span><span>2 · 이후 검색에 인용될 때</span><span>3 · 데이터가 쌓일수록 더 잘 매칭될 때</span></div>
+      </div>
+      <footer class="slide-foot"><span>사람의 기억을 검색 가능한 데이터 시장으로</span><span class="slide-number">12</span></footer>
+    </section>
+  </main>
+
+  <nav class="controls" aria-label="슬라이드 이동">
+    <button class="nav-button" id="prevButton" type="button" aria-label="이전 슬라이드">‹</button>
+    <div class="progress" aria-hidden="true"><div class="progress-bar" id="progressBar"></div></div>
+    <button class="nav-button" id="nextButton" type="button" aria-label="다음 슬라이드">›</button>
+  </nav>
+
+  <div class="scrim" id="scrim"></div>
+  <aside class="toc" id="toc" aria-label="발표자료 목차" aria-hidden="true">
+    <div class="toc-head">
+      <h2>목차</h2>
+      <button class="toc-close" id="tocCloseButton" type="button" aria-label="목차 닫기">×</button>
+    </div>
+    <div class="toc-list" id="tocList"></div>
+  </aside>
+
+  <script>
+    (() => {
+      const slides = [...document.querySelectorAll('.slide')];
+      const counter = document.getElementById('counter');
+      const progressBar = document.getElementById('progressBar');
+      const prevButton = document.getElementById('prevButton');
+      const nextButton = document.getElementById('nextButton');
+      const tocButton = document.getElementById('tocButton');
+      const tocCloseButton = document.getElementById('tocCloseButton');
+      const fullscreenButton = document.getElementById('fullscreenButton');
+      const toc = document.getElementById('toc');
+      const tocList = document.getElementById('tocList');
+      const scrim = document.getElementById('scrim');
+      let index = Math.max(0, Math.min(slides.length - 1, Number(location.hash.slice(1)) - 1 || 0));
+
+      slides.forEach((slide, slideIndex) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'toc-item';
+        button.innerHTML = `<span>${String(slideIndex + 1).padStart(2, '0')}</span><span>${slide.dataset.title}</span>`;
+        button.addEventListener('click', () => { show(slideIndex); closeToc(); });
+        tocList.append(button);
+      });
+
+      const tocItems = [...tocList.children];
+
+      function show(nextIndex, updateHash = true) {
+        const bounded = Math.max(0, Math.min(slides.length - 1, nextIndex));
+        slides.forEach((slide, slideIndex) => {
+          slide.classList.toggle('is-active', slideIndex === bounded);
+          slide.classList.toggle('was-active', slideIndex < bounded);
+          slide.setAttribute('aria-hidden', slideIndex === bounded ? 'false' : 'true');
+          if (slideIndex === bounded) slide.scrollTop = 0;
+        });
+        tocItems.forEach((item, itemIndex) => item.classList.toggle('is-current', itemIndex === bounded));
+        index = bounded;
+        counter.textContent = `${String(index + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}`;
+        progressBar.style.width = `${((index + 1) / slides.length) * 100}%`;
+        prevButton.disabled = index === 0;
+        nextButton.disabled = index === slides.length - 1;
+        document.title = `${slides[index].dataset.title} — OPENSHELF`;
+        if (updateHash) history.replaceState(null, '', `#${index + 1}`);
+      }
+
+      function openToc() {
+        toc.classList.add('is-open');
+        scrim.classList.add('is-visible');
+        toc.setAttribute('aria-hidden', 'false');
+        tocButton.setAttribute('aria-expanded', 'true');
+        tocItems[index]?.focus();
+      }
+
+      function closeToc() {
+        toc.classList.remove('is-open');
+        scrim.classList.remove('is-visible');
+        toc.setAttribute('aria-hidden', 'true');
+        tocButton.setAttribute('aria-expanded', 'false');
+      }
+
+      prevButton.addEventListener('click', () => show(index - 1));
+      nextButton.addEventListener('click', () => show(index + 1));
+      tocButton.addEventListener('click', () => toc.classList.contains('is-open') ? closeToc() : openToc());
+      tocCloseButton.addEventListener('click', closeToc);
+      scrim.addEventListener('click', closeToc);
+
+      fullscreenButton.addEventListener('click', async () => {
+        try {
+          if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+          else await document.exitFullscreen();
+        } catch (_) { /* Fullscreen is optional. */ }
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && toc.classList.contains('is-open')) { closeToc(); return; }
+        if (toc.classList.contains('is-open')) return;
+        if (['ArrowRight', 'PageDown', ' '].includes(event.key)) { event.preventDefault(); show(index + 1); }
+        if (['ArrowLeft', 'PageUp'].includes(event.key)) { event.preventDefault(); show(index - 1); }
+        if (event.key === 'Home') { event.preventDefault(); show(0); }
+        if (event.key === 'End') { event.preventDefault(); show(slides.length - 1); }
+      });
+
+      window.addEventListener('hashchange', () => {
+        const hashIndex = Number(location.hash.slice(1)) - 1;
+        if (Number.isInteger(hashIndex)) show(hashIndex, false);
+      });
+
+      show(index, false);
+    })();
+  </script>
+</body>
+</html>

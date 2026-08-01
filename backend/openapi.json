@@ -1,0 +1,99 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OPENSHELF API",
+    "version": "0.1.0",
+    "description": "Search first-person MDs, commission missing answers, and purchase quoted passages."
+  },
+  "servers": [{ "url": "http://127.0.0.1:8787" }],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "Health check",
+        "responses": { "200": { "description": "Healthy" } }
+      }
+    },
+    "/api/v1/questions/resolve": {
+      "post": {
+        "summary": "Resolve a question against private MD metadata",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ResolveQuestionRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A HIT quote or MISS open-call draft",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Resolution" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/flash-research": {
+      "get": {
+        "summary": "Purchase and open quoted MD passages",
+        "parameters": [
+          {
+            "name": "queryId",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "docs",
+            "in": "query",
+            "required": true,
+            "description": "Comma-separated handles from the resolution",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "payer",
+            "in": "query",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Purchased passages and settlement receipt"
+          },
+          "402": { "description": "Payment Required" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ResolveQuestionRequest": {
+        "type": "object",
+        "required": ["question"],
+        "properties": {
+          "question": { "type": "string", "minLength": 8, "maxLength": 1000 },
+          "requestedDocuments": { "type": "integer", "minimum": 1, "maximum": 20, "default": 5 },
+          "budgetKrw": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "Resolution": {
+        "type": "object",
+        "required": ["queryId", "decision", "matches"],
+        "properties": {
+          "queryId": { "type": "string" },
+          "decision": { "type": "string", "enum": ["hit", "miss"] },
+          "matches": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Payment-safe metadata; paid content is never included here."
+            }
+          }
+        }
+      }
+    }
+  }
+}
