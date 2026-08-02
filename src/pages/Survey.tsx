@@ -76,10 +76,17 @@ export default function Survey() {
     setSubmitting(true)
     setSubmitError(null)
     try {
+      const interviewResponses = warmups.flatMap((warmup) => {
+        const answer = answers[warmup.id]?.trim()
+        return answer
+          ? [{ questionId: warmup.id, prompt: warmup.prompt, answer }]
+          : []
+      })
       const result = await answerOrder(
         order.id,
         text,
         issues.length ? issues : undefined,
+        interviewResponses,
       )
       setFlags(result.issues.length ? result.issues : null)
       setStruck(result.voided)

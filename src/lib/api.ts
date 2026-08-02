@@ -1,6 +1,6 @@
 import type { CategoryId } from '@/data/categories'
 import type { Issue } from '@/lib/quality'
-import type { MemoryEntry, Order, Profile } from '@/state/ui'
+import type { InterviewResponse, MemoryEntry, Order, Profile } from '@/state/ui'
 
 export const BACKEND_ENABLED = import.meta.env.VITE_BACKEND_ENABLED !== 'false'
 
@@ -312,13 +312,14 @@ type ApiSubmitAnswerResult = Omit<SubmitAnswerResult, 'order'> & {
 export async function submitAnswer(
   orderId: string,
   answer: string,
+  interviewResponses: InterviewResponse[] = [],
 ): Promise<SubmitAnswerResult> {
   const result = await apiFetch<ApiSubmitAnswerResult>(
     `/api/v1/open-calls/${encodeURIComponent(orderId)}/answers`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ answer }),
+      body: JSON.stringify({ answer, interviewResponses }),
     },
   )
   return { ...result, order: orderFromApi(result.order) }

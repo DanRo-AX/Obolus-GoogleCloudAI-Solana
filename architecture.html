@@ -908,6 +908,7 @@ erDiagram
     TEXT status
     TEXT flags_json
     INTEGER rating
+    TEXT interview_json
   }
 
   DOCUMENTS {
@@ -1135,7 +1136,7 @@ erDiagram
               </li>
               <li class="step">
                 <span class="step-number">03</span>
-                <div><strong>답변 품질 판정</strong><p>voided이면 슬롯·문서·지급이 모두 0, accepted면 모두 함께 반영.</p></div>
+                <div><strong>인터뷰·답변 원자 저장</strong><p>워밍업 문답은 비공개 memory context로 보존하고 최종 유료 답변만 searchable document로 만든다. voided이면 슬롯·문서·지급은 모두 0.</p></div>
               </li>
               <li class="step">
                 <span class="step-number">04</span>

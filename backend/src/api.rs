@@ -324,7 +324,12 @@ async fn submit_answer(
     Json(request): Json<SubmitAnswerRequest>,
 ) -> Result<(StatusCode, Json<SubmitAnswerResponse>), ApiError> {
     let user = authenticated(&state, &headers)?;
-    let response = state.store.submit_answer(&id, &user.id, &request.answer)?;
+    let response = state.store.submit_answer_with_interview(
+        &id,
+        &user.id,
+        &request.answer,
+        &request.interview_responses,
+    )?;
     Ok((StatusCode::CREATED, Json(response)))
 }
 
@@ -1098,5 +1103,110 @@ mod tests {
                 .unwrap();
         assert_eq!(body["availableKrw"], 97_900);
         assert_eq!(body["reservedKrw"], 2_100);
+    }
+
+    #[tokio::test]
+    async fn survey_submission_registers_private_context_and_one_searchable_answer() {
+        let app = demo_app();
+        let buyer_cookie = register(&app, "survey-buyer@example.com").await;
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/open-calls")
+                    .header(header::COOKIE, buyer_cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "question": "Which winter boots work for field research in Svalbard?",
+                            "unitPrice": 700,
+                            "target": 1,
+                            "chatId": "chat-survey-registration",
+                            "shelf": "Svalbard field researchers",
+                            "category": "travel"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let call: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        let call_id = call["id"].as_str().unwrap();
+
+        let respondent_cookie = register(&app, "survey-respondent@example.com").await;
+        let profile = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/profile")
+                    .header(header::COOKIE, &respondent_cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "handle": "survey_respondent",
+                            "ageBand": "35-44",
+                            "region": "seoul",
+                            "household": "alone",
+                            "field": "travel",
+                            "years": "7-plus",
+                            "speaksTo": ["travel"],
+                            "autoMatch": true,
+                            "agents": false
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(profile.status(), StatusCode::OK);
+
+        let submitted = app
+            .clone()
+            .oneshot(
+                Request::post(format!("/api/v1/open-calls/{call_id}/answers"))
+                    .header(header::COOKIE, &respondent_cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "answer": "In January 2025 at Longyearbyen I wore insulated Baffin boots rated to -40C. After 6 hours on packed snow my toes stayed warm, but I changed the felt liner every second day because condensation froze overnight.",
+                            "interviewResponses": [{
+                                "questionId": "w1",
+                                "prompt": "When were you last there?",
+                                "answer": "January 2025"
+                            }]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(submitted.status(), StatusCode::CREATED);
+        let submitted: Value =
+            serde_json::from_slice(&submitted.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(submitted["order"]["answered"], 1);
+        assert_eq!(
+            submitted["memory"]["interviewResponses"][0]["questionId"],
+            "w1"
+        );
+
+        let memory = app
+            .oneshot(
+                Request::get("/api/v1/memory")
+                    .header(header::COOKIE, respondent_cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(memory.status(), StatusCode::OK);
+        let memory: Value =
+            serde_json::from_slice(&memory.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(memory[0]["interviewResponses"][0]["answer"], "January 2025");
     }
 }

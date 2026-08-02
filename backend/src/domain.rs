@@ -173,6 +173,19 @@ pub struct AnswerIssue {
 #[serde(rename_all = "camelCase")]
 pub struct SubmitAnswerRequest {
     pub answer: String,
+    #[serde(default)]
+    pub interview_responses: Vec<InterviewResponse>,
+}
+
+/// Optional context collected while easing a respondent into the paid question.
+/// These turns stay in the respondent's private memory record; only the final
+/// answer is indexed and sold.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InterviewResponse {
+    pub question_id: String,
+    pub prompt: String,
+    pub answer: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -189,6 +202,7 @@ pub struct MemoryEntry {
     pub flags: Vec<AnswerIssue>,
     pub rating: Option<u8>,
     pub dispute_status: Option<String>,
+    pub interview_responses: Vec<InterviewResponse>,
 }
 
 #[derive(Debug, Clone, Serialize)]

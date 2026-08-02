@@ -16,12 +16,12 @@ use crate::{
     domain::{
         AccountControls, BalanceSummary, ChainSettlementReceipt, ChatAnswer, Citation,
         CreateOpenCallRequest, DemographicBands, DisputeCase, Document, DocumentFeedback,
-        EarningEvent, EarningsSummary, MemoryEntry, OpenCall, OpenDocumentsResponse, PaidDocument,
-        PaymentDocumentProgress, PaymentProgress, PaymentQuote, RecordChainSettlementRequest,
-        RecoveredPaidDocument, ResolveQuestionResponse, ReviewDisputeRequest,
-        ReviewDocumentFeedbackRequest, SearchFilters, Settlement, SubmitAnswerResponse,
-        SubmitDocumentFeedbackRequest, UpdatePreferencesRequest, UpsertProfileRequest, UserAccount,
-        UserProfile, WalletChallenge,
+        EarningEvent, EarningsSummary, InterviewResponse, MemoryEntry, OpenCall,
+        OpenDocumentsResponse, PaidDocument, PaymentDocumentProgress, PaymentProgress,
+        PaymentQuote, RecordChainSettlementRequest, RecoveredPaidDocument, ResolveQuestionResponse,
+        ReviewDisputeRequest, ReviewDocumentFeedbackRequest, SearchFilters, Settlement,
+        SubmitAnswerResponse, SubmitDocumentFeedbackRequest, UpdatePreferencesRequest,
+        UpsertProfileRequest, UserAccount, UserProfile, WalletChallenge,
     },
     quality, seed,
 };
@@ -509,7 +509,8 @@ impl Store {
                 via TEXT NOT NULL,
                 status TEXT NOT NULL,
                 flags_json TEXT NOT NULL DEFAULT '[]',
-                rating INTEGER
+                rating INTEGER,
+                interview_json TEXT NOT NULL DEFAULT '[]'
             );
 
             CREATE TABLE IF NOT EXISTS settlements (
@@ -691,6 +692,12 @@ impl Store {
             "#,
         )?;
         add_column_if_missing(&connection, "queries", "payment_token_hash", "TEXT")?;
+        add_column_if_missing(
+            &connection,
+            "memory_entries",
+            "interview_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
         add_column_if_missing(&connection, "profiles", "wallet_verified_at", "INTEGER")?;
         connection.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_verified_wallet_owner
@@ -1239,6 +1246,16 @@ impl Store {
         user_id: &str,
         answer: &str,
     ) -> Result<SubmitAnswerResponse, StoreError> {
+        self.submit_answer_with_interview(open_call_id, user_id, answer, &[])
+    }
+
+    pub fn submit_answer_with_interview(
+        &self,
+        open_call_id: &str,
+        user_id: &str,
+        answer: &str,
+        interview_responses: &[InterviewResponse],
+    ) -> Result<SubmitAnswerResponse, StoreError> {
         if user_id.trim().is_empty() {
             return Err(StoreError::Validation("user id is required".to_owned()));
         }
@@ -1250,6 +1267,7 @@ impl Store {
                 "answer must be 10000 characters or fewer".to_owned(),
             ));
         }
+        let interview_responses = validate_interview_responses(interview_responses)?;
 
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
@@ -1358,8 +1376,8 @@ impl Store {
         transaction.execute(
             "INSERT INTO memory_entries
              (id, user_id, open_call_id, document_id, question, answer, shelf,
-              earned_krw, created_at, via, status, flags_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'Open call', ?10, ?11)",
+              earned_krw, created_at, via, status, flags_json, interview_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'Open call', ?10, ?11, ?12)",
             params![
                 memory_id,
                 user_id,
@@ -1372,6 +1390,8 @@ impl Store {
                 as_i64(created_at)?,
                 if voided { "voided" } else { "settled" },
                 serde_json::to_string(&issues).expect("issues are serialisable"),
+                serde_json::to_string(&interview_responses)
+                    .expect("interview responses are serialisable"),
             ],
         )?;
         if !voided {
@@ -1413,6 +1433,7 @@ impl Store {
             flags: issues.clone(),
             rating: None,
             dispute_status: None,
+            interview_responses,
         };
         transaction.commit()?;
 
@@ -1428,7 +1449,8 @@ impl Store {
         let mut statement = connection.prepare(
             "SELECT id, question, answer, shelf, earned_krw, created_at, via,
                     status, flags_json, rating,
-                    (SELECT status FROM dispute_events d WHERE d.memory_id = memory_entries.id)
+                    (SELECT status FROM dispute_events d WHERE d.memory_id = memory_entries.id),
+                    interview_json
              FROM memory_entries WHERE user_id = ?1 ORDER BY created_at DESC",
         )?;
         let entries = statement
@@ -3225,6 +3247,51 @@ fn validate_open_call(request: &CreateOpenCallRequest) -> Result<(), StoreError>
     Ok(())
 }
 
+fn validate_interview_responses(
+    responses: &[InterviewResponse],
+) -> Result<Vec<InterviewResponse>, StoreError> {
+    if responses.len() > 8 {
+        return Err(StoreError::Validation(
+            "interview responses must contain 8 turns or fewer".to_owned(),
+        ));
+    }
+
+    let mut question_ids = HashSet::new();
+    responses
+        .iter()
+        .map(|response| {
+            let question_id = response.question_id.trim();
+            let prompt = response.prompt.trim();
+            let answer = response.answer.trim();
+            if question_id.is_empty() || question_id.chars().count() > 64 {
+                return Err(StoreError::Validation(
+                    "interview question id must be between 1 and 64 characters".to_owned(),
+                ));
+            }
+            if !question_ids.insert(question_id.to_owned()) {
+                return Err(StoreError::Validation(
+                    "interview question ids must be unique".to_owned(),
+                ));
+            }
+            if prompt.is_empty() || prompt.chars().count() > 500 {
+                return Err(StoreError::Validation(
+                    "interview prompt must be between 1 and 500 characters".to_owned(),
+                ));
+            }
+            if answer.is_empty() || answer.chars().count() > 2_000 {
+                return Err(StoreError::Validation(
+                    "interview answer must be between 1 and 2000 characters".to_owned(),
+                ));
+            }
+            Ok(InterviewResponse {
+                question_id: question_id.to_owned(),
+                prompt: prompt.to_owned(),
+                answer: answer.to_owned(),
+            })
+        })
+        .collect()
+}
+
 fn load_call(transaction: &Transaction<'_>, id: &str) -> Result<StoredCall, StoreError> {
     transaction
         .query_row(
@@ -3267,6 +3334,7 @@ fn stored_call_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredCall>
 
 fn memory_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
     let flags_json: String = row.get(8)?;
+    let interview_json: String = row.get(11)?;
     Ok(MemoryEntry {
         id: row.get(0)?,
         question: row.get(1)?,
@@ -3279,6 +3347,7 @@ fn memory_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
         flags: serde_json::from_str(&flags_json).unwrap_or_default(),
         rating: row.get(9)?,
         dispute_status: row.get(10)?,
+        interview_responses: serde_json::from_str(&interview_json).unwrap_or_default(),
     })
 }
 
@@ -3576,10 +3645,10 @@ mod tests {
 
     use crate::{
         domain::{
-            CreateOpenCallRequest, Decision, RecordChainSettlementRequest, ResolveQuestionRequest,
-            ReviewDisputeRequest, ReviewDocumentFeedbackRequest, SearchFilters,
-            SubmitAnswerResponse, SubmitDocumentFeedbackRequest, UpdatePreferencesRequest,
-            UpsertProfileRequest,
+            CreateOpenCallRequest, Decision, InterviewResponse, RecordChainSettlementRequest,
+            ResolveQuestionRequest, ReviewDisputeRequest, ReviewDocumentFeedbackRequest,
+            SearchFilters, SubmitAnswerResponse, SubmitDocumentFeedbackRequest,
+            UpdatePreferencesRequest, UpsertProfileRequest,
         },
         search::Resolver,
     };
@@ -3781,6 +3850,72 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("complete onboarding"));
         assert!(store.list_memory("anonymous-reader").unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_answer_keeps_private_interview_context_but_indexes_only_the_paid_answer() {
+        let store = Store::in_memory().unwrap();
+        let call = create_svalbard_call(&store, "interview-buyer", 1);
+        onboard(&store, "interview-author");
+        let context = vec![
+            InterviewResponse {
+                question_id: "w1".to_owned(),
+                prompt: "When were you last there?".to_owned(),
+                answer: "Context-only-token-alpha".to_owned(),
+            },
+            InterviewResponse {
+                question_id: "w2".to_owned(),
+                prompt: "How long were you outside?".to_owned(),
+                answer: "Context-only-token-beta".to_owned(),
+            },
+        ];
+
+        let submitted = store
+            .submit_answer_with_interview(&call.id, "interview-author", strong_answer(), &context)
+            .unwrap();
+        assert_eq!(submitted.memory.interview_responses, context);
+
+        let memory = store.list_memory("interview-author").unwrap();
+        assert_eq!(memory.len(), 1);
+        assert_eq!(memory[0].interview_responses, context);
+
+        let indexed = store
+            .documents()
+            .unwrap()
+            .into_iter()
+            .find(|document| document.author_id == "interview-author")
+            .unwrap();
+        assert_eq!(indexed.content, strong_answer());
+        assert!(!indexed.content.contains("Context-only-token-alpha"));
+        assert!(!indexed.content.contains("Context-only-token-beta"));
+    }
+
+    #[test]
+    fn interview_context_is_bounded_and_rejects_duplicate_questions() {
+        let store = Store::in_memory().unwrap();
+        let call = create_svalbard_call(&store, "invalid-interview-buyer", 1);
+        onboard(&store, "invalid-interview-author");
+        let duplicate = InterviewResponse {
+            question_id: "w1".to_owned(),
+            prompt: "A light question".to_owned(),
+            answer: "A short answer".to_owned(),
+        };
+
+        let error = store
+            .submit_answer_with_interview(
+                &call.id,
+                "invalid-interview-author",
+                strong_answer(),
+                &[duplicate.clone(), duplicate],
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("must be unique"));
+        assert!(
+            store
+                .list_memory("invalid-interview-author")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

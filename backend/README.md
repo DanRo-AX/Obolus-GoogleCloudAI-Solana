@@ -72,7 +72,7 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data openshelf-api
 | `POST` | `/api/v1/questions/{id}/paid-documents/{handle}/feedback` | Record paid-buyer feedback or a report |
 | `GET/POST` | `/api/v1/open-calls` | List or commission missing coverage |
 | `DELETE` | `/api/v1/open-calls/{id}` | Cancel an owned call and refund unused escrow |
-| `POST` | `/api/v1/open-calls/{id}/answers` | Validate an answer and add accepted memory |
+| `POST` | `/api/v1/open-calls/{id}/answers` | Validate an answer, retain private interview context, and add accepted memory |
 | `GET` | `/api/v1/chats/{id}/answers` | Return accepted answers only to the originating chat owner |
 | `GET` | `/api/v1/memory` | Read a user's answer and earnings ledger |
 | `POST` | `/api/v1/memory/{id}/dispute` | Submit the user's one dispute for review |
@@ -97,6 +97,11 @@ strike or payment. An admin approval performs the restoration atomically.
 An unverified profile wallet is never used as an on-chain recipient. Updating the
 address revokes verification, one verified wallet cannot belong to two accounts,
 and user-authored documents cannot fall back to the seeded-content receiver.
+
+Answer submissions may include `interviewResponses` from the optional warm-up
+conversation. Those turns are returned only in the respondent's authenticated
+memory stream. They are not copied into the searchable document, quoted to a
+buyer, priced, or settled separately; the final `answer` remains the sale unit.
 
 Register and keep the cookie in a local cookie jar:
 

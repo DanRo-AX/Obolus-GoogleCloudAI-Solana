@@ -122,6 +122,12 @@ export type Profile = {
 }
 
 /** One line of the memory stream. Recent entries carry more weight. */
+export type InterviewResponse = {
+  questionId: string
+  prompt: string
+  answer: string
+}
+
 export type MemoryEntry = {
   id: string
   question: string
@@ -137,6 +143,8 @@ export type MemoryEntry = {
   flags?: Issue[]
   /** Buyer rating out of 5, once someone has opened it. */
   rating?: number
+  /** Private warm-up context. It is retained but never indexed or sold. */
+  interviewResponses?: InterviewResponse[]
 }
 
 type UiValue = {
@@ -188,6 +196,7 @@ type UiValue = {
     orderId: string,
     answer: string,
     flags?: Issue[],
+    interviewResponses?: InterviewResponse[],
   ) => Promise<{ voided: boolean; issues: Issue[] }>
   cancelOrder: (orderId: string) => Promise<void>
   clearAll: () => void
@@ -539,14 +548,19 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
    * both updaters stay pure.
    */
   const answerOrder = useCallback(
-    async (orderId: string, answer: string, flags?: Issue[]) => {
+    async (
+      orderId: string,
+      answer: string,
+      flags?: Issue[],
+      interviewResponses?: InterviewResponse[],
+    ) => {
       const order = orders.find((o) => o.id === orderId)
       if (!order || order.answered >= order.target) {
         return { voided: false, issues: [] }
       }
 
       if (BACKEND_ENABLED) {
-        const result = await submitAnswer(orderId, answer)
+        const result = await submitAnswer(orderId, answer, interviewResponses)
         setOrders((prev) =>
           prev.map((item) => (item.id === orderId ? result.order : item)),
         )
@@ -594,6 +608,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           via: 'Open call' as const,
           status: voided ? ('voided' as const) : ('settled' as const),
           flags,
+          interviewResponses,
         },
         ...prev,
       ])

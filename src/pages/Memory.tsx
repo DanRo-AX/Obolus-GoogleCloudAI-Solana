@@ -347,6 +347,26 @@ export default function Memory() {
                         {m.answer}
                       </p>
 
+                      {m.interviewResponses?.length ? (
+                        <details className="mt-3 rounded-[4px] border border-border/70 bg-muted/25 px-3 py-2">
+                          <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                            Interview context · {m.interviewResponses.length} turns · private
+                          </summary>
+                          <ol className="mt-3 space-y-3">
+                            {m.interviewResponses.map((response) => (
+                              <li key={response.questionId}>
+                                <p className="text-xs text-muted-foreground">
+                                  {response.prompt}
+                                </p>
+                                <p className="mt-0.5 text-sm text-foreground/85">
+                                  {response.answer}
+                                </p>
+                              </li>
+                            ))}
+                          </ol>
+                        </details>
+                      ) : null}
+
                       {m.status === 'voided' ? (
                         <div className="mt-3 rounded-[4px] border border-destructive/25 bg-destructive/[0.04] p-3">
                           <p className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[1px] text-destructive">
