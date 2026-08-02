@@ -1,6 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
-import { Coins, Flame, Loader2, ShieldAlert, Sparkles, Star, Trash2, Wallet } from 'lucide-react'
+import {
+  Coins,
+  Download,
+  Flame,
+  Loader2,
+  Lock,
+  ShieldAlert,
+  Sparkles,
+  Star,
+  Trash2,
+  Unlock,
+  Wallet,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Badge,
@@ -10,6 +22,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/primitives'
 import { AUTO_MATCH_STRIKE_LIMIT, STRIKE_LIMIT } from '@/data/onboarding'
+import { exportAccount, setMemoryLocked } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
 import { shortKey } from '@/state/wallet'
@@ -40,6 +53,47 @@ export default function Memory() {
   const [disputeError, setDisputeError] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [lockingId, setLockingId] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const [memoryActionError, setMemoryActionError] = useState<string | null>(null)
+
+  const toggleMemoryLock = async (memoryId: string, locked: boolean) => {
+    setLockingId(memoryId)
+    setMemoryActionError(null)
+    try {
+      await setMemoryLocked(memoryId, locked)
+      await refreshLedger()
+    } catch (error) {
+      setMemoryActionError(
+        error instanceof Error ? error.message : 'The memory setting could not be updated.',
+      )
+    } finally {
+      setLockingId(null)
+    }
+  }
+
+  const downloadExport = async () => {
+    setExporting(true)
+    setMemoryActionError(null)
+    try {
+      const data = await exportAccount()
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: 'application/json',
+      })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `openshelf-export-${new Date().toISOString().slice(0, 10)}.json`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      setMemoryActionError(
+        error instanceof Error ? error.message : 'The account export could not be created.',
+      )
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const dispute = async (memoryId: string) => {
     if (disputingId) return
@@ -87,17 +141,45 @@ export default function Memory() {
     return Math.max(0.2, Math.min(1, 2 ** (-days / 90)))
   }
 
-  if (authReady && !account) return <Navigate to="/login" replace />
+  if (!authReady) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+  if (!account) return <Navigate to="/login" replace />
 
   return (
     <div className="page-enter flex-1 overflow-y-auto">
       <div className="space-y-6 p-4 sm:p-6">
         <div className="flex min-h-8 items-center justify-between gap-4">
           <h1 className="font-sans text-base font-medium">My memory</h1>
-          <Button asChild variant="monoGhost" size="monoSm">
-            <Link to="/dashboard">Browse open calls</Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="monoGhost"
+              size="monoSm"
+              disabled={exporting}
+              onClick={() => void downloadExport()}
+            >
+              {exporting ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Download className="size-3" />
+              )}
+              Export
+            </Button>
+            <Button asChild variant="monoGhost" size="monoSm">
+              <Link to="/dashboard">Browse open calls</Link>
+            </Button>
+          </div>
         </div>
+
+        {memoryActionError ? (
+          <p className="rounded-[4px] border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            {memoryActionError}
+          </p>
+        ) : null}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Stat
@@ -128,6 +210,13 @@ export default function Memory() {
           </div>
         ) : null}
 
+        {earnings?.claimableKrw ? (
+          <div className="rounded-[6px] border border-[#0F766E]/30 bg-[#0F766E]/5 px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+            Bundle escrow claimable <strong className="text-foreground">₩{earnings.claimableKrw.toLocaleString()}</strong>
+            {' · '}beneficiary wallet is snapshotted per sale; payout execution is separate from sandbox balance
+          </div>
+        ) : null}
+
         {profile ? (
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-[6px] border border-border bg-card px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
             <span className="flex items-center gap-1.5">
@@ -135,14 +224,14 @@ export default function Memory() {
               Payouts to{' '}
               {profile.wallet ? (
                 <span className="text-foreground">
-                  {shortKey(profile.wallet)}
+                  {shortKey(profile.wallet)} · {profile.walletVerified ? 'verified' : 'unverified'} · Devnet
                 </span>
               ) : (
                 <Link
                   to="/onboarding"
                   className="text-foreground underline decoration-dotted underline-offset-4"
                 >
-                  no wallet connected
+                  payout wallet not set
                 </Link>
               )}
             </span>
@@ -245,6 +334,11 @@ export default function Memory() {
                       paid onchain
                     </span>
                   ) : null}
+                  {event.payoutStatus === 'claimable' ? (
+                    <span className="rounded-[2px] bg-sky-500/10 px-1.5 font-mono text-[9px] uppercase tracking-[1px] text-sky-700">
+                      escrow claimable
+                    </span>
+                  ) : null}
                   <span className="ml-auto font-mono text-xs tabular-nums text-[#0F766E]">
                     +₩{event.amountKrw.toLocaleString()}
                   </span>
@@ -325,6 +419,24 @@ export default function Memory() {
                         >
                           +₩{m.earned.toLocaleString()}
                         </span>
+                        {m.status !== 'voided' && m.memoryType !== 'reflection' ? (
+                          <button
+                            type="button"
+                            disabled={lockingId === m.id}
+                            onClick={() => void toggleMemoryLock(m.id, !m.locked)}
+                            className="inline-flex size-6 cursor-pointer items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground disabled:cursor-wait"
+                            title={m.locked ? 'Unlock for matching' : 'Lock and remove from matching'}
+                            aria-label={m.locked ? 'Unlock memory' : 'Lock memory'}
+                          >
+                            {lockingId === m.id ? (
+                              <Loader2 className="size-3 animate-spin" />
+                            ) : m.locked ? (
+                              <Lock className="size-3" />
+                            ) : (
+                              <Unlock className="size-3" />
+                            )}
+                          </button>
+                        ) : null}
                       </div>
                       <p className="mt-1.5 text-sm text-muted-foreground">
                         {m.question}
@@ -339,6 +451,26 @@ export default function Memory() {
                       >
                         {m.answer}
                       </p>
+
+                      {m.interviewResponses?.length ? (
+                        <details className="mt-3 rounded-[4px] border border-border/70 bg-muted/25 px-3 py-2">
+                          <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                            Interview context · {m.interviewResponses.length} turns · private
+                          </summary>
+                          <ol className="mt-3 space-y-3">
+                            {m.interviewResponses.map((response) => (
+                              <li key={response.questionId}>
+                                <p className="text-xs text-muted-foreground">
+                                  {response.prompt}
+                                </p>
+                                <p className="mt-0.5 text-sm text-foreground/85">
+                                  {response.answer}
+                                </p>
+                              </li>
+                            ))}
+                          </ol>
+                        </details>
+                      ) : null}
 
                       {m.status === 'voided' ? (
                         <div className="mt-3 rounded-[4px] border border-destructive/25 bg-destructive/[0.04] p-3">

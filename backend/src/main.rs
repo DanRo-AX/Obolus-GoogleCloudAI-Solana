@@ -14,10 +14,21 @@ async fn main() {
         )
         .init();
 
-    let bind = std::env::var("OPENSHELF_BIND").unwrap_or_else(|_| "0.0.0.0:8787".to_owned());
+    let bind = std::env::var("OPENSHELF_BIND").unwrap_or_else(|_| "127.0.0.1:8787".to_owned());
     let address: SocketAddr = bind
         .parse()
         .unwrap_or_else(|error| panic!("invalid OPENSHELF_BIND {bind:?}: {error}"));
+    if !address.ip().is_loopback() {
+        let internal_token = std::env::var("OPENSHELF_INTERNAL_TOKEN").unwrap_or_default();
+        if internal_token.len() < 32
+            || ["openshelf-local-internal", "change-this-before-deploy"]
+                .contains(&internal_token.as_str())
+        {
+            panic!(
+                "a non-loopback OPENSHELF_BIND requires an OPENSHELF_INTERNAL_TOKEN of at least 32 characters"
+            );
+        }
+    }
 
     let database_path =
         std::env::var("OPENSHELF_DATABASE").unwrap_or_else(|_| "openshelf.db".to_owned());

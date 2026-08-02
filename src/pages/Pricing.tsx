@@ -29,6 +29,12 @@ export default function Pricing() {
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             Your balance is drawn down per document opened. Nothing else.
           </p>
+          <div className="mt-5 max-w-3xl rounded-[6px] border border-border bg-card px-4 py-3 text-sm leading-relaxed text-muted-foreground">
+            <span className="font-medium text-foreground">What works today:</span>{' '}
+            the Devnet demo pays each quoted document directly in USDC. Monthly
+            top-ups below are the projected mainnet packaging, not an active
+            subscription checkout.
+          </div>
         </div>
       </section>
 
@@ -43,15 +49,16 @@ export default function Pricing() {
           <div className="mt-10 flex flex-col gap-6 rounded-[6px] bg-foreground/[0.04] p-8 sm:flex-row sm:items-center sm:justify-between">
             <div className="max-w-2xl">
               <h3 className="font-host text-2xl font-semibold uppercase tracking-[1px]">
-                Teams & Enterprise
+                Teams & Enterprise · projected
               </h3>
               <p className="mt-2 text-base leading-relaxed text-muted-foreground">
-                Shared balance and seats, with per-open pricing set to your volume.
+                Shared balance and seats are a product concept. There is no team
+                custody, checkout, or production funding flow yet.
               </p>
             </div>
             <Button asChild variant="mono" size="monoLg" className="shrink-0">
               <a href="https://t.me/openshelf" target="_blank" rel="noreferrer">
-                Contact us
+                Pilot enquiry · no checkout
               </a>
             </Button>
           </div>
@@ -66,6 +73,7 @@ export default function Pricing() {
 }
 
 function PlanCard({ plan }: { plan: Plan }) {
+  const available = plan.id === 'free'
   return (
     <div className="flex shrink-0 basis-full snap-center flex-col md:shrink md:basis-auto">
       <div className="flex h-full flex-col">
@@ -108,14 +116,25 @@ function PlanCard({ plan }: { plan: Plan }) {
             </div>
 
             <div className="group/cta relative isolate mb-4 mt-2">
-              <Button
-                asChild
-                variant="mono"
-                size="monoLg"
-                className="w-full bg-foreground/90 hover:bg-foreground"
-              >
-                <Link to={plan.href}>{plan.cta}</Link>
-              </Button>
+              {available ? (
+                <Button
+                  asChild
+                  variant="mono"
+                  size="monoLg"
+                  className="w-full bg-foreground/90 hover:bg-foreground"
+                >
+                  <Link to={plan.href}>{plan.cta}</Link>
+                </Button>
+              ) : (
+                <Button
+                  disabled
+                  variant="monoMuted"
+                  size="monoLg"
+                  className="w-full"
+                >
+                  Concept only · unavailable
+                </Button>
+              )}
               {plan.glow ? (
                 <span
                   className="pointer-events-none absolute inset-x-4 top-1/2 -z-10 h-7 -translate-y-1/2 rounded-full opacity-40 blur-lg transition-opacity duration-300 group-hover/cta:opacity-80"
@@ -385,14 +404,25 @@ function PlanEstimator() {
                 </span>
               </div>
 
-              <Button
-                asChild
-                variant="mono"
-                size="monoLg"
-                className="mt-4 w-full"
-              >
-                <Link to={plan.href}>Choose {plan.name}</Link>
-              </Button>
+              {plan.id === 'free' ? (
+                <Button
+                  asChild
+                  variant="mono"
+                  size="monoLg"
+                  className="mt-4 w-full"
+                >
+                  <Link to={plan.href}>Start free</Link>
+                </Button>
+              ) : (
+                <Button
+                  disabled
+                  variant="monoMuted"
+                  size="monoLg"
+                  className="mt-4 w-full"
+                >
+                  Projection · no checkout
+                </Button>
+              )}
             </div>
           </div>
         </div>

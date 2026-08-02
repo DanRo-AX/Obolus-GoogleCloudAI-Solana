@@ -2,11 +2,16 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Check,
+  Bell,
+  Bot,
   ChevronDown,
   Clock,
   Coins,
+  MessageSquareText,
+  Mail,
   ShieldAlert,
   UserRound,
+  type LucideIcon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -15,9 +20,11 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  Switch,
 } from '@/components/ui/primitives'
 import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from '@/data/categories'
 import { STRIKE_LIMIT } from '@/data/onboarding'
+import { ApiError, getChatAnswers, type ChatAnswer } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useUi, type Order } from '@/state/ui'
 
@@ -49,7 +56,8 @@ function topScore(o: Order) {
   const hours = (Date.now() - o.createdAt) / 3600000
   const freshness = 1 / (1 + hours / 24)
   const room = 1 + ((o.target - o.answered) / o.target) * 0.5
-  return o.unitPrice * freshness * room
+  const fit = o.recommendationScore ?? (o.eligible ? 0.55 : 0)
+  return o.unitPrice * freshness * room * (0.75 + fit * 0.5)
 }
 
 const MIN_PAY: Array<{ value: number; label: string }> = [
@@ -59,7 +67,23 @@ const MIN_PAY: Array<{ value: number; label: string }> = [
 ]
 
 export default function Dashboard() {
-  const { orders, memory, earnings, profile, suspended, cancelOrder, balance } = useUi()
+  const {
+    orders,
+    memory,
+    earnings,
+    profile,
+    suspended,
+    cancelOrder,
+    balance,
+    chats,
+    refreshLedger,
+    agents,
+    setAgents,
+    notifications,
+    markNotificationsRead,
+    setBrowserAlerts,
+    setEmailAlerts,
+  } = useUi()
   const navigate = useNavigate()
   const [params] = useSearchParams()
 
@@ -74,6 +98,40 @@ export default function Dashboard() {
   const [fitsMe, setFitsMe] = useState(false)
   const [hideFilled, setHideFilled] = useState(true)
   const [opening, setOpening] = useState<string | null>(null)
+  const [answerPanels, setAnswerPanels] = useState<Record<string, ChatAnswer[]>>({})
+  const [answersLoading, setAnswersLoading] = useState<string | null>(null)
+  const [answersError, setAnswersError] = useState<Record<string, string>>({})
+  const [alertError, setAlertError] = useState<string | null>(null)
+
+  async function toggleAnswers(order: Order) {
+    if (!order.chatId) return
+    if (answerPanels[order.id]) {
+      setAnswerPanels((current) => {
+        const next = { ...current }
+        delete next[order.id]
+        return next
+      })
+      return
+    }
+
+    setAnswersLoading(order.id)
+    setAnswersError((current) => ({ ...current, [order.id]: '' }))
+    try {
+      const answers = await getChatAnswers(order.chatId)
+      setAnswerPanels((current) => ({ ...current, [order.id]: answers }))
+      void refreshLedger().catch(() => undefined)
+    } catch (error) {
+      setAnswersError((current) => ({
+        ...current,
+        [order.id]:
+          error instanceof ApiError
+            ? error.message
+            : 'The returned answers could not be loaded.',
+      }))
+    } finally {
+      setAnswersLoading((current) => (current === order.id ? null : current))
+    }
+  }
 
   const base = useMemo(
     () =>
@@ -144,6 +202,7 @@ export default function Dashboard() {
         .reduce((sum, m) => sum + m.earned, 0)
 
   const activeSort = SORTS.find((s) => s.id === sort) ?? SORTS[0]
+  const unread = notifications.filter((notification) => !notification.readAt)
 
   return (
     <div className="page-enter flex-1 overflow-y-auto">
@@ -161,6 +220,80 @@ export default function Dashboard() {
             ) : null}
           </div>
         </div>
+
+        {profile ? (
+          <div className="grid gap-3 rounded-[6px] border border-border bg-card p-4 lg:grid-cols-3">
+            <AlertPreference
+              icon={Bell}
+              label="Browser alerts"
+              detail="Show a system alert when a matching paid question arrives."
+              checked={
+                profile.browserAlerts === true &&
+                typeof Notification !== 'undefined' &&
+                Notification.permission === 'granted'
+              }
+              onChange={(value) => {
+                setAlertError(null)
+                void setBrowserAlerts(value).catch((error) =>
+                  setAlertError(error instanceof Error ? error.message : 'Could not update alerts.'),
+                )
+              }}
+            />
+            <AlertPreference
+              icon={Mail}
+              label="Email alerts"
+              detail="Queue matching questions to your account email."
+              checked={profile.emailAlerts === true}
+              onChange={(value) => {
+                setAlertError(null)
+                void setEmailAlerts(value).catch((error) =>
+                  setAlertError(error instanceof Error ? error.message : 'Could not update alerts.'),
+                )
+              }}
+            />
+            <AlertPreference
+              icon={Bot}
+              label="Memory agent"
+              detail="Reuse your exact paid answer only for a 82%+ near-identical call."
+              checked={agents}
+              onChange={setAgents}
+            />
+            {alertError ? (
+              <p className="text-sm text-destructive lg:col-span-3">{alertError}</p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {unread.length ? (
+          <div className="rounded-[6px] border border-[#0F766E]/25 bg-[#0F766E]/[0.04] p-4">
+            <div className="flex items-center gap-2">
+              <Bell className="size-4 text-[#0F766E]" />
+              <span className="text-sm font-medium">{unread.length} new update{unread.length > 1 ? 's' : ''}</span>
+              <button
+                type="button"
+                className="ml-auto cursor-pointer font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground hover:text-foreground"
+                onClick={() => void markNotificationsRead()}
+              >
+                Mark all read
+              </button>
+            </div>
+            <div className="mt-3 grid gap-2 lg:grid-cols-3">
+              {unread.slice(0, 3).map((notification) => (
+                <Link
+                  key={notification.id}
+                  to={notification.kind === 'call_available' && notification.openCallId
+                    ? `/answer/${notification.openCallId}`
+                    : '/dashboard'}
+                  onClick={() => void markNotificationsRead([notification.id])}
+                  className="rounded-[4px] border border-border bg-card p-3 transition-colors hover:border-foreground/25"
+                >
+                  <p className="text-sm font-medium">{notification.title}</p>
+                  <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{notification.body}</p>
+                </Link>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {/* tab + sort ---------------------------------------------------- */}
         <div className="flex flex-wrap items-center gap-2">
@@ -321,6 +454,12 @@ export default function Dashboard() {
               const cancelled = order.status === 'cancelled'
               const cat = CATEGORY_BY_ID[order.category]
               const fits = order.eligible ?? profile?.speaksTo.includes(order.category)
+              const remaining = Math.max(0, order.target - order.answered)
+              const reservedByOthers = Math.max(
+                0,
+                (order.reservedSlots ?? 0) - (order.reservationExpiresAt ? 1 : 0),
+              )
+              const fullyReserved = reservedByOthers >= remaining && !order.reservationExpiresAt
               return (
                 <div
                   key={order.id}
@@ -365,6 +504,14 @@ export default function Dashboard() {
                         .join(' · ')}
                     </p>
                   ) : null}
+                  {profile && fits && (order.recommendationScore ?? 0) > 0 ? (
+                    <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-[#0F766E]">
+                      Recommended · {Math.round((order.recommendationScore ?? 0) * 100)}% fit
+                      {order.recommendationReason?.[1]
+                        ? ` · ${order.recommendationReason[1]}`
+                        : ''}
+                    </p>
+                  ) : null}
 
                   <div className="mt-4 flex items-center gap-3">
                     <div className="h-1 flex-1 overflow-hidden rounded-full bg-foreground/10">
@@ -377,6 +524,7 @@ export default function Dashboard() {
                     </div>
                     <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
                       {order.answered}/{order.target}
+                      {reservedByOthers > 0 ? ` · ${reservedByOthers} held` : ''}
                     </span>
                   </div>
 
@@ -419,12 +567,19 @@ export default function Dashboard() {
                           620,
                         )
                       }}
-                      disabled={opening === order.id || suspended || Boolean(profile && !fits)}
+                      disabled={
+                        opening === order.id ||
+                        suspended ||
+                        Boolean(profile && !fits) ||
+                        fullyReserved
+                      }
                     >
                       {opening === order.id
                         ? 'Opening…'
                         : profile
-                          ? fits
+                          ? fullyReserved
+                            ? 'All remaining slots held'
+                            : fits
                             ? 'Answer'
                             : 'Profile does not match'
                           : 'Set up profile'}
@@ -432,20 +587,76 @@ export default function Dashboard() {
                   ) : null}
 
                   {tab === 'mine' ? (
-                    <div className="mt-4 flex items-center gap-2">
-                      {order.chatId ? (
-                        <Button asChild variant="monoGhost" size="monoSm">
-                          <Link to={`/chat/${order.chatId}`}>Back to the chat</Link>
-                        </Button>
+                    <div className="mt-4 space-y-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {order.chatId ? (
+                          <Button
+                            variant="monoGhost"
+                            size="monoSm"
+                            onClick={() => void toggleAnswers(order)}
+                            disabled={answersLoading === order.id}
+                          >
+                            <MessageSquareText className="size-3.5" />
+                            {answersLoading === order.id
+                              ? 'Loading answers…'
+                              : answerPanels[order.id]
+                                ? 'Hide returned answers'
+                                : `View returned answers · ${order.answered}`}
+                          </Button>
+                        ) : null}
+                        {order.chatId && chats.some((chat) => chat.id === order.chatId) ? (
+                          <Button asChild variant="monoGhost" size="monoSm">
+                            <Link to={`/chat/${order.chatId}`}>Back to this browser's chat</Link>
+                          </Button>
+                        ) : null}
+                        {order.status !== 'filled' && order.status !== 'cancelled' ? (
+                          <Button
+                            variant="monoMuted"
+                            size="monoSm"
+                            onClick={() => void cancelOrder(order.id)}
+                          >
+                            Cancel · refund ₩{(order.escrowRemainingKrw ?? 0).toLocaleString()}
+                          </Button>
+                        ) : null}
+                      </div>
+
+                      {answersError[order.id] ? (
+                        <p className="text-xs leading-relaxed text-destructive">
+                          {answersError[order.id]}
+                        </p>
                       ) : null}
-                      {order.status !== 'filled' && order.status !== 'cancelled' ? (
-                        <Button
-                          variant="monoMuted"
-                          size="monoSm"
-                          onClick={() => void cancelOrder(order.id)}
-                        >
-                          Cancel · refund ₩{(order.escrowRemainingKrw ?? 0).toLocaleString()}
-                        </Button>
+
+                      {answerPanels[order.id] ? (
+                        answerPanels[order.id].length > 0 ? (
+                          <div className="space-y-2 border-t border-border pt-3">
+                            {answerPanels[order.id].map((answer) => (
+                              <div
+                                key={answer.id}
+                                className="rounded-[4px] border border-border bg-background/70 p-3"
+                              >
+                                <div className="flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                                  <span className="text-foreground">{answer.handle}</span>
+                                  <span>· {answer.shelf}</span>
+                                  {answer.demographics ? (
+                                    <span>
+                                      · {answer.demographics.ageBand} · {answer.demographics.region}
+                                    </span>
+                                  ) : null}
+                                  <span className="ml-auto tabular-nums">
+                                    ₩{answer.price.toLocaleString()} settled
+                                  </span>
+                                </div>
+                                <p className="mt-2 text-sm leading-relaxed text-foreground">
+                                  {answer.excerpt}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="border-t border-border pt-3 text-xs leading-relaxed text-muted-foreground">
+                            No accepted answers yet. This stays available across browsers and devices.
+                          </p>
+                        )
                       ) : null}
                     </div>
                   ) : null}
@@ -554,6 +765,31 @@ function FilterChip({
     >
       {label}
     </button>
+  )
+}
+
+function AlertPreference({
+  icon: Icon,
+  label,
+  detail,
+  checked,
+  onChange,
+}: {
+  icon: LucideIcon
+  label: string
+  detail: string
+  checked: boolean
+  onChange: (checked: boolean) => void
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">{label}</p>
+        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{detail}</p>
+      </div>
+      <Switch checked={checked} onCheckedChange={onChange} aria-label={label} />
+    </div>
   )
 }
 

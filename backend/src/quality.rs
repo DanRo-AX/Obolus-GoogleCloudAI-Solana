@@ -59,7 +59,77 @@ pub fn assess(question: &str, answer: &str) -> Vec<AnswerIssue> {
         }
     }
 
+    if contains_direct_identifier(text) {
+        issues.push(AnswerIssue {
+            rule: "Private identifiers".to_owned(),
+            detail: "Remove email addresses, phone numbers, or long account-like numbers before publishing this answer.".to_owned(),
+        });
+    }
+
+    if repeated_phrase_ratio(text) > 0.45 {
+        issues.push(AnswerIssue {
+            rule: "Repetitive answer".to_owned(),
+            detail: "The answer repeats the same phrase too often to be useful evidence."
+                .to_owned(),
+        });
+    }
+
     issues
+}
+
+pub fn quality_score(question: &str, answer: &str) -> f32 {
+    let issues = assess(question, answer).len() as f32;
+    let words = content_words(answer);
+    let unique = words.iter().collect::<HashSet<_>>().len() as f32;
+    let diversity = if words.is_empty() {
+        0.0
+    } else {
+        unique / words.len() as f32
+    };
+    (0.55 + diversity.min(1.0) * 0.35 - issues * 0.2).clamp(0.0, 1.0)
+}
+
+pub fn near_duplicate(left: &str, right: &str) -> bool {
+    let left = content_words(left).into_iter().collect::<HashSet<_>>();
+    let right = content_words(right).into_iter().collect::<HashSet<_>>();
+    if left.len().min(right.len()) < 8 {
+        return false;
+    }
+    let intersection = left.intersection(&right).count() as f32;
+    let union = left.union(&right).count() as f32;
+    union > 0.0 && intersection / union >= 0.82
+}
+
+fn contains_direct_identifier(text: &str) -> bool {
+    if text.split_whitespace().any(|token| {
+        let token = token.trim_matches(|c: char| ",.;:()[]{}<>".contains(c));
+        let mut parts = token.split('@');
+        matches!((parts.next(), parts.next(), parts.next()), (Some(local), Some(domain), None)
+            if !local.is_empty() && domain.contains('.'))
+    }) {
+        return true;
+    }
+    let digits = text
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect::<String>();
+    digits.len() >= 10
+        && text
+            .split(|c: char| c.is_whitespace() || ",.;:()[]{}".contains(c))
+            .any(|token| token.chars().filter(char::is_ascii_digit).count() >= 10)
+}
+
+fn repeated_phrase_ratio(text: &str) -> f32 {
+    let words = content_words(text);
+    if words.len() < 12 {
+        return 0.0;
+    }
+    let mut pairs = Vec::new();
+    for window in words.windows(2) {
+        pairs.push(format!("{} {}", window[0], window[1]));
+    }
+    let unique = pairs.iter().collect::<HashSet<_>>().len();
+    1.0 - unique as f32 / pairs.len() as f32
 }
 
 fn content_words(text: &str) -> Vec<String> {
@@ -176,7 +246,7 @@ fn is_stopword(word: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::assess;
+    use super::{assess, near_duplicate};
 
     #[test]
     fn accepts_a_specific_lived_answer() {
@@ -212,5 +282,22 @@ mod tests {
             "성수동에는 맛있는 곳이 많아서 상황에 따라 좋은 식당을 찾아가면 됩니다.",
         );
         assert!(!issues.is_empty());
+    }
+
+    #[test]
+    fn rejects_direct_identifiers_and_near_duplicates() {
+        let issues = assess(
+            "Where did you buy lunch in Paris last week?",
+            "In Paris last week I paid 12 euros for lunch near Bastille. You can contact me at private@example.com for the exact address and I returned there twice because the weekday queue took only 8 minutes.",
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.rule == "Private identifiers")
+        );
+        assert!(near_duplicate(
+            "I paid 12 euros for noodles near Bastille last Tuesday and waited eight minutes before walking back to the office.",
+            "Last Tuesday near Bastille I paid 12 euros for noodles, waited eight minutes, and then walked back to my office."
+        ));
     }
 }

@@ -44,7 +44,7 @@ pub fn documents() -> Vec<Document> {
             "Neighborhood",
             "I eat lunch inside Seongsu almost every day, but once the wait goes past 30 minutes I just grab a convenience store lunchbox.",
             &["Seongsu", "weekday lunch", "queue", "resident"],
-            420,
+            10,
             4,
         ),
         document(
@@ -56,7 +56,7 @@ pub fn documents() -> Vec<Document> {
             "Neighborhood",
             "Yeonmujang-gil is unwalkable after 2pm on a weekend, so I do the grocery run before 10am on Saturday.",
             &["Seongsu", "daily route", "weekend", "resident"],
-            420,
+            10,
             12,
         ),
         document(
@@ -68,7 +68,7 @@ pub fn documents() -> Vec<Document> {
             "Neighborhood",
             "The stairs at Seongsu Station exit 3 are narrow, so at rush hour I walk one stop and board at Kondae-ipgu.",
             &["Seongsu", "commute", "daily route", "resident"],
-            420,
+            10,
             24,
         ),
         document(
@@ -80,7 +80,7 @@ pub fn documents() -> Vec<Document> {
             "Neighborhood",
             "Plenty of cafes, nowhere to sit and work for long. I rotate between the two that have outlets.",
             &["Seongsu", "cafe", "work", "resident"],
-            420,
+            10,
             8,
         ),
         document(
@@ -92,7 +92,7 @@ pub fn documents() -> Vec<Document> {
             "Neighborhood",
             "The laundry by my place shuts at 8pm, so all my shirts go in together on Wednesday morning before the weekday lunch crowd arrives.",
             &["Seongsu", "laundry", "weekday", "resident"],
-            420,
+            10,
             17,
         ),
         document(
@@ -104,7 +104,7 @@ pub fn documents() -> Vec<Document> {
             "Neighborhood",
             "Rent is nine hundred fifty thousand won with maintenance included, and in summer the air conditioning adds about one hundred twenty thousand won.",
             &["Seongsu", "rent", "daily cost", "resident"],
-            420,
+            10,
             27,
         ),
         document(
@@ -116,7 +116,7 @@ pub fn documents() -> Vec<Document> {
             "F&B",
             "Ten thousand won is my line for lunch. If a place goes over it, I do a convenience store run once that week.",
             &["weekday lunch", "office", "price", "queue"],
-            260,
+            5,
             6,
         ),
         document(
@@ -128,7 +128,7 @@ pub fn documents() -> Vec<Document> {
             "F&B",
             "Leave at 12 sharp and everywhere is a 20-minute wait, so our team agreed to head out at 11:50.",
             &["weekday lunch", "office", "queue", "wait"],
-            260,
+            5,
             18,
         ),
         document(
@@ -140,7 +140,7 @@ pub fn documents() -> Vec<Document> {
             "Travel",
             "I do the weekly shop on Sunday morning at the market. By noon the good produce is gone and the aisles are packed.",
             &["Paris", "resident", "daily route", "shopping"],
-            820,
+            15,
             5,
         ),
         document(
@@ -152,7 +152,7 @@ pub fn documents() -> Vec<Document> {
             "Travel",
             "I eat out maybe twice a month. The lunch set is eighteen euros and dinner is double that, so dinner happens at home.",
             &["Paris", "resident", "dinner", "daily life"],
-            820,
+            15,
             15,
         ),
         document(
@@ -164,7 +164,7 @@ pub fn documents() -> Vec<Document> {
             "Travel",
             "Half the shops on my street close in August. Anyone visiting then, I warn them in advance.",
             &["Paris", "resident", "August", "daily life"],
-            820,
+            15,
             33,
         ),
         document(
@@ -176,7 +176,7 @@ pub fn documents() -> Vec<Document> {
             "F&B",
             "I go through 12kg of beans a month. I changed suppliers twice, and the one I use now is twenty-two thousand won per kg.",
             &["cafe owner", "beans", "supplier", "cost"],
-            1_250,
+            25,
             3,
         ),
         document(
@@ -188,7 +188,7 @@ pub fn documents() -> Vec<Document> {
             "F&B",
             "Opening at 7am brings in about 20 people on their way to work, and nearly all buy one americano.",
             &["cafe owner", "sales", "opening hours", "margin"],
-            1_250,
+            25,
             14,
         ),
         document(
@@ -200,7 +200,7 @@ pub fn documents() -> Vec<Document> {
             "Hiring & Roles",
             "The first production pager rotation was harder than writing the service. I spent two months turning tribal runbooks into alerts the whole team could follow.",
             &["backend engineer", "pager", "production", "small team"],
-            1_100,
+            20,
             9,
         ),
         document(
@@ -217,7 +217,7 @@ pub fn documents() -> Vec<Document> {
                 "cost",
                 "production",
             ],
-            1_100,
+            20,
             21,
         ),
         document(
@@ -229,7 +229,7 @@ pub fn documents() -> Vec<Document> {
             "Crypto & Investing",
             "I split across three wallets: one for spending, one for storage, and one for contracts I have never seen before.",
             &["Solana", "wallet", "onchain", "security"],
-            1_150,
+            20,
             7,
         ),
         document(
@@ -241,7 +241,7 @@ pub fn documents() -> Vec<Document> {
             "Crypto & Investing",
             "Fees on Solana are cheap, so small payments go through there and I keep a separate spending wallet.",
             &["Solana", "wallet", "micropayment", "fees"],
-            1_150,
+            20,
             11,
         ),
     ]

@@ -4,9 +4,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::authority::personalized_page_rank;
 use crate::domain::{
-    Decision, DecisionReason, Document, MAX_REQUESTED_DOCUMENTS, MatchedDocument, OpenCallDraft,
-    Quote, ResolveError, ResolveQuestionRequest, ResolveQuestionResponse, ScoreBreakdown,
+    CATEGORY_IDS, Decision, DecisionReason, Document, EvidenceEdge, MAX_REQUESTED_DOCUMENTS,
+    MatchedDocument, OpenCallDraft, Quote, ResolveError, ResolveQuestionRequest,
+    ResolveQuestionResponse, ScoreBreakdown,
 };
 
 const EMBEDDING_DIMENSIONS: usize = 768;
@@ -25,6 +27,7 @@ struct IndexedDocument {
 pub struct Resolver {
     documents: Vec<IndexedDocument>,
     document_frequency: HashMap<String, usize>,
+    evidence_edges: Vec<EvidenceEdge>,
 }
 
 #[derive(Debug)]
@@ -56,7 +59,13 @@ impl Resolver {
         Self {
             documents,
             document_frequency,
+            evidence_edges: Vec::new(),
         }
+    }
+
+    pub fn with_evidence_edges(mut self, evidence_edges: Vec<EvidenceEdge>) -> Self {
+        self.evidence_edges = evidence_edges;
+        self
     }
 
     pub fn resolve(
@@ -95,6 +104,7 @@ impl Resolver {
                 .cloned()
                 .collect();
         }
+        let authority = self.authority_scores(&query_embedding, &query_terms);
         let mut candidates = self
             .documents
             .iter()
@@ -107,7 +117,15 @@ impl Resolver {
                     .max_unit_price_krw
                     .is_none_or(|max| indexed.document.price_krw <= max)
             })
-            .filter_map(|indexed| score(indexed, &query_embedding, &query_terms, &anchor_terms))
+            .filter_map(|indexed| {
+                score(
+                    indexed,
+                    &query_embedding,
+                    &query_terms,
+                    &anchor_terms,
+                    authority.get(&indexed.document.id).copied().unwrap_or(0.5),
+                )
+            })
             .collect::<Vec<_>>();
 
         candidates.sort_by(|left, right| {
@@ -120,27 +138,18 @@ impl Resolver {
         });
         let candidate_count = candidates.len();
 
-        // Representative results, not repeated passages from one contributor.
-        let mut authors = HashSet::new();
+        // Optimise the whole bundle. Selection prefers independent authors and
+        // penalises redundant passages instead of spending greedily on the
+        // first expensive result.
+        let selected =
+            select_candidate_indices(&candidates, request.requested_documents, request.budget_krw);
         let mut spent = 0_u64;
-        let mut budget_blocked = false;
+        let budget_blocked =
+            request.budget_krw.is_some() && !candidates.is_empty() && selected.is_empty();
         let mut matches = Vec::new();
-        for candidate in candidates {
-            if matches.len() == request.requested_documents {
-                break;
-            }
+        for index in selected {
+            let candidate = &candidates[index];
             let document = &candidate.indexed.document;
-            if !authors.insert(document.author_id.as_str()) {
-                continue;
-            }
-            if request
-                .budget_krw
-                .is_some_and(|budget| spent + document.price_krw > budget)
-            {
-                budget_blocked = true;
-                continue;
-            }
-
             spent += document.price_krw;
             matches.push(MatchedDocument {
                 handle: document.handle.clone(),
@@ -152,6 +161,7 @@ impl Resolver {
                 score_breakdown: ScoreBreakdown {
                     relevance: rounded(candidate.breakdown.relevance),
                     term_coverage: rounded(candidate.breakdown.term_coverage),
+                    authority: rounded(candidate.breakdown.authority),
                     trust: rounded(candidate.breakdown.trust),
                     freshness: rounded(candidate.breakdown.freshness),
                 },
@@ -190,6 +200,7 @@ impl Resolver {
 
         Ok(ResolveQuestionResponse {
             query_id: query_id(&question),
+            payment_access_token: None,
             decision,
             reason,
             requested_documents: request.requested_documents,
@@ -198,6 +209,182 @@ impl Resolver {
             quote,
             open_call,
         })
+    }
+
+    fn authority_scores(
+        &self,
+        query_embedding: &[f32],
+        query_terms: &HashSet<String>,
+    ) -> HashMap<String, f32> {
+        if self.evidence_edges.is_empty() {
+            return HashMap::new();
+        }
+
+        let mut teleport = HashMap::new();
+        let node_ids = self
+            .documents
+            .iter()
+            .map(|indexed| {
+                let relevance = cosine(query_embedding, &indexed.embedding).max(0.0);
+                let coverage = if query_terms.is_empty() {
+                    0.0
+                } else {
+                    query_terms
+                        .iter()
+                        .filter(|term| indexed.terms.contains(*term))
+                        .count() as f32
+                        / query_terms.len() as f32
+                };
+                let trust =
+                    (indexed.document.quality_score + indexed.document.reliability_score) / 2.0;
+                // Query relevance controls where the random walk restarts. A
+                // small verified-trust floor prevents disconnected documents
+                // from receiving a literal zero probability.
+                teleport.insert(
+                    indexed.document.id.clone(),
+                    relevance.powi(2) + coverage * 0.5 + trust * 0.02,
+                );
+                indexed.document.id.clone()
+            })
+            .collect::<Vec<_>>();
+        let topical_edges = self
+            .evidence_edges
+            .iter()
+            .filter(|edge| {
+                let topic_terms = word_terms(&edge.topic);
+                topic_terms.is_empty() || topic_terms.iter().any(|term| query_terms.contains(term))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let raw = personalized_page_rank(&node_ids, &topical_edges, &teleport);
+        let maximum = raw.values().copied().fold(0.0_f32, f32::max);
+        if maximum <= f32::EPSILON {
+            return HashMap::new();
+        }
+        raw.into_iter()
+            .map(|(id, score)| (id, score / maximum))
+            .collect()
+    }
+}
+
+#[derive(Clone)]
+struct SelectionState {
+    spent: u64,
+    utility: f32,
+    indices: Vec<usize>,
+}
+
+fn select_candidate_indices(
+    candidates: &[Candidate<'_>],
+    requested: usize,
+    budget: Option<u64>,
+) -> Vec<usize> {
+    let mut authors = HashSet::new();
+    let unique = candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(index, candidate)| {
+            authors
+                .insert(candidate.indexed.document.author_id.as_str())
+                .then_some(index)
+        })
+        .take(80)
+        .collect::<Vec<_>>();
+    let Some(budget) = budget else {
+        let mut chosen = Vec::new();
+        while chosen.len() < requested {
+            let next = unique
+                .iter()
+                .copied()
+                .filter(|index| !chosen.contains(index))
+                .max_by(|left, right| {
+                    marginal_utility(candidates, *left, &chosen)
+                        .total_cmp(&marginal_utility(candidates, *right, &chosen))
+                });
+            let Some(next) = next else { break };
+            chosen.push(next);
+        }
+        return chosen;
+    };
+
+    let mut states = vec![Vec::<SelectionState>::new(); requested + 1];
+    states[0].push(SelectionState {
+        spent: 0,
+        utility: 0.0,
+        indices: Vec::new(),
+    });
+    for index in unique {
+        let price = candidates[index].indexed.document.price_krw;
+        for count in (0..requested).rev() {
+            let additions = states[count]
+                .iter()
+                .filter_map(|state| {
+                    let spent = state.spent.checked_add(price)?;
+                    (spent <= budget).then(|| SelectionState {
+                        spent,
+                        utility: state.utility
+                            + marginal_utility(candidates, index, &state.indices),
+                        indices: state
+                            .indices
+                            .iter()
+                            .copied()
+                            .chain(std::iter::once(index))
+                            .collect(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            states[count + 1].extend(additions);
+            prune_states(&mut states[count + 1]);
+        }
+    }
+    states
+        .into_iter()
+        .rev()
+        .find_map(|bucket| {
+            bucket
+                .into_iter()
+                .max_by(|left, right| left.utility.total_cmp(&right.utility))
+                .map(|state| state.indices)
+        })
+        .unwrap_or_default()
+}
+
+fn marginal_utility(candidates: &[Candidate<'_>], index: usize, chosen: &[usize]) -> f32 {
+    let terms = &candidates[index].indexed.terms;
+    let redundancy = chosen
+        .iter()
+        .map(|other| jaccard(terms, &candidates[*other].indexed.terms))
+        .fold(0.0_f32, f32::max);
+    candidates[index].score - redundancy * 0.18
+}
+
+fn jaccard(left: &HashSet<String>, right: &HashSet<String>) -> f32 {
+    let union = left.union(right).count();
+    if union == 0 {
+        0.0
+    } else {
+        left.intersection(right).count() as f32 / union as f32
+    }
+}
+
+fn prune_states(states: &mut Vec<SelectionState>) {
+    states.sort_by(|left, right| {
+        left.spent
+            .cmp(&right.spent)
+            .then_with(|| right.utility.total_cmp(&left.utility))
+    });
+    let mut best = f32::NEG_INFINITY;
+    states.retain(|state| {
+        if state.utility > best + 0.0001 {
+            best = state.utility;
+            true
+        } else {
+            false
+        }
+    });
+    if states.len() > 512 {
+        states.sort_by(|left, right| right.utility.total_cmp(&left.utility));
+        states.truncate(512);
     }
 }
 
@@ -214,9 +401,12 @@ fn validate(request: &ResolveQuestionRequest) -> Result<(), ResolveError> {
     }
     let filters = &request.filters;
     if filters
-        .age_band
+        .category
         .as_deref()
-        .is_some_and(|value| !["under-25", "25-34", "35-44", "45-54", "55-plus"].contains(&value))
+        .is_some_and(|value| !CATEGORY_IDS.contains(&value))
+        || filters.age_band.as_deref().is_some_and(|value| {
+            !["under-25", "25-34", "35-44", "45-54", "55-plus"].contains(&value)
+        })
         || filters
             .region
             .as_deref()
@@ -296,6 +486,7 @@ fn score<'a>(
     query_embedding: &[f32],
     query_terms: &HashSet<String>,
     anchor_terms: &HashSet<String>,
+    authority: f32,
 ) -> Option<Candidate<'a>> {
     let relevance = cosine(query_embedding, &indexed.embedding);
     let term_coverage = if query_terms.is_empty() {
@@ -318,13 +509,18 @@ fn score<'a>(
     if relevance < MIN_RELEVANCE || term_coverage == 0.0 || !has_anchor {
         return None;
     }
-    let final_score = relevance * 0.72 + term_coverage * 0.13 + trust * 0.10 + freshness * 0.05;
+    let final_score = relevance * 0.60
+        + term_coverage * 0.12
+        + authority * 0.13
+        + trust * 0.10
+        + freshness * 0.05;
     Some(Candidate {
         indexed,
         score: final_score,
         breakdown: ScoreBreakdown {
             relevance,
             term_coverage,
+            authority,
             trust,
             freshness,
         },
@@ -425,7 +621,27 @@ fn word_terms(text: &str) -> Vec<String> {
 }
 
 fn canonical_term(term: &str) -> String {
-    if !term.is_ascii() || term == "paris" {
+    if !term.is_ascii() {
+        for (needle, canonical) in [
+            ("파리", "paris"),
+            ("음식", "food"),
+            ("요리", "food"),
+            ("식당", "restaurant"),
+            ("점심", "lunch"),
+            ("저녁", "dinner"),
+            ("여행", "travel"),
+            ("가격", "price"),
+            ("비용", "cost"),
+            ("선호", "preference"),
+            ("좋아", "preference"),
+        ] {
+            if term.contains(needle) {
+                return canonical.to_owned();
+            }
+        }
+        return term.to_owned();
+    }
+    if term == "paris" {
         return term.to_owned();
     }
     if term.len() > 5
@@ -512,11 +728,16 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use crate::{
-        domain::{Decision, DecisionReason, ResolveQuestionRequest, SearchFilters},
+        domain::{
+            Decision, DecisionReason, Document, ResolveQuestionRequest, ScoreBreakdown,
+            SearchFilters,
+        },
         seed,
     };
 
-    use super::Resolver;
+    use super::{
+        Candidate, IndexedDocument, Resolver, embed, select_candidate_indices, word_terms,
+    };
 
     fn request(question: &str, requested_documents: usize) -> ResolveQuestionRequest {
         ResolveQuestionRequest {
@@ -598,7 +819,7 @@ mod tests {
             "Where do people living in Seongsu eat lunch when the queue is long?",
             3,
         );
-        input.budget_krw = Some(500);
+        input.budget_krw = Some(5);
         let result = resolver.resolve(input).unwrap();
 
         assert_eq!(result.decision, Decision::Miss);
@@ -606,7 +827,85 @@ mod tests {
             result
                 .quote
                 .as_ref()
-                .is_none_or(|quote| quote.total_price_krw <= 500)
+                .is_none_or(|quote| quote.total_price_krw <= 5)
+        );
+    }
+
+    #[test]
+    fn unknown_category_is_rejected_instead_of_becoming_a_silent_miss() {
+        let resolver = Resolver::new(seed::documents());
+        let mut input = request("What do Paris residents eat for dinner?", 1);
+        input.filters.category = Some("unknown".to_owned());
+
+        assert!(matches!(
+            resolver.resolve(input),
+            Err(crate::domain::ResolveError::UnsupportedFilter)
+        ));
+    }
+
+    #[test]
+    fn korean_query_can_retrieve_english_paris_evidence() {
+        let result = Resolver::new(seed::documents())
+            .resolve(request("파리에 사는 사람들은 어떤 음식을 좋아하나요?", 1))
+            .unwrap();
+        assert_eq!(result.decision, Decision::Hit);
+        assert!(result.matches[0].shelf.contains("Paris"));
+    }
+
+    #[test]
+    fn bundle_selection_does_not_let_one_expensive_result_consume_the_budget() {
+        let make = |id: &str, author: &str, price: u64, content: &str| {
+            let document = Document {
+                id: id.to_owned(),
+                handle: id.to_uppercase(),
+                author_id: author.to_owned(),
+                shelf_id: "test".to_owned(),
+                shelf: "Test".to_owned(),
+                category: "food".to_owned(),
+                content: content.to_owned(),
+                tags: vec!["paris".to_owned(), "food".to_owned()],
+                price_krw: price,
+                age_days: 0,
+                quality_score: 0.9,
+                reliability_score: 0.9,
+                locked: false,
+                demographics: None,
+            };
+            let searchable = super::searchable_text(&document);
+            IndexedDocument {
+                embedding: embed(&searchable),
+                terms: word_terms(&searchable).into_iter().collect(),
+                document,
+            }
+        };
+        let indexed = [
+            make("expensive", "a", 90, "Paris food market details"),
+            make("value-one", "b", 50, "Paris lunch cafe details"),
+            make("value-two", "c", 50, "Paris dinner home cooking details"),
+        ];
+        let candidates = indexed
+            .iter()
+            .enumerate()
+            .map(|(index, indexed)| Candidate {
+                indexed,
+                score: [0.95, 0.82, 0.81][index],
+                breakdown: ScoreBreakdown {
+                    relevance: 0.8,
+                    term_coverage: 0.8,
+                    authority: 0.5,
+                    trust: 0.9,
+                    freshness: 1.0,
+                },
+            })
+            .collect::<Vec<_>>();
+        let selected = select_candidate_indices(&candidates, 2, Some(100));
+        assert_eq!(selected.len(), 2);
+        assert_eq!(
+            selected
+                .iter()
+                .map(|index| candidates[*index].indexed.document.price_krw)
+                .sum::<u64>(),
+            100
         );
     }
 }

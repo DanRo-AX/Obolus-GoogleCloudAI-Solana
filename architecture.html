@@ -570,8 +570,8 @@
         </div>
         <aside class="release" aria-label="문서 기준">
           <strong>As implemented</strong>
-          <span>2026-08-01 · local sandbox ledger</span>
-          <span>13 tables · 23 API operations + health check</span>
+          <span>2026-08-03 · one-approval bundle settlement + recovery</span>
+          <span>21 tables · 37 Rust route contracts + gateway resources</span>
           <span>Rust modular monolith</span>
         </aside>
       </header>
@@ -679,15 +679,15 @@ flowchart LR
   end
 
   subgraph DATA["SQLite · source of truth"]
-    IDENTITY[("Identity\nusers · sessions · profiles")]
+    IDENTITY[("Identity\nusers · sessions · profiles\nwallet challenges · auth limits")]
     MARKET[("Marketplace\nopen_calls · memory · documents")]
     SEARCHDB[("Retrieval\nqueries · query_matches")]
     LEDGER[("Ledger\nbalances · funding · settlements · earnings")]
-    REVIEW[("Enforcement\ndispute_events")]
+    REVIEW[("Enforcement\ndisputes · paid feedback")]
   end
 
   subgraph EXTERNAL["External payment boundary"]
-    GATE["x402 gateway · TypeScript\ndynamic quote · durable outbox"]
+    GATE["x402 gateway · TypeScript\ndirect / bundle quote · durable outbox"]
     FAC["x402 facilitator\nverify · settle · fee payer"]
     RPC["Solana Devnet RPC"]
     GATE --> FAC --> RPC
@@ -699,7 +699,7 @@ flowchart LR
   A --> UI
   CLIENT -->|"HTTPS JSON + HttpOnly cookie"| API
   WALLET -->|"PAYMENT-SIGNATURE"| GATE
-  CLIENT -->|"paid document URL"| GATE
+  CLIENT -->|"prepare exact bundle · paid resource URL"| GATE
   STORE -->|"ACID SQL transaction"| IDENTITY
   STORE --> MARKET
   STORE --> SEARCHDB
@@ -796,6 +796,7 @@ flowchart LR
           <pre class="mermaid">
 erDiagram
   USERS ||--o{ SESSIONS : "owns FK"
+  USERS ||--o{ WALLET_CHALLENGES : "proves wallet FK"
   USERS ||--|| BALANCES : "owns FK"
   USERS ||..o| PROFILES : "has logical"
 
@@ -806,6 +807,13 @@ erDiagram
   DOCUMENTS ||..o{ PAYMENT_QUOTES : "recipient snapshot"
   PAYMENT_QUOTES ||--o| CHAIN_SETTLEMENTS : "settles once FK"
   SETTLEMENTS ||--o| CHAIN_SETTLEMENTS : "mirrors FK"
+  QUERIES ||--o{ PAYMENT_BUNDLE_QUOTES : "bundles exact matches"
+  PAYMENT_BUNDLE_QUOTES ||--|{ PAYMENT_BUNDLE_DOCUMENTS : "commits snapshots"
+  DOCUMENTS ||--o{ PAYMENT_BUNDLE_DOCUMENTS : "beneficiary snapshot"
+  PAYMENT_BUNDLE_QUOTES ||--o| BUNDLE_CHAIN_SETTLEMENTS : "settles once FK"
+  SETTLEMENTS ||--o| BUNDLE_CHAIN_SETTLEMENTS : "one aggregate receipt"
+  CHAIN_SETTLEMENTS ||..o| DOCUMENT_FEEDBACK : "permits feedback"
+  DOCUMENTS ||..o{ DOCUMENT_FEEDBACK : "changes reliability"
 
   OPEN_CALLS ||--o{ MEMORY_ENTRIES : "receives FK"
   DOCUMENTS o|--o| MEMORY_ENTRIES : "materializes FK"
@@ -832,6 +840,14 @@ erDiagram
     INTEGER created_at
   }
 
+  AUTH_FAILURES {
+    TEXT email PK
+    INTEGER failure_count
+    INTEGER window_started_at
+    INTEGER blocked_until
+    INTEGER updated_at
+  }
+
   BALANCES {
     TEXT user_id PK
     INTEGER available_krw
@@ -850,9 +866,20 @@ erDiagram
     TEXT years
     TEXT speaks_to_json
     TEXT wallet
+    INTEGER wallet_verified_at
     INTEGER agreed_at
     INTEGER auto_match
     INTEGER agents
+  }
+
+  WALLET_CHALLENGES {
+    TEXT id PK
+    TEXT user_id FK
+    TEXT wallet
+    TEXT message
+    INTEGER expires_at
+    INTEGER consumed_at
+    INTEGER created_at
   }
 
   OPEN_CALLS {
@@ -886,6 +913,7 @@ erDiagram
     TEXT status
     TEXT flags_json
     INTEGER rating
+    TEXT interview_json
   }
 
   DOCUMENTS {
@@ -907,6 +935,7 @@ erDiagram
     TEXT id PK
     TEXT question
     TEXT decision
+    TEXT payment_token_hash
     INTEGER created_at
   }
 
@@ -957,6 +986,44 @@ erDiagram
     INTEGER confirmed_at
   }
 
+  PAYMENT_BUNDLE_QUOTES {
+    TEXT id PK
+    TEXT query_id FK
+    TEXT pay_to
+    TEXT network
+    TEXT asset
+    INTEGER amount_atomic
+    INTEGER total_price_krw
+    INTEGER expires_at
+    TEXT bundle_hash
+    TEXT status
+  }
+
+  PAYMENT_BUNDLE_DOCUMENTS {
+    TEXT quote_id PK
+    TEXT document_id PK
+    INTEGER rank
+    TEXT document_handle
+    TEXT author_id
+    TEXT recipient_wallet
+    INTEGER price_krw
+    TEXT content_hash
+    INTEGER document_version
+    TEXT consent_version
+  }
+
+  BUNDLE_CHAIN_SETTLEMENTS {
+    TEXT id PK
+    TEXT quote_id UK
+    TEXT settlement_id UK
+    TEXT transaction_signature UK
+    TEXT payer
+    TEXT pay_to
+    INTEGER amount_atomic
+    TEXT network
+    INTEGER confirmed_at
+  }
+
   EARNING_EVENTS {
     TEXT id PK
     TEXT settlement_id FK
@@ -983,6 +1050,22 @@ erDiagram
   DISPUTE_EVENTS {
     TEXT user_id PK
     TEXT memory_id FK
+    TEXT reason
+    TEXT status
+    TEXT reviewer_id
+    TEXT review_note
+    INTEGER reviewed_at
+    INTEGER created_at
+  }
+
+  DOCUMENT_FEEDBACK {
+    TEXT id PK
+    TEXT query_id
+    TEXT document_id
+    TEXT document_handle
+    TEXT settlement_id UK
+    TEXT payer
+    TEXT outcome
     TEXT reason
     TEXT status
     TEXT reviewer_id
@@ -1029,6 +1112,10 @@ erDiagram
             <strong>온체인 중복 정산 차단</strong>
             <span>quote_id와 transaction_signature UNIQUE, 수취인·network·atomic amount 완전 일치.</span>
           </article>
+          <article class="invariant">
+            <strong>검증된 저자에게만 지급</strong>
+            <span>Ed25519 서명 완료 지갑만 payout에 사용하고 주소 변경 시 검증을 폐기.</span>
+          </article>
         </div>
       </section>
 
@@ -1063,15 +1150,15 @@ erDiagram
               </li>
               <li class="step">
                 <span class="step-number">02</span>
-                <div><strong>Quote 고정</strong><p>queries와 query_matches에 순위와 quoted price를 기록.</p></div>
+                <div><strong>Quote·복구 권한 고정</strong><p>순위와 가격, 해시된 payment access token을 기록.</p></div>
               </li>
               <li class="step">
                 <span class="step-number">03</span>
-                <div><strong>동적 x402 결제</strong><p>quote의 payTo·Devnet USDC·atomic amount로 402를 만들고 facilitator가 서명과 정산을 검증.</p></div>
+                <div><strong>한 번의 동적 x402 결제</strong><p>문서 1개는 저자에게 직접, 2개 이상은 정확한 bundle hash·총액으로 에스크로에 한 번 결제하고 facilitator가 서명과 정산을 검증.</p></div>
               </li>
               <li class="step">
                 <span class="step-number">04</span>
-                <div><strong>본문·온체인 영수증</strong><p>본문 반환 뒤 chain_settlements와 onchain earning을 idempotent하게 mirror.</p></div>
+                <div><strong>본문·온체인 영수증·저자 claim</strong><p>정산을 idempotent하게 mirror하고 문서별 수익자를 claimable로 기록하며 응답 손실 시 payer별 상태와 본문을 복구.</p></div>
               </li>
             </ol>
           </article>
@@ -1092,7 +1179,7 @@ erDiagram
               </li>
               <li class="step">
                 <span class="step-number">03</span>
-                <div><strong>답변 품질 판정</strong><p>voided이면 슬롯·문서·지급이 모두 0, accepted면 모두 함께 반영.</p></div>
+                <div><strong>인터뷰·답변 원자 저장</strong><p>워밍업 문답은 비공개 memory context로 보존하고 최종 유료 답변만 searchable document로 만든다. voided이면 슬롯·문서·지급은 모두 0.</p></div>
               </li>
               <li class="step">
                 <span class="step-number">04</span>

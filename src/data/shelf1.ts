@@ -209,15 +209,15 @@ export const SECTIONS: Section[] = [
   {
     n: '04',
     eyebrow: 'The rail',
-    title: 'x402, because nobody approves a two-cent payment',
+    title: 'x402, because agents need policy-limited payments',
     blocks: [
       {
         kind: 'p',
-        text: 'Per-open pricing only works if the payment is invisible. Put a confirmation dialog in front of a ₩300 charge and the model stops making sense before the first question finishes.',
+        text: 'Per-open pricing only works at true micropayment scale. The Devnet browser demo bundles the exact selected documents into one explicit Phantom approval; unattended agents still need a policy-limited wallet.',
       },
       {
         kind: 'p',
-        text: 'HTTP already has the status code for this. A request arrives, the server answers 402 with a price, payment is presented, and the body is released. Machines settle with machines. No wallet popup, no browser extension, no human in the loop.',
+        text: 'HTTP already has the status code for this. A request arrives, the server answers 402 with a price, payment is presented, and the body is released. The current browser demo signs through Phantom. A delegated agent wallet is the next step for machine-to-machine settlement.',
       },
       {
         kind: 'code',

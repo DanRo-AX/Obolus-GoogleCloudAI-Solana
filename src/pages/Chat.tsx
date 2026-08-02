@@ -4,18 +4,29 @@ import {
   ArrowUpRight,
   Check,
   Coins,
+  Flag,
   Loader2,
+  Menu,
   Search,
   SlidersHorizontal,
+  ThumbsDown,
+  ThumbsUp,
 } from 'lucide-react'
 import { Composer } from '@/components/Composer'
 import { Button } from '@/components/ui/button'
 import { SHELVES, type Shelf } from '@/data/shelf'
-import { getChatAnswers, resolveQuestion, type Resolution } from '@/lib/api'
+import {
+  getChatAnswers,
+  resolveQuestion,
+  submitDocumentFeedback,
+  synthesizeAnswer,
+  type DocumentFeedback,
+  type Resolution,
+} from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { explorerUrl, openDocuments, PaymentError } from '@/lib/x402'
-import { useWallet } from '@/state/wallet'
-import { useUi, type Citation } from '@/state/ui'
+import { DEVNET_USDC, shortKey, useWallet } from '@/state/wallet'
+import { useUi, type Citation, type PaymentContext } from '@/state/ui'
 
 /**
  * The life of one question — the 7 steps the meeting locked, as state.
@@ -23,7 +34,8 @@ import { useUi, type Citation } from '@/state/ui'
  *   1 ask  2 search  3 rank  4 hit/miss  5 open call  6 x402  7 accrue
  *
  * Step 4 is the whole service. A hit ends as search; a miss posts an open call
- * on the spot. Above a threshold the spend is confirmed before anything opens.
+ * on the spot. The browser-wallet demo confirms every spend because Phantom
+ * asks the person to sign one exact direct or aggregate payment.
  */
 
 type Phase =
@@ -39,8 +51,7 @@ type Phase =
   | 'answered' // 6·7
   | 'failed' // settlement did not go through
 
-/** Spend above which we confirm before opening anything. */
-const CONFIRM_OVER = 1500
+const KRW_PER_USDC = Number(import.meta.env.VITE_KRW_PER_USDC ?? 1350)
 
 const STEPS = [
   { n: 2, label: 'Search the shelves', blurb: 'People\u2019s documents, not the web' },
@@ -57,22 +68,35 @@ export default function Chat() {
   const {
     chats,
     appendAssistant,
+    patchChat,
     placeOrder,
     cancelOrder,
     orders,
     refreshLedger,
     account,
+    createChat,
+    setMobileSidebar,
   } = useUi()
   const wallet = useWallet()
   const chat = chats.find((c) => c.id === id)
 
-  const [phase, setPhase] = useState<Phase>('searching')
+  const [phase, setPhase] = useState<Phase>(() =>
+    chat?.paymentSession
+      ? chat.messages.some((message) => message.settlement?.partial)
+        ? 'failed'
+        : 'confirm'
+      : 'searching',
+  )
   const [hits, setHits] = useState<{ shelf: Shelf; score: number }[]>([])
-  const [pending, setPending] = useState<Citation[]>([])
+  const [pending, setPending] = useState<Citation[]>(
+    () => chat?.paymentSession?.docs ?? [],
+  )
   const [count, setCount] = useState<number | null>(null)
   const [placedOrderId, setPlacedOrderId] = useState<string | null>(null)
   const [payError, setPayError] = useState<string | null>(null)
-  const [queryId, setQueryId] = useState<string | null>(null)
+  const [queryId, setQueryId] = useState<string | null>(
+    () => chat?.paymentSession?.queryId ?? null,
+  )
   const [resolutionReason, setResolutionReason] = useState<Resolution['reason'] | null>(null)
   const [openCallDraft, setOpenCallDraft] = useState<Resolution['openCall'] | null>(
     null,
@@ -90,8 +114,21 @@ export default function Chat() {
   const existingOrder = orders.find(
     (order) => order.mine && order.chatId === chatId && order.status !== 'cancelled',
   )
+  const paymentSession = chat?.paymentSession
+  const paymentPayerMismatch = Boolean(
+    paymentSession?.payer &&
+      wallet.pubkey &&
+      paymentSession.payer !== wallet.pubkey,
+  )
+  const paymentIncomplete = phase === 'failed' && Boolean(paymentSession?.docs.length)
 
   const total = pending.reduce((sum, c) => sum + c.price, 0)
+  const estimatedUsdc =
+    pending.reduce(
+      (sum, citation) =>
+        sum + Math.ceil((citation.price * 1_000_000) / KRW_PER_USDC),
+      0,
+    ) / 1_000_000
   const countChoices = useMemo(
     () =>
       [...new Set([openCallDraft?.answersNeeded, ...COUNT_CHOICES])].filter(
@@ -115,6 +152,28 @@ export default function Chat() {
       resolvedQueryId: string | null,
     ) => {
       if (!chatId || !resolvedQueryId) return
+      const session = chat?.paymentSession
+      if (!session) {
+        setPayError('The payment recovery session is missing. Start a new query.')
+        setPhase('failed')
+        return
+      }
+      if (!wallet.pubkey) {
+        await wallet.connect()
+        return
+      }
+      if (session.payer && session.payer !== wallet.pubkey) {
+        setPayError(
+          `This query belongs to ${shortKey(session.payer)}. The connected wallet is ${shortKey(wallet.pubkey)}. Switch back to recover settled documents without paying twice.`,
+        )
+        setPhase('failed')
+        return
+      }
+      if (!session.payer) {
+        patchChat(chatId, {
+          paymentSession: { ...session, payer: wallet.pubkey },
+        })
+      }
       setPhase('settling')
       setPayError(null)
       try {
@@ -122,27 +181,64 @@ export default function Chat() {
           queryId: resolvedQueryId,
           question: prompt ?? '',
           payer: wallet.pubkey,
+          accessToken: session.accessToken,
           docs: citations.map((c) => ({
             handle: c.handle,
             shelf: c.shelf,
             price: c.price,
           })),
         })
+        const openedHandles = new Set(result.citations.map((citation) => citation.handle))
+        const remaining = citations.filter(
+          (citation) => !openedHandles.has(citation.handle),
+        )
+        let answer = `Opened ${result.citations.length} matching documents from the ${shelfName} shelf. Each passage below is quoted as written.${result.settlement.partial ? ' Payment stopped before the remaining documents, so they stayed closed.' : ''}`
+        if (result.citations.length > 0) {
+          try {
+            const synthesis = await synthesizeAnswer(
+              resolvedQueryId,
+              result.citations.map((citation) => citation.handle),
+              session.accessToken,
+            )
+            answer = synthesis.answer
+          } catch {
+            // Payment and evidence delivery remain successful if synthesis is unavailable.
+          }
+        }
         appendAssistant(chatId, {
-          id: `${chatId}_a`,
+          id: `${chatId}_paid_${Date.now().toString(36)}`,
           role: 'assistant',
-          content: `Opened ${result.citations.length} matching documents from the ${shelfName} shelf. Each passage below is quoted as written.${result.settlement.partial ? ' Payment stopped before the remaining documents, so they stayed closed.' : ''}`,
+          content: answer,
           citations: result.citations,
           settlement: {
             count: result.settlement.count,
             total: result.settlement.total,
             txSig: result.settlement.txSig,
+            txSigs: result.settlement.txSigs,
             network: result.settlement.network,
             partial: result.settlement.partial,
+            mode: result.settlement.mode,
+          },
+          paymentContext: {
+            queryId: session.queryId,
+            accessToken: session.accessToken,
+            payer: wallet.pubkey,
           },
         })
         void refreshLedger().catch(() => undefined)
-        setPhase('answered')
+        if (result.settlement.partial && remaining.length) {
+          const nextSession = { ...session, payer: wallet.pubkey, docs: remaining }
+          patchChat(chatId, { paymentSession: nextSession })
+          setPending(remaining)
+          setPayError(
+            `${result.citations.length} document${result.citations.length === 1 ? '' : 's'} settled and were recovered. ${remaining.length} remain unpaid.`,
+          )
+          setPhase('failed')
+        } else {
+          patchChat(chatId, { paymentSession: undefined })
+          setPending([])
+          setPhase('answered')
+        }
       } catch (e) {
         setPayError(
           e instanceof PaymentError ? e.message : 'Settlement did not go through.',
@@ -150,13 +246,13 @@ export default function Chat() {
         setPhase('failed')
       }
     },
-    [appendAssistant, chatId, prompt, refreshLedger, wallet.pubkey],
+    [appendAssistant, chat?.paymentSession, chatId, patchChat, prompt, refreshLedger, wallet],
   )
 
   // search → rank → branch. The guard is released in cleanup so StrictMode's
   // remount reschedules instead of leaving the run half-finished.
   useEffect(() => {
-    if (!chatId || !prompt || hasAnswer || existingOrder) return
+    if (!chatId || !prompt || hasAnswer || existingOrder || chat?.paymentSession) return
     if (startedRef.current === chatId) return
     startedRef.current = chatId
 
@@ -204,10 +300,16 @@ export default function Chat() {
           excerpt: '',
           price: match.priceKrw,
         }))
-        const sum = cites.reduce((s, c) => s + c.price, 0)
+        patchChat(chatId, {
+          paymentSession: {
+            queryId: resolution.queryId,
+            accessToken: resolution.paymentAccessToken,
+            docs: cites,
+            shelfName: cites[0]?.shelf ?? 'Unsorted',
+          },
+        })
         setPending(cites)
-        if (sum > CONFIRM_OVER) setPhase('confirm')
-        else void settle(cites, ranked[0]?.shelf.name ?? cites[0]?.shelf ?? 'Unsorted', resolution.queryId)
+        setPhase('confirm')
       } catch (error) {
         if (cancelled) return
         setPayError(error instanceof Error ? error.message : 'Search failed.')
@@ -220,7 +322,7 @@ export default function Chat() {
       cancelled = true
       startedRef.current = null
     }
-  }, [chat?.filters, chatId, existingOrder, prompt, hasAnswer, settle])
+  }, [chat?.filters, chat?.paymentSession, chatId, existingOrder, prompt, hasAnswer, patchChat])
 
   useEffect(() => {
     if (!chatId || !existingOrder || !account) return
@@ -276,9 +378,19 @@ export default function Chat() {
   return (
     <div className="page-enter flex h-full min-h-0 flex-1 flex-col">
       <div className="flex min-h-8 items-center justify-between gap-4 px-4 pt-4 sm:px-6 sm:pt-6">
-        <h1 className="truncate font-sans text-base font-medium">
-          {chat.title}
-        </h1>
+        <div className="flex min-w-0 items-center gap-2">
+          <button
+            type="button"
+            aria-label="Open sidebar"
+            onClick={() => setMobileSidebar(true)}
+            className="flex size-7 shrink-0 items-center justify-center text-muted-foreground md:hidden"
+          >
+            <Menu className="size-4" />
+          </button>
+          <h1 className="truncate font-sans text-base font-medium">
+            {chat.title}
+          </h1>
+        </div>
         <Link
           to="/dashboard"
           className="shrink-0 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground"
@@ -327,6 +439,12 @@ export default function Chat() {
                             {c.demographics.household} · {c.demographics.field}
                           </p>
                         ) : null}
+                        {m.paymentContext ? (
+                          <FeedbackActions
+                            citation={c}
+                            context={m.paymentContext}
+                          />
+                        ) : null}
                       </li>
                     ))}
                   </ul>
@@ -348,50 +466,75 @@ export default function Chat() {
                           ? 'paid from reserved sandbox escrow'
                         : m.settlement.network === 'offline'
                           ? 'offline preview · no payment sent'
+                        : m.settlement.mode === 'bundle_escrow'
+                          ? 'one x402 bundle · contributor shares recorded as claimable'
                           : 'settled through x402 · unopened documents cost nothing'}
                     </span>
-                    {m.settlement.txSig ? (
+                    {(m.settlement.txSigs?.length
+                      ? m.settlement.txSigs
+                      : m.settlement.txSig
+                        ? [m.settlement.txSig]
+                        : []
+                    ).map((signature, index, signatures) => (
                       <a
+                        key={signature}
                         href={explorerUrl(
-                          m.settlement.txSig,
-                          m.settlement.network ?? 'devnet',
+                          signature,
+                          m.settlement?.network ?? 'devnet',
                         )}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground"
                       >
-                        {m.settlement.txSig.slice(0, 8)}…
+                        {signatures.length > 1 ? `tx ${index + 1}` : signature.slice(0, 8)}…
                         <ArrowUpRight className="size-3" />
                       </a>
-                    ) : null}
+                    ))}
                   </div>
                 ) : null}
               </div>
             ),
           )}
 
-          {!hasAnswer ? (
+          {!hasAnswer || paymentIncomplete ? (
             <div className="flex flex-col gap-4 rounded-[6px] border border-border bg-card p-4">
               <TraceSteps phase={phase} hits={hits} />
 
               {phase === 'confirm' ? (
                 <Branch
                   title={`${pending.length} people already match.`}
-                  body={`No open call needed — this can be answered now. ${pending.length} opens, ₩${total.toLocaleString()}.`}
+                  body={`No open call needed. ${pending.length} documents cost ₩${total.toLocaleString()} total (about ${estimatedUsdc.toFixed(6)} USDC). ${pending.length === 1 ? 'This pays that author directly with one Phantom approval.' : 'One Phantom approval pays the exact bundle into the payout escrow; each contributor share is recorded against their verified wallet.'}`}
                 >
-                  <Button
-                    variant="mono"
-                    size="mono"
-                    onClick={() =>
-                      void settle(
-                        pending,
-                        pending[0]?.shelf ?? 'Unsorted',
-                        queryId,
-                      )
-                    }
-                  >
-                    Pay and open
-                  </Button>
+                  <div className="w-full rounded-[4px] bg-foreground/[0.04] px-3 py-2 font-mono text-[10px] uppercase leading-relaxed tracking-[0.8px] text-muted-foreground">
+                    Devnet USDC may appear as “Unknown” in Phantom. Verify mint{' '}
+                    <span className="text-foreground" title={DEVNET_USDC}>
+                      {shortKey(DEVNET_USDC)}
+                    </span>{' '}
+                    and network Devnet before approving.
+                  </div>
+                  {wallet.pubkey && !paymentPayerMismatch ? (
+                    <Button
+                      variant="mono"
+                      size="mono"
+                      onClick={() =>
+                        void settle(
+                          pending,
+                          pending[0]?.shelf ?? 'Unsorted',
+                          queryId,
+                        )
+                      }
+                    >
+                      Pay and open · 1 approval
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="mono"
+                      size="mono"
+                      onClick={() => void wallet.connect()}
+                    >
+                      {paymentPayerMismatch ? 'Switch to the original wallet' : 'Connect wallet to pay'}
+                    </Button>
+                  )}
                   <Button
                     variant="monoMuted"
                     size="mono"
@@ -535,7 +678,9 @@ export default function Chat() {
               {phase === 'settling' ? (
                 <Branch
                   title="Settling over x402…"
-                  body="Requesting the documents, paying each author, then returning the passages."
+                  body={pending.length > 1
+                    ? 'Paying the exact document bundle once, recording contributor claims, then returning every passage.'
+                    : 'Paying the document author, then returning the passage.'}
                 />
               ) : null}
 
@@ -546,7 +691,35 @@ export default function Chat() {
                     payError ??
                     'The documents stayed closed. If Phantom already showed a confirmed transfer, check the explorer before retrying.'
                   }
-                />
+                >
+                  {queryId && pending.length && !paymentPayerMismatch ? (
+                    <Button
+                      variant="mono"
+                      size="mono"
+                      onClick={() =>
+                        void settle(
+                          pending,
+                          paymentSession?.shelfName ?? pending[0]?.shelf ?? 'Unsorted',
+                          queryId,
+                        )
+                      }
+                    >
+                      Check ledger and retry {pending.length} remaining
+                    </Button>
+                  ) : null}
+                  {paymentPayerMismatch ? (
+                    <Button
+                      variant="monoMuted"
+                      size="mono"
+                      onClick={() => {
+                        const next = createChat(prompt ?? '', chat.filters)
+                        navigate(`/chat/${next}`)
+                      }}
+                    >
+                      Start a separate query with this wallet
+                    </Button>
+                  ) : null}
+                </Branch>
               ) : null}
 
               {phase === 'declined' ? (
@@ -558,7 +731,7 @@ export default function Chat() {
             </div>
           ) : null}
 
-          {hasAnswer ? (
+          {hasAnswer && !paymentIncomplete ? (
             <p className="text-center font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
               Each author was paid onchain · these documents can auto-match again
             </p>
@@ -588,6 +761,112 @@ function AgentLabel() {
   )
 }
 
+function FeedbackActions({
+  citation,
+  context,
+}: {
+  citation: Citation
+  context: PaymentContext
+}) {
+  const [recorded, setRecorded] = useState<DocumentFeedback | null>(null)
+  const [reporting, setReporting] = useState(false)
+  const [reason, setReason] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const send = async (
+    outcome: 'helpful' | 'not_helpful' | 'report',
+  ) => {
+    if (submitting || recorded) return
+    if (outcome === 'report' && reason.trim().length < 20) return
+    setSubmitting(true)
+    setError(null)
+    try {
+      const feedback = await submitDocumentFeedback(
+        context.queryId,
+        citation.handle,
+        context.payer,
+        context.accessToken,
+        outcome,
+        outcome === 'report' ? reason.trim() : undefined,
+      )
+      setRecorded(feedback)
+      setReporting(false)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Feedback could not be saved.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (recorded) {
+    return (
+      <p className="mt-3 border-t border-border/70 pt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+        {recorded.outcome === 'report'
+          ? 'Report submitted · admin review pending'
+          : `${recorded.outcome.replace('_', ' ')} · recorded`}
+      </p>
+    )
+  }
+
+  return (
+    <div className="mt-3 border-t border-border/70 pt-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="mr-1 font-mono text-[9px] uppercase tracking-[1px] text-muted-foreground">
+          Paid buyer feedback
+        </span>
+        <Button
+          variant="monoGhost"
+          size="monoSm"
+          disabled={submitting}
+          onClick={() => void send('helpful')}
+        >
+          <ThumbsUp className="size-3" /> Helpful
+        </Button>
+        <Button
+          variant="monoGhost"
+          size="monoSm"
+          disabled={submitting}
+          onClick={() => void send('not_helpful')}
+        >
+          <ThumbsDown className="size-3" /> Not helpful
+        </Button>
+        <Button
+          variant="monoGhost"
+          size="monoSm"
+          disabled={submitting}
+          onClick={() => setReporting((value) => !value)}
+        >
+          <Flag className="size-3" /> Report
+        </Button>
+      </div>
+      {reporting ? (
+        <div className="mt-2 grid gap-2">
+          <textarea
+            rows={3}
+            maxLength={1000}
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Describe the specific safety, authenticity, or abuse issue (20–1000 characters)."
+            className="w-full resize-y rounded-[3px] border border-border bg-background p-2 text-sm outline-none focus:ring-1 focus:ring-foreground/30"
+          />
+          <Button
+            variant="mono"
+            size="monoSm"
+            className="justify-self-start"
+            disabled={submitting || reason.trim().length < 20}
+            onClick={() => void send('report')}
+          >
+            {submitting ? <Loader2 className="size-3 animate-spin" /> : null}
+            Submit report
+          </Button>
+        </div>
+      ) : null}
+      {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
+    </div>
+  )
+}
+
 function TraceSteps({
   phase,
   hits,
@@ -595,8 +874,10 @@ function TraceSteps({
   phase: Phase
   hits: { shelf: Shelf; score: number }[]
 }) {
-  const reached =
-    phase === 'searching' ? 0 : phase === 'ranking' ? 1 : 2
+  // Search and ranking are the only long-running trace phases. Once ranking
+  // resolves, step 4 has made its hit/miss decision; payment, open-call, and
+  // failure states are downstream outcomes and must not leave step 4 spinning.
+  const reached = phase === 'searching' ? 0 : phase === 'ranking' ? 1 : STEPS.length
   const icons = [Search, SlidersHorizontal, Coins]
 
   return (

@@ -13,8 +13,9 @@ x402/Solana payment gateway.
 ```bash
 npm ci
 npm --prefix payment-gateway ci
-cp .env.example .env  # set OPENSHELF_DEFAULT_RECEIVER to your Devnet wallet
+cp .env.example .env  # set the direct and bundle receiver Devnet wallets
 npm run dev:stack     # frontend :4319, Rust :8787, x402 gateway :1402
+npm run x402:devnet:smoke # optional funded-wallet settlement verification
 ```
 
 Verification:
@@ -31,21 +32,38 @@ explicitly want the old sandbox-ledger path, or
 ## Actual payment path
 
 1. Rust searches private documents and returns only safe handles and KRW prices.
-2. The gateway asks Rust for a short-lived per-document quote: recipient,
-   Devnet USDC mint, exact atomic amount, network, and expiry.
+2. For one document, the gateway asks Rust for a short-lived direct-author
+   quote. For two or more, Rust commits the exact handles, content hashes,
+   beneficiary wallets, total, mint, network, and expiry into one bundle quote.
 3. An unpaid resource request returns x402 v2 `402 Payment Required` with a
    `PAYMENT-REQUIRED` header.
-4. The browser x402 client has Phantom sign the exact USDC transfer and retries
-   with `PAYMENT-SIGNATURE`.
+4. The browser x402 client asks Phantom once. A single document pays its author
+   directly; a multi-document purchase sends one aggregate transfer to the
+   configured bundle escrow and retries with `PAYMENT-SIGNATURE`.
 5. The public Devnet facilitator verifies and settles it, the gateway releases
-   one document, and Rust records the transaction signature idempotently.
-6. Direct-to-author payments are marked `onchain`; they are not added again to
-   the sandbox KRW balance. Failed ledger mirrors remain in the gateway outbox
-   and retry safely.
+   the purchase-time content snapshot, and Rust records the signature
+   idempotently.
+6. Rust reloads only server-proven opened passages, then Gemini/Vertex produces
+   a cited synthesis. Without a provider, the UI shows an explicit evidence-only
+   result instead of inventing an answer.
+7. Direct-to-author payments are marked `onchain`. Bundle shares are marked
+   `claimable` against each author's verified wallet and are not presented as
+   paid until a separate escrow payout executes. Neither is added again to the
+   sandbox KRW balance. Failed ledger mirrors remain in the gateway outbox and
+   retry safely.
 
 The seeded corpus has no real author wallets, so
-`OPENSHELF_DEFAULT_RECEIVER` receives those demo payments. User-authored
-documents pay the wallet saved on that author's profile.
+`OPENSHELF_DEFAULT_RECEIVER` is its demo beneficiary. User-authored documents
+snapshot the verified wallet saved on that author's profile. Multi-document
+transfers land in `OPENSHELF_BUNDLE_RECEIVER`; the contributor Memory screen
+shows the corresponding escrow claim separately from sandbox and direct-chain
+balances.
+
+If a browser loses the response after settlement, the client reconciles the
+query with Rust, recovers passages that are already proven paid, and retries
+only unpaid handles. The query recovery token is scoped to the original query
+and payer-sensitive recovery APIs; it is also required for paid-evidence
+synthesis and is never a general document-access credential.
 
 ## The three screens the meeting locked
 
@@ -65,20 +83,27 @@ the exact dialogue the meeting settled on:
 
 ```
 ask → search the shelves → rank by similarity → HIT or MISS
-  HIT  → open N docs → quote each → x402 settlement line → accrues to authors
+  HIT  → open N docs → one exact bundle quote → one x402 approval → author claims
   MISS → "Nobody has covered this yet. Want me to ask people?"
        → "How many people?"  → "What do you want to pay per answer?"
        → call posted → dashboard
 ```
 
-Above ₩1,500 of spend the agent confirms before opening anything. A question
-that already has enough matching documents skips the call entirely and offers
-to settle on the spot — the inverted order the meeting called out.
+The browser-wallet path confirms every spend before opening anything. Phantom
+signs once for the exact set: one document is direct-to-author, while two or
+more use the bundle escrow and beneficiary ledger. The preview shows KRW,
+estimated Devnet USDC, approval count, network, and the token mint. A question that already
+has enough matching documents skips the call entirely and offers to settle on
+the spot — the inverted order the meeting called out. Seeded opens cost ₩5–₩25;
+the five-document Seongsu example currently resolves to ₩50 (about 0.03704
+Devnet USDC at the default conversion rate).
 
 Matching, ranking, budget filtering, author deduplication, and the hit/miss
 decision now run in the Rust service. It combines deterministic 768-dimensional
-hash embeddings, word/character n-grams, entity anchors, trust, and freshness.
-The search response contains handles and prices but never paid passages.
+hash embeddings, word/character n-grams, entity anchors, trust, freshness, and
+topic-personalized PageRank over curator-verified independent evidence edges.
+Paid, self-owned, inferred, and raw UGC edges cannot buy authority. The search
+response contains handles and prices but never paid passages.
 
 ## Canvases
 
@@ -98,10 +123,12 @@ through an SVG or rasterised text). Both pause off-screen and honour
 
 The frontend now uses server-issued, HttpOnly session cookies; client-supplied
 `userId` values are not accepted. Registration creates ₩100,000 of explicitly
-labelled sandbox credit. A paid open call reserves its full maximum budget in a
+labelled sandbox credit and requires explicit confirmation that the user is at
+least 14. A paid open call reserves its full maximum budget in a
 SQLite ledger, accepted answers release one unit to the contributor, and
 cancellation refunds every unused unit. Open-call answers are readable only by
-the owner of the originating `chatId` and are delivered back into that chat.
+the owner of the originating `chatId`. They are delivered back into that chat
+and can also be reloaded from “Posted by me” after a browser or device change.
 
 Age, region, household, and field bands can be selected in the composer. The
 same filters are enforced during document search and when an answerer tries to
@@ -114,6 +141,14 @@ Authenticated account deletion refunds unused reservations, revokes all
 sessions, deletes profile, memory, and document text, and anonymizes the minimal
 append-only financial audit rows.
 
+Accepted memories carry a SHA-256 content hash, immutable version, reliability
+and importance scores, lock state, and access count. Corrections create a new
+version and lock the superseded passage. Contributors can export their private
+memory/access log, while public contributor and document manifests expose only
+matching metadata (including profile demographic bands), hashes, versions,
+prices, and x402 links. Those bands therefore require an explicit disclosure
+and consent treatment before a public launch.
+
 ## Honest gaps
 
 Carried over from the meeting, and stated in the FAQ rather than smoothed over:
@@ -122,21 +157,42 @@ Carried over from the meeting, and stated in the FAQ rather than smoothed over:
    shelf leaves the librarian nothing to do. The dashboard ships with seeded
    open calls so a demo has something to show.
 2. **Voice vs chat collection.** Undecided; v1 uses the open-call answer flow.
-3. **Who gets picked when more documents match than are needed.** Undecided.
+3. **Cold-start authority.** Relevance exploration works, but production
+   calibration and Sybil-resistant identity are still required before graph
+   authority can be treated as mature.
 4. **Low-effort answers.** ID-verified identity is out of scope for v1.
 
 Profiles, payout wallets, auto-match preferences, open calls, answers, memory,
 query quotes, disputes, and append-only settlement/accrual events persist in
 SQLite. The server also enforces the two-strike auto-match/payout hold and the
-three-strike suspension. Chat transcripts remain browser-local; authenticated
+three-strike suspension. Chat transcripts remain tab-session local in backend
+mode (durable local storage is reserved for the offline demo); authenticated
 account, money, memory, and authorization state are server-owned.
 
 The KRW signup/open-call balance is still a clearly labelled sandbox ledger; it
 models reservations and refunds but is not fiat or on-chain escrow. Paid
 document opens now use actual x402 exact/SVM settlement on Solana Devnet.
+The official Pay.sh YAML is a separate static localnet compatibility path; it
+is not proof of Devnet settlement. See [`docs/PAY-SH.md`](./docs/PAY-SH.md).
 Production still requires a mainnet facilitator credential, managed RPC,
 durable outbox volume or queue, rate limiting, email verification/recovery, KMS
 secret management, and an external identity provider if social login is
-desired. See `backend/README.md` for the exact boundary.
+desired. A policy-limited agent wallet and the projected monthly top-up product
+are not implemented yet. Agent payments
+remain visibly disabled until the controls in
+[`docs/agent-payment-threat-model.md`](./docs/agent-payment-threat-model.md) are
+implemented and reviewed. Browser settlement reconciliation is implemented;
+paid handles are recovered before any retry.
+
+Contributor question delivery now includes server-ranked recommendations, a
+durable in-app inbox, five-second browser refresh with optional system alerts,
+opt-in email outbox delivery, and ten-minute answer-slot reservations. The
+contributor memory agent is deliberately narrower than a generative responder:
+it reuses the exact original paid answer only for an opted-in, 82%+
+near-identical call that still meets targeting, pricing, lock, and conduct
+rules. Every other call still requires the person to answer.
+See `SCENARIO-AUDIT.md` for the Chrome-verified scenarios and prioritized gaps,
+[`docs/CODE-REVIEW.md`](./docs/CODE-REVIEW.md) for the PR #2/#9 consolidation
+and production audit, and `backend/README.md` for the exact backend boundary.
 
 `BRIEF.md` holds the source-of-truth product brief the copy was written against.

@@ -2,15 +2,24 @@
   "openapi": "3.1.0",
   "info": {
     "title": "OPENSHELF API",
-    "version": "0.1.0",
-    "description": "Search first-person MDs, commission missing answers, and purchase quoted passages."
+    "version": "0.2.0",
+    "description": "Browser integration contracts for private-document search, safe x402 recovery, verified payout wallets, and paid-buyer feedback."
   },
   "servers": [{ "url": "http://127.0.0.1:8787" }],
   "paths": {
     "/healthz": {
       "get": {
-        "summary": "Health check",
-        "responses": { "200": { "description": "Healthy" } }
+        "summary": "Process liveness",
+        "responses": { "200": { "description": "Live" } }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "summary": "SQLite readiness",
+        "responses": {
+          "200": { "description": "Ready" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/v1/questions/resolve": {
@@ -32,14 +41,297 @@
                 "schema": { "$ref": "#/components/schemas/Resolution" }
               }
             }
+          },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/questions/{queryId}/payment-progress": {
+      "get": {
+        "summary": "Reconcile settled, quoted, and unpaid documents before retry",
+        "parameters": [
+          { "$ref": "#/components/parameters/QueryId" },
+          { "$ref": "#/components/parameters/Payer" },
+          { "$ref": "#/components/parameters/QueryToken" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-document payment state",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaymentProgress" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/questions/{queryId}/paid-documents/{handle}": {
+      "get": {
+        "summary": "Recover a passage already settled by this payer",
+        "parameters": [
+          { "$ref": "#/components/parameters/QueryId" },
+          { "$ref": "#/components/parameters/Handle" },
+          { "$ref": "#/components/parameters/Payer" },
+          { "$ref": "#/components/parameters/QueryToken" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paid passage and immutable chain receipt",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RecoveredPaidDocument" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/questions/{queryId}/paid-documents/{handle}/feedback": {
+      "post": {
+        "summary": "Submit feedback for a passage paid by this payer",
+        "parameters": [
+          { "$ref": "#/components/parameters/QueryId" },
+          { "$ref": "#/components/parameters/Handle" },
+          { "$ref": "#/components/parameters/Payer" },
+          { "$ref": "#/components/parameters/QueryToken" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SubmitFeedback" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Idempotently recorded feedback",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DocumentFeedback" }
+              }
+            }
+          },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/profile/wallet/challenge": {
+      "post": {
+        "summary": "Create a single-use payout-wallet ownership challenge",
+        "security": [{ "sessionCookie": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["wallet"],
+                "properties": { "wallet": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Message to sign with the requested Solana wallet",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WalletChallenge" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/profile/wallet/verify": {
+      "post": {
+        "summary": "Verify a base58 Ed25519 signMessage signature",
+        "security": [{ "sessionCookie": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["challengeId", "signature"],
+                "properties": {
+                  "challengeId": { "type": "string" },
+                  "signature": { "type": "string", "description": "Base58-encoded 64-byte Ed25519 signature" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Profile with walletVerified=true" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/admin/document-feedback": {
+      "get": {
+        "summary": "List buyer feedback and pending reports",
+        "security": [{ "sessionCookie": [] }],
+        "responses": {
+          "200": {
+            "description": "Pending reports first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/DocumentFeedback" }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/admin/document-feedback/{feedbackId}/review": {
+      "post": {
+        "summary": "Uphold or dismiss a pending buyer report",
+        "security": [{ "sessionCookie": [] }],
+        "parameters": [
+          {
+            "name": "feedbackId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["decision", "note"],
+                "properties": {
+                  "decision": { "type": "string", "enum": ["upheld", "dismissed"] },
+                  "note": { "type": "string", "minLength": 5, "maxLength": 1000 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Reviewed report",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DocumentFeedback" }
+              }
+            }
           }
         }
       }
     },
+    "/api/v1/answers/synthesize": {
+      "post": {
+        "summary": "Synthesize only server-canonical passages already opened for a query",
+        "parameters": [{ "$ref": "#/components/parameters/QueryToken" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SynthesizePaidAnswerRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Cited Gemini/Vertex synthesis or an explicit evidence-only fallback",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EvidenceSynthesis" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/memory/{memoryId}": {
+      "patch": {
+        "summary": "Lock or unlock one owned memory and its searchable document",
+        "security": [{ "sessionCookie": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/MemoryId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["locked"],
+                "properties": { "locked": { "type": "boolean" } }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Updated memory" } }
+      }
+    },
+    "/api/v1/memory/{memoryId}/corrections": {
+      "post": {
+        "summary": "Create a new immutable version and lock the superseded passage",
+        "security": [{ "sessionCookie": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/MemoryId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["answer"],
+                "properties": { "answer": { "type": "string", "maxLength": 10000 } }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "New correction memory version" } }
+      }
+    },
+    "/api/v1/account/export": {
+      "get": {
+        "summary": "Export the authenticated contributor's profile, memories, and access log",
+        "security": [{ "sessionCookie": [] }],
+        "responses": { "200": { "description": "Portable account JSON" } }
+      }
+    },
+    "/api/v1/contributors/{handle}": {
+      "get": {
+        "summary": "Public contributor manifest with hashes and versioned memory links",
+        "parameters": [{ "$ref": "#/components/parameters/Handle" }],
+        "responses": { "200": { "description": "Contributor manifest without private content" } }
+      }
+    },
+    "/api/v1/personas/{handle}": {
+      "get": {
+        "summary": "Compatibility alias for the public contributor manifest",
+        "parameters": [{ "$ref": "#/components/parameters/Handle" }],
+        "responses": { "200": { "description": "Contributor manifest without private content" } }
+      }
+    },
+    "/api/v1/documents/{handle}": {
+      "get": {
+        "summary": "Public paid-document metadata without the protected passage",
+        "parameters": [{ "$ref": "#/components/parameters/Handle" }],
+        "responses": { "200": { "description": "Hash, version, price, and x402 template" } }
+      }
+    },
     "/api/flash-research": {
       "get": {
-        "summary": "Purchase and open quoted MD passages",
+        "summary": "Sandbox-only idempotent document opening",
         "parameters": [
+          { "$ref": "#/components/parameters/Payer" },
           {
             "name": "queryId",
             "in": "query",
@@ -50,25 +342,64 @@
             "name": "docs",
             "in": "query",
             "required": true,
-            "description": "Comma-separated handles from the resolution",
-            "schema": { "type": "string" }
-          },
-          {
-            "name": "payer",
-            "in": "query",
             "schema": { "type": "string" }
           }
         ],
-        "responses": {
-          "200": {
-            "description": "Purchased passages and settlement receipt"
-          },
-          "402": { "description": "Payment Required" }
-        }
+        "responses": { "200": { "description": "Sandbox passages and ledger receipt" } }
       }
     }
   },
   "components": {
+    "securitySchemes": {
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "openshelf_session"
+      }
+    },
+    "parameters": {
+      "QueryId": {
+        "name": "queryId",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
+      "Handle": {
+        "name": "handle",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
+      "MemoryId": {
+        "name": "memoryId",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
+      "Payer": {
+        "name": "payer",
+        "in": "query",
+        "required": true,
+        "schema": { "type": "string" },
+        "description": "Base58 Solana public key that settled the purchase"
+      },
+      "QueryToken": {
+        "name": "x-openshelf-query-token",
+        "in": "header",
+        "required": true,
+        "schema": { "type": "string" }
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "Structured API error",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+          }
+        }
+      }
+    },
     "schemas": {
       "ResolveQuestionRequest": {
         "type": "object",
@@ -76,20 +407,133 @@
         "properties": {
           "question": { "type": "string", "minLength": 8, "maxLength": 1000 },
           "requestedDocuments": { "type": "integer", "minimum": 1, "maximum": 20, "default": 5 },
-          "budgetKrw": { "type": "integer", "minimum": 0 }
+          "budgetKrw": { "type": "integer", "minimum": 0 },
+          "filters": { "type": "object" }
         }
       },
       "Resolution": {
         "type": "object",
-        "required": ["queryId", "decision", "matches"],
+        "required": ["queryId", "paymentAccessToken", "decision", "matches"],
         "properties": {
           "queryId": { "type": "string" },
+          "paymentAccessToken": { "type": "string", "description": "Returned once; persist locally for safe recovery" },
           "decision": { "type": "string", "enum": ["hit", "miss"] },
           "matches": {
             "type": "array",
+            "items": { "type": "object", "description": "Payment-safe metadata; paid content is excluded" }
+          }
+        }
+      },
+      "PaymentProgress": {
+        "type": "object",
+        "required": ["queryId", "payer", "documentCount", "settledCount", "unpaidCount", "documents"],
+        "properties": {
+          "queryId": { "type": "string" },
+          "payer": { "type": "string" },
+          "documentCount": { "type": "integer" },
+          "settledCount": { "type": "integer" },
+          "unpaidCount": { "type": "integer" },
+          "totalPriceKrw": { "type": "integer" },
+          "settledPriceKrw": { "type": "integer" },
+          "documents": {
+            "type": "array",
             "items": {
               "type": "object",
-              "description": "Payment-safe metadata; paid content is never included here."
+              "required": ["handle", "priceKrw", "status"],
+              "properties": {
+                "handle": { "type": "string" },
+                "priceKrw": { "type": "integer" },
+                "status": { "type": "string", "enum": ["unpaid", "quoted", "settled"] },
+                "quoteId": { "type": ["string", "null"] },
+                "quoteExpiresAt": { "type": ["integer", "null"] },
+                "transactionSignature": { "type": ["string", "null"] },
+                "network": { "type": ["string", "null"] },
+                "settledAt": { "type": ["integer", "null"] }
+              }
+            }
+          }
+        }
+      },
+      "RecoveredPaidDocument": {
+        "type": "object",
+        "required": ["citation", "settlement"],
+        "properties": {
+          "citation": { "type": "object" },
+          "settlement": { "type": "object" }
+        }
+      },
+      "SynthesizePaidAnswerRequest": {
+        "type": "object",
+        "required": ["queryId", "handles"],
+        "properties": {
+          "queryId": { "type": "string" },
+          "handles": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "uniqueItems": true,
+            "items": { "type": "string" }
+          }
+        }
+      },
+      "EvidenceSynthesis": {
+        "type": "object",
+        "required": ["answer", "confidence", "usedHandles", "contributions", "mode"],
+        "properties": {
+          "answer": { "type": "string" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "consensus": { "type": "array", "items": { "type": "string" } },
+          "disagreements": { "type": "array", "items": { "type": "string" } },
+          "usedHandles": { "type": "array", "items": { "type": "string" } },
+          "contributions": { "type": "array", "items": { "type": "object" } },
+          "model": { "type": "string" },
+          "mode": { "type": "string" }
+        }
+      },
+      "SubmitFeedback": {
+        "type": "object",
+        "required": ["outcome"],
+        "properties": {
+          "outcome": { "type": "string", "enum": ["helpful", "not_helpful", "report"] },
+          "reason": { "type": ["string", "null"], "maxLength": 1000 }
+        }
+      },
+      "DocumentFeedback": {
+        "type": "object",
+        "required": ["id", "queryId", "documentHandle", "payer", "outcome", "status", "createdAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "queryId": { "type": "string" },
+          "documentHandle": { "type": "string" },
+          "payer": { "type": "string" },
+          "outcome": { "type": "string" },
+          "reason": { "type": ["string", "null"] },
+          "status": { "type": "string", "enum": ["recorded", "pending", "upheld", "dismissed"] },
+          "reviewNote": { "type": ["string", "null"] },
+          "createdAt": { "type": "integer" },
+          "reviewedAt": { "type": ["integer", "null"] }
+        }
+      },
+      "WalletChallenge": {
+        "type": "object",
+        "required": ["id", "wallet", "message", "expiresAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "wallet": { "type": "string" },
+          "message": { "type": "string" },
+          "expiresAt": { "type": "integer" }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "type": "string" },
+              "message": { "type": "string" }
             }
           }
         }

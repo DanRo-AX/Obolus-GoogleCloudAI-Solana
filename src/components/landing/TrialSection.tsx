@@ -178,12 +178,16 @@ export function TrialSection() {
                 </span>
               </>
             }
-            html={SHELF_RESPONSE_HTML}
+            html={SHELF_RESPONSE_HTML
+              .replaceAll('₩2,100', '₩70')
+              .replaceAll('₩400', '₩15')
+              .replaceAll('₩300', '₩10')
+              .replaceAll('₩200', '₩5')}
           />
         </div>
 
         <p className="mt-10 text-center font-mono text-xs font-medium uppercase tracking-[1px] text-muted-foreground">
-          7 opens · ₩2,100 · settled over x402
+          7 opens · ₩70 · settled over x402
         </p>
       </div>
 

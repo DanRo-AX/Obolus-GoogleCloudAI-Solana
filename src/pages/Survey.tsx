@@ -15,6 +15,12 @@ import { AGE_BANDS, HOUSEHOLDS, REGIONS } from '@/data/onboarding'
 import { AUTO_MATCH_STRIKE_LIMIT, STRIKE_LIMIT } from '@/data/onboarding'
 import { MAIN_GUIDANCE, warmupsFor, type Warmup } from '@/data/survey'
 import { assess, type Issue } from '@/lib/quality'
+import {
+  BACKEND_ENABLED,
+  beaconReleaseOpenCallReservation,
+  releaseOpenCallReservation,
+  reserveOpenCall,
+} from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
 
@@ -28,7 +34,7 @@ import { useUi } from '@/state/ui'
 export default function Survey() {
   const { orderId } = useParams()
   const navigate = useNavigate()
-  const { orders, answerOrder, profile, suspended } = useUi()
+  const { orders, answerOrder, profile, suspended, authReady } = useUi()
   const order = orders.find((o) => o.id === orderId)
 
   const warmups = useMemo(() => warmupsFor(order?.shelf ?? ''), [order?.shelf])
@@ -43,6 +49,9 @@ export default function Survey() {
   const [struck, setStruck] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [reservationExpiresAt, setReservationExpiresAt] = useState<number | null>(null)
+  const [reservationError, setReservationError] = useState<string | null>(null)
+  const submittedRef = useRef(false)
   const mainRef = useRef<HTMLTextAreaElement>(null)
 
   const onLast = step === warmups.length
@@ -52,6 +61,48 @@ export default function Survey() {
     if (onLast) mainRef.current?.focus()
   }, [onLast])
 
+  useEffect(() => {
+    if (!BACKEND_ENABLED || !orderId || !profile || suspended) return
+    let cancelled = false
+    const hold = async () => {
+      try {
+        const reservation = await reserveOpenCall(orderId)
+        if (!cancelled) {
+          setReservationExpiresAt(reservation.expiresAt)
+          setReservationError(null)
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setReservationError(
+            error instanceof Error ? error.message : 'A slot could not be reserved.',
+          )
+        }
+      }
+    }
+    void hold()
+    const interval = window.setInterval(() => void hold(), 60_000)
+    const releaseOnPageHide = () => {
+      if (!submittedRef.current) beaconReleaseOpenCallReservation(orderId)
+    }
+    window.addEventListener('pagehide', releaseOnPageHide)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+      window.removeEventListener('pagehide', releaseOnPageHide)
+      if (!submittedRef.current) {
+        void releaseOpenCallReservation(orderId).catch(() => undefined)
+      }
+    }
+  }, [orderId, profile, suspended])
+
+  if (!authReady) {
+    return (
+      <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+        <Loader2 className="mr-2 size-4 animate-spin" />
+        Loading your call…
+      </div>
+    )
+  }
   if (!order) return <Navigate to="/dashboard" replace />
   if (!profile) return <Navigate to="/onboarding" replace />
   if (suspended) return <Navigate to="/dashboard" replace />
@@ -76,11 +127,19 @@ export default function Survey() {
     setSubmitting(true)
     setSubmitError(null)
     try {
+      const interviewResponses = warmups.flatMap((warmup) => {
+        const answer = answers[warmup.id]?.trim()
+        return answer
+          ? [{ questionId: warmup.id, prompt: warmup.prompt, answer }]
+          : []
+      })
       const result = await answerOrder(
         order.id,
         text,
         issues.length ? issues : undefined,
+        interviewResponses,
       )
+      submittedRef.current = true
       setFlags(result.issues.length ? result.issues : null)
       setStruck(result.voided)
       setDone(true)
@@ -189,6 +248,7 @@ export default function Survey() {
         </div>
         <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
           {step + 1}/{total}
+          {reservationExpiresAt ? ' · slot held 10 min' : ''}
         </span>
         <button
           type="button"
@@ -202,6 +262,11 @@ export default function Survey() {
 
       <div className="flex flex-1 items-center justify-center px-6 py-10">
         <div key={step} className="animate-fade-in-up w-full max-w-xl">
+          {reservationError ? (
+            <div className="mb-6 rounded-[6px] border border-destructive/30 bg-destructive/[0.04] p-4 text-sm text-destructive">
+              {reservationError} Return to the dashboard and choose another call.
+            </div>
+          ) : null}
           {onLast ? (
             <MainQuestion
               order={order}
@@ -262,7 +327,7 @@ export default function Survey() {
               <Button
                 variant="mono"
                 size="monoLg"
-                disabled={!main.trim() || submitting}
+                disabled={!main.trim() || submitting || Boolean(reservationError)}
                 onClick={() => void submit()}
                 className={cn(flags && 'bg-destructive hover:bg-destructive/90')}
               >

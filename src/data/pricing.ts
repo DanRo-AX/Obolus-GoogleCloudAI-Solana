@@ -1,6 +1,6 @@
-// OPENSHELF pricing. Each plan is a monthly top-up: the price buys a set number
-// of opens for that month, and the balance draws down only for the MDs you
-// actually open. Searching and ranking the stacks costs nothing.
+// Projected mainnet top-ups. The working Devnet demo pays each live quote
+// directly in USDC; the page labels that distinction so it cannot be mistaken
+// for an already implemented subscription or stored-value product.
 
 export type Plan = {
   id: string
@@ -40,10 +40,10 @@ export const PLANS: Plan[] = [
   {
     id: 'lite',
     name: 'Lite',
-    tagline: '₩330 an open. Pull it out only when something needs checking.',
-    credits: '30',
-    price: '₩9,900',
-    cta: 'Top up Lite',
+    tagline: 'About ₩10 an open for occasional questions.',
+    credits: '300',
+    price: '₩3,000',
+    cta: 'Try on Devnet',
     href: '/login?mode=signup&plan=shelf-lite',
     from: 'from-[#0F766E]/[0.12]',
     accent: '#0F766E40',
@@ -53,10 +53,10 @@ export const PLANS: Plan[] = [
   {
     id: 'standard',
     name: 'Standard',
-    tagline: 'About ₩249 an open. Sized for one research round a week.',
-    credits: '120',
-    price: '₩29,900',
-    cta: 'Top up Standard',
+    tagline: 'About ₩7.5 an open for regular research.',
+    credits: '2,000',
+    price: '₩15,000',
+    cta: 'Try on Devnet',
     href: '/login?mode=signup&plan=shelf-standard',
     from: 'from-[#6D28D9]/[0.13]',
     accent: '#6D28D940',
@@ -66,10 +66,10 @@ export const PLANS: Plan[] = [
   {
     id: 'team',
     name: 'Team',
-    tagline: '₩198 an open. Five seats share one balance.',
-    credits: '500',
-    price: '₩99,000',
-    cta: 'Start with Team',
+    tagline: 'About ₩5 an open. Five seats share one balance.',
+    credits: '10,000',
+    price: '₩50,000',
+    cta: 'Join the pilot',
     href: '/login?mode=signup&plan=shelf-team',
     from: 'from-[#23008E]/[0.12]',
     accent: '#23008E40',
@@ -106,7 +106,7 @@ export const FEATURE_TOOLTIPS: Record<string, string> = {
   'Source verification':
     'Each sentence in an answer keeps a record of which MD it came from and which passage. You can check it against your open history.',
   'x402 settlement':
-    'The moment an open is confirmed, x402 sends the payment. It reaches the author directly as USDC on Solana, with no human pressing an approve button.',
+    'The browser demo asks Phantom once for the exact selected set. A multi-document payment lands in payout escrow and creates one claim per contributor. Unattended agent spending still needs a policy-limited wallet or delegation.',
 }
 
 /** Input for the "Find the right plan" estimator. Average opens per question. */

@@ -17,6 +17,10 @@ export type PhantomProvider = {
   connect(opts?: { onlyIfTrusted?: boolean }): Promise<{ publicKey: { toString(): string } }>
   disconnect(): Promise<void>
   signTransaction<T>(tx: T): Promise<T>
+  signMessage?(
+    message: Uint8Array,
+    display?: 'utf8' | 'hex',
+  ): Promise<{ signature: Uint8Array } | Uint8Array>
   on(event: string, handler: (...args: unknown[]) => void): void
   removeListener?(event: string, handler: (...args: unknown[]) => void): void
 }
@@ -48,6 +52,7 @@ export type WalletState = {
   connecting: boolean
   pubkey: string | null
   error: string | null
+  network: 'devnet'
 }
 
 export function useWallet() {
@@ -56,6 +61,7 @@ export function useWallet() {
     connecting: false,
     pubkey: null,
     error: null,
+    network: 'devnet',
   })
 
   useEffect(() => {

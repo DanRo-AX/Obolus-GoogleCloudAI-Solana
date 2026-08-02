@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react'
 import { categoryFor, type CategoryId } from '@/data/categories'
@@ -12,6 +13,7 @@ import {
   BACKEND_ENABLED,
   cancelOpenCall,
   createOpenCall,
+  createWalletChallenge,
   deleteAccount,
   disputeMemory,
   getBalance,
@@ -20,16 +22,20 @@ import {
   getSession,
   login as loginAccount,
   listMemory,
+  listNotifications,
   listOpenCalls,
   logout,
+  markNotificationsRead as markNotificationsReadApi,
   register as registerAccount,
   submitAnswer,
   updatePreferences,
   upsertProfile,
+  verifyWalletChallenge,
   type EarningsSummary,
   type Account,
   type BalanceSummary,
   type DemographicBands,
+  type ContributorNotification,
   type ServerProfile,
   type TargetFilters,
 } from '@/lib/api'
@@ -42,6 +48,20 @@ export type Citation = {
   excerpt: string
   price: number
   demographics?: DemographicBands
+}
+
+export type PaymentContext = {
+  queryId: string
+  accessToken: string
+  payer: string
+}
+
+export type PaymentSession = {
+  queryId: string
+  accessToken: string
+  payer?: string
+  docs: Citation[]
+  shelfName: string
 }
 
 export type ChatMessage = {
@@ -58,9 +78,14 @@ export type ChatMessage = {
     total: number
     /** Present once a real on-chain settlement happened. */
     txSig?: string
+    /** One x402/SVM settlement per opened document. */
+    txSigs?: string[]
     network?: string
     partial?: boolean
+    mode?: 'direct' | 'bundle_escrow'
   }
+  /** Kept privately in local chat state so a paid buyer can recover and rate. */
+  paymentContext?: PaymentContext
 }
 
 export type Chat = {
@@ -70,6 +95,7 @@ export type Chat = {
   messages: ChatMessage[]
   filters?: TargetFilters
   ownerId?: string
+  paymentSession?: PaymentSession
 }
 
 /** An open call. Posted on the spot when the shelves come up empty. */
@@ -91,6 +117,10 @@ export type Order = {
   eligible?: boolean
   escrowRemainingKrw?: number
   status?: 'open' | 'filled' | 'cancelled'
+  reservedSlots?: number
+  reservationExpiresAt?: number
+  recommendationScore?: number
+  recommendationReason?: string[]
 }
 
 /**
@@ -116,10 +146,20 @@ export type Profile = {
   disputeUsed: boolean
   /** Solana pubkey payouts land at. Optional — you can connect later. */
   wallet?: string
+  walletVerified?: boolean
+  walletVerifiedAt?: number
   agreedAt: number
+  browserAlerts?: boolean
+  emailAlerts?: boolean
 }
 
 /** One line of the memory stream. Recent entries carry more weight. */
+export type InterviewResponse = {
+  questionId: string
+  prompt: string
+  answer: string
+}
+
 export type MemoryEntry = {
   id: string
   question: string
@@ -127,7 +167,7 @@ export type MemoryEntry = {
   shelf: string
   earned: number
   createdAt: number
-  via: 'Open call' | 'Auto-match'
+  via: 'Open call' | 'Auto-match' | 'Correction' | 'Reflection'
   /** Voided entries keep the attempted answer but earn zero until disputed. */
   status: 'settled' | 'voided'
   disputeStatus?: 'pending' | 'approved' | 'rejected'
@@ -135,6 +175,17 @@ export type MemoryEntry = {
   flags?: Issue[]
   /** Buyer rating out of 5, once someone has opened it. */
   rating?: number
+  /** Private warm-up context. It is retained but never indexed or sold. */
+  interviewResponses?: InterviewResponse[]
+  memoryType?: 'observation' | 'reflection' | 'correction'
+  importance?: number
+  reliabilityScore?: number
+  contentHash?: string
+  version?: number
+  locked?: boolean
+  accessCount?: number
+  lastAccessedAt?: number
+  sourceIds?: string[]
 }
 
 type UiValue = {
@@ -144,12 +195,16 @@ type UiValue = {
   setAgents: (v: boolean) => void
   autoMatch: boolean
   setAutoMatch: (v: boolean) => void
+  setBrowserAlerts: (v: boolean) => Promise<void>
+  setEmailAlerts: (v: boolean) => Promise<void>
   mobileSidebar: boolean
   setMobileSidebar: (v: boolean) => void
   chats: Chat[]
   orders: Order[]
   memory: MemoryEntry[]
   earnings: EarningsSummary | null
+  notifications: ContributorNotification[]
+  markNotificationsRead: (ids?: string[]) => Promise<void>
   balance: BalanceSummary | null
   account: Account | null
   authReady: boolean
@@ -158,10 +213,15 @@ type UiValue = {
   saveProfile: (
     p: Omit<Profile, 'strikes' | 'disputeUsed' | 'agreedAt'>,
   ) => Promise<void>
+  verifyPayoutWallet: (
+    wallet: string,
+    signMessage: (message: string) => Promise<string>,
+  ) => Promise<void>
   authenticate: (
     email: string,
     password: string,
     signup: boolean,
+    ageConfirmed14?: boolean,
   ) => Promise<void>
   signOut: () => Promise<void>
   deleteCurrentAccount: () => Promise<void>
@@ -171,6 +231,7 @@ type UiValue = {
   disputeStrike: (memoryId: string, reason: string) => Promise<void>
   refreshLedger: () => Promise<void>
   createChat: (prompt: string, filters?: TargetFilters) => string
+  patchChat: (chatId: string, patch: Partial<Chat>) => void
   appendAssistant: (chatId: string, message: ChatMessage) => void
   patchMessage: (
     chatId: string,
@@ -186,6 +247,7 @@ type UiValue = {
     orderId: string,
     answer: string,
     flags?: Issue[],
+    interviewResponses?: InterviewResponse[],
   ) => Promise<{ voided: boolean; issues: Issue[] }>
   cancelOrder: (orderId: string) => Promise<void>
   clearAll: () => void
@@ -193,6 +255,7 @@ type UiValue = {
 
 const UiContext = createContext<UiValue | null>(null)
 const STORAGE_KEY = 'openshelf:v1'
+const SESSION_STORAGE_KEY = 'openshelf:session:v1'
 
 const HOUR = 1000 * 60 * 60
 
@@ -317,28 +380,42 @@ function profileFromServer(profile: ServerProfile): Profile {
     strikes: profile.strikes,
     disputeUsed: profile.disputeUsed,
     wallet: profile.wallet,
+    walletVerified: profile.walletVerified,
+    walletVerifiedAt: profile.walletVerifiedAt,
     agreedAt: profile.agreedAt,
+    browserAlerts: profile.browserAlerts,
+    emailAlerts: profile.emailAlerts,
   }
 }
 
 function load(): Persisted {
   const fallback: Persisted = {
     chats: [],
-    orders: SEED_ORDERS,
-    memory: SEED_MEMORY,
+    orders: BACKEND_ENABLED ? [] : SEED_ORDERS,
+    memory: BACKEND_ENABLED ? [] : SEED_MEMORY,
     profile: null,
     agents: false,
     autoMatch: true,
   }
   if (typeof window === 'undefined') return fallback
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
+    // Server-backed chats contain paid passages and query capabilities. Keep
+    // them only for the current browser session, and remove the legacy durable
+    // copy left by earlier builds.
+    if (BACKEND_ENABLED) window.localStorage.removeItem(STORAGE_KEY)
+    const storage = BACKEND_ENABLED ? window.sessionStorage : window.localStorage
+    const key = BACKEND_ENABLED ? SESSION_STORAGE_KEY : STORAGE_KEY
+    const raw = storage.getItem(key)
     if (!raw) return fallback
     const parsed = JSON.parse(raw) as Partial<Persisted>
     return {
       chats: parsed.chats ?? [],
-      orders: parsed.orders ? normalise(parsed.orders) : SEED_ORDERS,
-      memory: parsed.memory ? normaliseMemory(parsed.memory) : SEED_MEMORY,
+      orders: parsed.orders
+        ? normalise(parsed.orders)
+        : BACKEND_ENABLED ? [] : SEED_ORDERS,
+      memory: parsed.memory
+        ? normaliseMemory(parsed.memory)
+        : BACKEND_ENABLED ? [] : SEED_MEMORY,
       profile: parsed.profile ?? null,
       agents: parsed.agents ?? false,
       autoMatch: parsed.autoMatch ?? true,
@@ -358,6 +435,8 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
   const [orders, setOrders] = useState<Order[]>(initial.orders)
   const [memory, setMemory] = useState<MemoryEntry[]>(initial.memory)
   const [earnings, setEarnings] = useState<EarningsSummary | null>(null)
+  const [notifications, setNotifications] = useState<ContributorNotification[]>([])
+  const notifiedIds = useRef(new Set<string>())
   const [profile, setProfile] = useState<Profile | null>(
     BACKEND_ENABLED ? null : initial.profile,
   )
@@ -367,8 +446,9 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(
-        STORAGE_KEY,
+      const storage = BACKEND_ENABLED ? window.sessionStorage : window.localStorage
+      storage.setItem(
+        BACKEND_ENABLED ? SESSION_STORAGE_KEY : STORAGE_KEY,
         JSON.stringify({ chats, orders, memory, profile, agents, autoMatch }),
       )
     } catch {
@@ -391,13 +471,15 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           setMemory([])
           setProfile(null)
           setEarnings(null)
+          setNotifications([])
           setBalance(null)
           return
         }
-        const [remoteMemory, remoteProfile, remoteEarnings] = await Promise.all([
+        const [remoteMemory, remoteProfile, remoteEarnings, remoteNotifications] = await Promise.all([
           listMemory(),
           getProfile(),
           getEarnings(),
+          listNotifications(),
         ])
         if (cancelled) return
         setAccount(session.user)
@@ -409,6 +491,8 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
         setBalance(session.balance)
         setMemory(remoteMemory)
         setEarnings(remoteEarnings)
+        setNotifications(remoteNotifications)
+        remoteNotifications.forEach((notification) => notifiedIds.current.add(notification.id))
         if (remoteProfile) {
           setProfile(profileFromServer(remoteProfile))
           setAutoMatchState(remoteProfile.autoMatch)
@@ -426,16 +510,65 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  useEffect(() => {
+    if (!BACKEND_ENABLED || !account) return
+    let cancelled = false
+    const collect = async () => {
+      const [remoteNotifications, remoteOrders] = await Promise.all([
+        listNotifications(),
+        listOpenCalls(),
+      ])
+      if (cancelled) return
+      const fresh = remoteNotifications.filter(
+        (notification) =>
+          !notification.readAt && !notifiedIds.current.has(notification.id),
+      )
+      remoteNotifications.forEach((notification) =>
+        notifiedIds.current.add(notification.id),
+      )
+      setNotifications(remoteNotifications)
+      setOrders(remoteOrders)
+      if (
+        profile?.browserAlerts !== false &&
+        typeof Notification !== 'undefined' &&
+        Notification.permission === 'granted'
+      ) {
+        for (const item of fresh.slice(0, 3)) {
+          const alert = new Notification(item.title, { body: item.body })
+          alert.onclick = () => {
+            window.focus()
+            window.location.assign(
+              item.openCallId ? `/answer/${item.openCallId}` : '/dashboard',
+            )
+          }
+        }
+      }
+    }
+    void collect().catch(() => undefined)
+    const interval = window.setInterval(
+      () => void collect().catch(() => undefined),
+      5_000,
+    )
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [account, profile?.browserAlerts])
+
   const refreshLedger = useCallback(async () => {
     if (!BACKEND_ENABLED) return
-    const [remoteMemory, remoteEarnings, remoteBalance] = await Promise.all([
+    const [remoteMemory, remoteEarnings, remoteBalance, remoteOrders, remoteNotifications] = await Promise.all([
       listMemory(),
       getEarnings(),
       getBalance(),
+      listOpenCalls(),
+      listNotifications(),
     ])
     setMemory(remoteMemory)
     setEarnings(remoteEarnings)
     setBalance(remoteBalance)
+    setOrders(remoteOrders)
+    setNotifications(remoteNotifications)
   }, [])
 
   const createChat = useCallback((prompt: string, filters?: TargetFilters) => {
@@ -462,6 +595,12 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       prev.map((c) =>
         c.id === chatId ? { ...c, messages: [...c.messages, message] } : c,
       ),
+    )
+  }, [])
+
+  const patchChat = useCallback((chatId: string, patch: Partial<Chat>) => {
+    setChats((prev) =>
+      prev.map((chat) => (chat.id === chatId ? { ...chat, ...patch } : chat)),
     )
   }, [])
 
@@ -537,14 +676,19 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
    * both updaters stay pure.
    */
   const answerOrder = useCallback(
-    async (orderId: string, answer: string, flags?: Issue[]) => {
+    async (
+      orderId: string,
+      answer: string,
+      flags?: Issue[],
+      interviewResponses?: InterviewResponse[],
+    ) => {
       const order = orders.find((o) => o.id === orderId)
       if (!order || order.answered >= order.target) {
         return { voided: false, issues: [] }
       }
 
       if (BACKEND_ENABLED) {
-        const result = await submitAnswer(orderId, answer)
+        const result = await submitAnswer(orderId, answer, interviewResponses)
         setOrders((prev) =>
           prev.map((item) => (item.id === orderId ? result.order : item)),
         )
@@ -592,6 +736,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           via: 'Open call' as const,
           status: voided ? ('voided' as const) : ('settled' as const),
           flags,
+          interviewResponses,
         },
         ...prev,
       ])
@@ -671,13 +816,72 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     [autoMatch, profile],
   )
 
+  const setBrowserAlerts = useCallback(
+    async (value: boolean) => {
+      if (!profile) return
+      let enabled = value
+      if (value) {
+        if (typeof Notification === 'undefined') {
+          throw new Error('This browser does not support system notifications.')
+        }
+        const permission =
+          Notification.permission === 'granted'
+            ? 'granted'
+            : await Notification.requestPermission()
+        enabled = permission === 'granted'
+        if (!enabled) {
+          throw new Error('Browser notification permission was not granted.')
+        }
+      }
+      if (BACKEND_ENABLED) {
+        const updated = await updatePreferences({ browserAlerts: enabled })
+        setProfile(profileFromServer(updated))
+      } else {
+        setProfile((current) => current ? { ...current, browserAlerts: enabled } : current)
+      }
+    },
+    [profile],
+  )
+
+  const setEmailAlerts = useCallback(
+    async (value: boolean) => {
+      if (!profile) return
+      if (BACKEND_ENABLED) {
+        const updated = await updatePreferences({ emailAlerts: value })
+        setProfile(profileFromServer(updated))
+      } else {
+        setProfile((current) => current ? { ...current, emailAlerts: value } : current)
+      }
+    },
+    [profile],
+  )
+
+  const markNotificationsRead = useCallback(async (ids: string[] = []) => {
+    if (BACKEND_ENABLED) await markNotificationsReadApi(ids)
+    const readAt = Date.now()
+    setNotifications((current) =>
+      current.map((notification) =>
+        ids.length === 0 || ids.includes(notification.id)
+          ? { ...notification, readAt: notification.readAt ?? readAt }
+          : notification,
+      ),
+    )
+  }, [])
+
   const saveProfile = useCallback(
     async (p: Omit<Profile, 'strikes' | 'disputeUsed' | 'agreedAt'>) => {
       if (BACKEND_ENABLED) {
-        const saved = await upsertProfile(p, { autoMatch, agents })
+        const saved = await upsertProfile(p, {
+          autoMatch,
+          agents,
+          browserAlerts: p.browserAlerts ?? false,
+          emailAlerts: p.emailAlerts ?? false,
+        })
         setProfile(profileFromServer(saved))
         setAutoMatchState(saved.autoMatch)
         setAgentsState(saved.agents)
+        const refreshedOrders = await listOpenCalls().catch(() => null)
+        if (refreshedOrders) setOrders(refreshedOrders)
         return
       }
       setProfile({ ...p, strikes: 0, disputeUsed: false, agreedAt: Date.now() })
@@ -685,18 +889,64 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     [agents, autoMatch],
   )
 
+  const verifyPayoutWallet = useCallback(
+    async (
+      wallet: string,
+      signMessage: (message: string) => Promise<string>,
+    ) => {
+      if (!profile) throw new Error('Complete onboarding before verifying a wallet.')
+      let serverProfile = await upsertProfile(
+        {
+          handle: profile.handle,
+          ageBand: profile.ageBand,
+          region: profile.region,
+          household: profile.household,
+          field: profile.field,
+          years: profile.years,
+          speaksTo: profile.speaksTo,
+          wallet,
+        },
+        {
+          autoMatch,
+          agents,
+          browserAlerts: profile.browserAlerts ?? false,
+          emailAlerts: profile.emailAlerts ?? false,
+        },
+      )
+      setProfile(profileFromServer(serverProfile))
+      const challenge = await createWalletChallenge(wallet)
+      const signature = await signMessage(challenge.message)
+      serverProfile = await verifyWalletChallenge(challenge.id, signature)
+      setProfile(profileFromServer(serverProfile))
+    },
+    [agents, autoMatch, profile],
+  )
+
   const authenticate = useCallback(
-    async (email: string, password: string, signup: boolean) => {
+    async (
+      email: string,
+      password: string,
+      signup: boolean,
+      ageConfirmed14 = false,
+    ) => {
       const session = signup
-        ? await registerAccount(email, password)
+        ? await registerAccount(email, password, ageConfirmed14)
         : await loginAccount(email, password)
-      const [remoteOrders, remoteMemory, remoteProfile, remoteEarnings] =
-        await Promise.all([listOpenCalls(), listMemory(), getProfile(), getEarnings()])
+      const [remoteOrders, remoteMemory, remoteProfile, remoteEarnings, remoteNotifications] =
+        await Promise.all([
+          listOpenCalls(),
+          listMemory(),
+          getProfile(),
+          getEarnings(),
+          listNotifications(),
+        ])
       setAccount(session.user)
       setBalance(session.balance)
       setOrders(remoteOrders)
       setMemory(remoteMemory)
       setEarnings(remoteEarnings)
+      setNotifications(remoteNotifications)
+      remoteNotifications.forEach((notification) => notifiedIds.current.add(notification.id))
       setChats([])
       if (remoteProfile) {
         setProfile(profileFromServer(remoteProfile))
@@ -716,9 +966,12 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     setProfile(null)
     setMemory([])
     setEarnings(null)
+    setNotifications([])
+    notifiedIds.current.clear()
     setChats([])
     if (BACKEND_ENABLED) {
-      setOrders(await listOpenCalls().catch(() => SEED_ORDERS))
+      window.sessionStorage.removeItem(SESSION_STORAGE_KEY)
+      setOrders(await listOpenCalls().catch(() => []))
     }
   }, [])
 
@@ -729,10 +982,13 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     setProfile(null)
     setMemory([])
     setEarnings(null)
+    setNotifications([])
+    notifiedIds.current.clear()
     setChats([])
-    setOrders(BACKEND_ENABLED ? await listOpenCalls().catch(() => SEED_ORDERS) : SEED_ORDERS)
+    setOrders(BACKEND_ENABLED ? await listOpenCalls().catch(() => []) : SEED_ORDERS)
     try {
       window.localStorage.removeItem(STORAGE_KEY)
+      window.sessionStorage.removeItem(SESSION_STORAGE_KEY)
     } catch {
       // Storage is optional.
     }
@@ -756,9 +1012,10 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
 
   const clearAll = useCallback(() => {
     setChats([])
-    setOrders(SEED_ORDERS)
-    setMemory(SEED_MEMORY)
+    setOrders(BACKEND_ENABLED ? [] : SEED_ORDERS)
+    setMemory(BACKEND_ENABLED ? [] : SEED_MEMORY)
     setEarnings(null)
+    setNotifications([])
   }, [])
 
   const suspended = (profile?.strikes ?? 0) >= STRIKE_LIMIT
@@ -771,17 +1028,22 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       setAgents,
       autoMatch,
       setAutoMatch,
+      setBrowserAlerts,
+      setEmailAlerts,
       mobileSidebar,
       setMobileSidebar,
       chats,
       orders,
       memory,
       earnings,
+      notifications,
+      markNotificationsRead,
       balance,
       account,
       authReady,
       profile,
       saveProfile,
+      verifyPayoutWallet,
       authenticate,
       signOut,
       deleteCurrentAccount,
@@ -789,6 +1051,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       disputeStrike,
       refreshLedger,
       createChat,
+      patchChat,
       appendAssistant,
       patchMessage,
       placeOrder,
@@ -802,16 +1065,21 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       setAgents,
       autoMatch,
       setAutoMatch,
+      setBrowserAlerts,
+      setEmailAlerts,
       mobileSidebar,
       chats,
       orders,
       memory,
       earnings,
+      notifications,
+      markNotificationsRead,
       balance,
       account,
       authReady,
       profile,
       saveProfile,
+      verifyPayoutWallet,
       authenticate,
       signOut,
       deleteCurrentAccount,
@@ -819,6 +1087,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       disputeStrike,
       refreshLedger,
       createChat,
+      patchChat,
       appendAssistant,
       patchMessage,
       placeOrder,

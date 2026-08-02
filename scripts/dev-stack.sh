@@ -39,7 +39,10 @@ trap cleanup EXIT INT TERM
 
 cargo run --manifest-path backend/Cargo.toml &
 child_pids+=("$!")
-npm --prefix payment-gateway start &
+# Keep the payment boundary in sync with frontend HMR during local work. A
+# stale non-watching gateway can otherwise expose new UI while still serving
+# old CORS and route contracts, which browsers report only as `Failed to fetch`.
+npm --prefix payment-gateway run dev &
 child_pids+=("$!")
 npm run dev &
 child_pids+=("$!")
