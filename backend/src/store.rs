@@ -20,11 +20,12 @@ use crate::{
         CreateEvidenceEdgeRequest, CreateOpenCallRequest, DemographicBands, DisputeCase, Document,
         DocumentFeedback, EarningEvent, EarningsSummary, EvidenceContribution, EvidenceEdge,
         InterviewResponse, MemoryAccessEvent, MemoryEntry, MemoryExport, OpenCall,
-        OpenDocumentsResponse, PaidDocument, PaymentDocumentProgress, PaymentProgress,
-        PaymentQuote, PublicDocument, RecordChainSettlementRequest, RecoveredPaidDocument,
-        ResolveQuestionResponse, ReviewDisputeRequest, ReviewDocumentFeedbackRequest,
-        SearchFilters, Settlement, SubmitAnswerResponse, SubmitDocumentFeedbackRequest,
-        UpdatePreferencesRequest, UpsertProfileRequest, UserAccount, UserProfile, WalletChallenge,
+        OpenDocumentsResponse, PaidDocument, PaymentDocumentProgress, PaymentDocumentSnapshot,
+        PaymentProgress, PaymentQuote, PublicDocument, RecordChainSettlementRequest,
+        RecoveredPaidDocument, ResolveQuestionResponse, ReviewDisputeRequest,
+        ReviewDocumentFeedbackRequest, SearchFilters, Settlement, SubmitAnswerResponse,
+        SubmitDocumentFeedbackRequest, UpdatePreferencesRequest, UpsertProfileRequest, UserAccount,
+        UserProfile, WalletChallenge,
     },
     quality, seed,
 };
@@ -3287,6 +3288,39 @@ impl Store {
         })
     }
 
+    /// Returns the immutable content committed into a quote to the trusted
+    /// gateway while the x402 middleware is buffering the HTTP response.
+    /// Unlike `paid_document`, this does not mark delivery or expose a public
+    /// route; the middleware discards the buffer if settlement fails.
+    pub fn payment_document_snapshot(
+        &self,
+        quote_id: &str,
+    ) -> Result<PaymentDocumentSnapshot, StoreError> {
+        let connection = self.connection()?;
+        connection
+            .query_row(
+                "SELECT id, document_handle, shelf_snapshot, content_snapshot, price_krw,
+                        content_hash, document_version
+                 FROM payment_quotes WHERE id = ?1",
+                [quote_id.trim()],
+                |row| {
+                    Ok(PaymentDocumentSnapshot {
+                        quote_id: row.get(0)?,
+                        citation: Citation {
+                            handle: row.get(1)?,
+                            shelf: row.get(2)?,
+                            excerpt: row.get(3)?,
+                            price: as_u64(row.get(4)?)?,
+                        },
+                        content_hash: row.get(5)?,
+                        document_version: as_u64(row.get(6)?)?.min(u32::MAX as u64) as u32,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("payment quote"))
+    }
+
     pub fn record_chain_settlement(
         &self,
         request: &RecordChainSettlementRequest,
@@ -5238,6 +5272,10 @@ mod tests {
             store.paid_document(&quote.id),
             Err(StoreError::NotFound("settled payment quote"))
         ));
+        let buffered_snapshot = store.payment_document_snapshot(&quote.id).unwrap();
+        assert_eq!(buffered_snapshot.quote_id, quote.id);
+        assert_eq!(buffered_snapshot.citation.handle, *handle);
+        assert_eq!(buffered_snapshot.citation.excerpt, strong_answer());
         let corrected = store
             .correct_memory(
                 "researcher-1",

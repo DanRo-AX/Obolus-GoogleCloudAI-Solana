@@ -21,14 +21,14 @@ use crate::{
         ContributorManifest, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
         CreateOpenCallRequest, DisputeCase, DocumentFeedback, EarningsSummary, EvidenceEdge,
         LoginRequest, MemoryEntry, MemoryExport, OpenCall, OpenDocumentsResponse, PaidDocument,
-        PaymentProgress, PaymentQuote, PublicDocument, RecordChainSettlementRequest,
-        RecoveredPaidDocument, RegisterRequest, ResolveError, ResolveQuestionRequest,
-        ResolveQuestionResponse, ReviewDisputeRequest, ReviewDocumentFeedbackRequest,
-        SubmitAnswerRequest, SubmitAnswerResponse, SubmitDisputeRequest,
-        SubmitDocumentFeedbackRequest, SynthesizeAnswerRequest, SynthesizeAnswerResponse,
-        SynthesizePaidAnswerRequest, UpdateMemoryRequest, UpdatePreferencesRequest,
-        UpsertProfileRequest, UserAccount, UserProfile, VerifyWalletRequest, WalletChallenge,
-        WalletChallengeRequest,
+        PaymentDocumentSnapshot, PaymentProgress, PaymentQuote, PublicDocument,
+        RecordChainSettlementRequest, RecoveredPaidDocument, RegisterRequest, ResolveError,
+        ResolveQuestionRequest, ResolveQuestionResponse, ReviewDisputeRequest,
+        ReviewDocumentFeedbackRequest, SubmitAnswerRequest, SubmitAnswerResponse,
+        SubmitDisputeRequest, SubmitDocumentFeedbackRequest, SynthesizeAnswerRequest,
+        SynthesizeAnswerResponse, SynthesizePaidAnswerRequest, UpdateMemoryRequest,
+        UpdatePreferencesRequest, UpsertProfileRequest, UserAccount, UserProfile,
+        VerifyWalletRequest, WalletChallenge, WalletChallengeRequest,
     },
     orchestrator,
     search::Resolver,
@@ -173,6 +173,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/internal/v1/payment-quotes/{id}/document",
             get(paid_document),
+        )
+        .route(
+            "/internal/v1/payment-quotes/{id}/snapshot",
+            get(payment_document_snapshot),
         )
         .route(
             "/internal/v1/chain-settlements",
@@ -657,6 +661,15 @@ async fn paid_document(
 ) -> Result<Json<PaidDocument>, ApiError> {
     require_internal(&state, &headers)?;
     Ok(Json(state.store.paid_document(&id)?))
+}
+
+async fn payment_document_snapshot(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<PaymentDocumentSnapshot>, ApiError> {
+    require_internal(&state, &headers)?;
+    Ok(Json(state.store.payment_document_snapshot(&id)?))
 }
 
 async fn record_chain_settlement(
@@ -1200,15 +1213,16 @@ mod tests {
 
     #[tokio::test]
     async fn payment_ledger_routes_require_the_internal_service_token() {
-        let response = demo_app()
-            .oneshot(
-                Request::get("/internal/v1/payment-quotes/query/document")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        for path in [
+            "/internal/v1/payment-quotes/query/document",
+            "/internal/v1/payment-quotes/query/snapshot",
+        ] {
+            let response = demo_app()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
     }
 
     #[tokio::test]

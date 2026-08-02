@@ -531,6 +531,20 @@ pub struct PaidDocument {
     pub citation: Citation,
 }
 
+/// A quote-bound content snapshot returned only to the trusted x402 gateway.
+///
+/// The gateway needs to build and buffer the success response before the x402
+/// middleware settles the transaction. This type deliberately has no delivery
+/// timestamp: fetching it neither proves payment nor records buyer access.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentDocumentSnapshot {
+    pub quote_id: String,
+    pub content_hash: String,
+    pub document_version: u32,
+    pub citation: Citation,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordChainSettlementRequest {

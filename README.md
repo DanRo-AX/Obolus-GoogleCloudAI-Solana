@@ -86,7 +86,7 @@ Phantom signs one author payment per document. The preview shows KRW, estimated
 Devnet USDC, approval count, network, and the token mint. A question that already
 has enough matching documents skips the call entirely and offers to settle on
 the spot — the inverted order the meeting called out. Seeded opens cost ₩5–₩25;
-the five-document Seongsu example currently resolves to ₩40 (about 0.029632
+the five-document Seongsu example currently resolves to ₩50 (about 0.03704
 Devnet USDC at the default conversion rate).
 
 Matching, ranking, budget filtering, author deduplication, and the hit/miss

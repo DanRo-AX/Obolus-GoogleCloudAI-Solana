@@ -55,7 +55,7 @@ Updated: 2026-08-02
    browser flow asks once per document. All returned transaction signatures are
    kept in the chat receipt rather than hiding all but the first.
 4. Seeded document opens are true micropayments: ₩5–₩25 each. The five-document
-   Seongsu example currently resolves to ₩40, about 0.029632 USDC at
+   Seongsu example currently resolves to ₩50, about 0.03704 USDC at
    ₩1,350/USDC.
 5. A failure finishes the hit/miss trace instead of leaving Step 4 spinning.
 6. The browser stores the query recovery token with the local chat, asks Rust
@@ -115,11 +115,12 @@ Oxlint, and end-to-end Chrome walkthroughs of registration, onboarding, explicit
 payout-address opt-in, profile eligibility refresh, MISS-to-open-call creation,
 the four-step private interview, an accepted ₩300 answer and earnings ledger,
 and buyer retrieval of that returned answer after a full account switch erased
-the original local chat. The latest pass also inspected the ₩40/5-approval HIT
-preview without invoking Phantom and confirmed that projected subscriptions and
-agent payments are disabled. Earlier live Devnet passes covered Phantom reconnect,
-five real x402/SVM settlements, the success receipt, signed-out route guards,
-desktop and 390px mobile payment previews, and mobile navigation overlap.
+the original local chat. The latest live Devnet pass completed the ₩50/5-approval
+HIT across a response-loss recovery boundary, proved that failed attempts did not
+create chain settlements, and finalized all five x402/SVM transfers. It also
+confirmed projected subscriptions and agent payments remain disabled. Earlier
+passes covered Phantom reconnect, signed-out route guards, desktop and 390px
+mobile payment previews, and mobile navigation overlap.
 
 ## Explicit production boundaries
 

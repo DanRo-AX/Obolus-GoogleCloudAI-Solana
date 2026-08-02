@@ -9,6 +9,13 @@ to `X402_OUTBOX_PATH` before the mirror call and replayed idempotently.
 rejects the local shared secret, and `OPENSHELF_REQUIRE_MAINNET=true` rejects the
 default Devnet network.
 
+The browser obtains mint metadata and recent blockhashes through the restricted
+`POST /rpc` proxy, which allows only `getAccountInfo` and `getLatestBlockhash`.
+The resource server deliberately does not embed a blockhash in the 402 payment
+requirements: the middleware rebuilds those requirements for the signed retry,
+so a changing blockhash would make an otherwise valid V2 payload fail matching.
+`npm run test` guards this invariant.
+
 The root `.env.example` documents every setting. For local development use
 `npm run dev:stack` from the repository root.
 

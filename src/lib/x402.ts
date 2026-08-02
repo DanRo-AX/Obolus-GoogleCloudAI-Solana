@@ -38,6 +38,7 @@ const X402_GATEWAY_BASE = (
 ).replace(/\/$/, '')
 const RESOURCE = '/api/flash-research'
 const DEVNET_NETWORK = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
+const DEVNET_RPC_BACKOFF_MS = [1_500, 3_000, 6_000]
 
 export class PaymentError extends Error {
   code: 'cancelled' | 'identity_mismatch' | 'failed'
@@ -149,20 +150,29 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
     const [
       { x402Client },
       { wrapFetchWithPayment, decodePaymentResponseHeader },
+      { decodePaymentRequiredHeader },
       svm,
       { phantomSvmSigner },
     ] =
       await Promise.all([
         import('@x402/core/client'),
         import('@x402/fetch'),
+        import('@x402/core/http'),
         import('@x402/svm/exact/client'),
         import('@/lib/phantomSigner'),
       ])
     const client = new x402Client()
+    const signer = phantomSvmSigner(provider)
     svm.registerExactSvmScheme(client, {
-      signer: phantomSvmSigner(provider),
+      signer,
       networks: [DEVNET_NETWORK],
     })
+    // Override the V2 scheme with the gateway's restricted RPC proxy. The
+    // registration helper remains above to preserve its V1 compatibility.
+    client.register(
+      DEVNET_NETWORK,
+      new svm.ExactSvmScheme(signer, { rpcUrl: `${X402_GATEWAY_BASE}/rpc` }),
+    )
     const paidFetch = wrapFetchWithPayment(window.fetch.bind(window), client)
     // Each document is its own author payment and therefore its own x402 resource.
     for (const document of req.docs) {
@@ -170,15 +180,21 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
       const resource = `${X402_GATEWAY_BASE}/api/v1/paid-documents/${encodeURIComponent(
         req.queryId,
       )}/${encodeURIComponent(document.handle)}`
-      const response = await paidFetch(resource, {
-        method: 'GET',
-        headers: { accept: 'application/json' },
-      })
+      const response = await paidFetchWithRpcBackoff(paidFetch, resource)
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as
           | { error?: { message?: string } }
           | null
-        throw new Error(payload?.error?.message ?? `x402 gateway returned ${response.status}.`)
+        const settlementHeader = response.headers.get('PAYMENT-RESPONSE')
+        const requirementHeader = response.headers.get('PAYMENT-REQUIRED')
+        const protocolMessage = settlementHeader
+          ? settlementFailureMessage(settlementHeader, decodePaymentResponseHeader)
+          : requirementHeader
+            ? verificationFailureMessage(requirementHeader, decodePaymentRequiredHeader)
+            : null
+        throw new Error(
+          payload?.error?.message ?? protocolMessage ?? `x402 gateway returned ${response.status}.`,
+        )
       }
       const payload = (await response.json()) as OpenResult
       for (const citation of payload.citations) {
@@ -191,6 +207,12 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
         const settlement = decodePaymentResponseHeader(paymentResponse)
         transactions.push(settlement.transaction)
         settledNetwork = settlement.network
+      }
+      // Public Devnet RPCs are shared and commonly throttle bursts. Each
+      // document is a distinct author transfer, so pace the next blockhash
+      // request instead of firing wallet approvals back-to-back.
+      if (openedHandles.size < requestedHandles.size) {
+        await delay(650)
       }
     }
 
@@ -244,6 +266,62 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
     }
     throw new PaymentError(`x402 payment failed: ${message}`)
   }
+}
+
+async function paidFetchWithRpcBackoff(
+  paidFetch: typeof window.fetch,
+  resource: string,
+): Promise<Response> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await paidFetch(resource, {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const retryDelay = DEVNET_RPC_BACKOFF_MS[attempt]
+      // x402 constructs the payload before Phantom is asked to sign. Retrying
+      // this exact failure cannot duplicate a transfer because no signed
+      // transaction exists yet.
+      if (retryDelay === undefined || !isPayloadRpcRateLimit(message)) throw error
+      await delay(retryDelay)
+    }
+  }
+}
+
+function settlementFailureMessage(
+  header: string,
+  decode: (value: string) => { errorReason?: string; errorMessage?: string },
+): string | null {
+  try {
+    const result = decode(header)
+    return result.errorMessage ?? result.errorReason ?? null
+  } catch {
+    return null
+  }
+}
+
+function verificationFailureMessage(
+  header: string,
+  decode: (value: string) => { error?: string },
+): string | null {
+  try {
+    return decode(header).error ?? null
+  } catch {
+    return null
+  }
+}
+
+function isPayloadRpcRateLimit(message: string): boolean {
+  return (
+    message.includes('Failed to create payment payload') &&
+    message.includes('HTTP error (429)')
+  )
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
 }
 
 function paymentResult(

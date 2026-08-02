@@ -1,18 +1,19 @@
-import express, { type NextFunction, type Request, type Response } from "express";
+import express, { type NextFunction, type Request, type Response as ExpressResponse } from "express";
 import { appendFile, readFile } from "node:fs/promises";
 import { HTTPFacilitatorClient, type HTTPRequestContext } from "@x402/core/server";
 import type { Network } from "@x402/core/types";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
-import { registerExactSvmScheme } from "@x402/svm/exact/server";
+import { createStableExactSvmServerScheme } from "./x402-svm.js";
 
 const DEVNET_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as Network;
+const DEFAULT_DEVNET_RPC_URL = "https://api.devnet.solana.com";
 const environment = env("NODE_ENV", "development").toLowerCase();
 const production = environment === "production";
 const rustApiUrl = env("RUST_API_URL", "http://127.0.0.1:8787").replace(/\/$/, "");
 const internalToken = env("OPENSHELF_INTERNAL_TOKEN", "openshelf-local-internal");
 const facilitatorUrl = env("X402_FACILITATOR_URL", "https://x402.org/facilitator");
 const network = env("X402_NETWORK", DEVNET_NETWORK) as Network;
-const rpcUrl = process.env.X402_RPC_URL?.trim() || undefined;
+const rpcUrl = process.env.X402_RPC_URL?.trim() || DEFAULT_DEVNET_RPC_URL;
 const allowedOrigin = env("FRONTEND_ORIGIN", "http://localhost:4319");
 const port = integerEnv("PORT", 1402);
 const outboxPath = env("X402_OUTBOX_PATH", "x402-outbox.ndjson");
@@ -48,6 +49,8 @@ type PaidDocument = {
   };
 };
 
+type PaymentDocumentSnapshot = PaidDocument;
+
 type RouteIdentity = { queryId: string; handle: string; key: string };
 type QuoteCacheEntry = { quote: Promise<PaymentQuote>; expiresAt: number };
 type PendingSettlement = {
@@ -65,6 +68,7 @@ type OutboxRecord =
 
 const quotes = new Map<string, QuoteCacheEntry>();
 const pendingSettlements = new Map<string, PendingSettlement>();
+const allowedBrowserRpcMethods = new Set(["getAccountInfo", "getLatestBlockhash"]);
 
 async function internalJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${rustApiUrl}${path}`, {
@@ -182,7 +186,7 @@ async function retryPendingSettlements(): Promise<void> {
 
 const facilitator = new HTTPFacilitatorClient({ url: facilitatorUrl });
 const resourceServer = new x402ResourceServer(facilitator);
-registerExactSvmScheme(resourceServer, { networks: [network], rpcUrl });
+resourceServer.register(network, createStableExactSvmServerScheme());
 
 resourceServer.onAfterVerify(async (context) => {
   if (context.result.payer && context.result.payer === context.requirements.payTo) {
@@ -192,6 +196,14 @@ resourceServer.onAfterVerify(async (context) => {
       message: "payer and document recipient must be different wallets",
     };
   }
+});
+
+resourceServer.onVerifyFailure(async (context) => {
+  console.error("x402 payment verification failed", safeError(context.error));
+});
+
+resourceServer.onSettleFailure(async (context) => {
+  console.error("x402 payment settlement failed", safeError(context.error));
 });
 
 resourceServer.onAfterSettle(async (context) => {
@@ -230,13 +242,13 @@ app.use((request, response, next) => {
   response.setHeader("cache-control", "no-store");
   response.setHeader("x-content-type-options", "nosniff");
   response.setHeader("x-frame-options", "DENY");
-  response.setHeader("access-control-allow-methods", "GET,OPTIONS");
+  response.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
   response.setHeader(
     "access-control-allow-headers",
     // @x402/fetch adds Access-Control-Expose-Headers to its paid retry.
     // It is unusual as a request header, but must be allowed or the browser
     // blocks the signed retry during CORS preflight with `Failed to fetch`.
-    "Content-Type,Payment-Signature,X-Payment,Access-Control-Expose-Headers",
+    "Content-Type,Payment-Signature,X-Payment,Access-Control-Expose-Headers,Solana-Client",
   );
   response.setHeader(
     "access-control-expose-headers",
@@ -247,6 +259,28 @@ app.use((request, response, next) => {
     return;
   }
   next();
+});
+
+// The x402 SVM client needs mint metadata and a recent blockhash before it can
+// ask Phantom to sign. Proxy only those read-only methods so a paid RPC key can
+// remain server-side and browser bursts can honor upstream Retry-After headers.
+app.post("/rpc", async (request, response, next) => {
+  try {
+    const body = request.body as unknown;
+    if (!isAllowedBrowserRpcRequest(body)) {
+      response.status(400).json({
+        jsonrpc: "2.0",
+        error: { code: -32600, message: "RPC method is not allowed" },
+        id: rpcRequestId(body),
+      });
+      return;
+    }
+    const upstream = await fetchRpcWithBackoff(body);
+    const payload = await upstream.text();
+    response.status(upstream.status).type("application/json").send(payload);
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/healthz", (_request, response) => {
@@ -302,6 +336,15 @@ app.use(
             },
           };
         },
+        settlementFailedResponseBody: (_context, result) => ({
+          contentType: "application/json",
+          body: {
+            error: {
+              code: "settlement_failed",
+              message: result.errorMessage ?? result.errorReason,
+            },
+          },
+        }),
       },
     },
     resourceServer,
@@ -317,8 +360,11 @@ app.get("/api/v1/paid-documents/:queryId/:handle", async (request, response, nex
       key: `${request.params.queryId}\u0000${request.params.handle}`,
     };
     const quote = await getQuote(identity);
-    const document = await internalJson<PaidDocument>(
-      `/internal/v1/payment-quotes/${encodeURIComponent(quote.id)}/document`,
+    // Express x402 buffers this body, settles on-chain, runs onAfterSettle,
+    // and releases it only after success. The snapshot endpoint is internal
+    // and read-only; it does not claim that payment or delivery has happened.
+    const document = await internalJson<PaymentDocumentSnapshot>(
+      `/internal/v1/payment-quotes/${encodeURIComponent(quote.id)}/snapshot`,
     );
     response.json({
       citations: [document.citation],
@@ -334,7 +380,7 @@ app.get("/api/v1/paid-documents/:queryId/:handle", async (request, response, nex
   }
 });
 
-app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
+app.use((error: unknown, _request: Request, response: ExpressResponse, _next: NextFunction) => {
   console.error("gateway request failed", safeError(error));
   response.status(502).json({
     error: { code: "gateway_error", message: "Payment service is temporarily unavailable." },
@@ -365,4 +411,39 @@ function booleanEnv(name: string, fallback: boolean): boolean {
 
 function safeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isAllowedBrowserRpcRequest(
+  body: unknown,
+): body is { jsonrpc: "2.0"; id?: unknown; method: string; params?: unknown[] } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  const request = body as Record<string, unknown>;
+  return (
+    request.jsonrpc === "2.0" &&
+    typeof request.method === "string" &&
+    allowedBrowserRpcMethods.has(request.method) &&
+    (request.params === undefined || Array.isArray(request.params))
+  );
+}
+
+function rpcRequestId(body: unknown): unknown {
+  return body && typeof body === "object" && !Array.isArray(body)
+    ? (body as Record<string, unknown>).id ?? null
+    : null;
+}
+
+async function fetchRpcWithBackoff(body: unknown): Promise<Response> {
+  for (let attempt = 0; ; attempt += 1) {
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (response.status !== 429 || attempt >= 3) return response;
+    const retryAfterSeconds = Number.parseInt(response.headers.get("retry-after") ?? "", 10);
+    const delayMs = Number.isFinite(retryAfterSeconds)
+      ? Math.min(Math.max(retryAfterSeconds, 1) * 1_000, 10_000)
+      : 1_000 * 2 ** attempt;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
 }
