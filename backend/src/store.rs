@@ -16,16 +16,17 @@ use thiserror::Error;
 use crate::{
     domain::{
         AccountControls, AnswerIssue, BalanceSummary, ChainSettlementReceipt, ChatAnswer, Citation,
-        ContributorManifest, ContributorMemoryLink, CorrectMemoryRequest,
+        ContributorManifest, ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
         CreateEvidenceEdgeRequest, CreateOpenCallRequest, CreatePaymentBundleRequest,
         DemographicBands, DisputeCase, Document, DocumentFeedback, EarningEvent, EarningsSummary,
         EvidenceContribution, EvidenceEdge, InterviewResponse, MemoryAccessEvent, MemoryEntry,
-        MemoryExport, OpenCall, OpenDocumentsResponse, PaidDocument, PaymentBundleQuote,
-        PaymentBundleSnapshot, PaymentDocumentProgress, PaymentDocumentSnapshot, PaymentProgress,
-        PaymentQuote, PublicDocument, RecordChainSettlementRequest, RecoveredPaidDocument,
-        ResolveQuestionResponse, ReviewDisputeRequest, ReviewDocumentFeedbackRequest,
-        SearchFilters, Settlement, SubmitAnswerResponse, SubmitDocumentFeedbackRequest,
-        UpdatePreferencesRequest, UpsertProfileRequest, UserAccount, UserProfile, WalletChallenge,
+        MemoryExport, OpenCall, OpenCallReservation, OpenDocumentsResponse, PaidDocument,
+        PaymentBundleQuote, PaymentBundleSnapshot, PaymentDocumentProgress,
+        PaymentDocumentSnapshot, PaymentProgress, PaymentQuote, PublicDocument,
+        RecordChainSettlementRequest, RecoveredPaidDocument, ResolveQuestionResponse,
+        ReviewDisputeRequest, ReviewDocumentFeedbackRequest, SearchFilters, Settlement,
+        SubmitAnswerResponse, SubmitDocumentFeedbackRequest, UpdatePreferencesRequest,
+        UpsertProfileRequest, UserAccount, UserProfile, WalletChallenge,
     },
     quality, seed,
 };
@@ -34,6 +35,8 @@ static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 const STRIKE_LIMIT: usize = 3;
 const AUTO_MATCH_STRIKE_LIMIT: usize = 2;
 const PAYOUT_HOLD_MS: u64 = 14 * 24 * 60 * 60 * 1_000;
+const ANSWER_RESERVATION_TTL_MS: u64 = 10 * 60 * 1_000;
+const AGENT_MATCH_THRESHOLD: f32 = 0.82;
 const SIGNUP_CREDIT_KRW: u64 = 100_000;
 const LOGIN_FAILURE_WINDOW_MS: u64 = 15 * 60 * 1_000;
 const LOGIN_BLOCK_MS: u64 = 15 * 60 * 1_000;
@@ -66,6 +69,14 @@ pub struct PaymentQuotePolicy {
     pub asset: String,
     pub krw_per_usdc: u64,
     pub ttl_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingEmail {
+    pub id: String,
+    pub recipient: String,
+    pub subject: String,
+    pub body: String,
 }
 
 #[derive(Clone)]
@@ -125,6 +136,10 @@ impl StoredCall {
             eligible: profile.is_some_and(|profile| profile_matches(profile, &self.filters)),
             escrow_remaining_krw: self.escrow_remaining_krw,
             status: self.status.clone(),
+            reserved_slots: 0,
+            reservation_expires_at: None,
+            recommendation_score: 0.0,
+            recommendation_reason: Vec::new(),
         }
     }
 }
@@ -740,8 +755,44 @@ impl Store {
                 consent_version TEXT NOT NULL DEFAULT 'legacy',
                 auto_match INTEGER NOT NULL DEFAULT 1,
                 agents INTEGER NOT NULL DEFAULT 0,
+                browser_alerts INTEGER NOT NULL DEFAULT 0,
+                email_alerts INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS open_call_reservations (
+                id TEXT PRIMARY KEY,
+                open_call_id TEXT NOT NULL REFERENCES open_calls(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                expires_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                UNIQUE(open_call_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS contributor_notifications (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                open_call_id TEXT REFERENCES open_calls(id) ON DELETE CASCADE,
+                created_at INTEGER NOT NULL,
+                read_at INTEGER,
+                UNIQUE(user_id, kind, open_call_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS email_outbox (
+                id TEXT PRIMARY KEY,
+                notification_id TEXT NOT NULL UNIQUE REFERENCES contributor_notifications(id) ON DELETE CASCADE,
+                recipient TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                body TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at INTEGER NOT NULL,
+                delivered_at INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS earning_events (
@@ -822,6 +873,12 @@ impl Store {
                 ON document_feedback(status, created_at ASC);
             CREATE INDEX IF NOT EXISTS idx_memory_access_memory
                 ON memory_access_events(memory_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_open_call_reservations_active
+                ON open_call_reservations(open_call_id, expires_at);
+            CREATE INDEX IF NOT EXISTS idx_contributor_notifications_user
+                ON contributor_notifications(user_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_email_outbox_pending
+                ON email_outbox(status, created_at ASC);
             "#,
         )?;
         add_column_if_missing(&connection, "queries", "payment_token_hash", "TEXT")?;
@@ -868,6 +925,18 @@ impl Store {
             "TEXT NOT NULL DEFAULT 'legacy'",
         )?;
         add_column_if_missing(&connection, "profiles", "wallet_verified_at", "INTEGER")?;
+        add_column_if_missing(
+            &connection,
+            "profiles",
+            "browser_alerts",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(
+            &connection,
+            "profiles",
+            "email_alerts",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
         add_column_if_missing(
             &connection,
             "profiles",
@@ -1574,6 +1643,10 @@ impl Store {
 
     pub fn list_open_calls(&self, user_id: Option<&str>) -> Result<Vec<OpenCall>, StoreError> {
         let connection = self.connection()?;
+        connection.execute(
+            "DELETE FROM open_call_reservations WHERE expires_at <= ?1",
+            [as_i64(now_ms())?],
+        )?;
         let profile = if let Some(user_id) = user_id {
             load_profile(&connection, user_id)?
         } else {
@@ -1589,12 +1662,26 @@ impl Store {
                 OR (status = 'cancelled' AND owner_id = ?1)
              ORDER BY created_at DESC",
         )?;
-        let calls = statement
+        let stored_calls = statement
             .query_map([user_id], stored_call_from_row)?
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .map(|call| call.public(user_id, profile.as_ref()))
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+        let mut calls = Vec::with_capacity(stored_calls.len());
+        for stored in stored_calls {
+            let mut call = stored.public(user_id, profile.as_ref());
+            call.reserved_slots = active_reservation_count(&connection, &call.id)?;
+            if let Some(user_id) = user_id {
+                call.reservation_expires_at =
+                    active_reservation_expiry(&connection, &call.id, user_id)?;
+                if let Some(profile) = profile.as_ref() {
+                    let (score, reasons) =
+                        call_recommendation(&connection, user_id, profile, &stored)?;
+                    call.recommendation_score = score;
+                    call.recommendation_reason = reasons;
+                }
+            }
+            calls.push(call);
+        }
         Ok(calls)
     }
 
@@ -1665,25 +1752,246 @@ impl Store {
         )?;
         transaction.commit()?;
         drop(connection);
-        let profile = self.get_profile(owner_id)?;
-        Ok(OpenCall {
-            id,
-            question: request.question.trim().to_owned(),
-            unit_price: request.unit_price,
-            target: request.target,
-            answered: 0,
-            created_at,
-            chat_id: request.chat_id.clone(),
-            mine: true,
-            shelf: request.shelf.trim().to_owned(),
-            category: request.category.trim().to_owned(),
-            filters: effective_filters.clone(),
-            eligible: profile
-                .as_ref()
-                .is_some_and(|profile| profile_matches(profile, &effective_filters)),
-            escrow_remaining_krw: total,
-            status: "open".to_owned(),
+        if let Err(error) = self.run_call_agents(&id) {
+            tracing::warn!(open_call_id = %id, %error, "memory-agent pass failed after call creation");
+        }
+        if let Err(error) = self.create_notifications_for_call(&id) {
+            tracing::warn!(open_call_id = %id, %error, "contributor notification fanout failed after call creation");
+        }
+        self.list_open_calls(Some(owner_id))?
+            .into_iter()
+            .find(|call| call.id == id)
+            .ok_or(StoreError::NotFound("open call"))
+    }
+
+    pub fn reserve_open_call(
+        &self,
+        open_call_id: &str,
+        user_id: &str,
+    ) -> Result<OpenCallReservation, StoreError> {
+        let now = now_ms();
+        let expires_at = now.saturating_add(ANSWER_RESERVATION_TTL_MS);
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM open_call_reservations WHERE expires_at <= ?1",
+            [as_i64(now)?],
+        )?;
+        let call = load_call(&transaction, open_call_id)?;
+        if call.status != "open" || call.answered >= call.target {
+            return Err(StoreError::Conflict(
+                "this open call is no longer accepting answers".to_owned(),
+            ));
+        }
+        if call.owner_id == user_id {
+            return Err(StoreError::Conflict(
+                "you cannot reserve your own open call".to_owned(),
+            ));
+        }
+        let profile = load_profile(&transaction, user_id)?.ok_or_else(|| {
+            StoreError::Conflict("complete onboarding before reserving a call".to_owned())
+        })?;
+        if profile.suspended || !profile_matches(&profile, &call.filters) {
+            return Err(StoreError::Conflict(
+                "your profile cannot reserve this call".to_owned(),
+            ));
+        }
+        let already_answered = transaction
+            .query_row(
+                "SELECT 1 FROM memory_entries WHERE open_call_id = ?1 AND user_id = ?2",
+                params![open_call_id, user_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if already_answered {
+            return Err(StoreError::Conflict(
+                "you have already answered this open call".to_owned(),
+            ));
+        }
+        let existing = transaction
+            .query_row(
+                "SELECT id FROM open_call_reservations
+                 WHERE open_call_id = ?1 AND user_id = ?2 AND expires_at > ?3",
+                params![open_call_id, user_id, as_i64(now)?],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let active = transaction.query_row(
+            "SELECT COUNT(*) FROM open_call_reservations
+             WHERE open_call_id = ?1 AND expires_at > ?2 AND user_id <> ?3",
+            params![open_call_id, as_i64(now)?, user_id],
+            |row| as_usize(row.get(0)?),
+        )?;
+        if existing.is_none() && active >= call.target.saturating_sub(call.answered) {
+            return Err(StoreError::Conflict(
+                "all remaining answer slots are temporarily reserved".to_owned(),
+            ));
+        }
+        transaction.execute(
+            "INSERT INTO open_call_reservations
+             (id, open_call_id, user_id, expires_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(open_call_id, user_id) DO UPDATE SET expires_at = excluded.expires_at",
+            params![
+                existing.unwrap_or_else(|| new_id("reservation")),
+                open_call_id,
+                user_id,
+                as_i64(expires_at)?,
+                as_i64(now)?,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(OpenCallReservation {
+            open_call_id: open_call_id.to_owned(),
+            expires_at,
         })
+    }
+
+    pub fn release_open_call_reservation(
+        &self,
+        open_call_id: &str,
+        user_id: &str,
+    ) -> Result<(), StoreError> {
+        self.connection()?.execute(
+            "DELETE FROM open_call_reservations WHERE open_call_id = ?1 AND user_id = ?2",
+            params![open_call_id, user_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_notifications(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<ContributorNotification>, StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        materialize_call_notifications(&transaction, user_id)?;
+        transaction.commit()?;
+        let mut statement = connection.prepare(
+            "SELECT id, kind, title, body, open_call_id, created_at, read_at
+             FROM contributor_notifications WHERE user_id = ?1
+             ORDER BY created_at DESC LIMIT 100",
+        )?;
+        Ok(statement
+            .query_map([user_id], notification_from_row)?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn mark_notifications_read(&self, user_id: &str, ids: &[String]) -> Result<(), StoreError> {
+        let connection = self.connection()?;
+        let read_at = as_i64(now_ms())?;
+        if ids.is_empty() {
+            connection.execute(
+                "UPDATE contributor_notifications SET read_at = ?1
+                 WHERE user_id = ?2 AND read_at IS NULL",
+                params![read_at, user_id],
+            )?;
+        } else {
+            for id in ids {
+                connection.execute(
+                    "UPDATE contributor_notifications SET read_at = ?1
+                     WHERE id = ?2 AND user_id = ?3",
+                    params![read_at, id, user_id],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn pending_emails(&self, limit: usize) -> Result<Vec<PendingEmail>, StoreError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT id, recipient, subject, body FROM email_outbox
+             WHERE status IN ('pending', 'retry') AND attempts < 5
+             ORDER BY created_at ASC LIMIT ?1",
+        )?;
+        Ok(statement
+            .query_map([limit.min(100) as i64], |row| {
+                Ok(PendingEmail {
+                    id: row.get(0)?,
+                    recipient: row.get(1)?,
+                    subject: row.get(2)?,
+                    body: row.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn mark_email_delivered(&self, id: &str) -> Result<(), StoreError> {
+        self.connection()?.execute(
+            "UPDATE email_outbox SET status = 'delivered', delivered_at = ?1,
+                    attempts = attempts + 1, last_error = NULL WHERE id = ?2",
+            params![as_i64(now_ms())?, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_email_failed(&self, id: &str, error: &str) -> Result<(), StoreError> {
+        self.connection()?.execute(
+            "UPDATE email_outbox SET status = 'retry', attempts = attempts + 1,
+                    last_error = ?1 WHERE id = ?2",
+            params![error.chars().take(500).collect::<String>(), id],
+        )?;
+        Ok(())
+    }
+
+    fn create_notifications_for_call(&self, open_call_id: &str) -> Result<(), StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let call = load_call(&transaction, open_call_id)?;
+        create_call_notifications(&transaction, &call)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    fn run_call_agents(&self, open_call_id: &str) -> Result<(), StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let mut candidate_statement = transaction.prepare(
+            "SELECT p.user_id FROM profiles p JOIN users u ON u.id = p.user_id
+             WHERE p.agents = 1 AND p.auto_match = 1 AND u.deleted_at IS NULL
+               AND p.user_id <> (SELECT owner_id FROM open_calls WHERE id = ?1)
+               AND (SELECT COUNT(*) FROM memory_entries strikes
+                    WHERE strikes.user_id = p.user_id AND strikes.status = 'voided') < ?2",
+        )?;
+        let candidates = candidate_statement
+            .query_map(
+                params![open_call_id, AUTO_MATCH_STRIKE_LIMIT as i64],
+                |row| row.get::<_, String>(0),
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(candidate_statement);
+
+        for user_id in candidates {
+            let call = load_call(&transaction, open_call_id)?;
+            if call.status != "open" || call.answered >= call.target {
+                break;
+            }
+            let Some(profile) = load_profile(&transaction, &user_id)? else {
+                continue;
+            };
+            if !profile_matches(&profile, &call.filters) {
+                continue;
+            }
+            let already_answered = transaction
+                .query_row(
+                    "SELECT 1 FROM memory_entries WHERE open_call_id = ?1 AND user_id = ?2",
+                    params![open_call_id, user_id],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if already_answered {
+                continue;
+            }
+            let Some(source) = best_agent_memory(&transaction, &user_id, &call)? else {
+                continue;
+            };
+            settle_agent_match(&transaction, &call, &user_id, &profile, &source)?;
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn submit_answer(
@@ -1761,6 +2069,31 @@ impl Store {
         if already_answered {
             return Err(StoreError::Conflict(
                 "you have already answered this open call".to_owned(),
+            ));
+        }
+        let now = now_ms();
+        transaction.execute(
+            "DELETE FROM open_call_reservations WHERE expires_at <= ?1",
+            [as_i64(now)?],
+        )?;
+        let owns_reservation = transaction
+            .query_row(
+                "SELECT 1 FROM open_call_reservations
+                 WHERE open_call_id = ?1 AND user_id = ?2 AND expires_at > ?3",
+                params![open_call_id, user_id, as_i64(now)?],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        let active_reservations = transaction.query_row(
+            "SELECT COUNT(*) FROM open_call_reservations
+             WHERE open_call_id = ?1 AND expires_at > ?2 AND user_id <> ?3",
+            params![open_call_id, as_i64(now)?, user_id],
+            |row| as_usize(row.get(0)?),
+        )?;
+        if !owns_reservation && active_reservations >= call.target.saturating_sub(call.answered) {
+            return Err(StoreError::Conflict(
+                "all remaining slots are reserved; refresh and try another call".to_owned(),
             ));
         }
 
@@ -1893,7 +2226,38 @@ impl Store {
                 call.unit_price,
                 created_at,
             )?;
+            insert_notification(
+                &transaction,
+                &call.owner_id,
+                "answer_received",
+                "A new answer arrived",
+                &format!(
+                    "{}/{} answers collected for {}",
+                    call.answered + 1,
+                    call.target,
+                    call.question
+                ),
+                Some(open_call_id),
+            )?;
+            if call.answered + 1 >= call.target {
+                insert_notification(
+                    &transaction,
+                    &call.owner_id,
+                    "call_filled",
+                    "Your open call is complete",
+                    &format!("All {} answers are ready to read.", call.target),
+                    Some(open_call_id),
+                )?;
+                transaction.execute(
+                    "DELETE FROM open_call_reservations WHERE open_call_id = ?1",
+                    [open_call_id],
+                )?;
+            }
         }
+        transaction.execute(
+            "DELETE FROM open_call_reservations WHERE open_call_id = ?1 AND user_id = ?2",
+            params![open_call_id, user_id],
+        )?;
 
         let updated_call = StoredCall {
             answered: call.answered + usize::from(!voided),
@@ -2309,9 +2673,9 @@ impl Store {
                 "INSERT INTO profiles
                  (user_id, handle, age_band, region, household, field, years,
                   speaks_to_json, wallet, wallet_verified_at, agreed_at, consent_version,
-                  auto_match, agents,
+                  auto_match, agents, browser_alerts, email_alerts,
                   created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11, ?12, ?13, ?10, ?10)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11, ?12, ?13, ?14, ?15, ?10, ?10)
                  ON CONFLICT(user_id) DO UPDATE SET
                    handle = excluded.handle,
                    age_band = excluded.age_band,
@@ -2328,6 +2692,8 @@ impl Store {
                    consent_version = excluded.consent_version,
                    auto_match = excluded.auto_match,
                    agents = excluded.agents,
+                   browser_alerts = excluded.browser_alerts,
+                   email_alerts = excluded.email_alerts,
                    updated_at = excluded.updated_at",
                 params![
                     user_id,
@@ -2344,8 +2710,11 @@ impl Store {
                     CURRENT_CONSENT_VERSION,
                     i64::from(request.auto_match),
                     i64::from(request.agents),
+                    i64::from(request.browser_alerts),
+                    i64::from(request.email_alerts),
                 ],
             )?;
+            materialize_call_notifications(&transaction, user_id)?;
             transaction.commit()?;
         }
         self.get_profile(user_id)?
@@ -2361,7 +2730,11 @@ impl Store {
         if user_id.is_empty() {
             return Err(StoreError::Validation("user id is required".to_owned()));
         }
-        if request.auto_match.is_none() && request.agents.is_none() {
+        if request.auto_match.is_none()
+            && request.agents.is_none()
+            && request.browser_alerts.is_none()
+            && request.email_alerts.is_none()
+        {
             return Err(StoreError::Validation(
                 "at least one preference is required".to_owned(),
             ));
@@ -2370,11 +2743,15 @@ impl Store {
             "UPDATE profiles
              SET auto_match = COALESCE(?1, auto_match),
                  agents = COALESCE(?2, agents),
-                 updated_at = ?3
-             WHERE user_id = ?4",
+                 browser_alerts = COALESCE(?3, browser_alerts),
+                 email_alerts = COALESCE(?4, email_alerts),
+                 updated_at = ?5
+             WHERE user_id = ?6",
             params![
                 request.auto_match.map(i64::from),
                 request.agents.map(i64::from),
+                request.browser_alerts.map(i64::from),
+                request.email_alerts.map(i64::from),
                 as_i64(now_ms())?,
                 user_id,
             ],
@@ -3056,6 +3433,15 @@ impl Store {
         transaction.execute(
             "UPDATE open_calls SET status = 'cancelled', escrow_remaining_krw = 0 WHERE id = ?1",
             [open_call_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM open_call_reservations WHERE open_call_id = ?1",
+            [open_call_id],
+        )?;
+        transaction.execute(
+            "UPDATE contributor_notifications SET read_at = COALESCE(read_at, ?1)
+             WHERE open_call_id = ?2 AND kind = 'call_available'",
+            params![as_i64(now_ms())?, open_call_id],
         )?;
         transaction.execute(
             "INSERT INTO funding_events
@@ -4477,12 +4863,486 @@ fn validate_filters(filters: &SearchFilters) -> Result<(), StoreError> {
     Ok(())
 }
 
+#[derive(Debug)]
+struct AgentMemorySource {
+    memory_id: String,
+    document_id: String,
+    answer: String,
+    content_hash: String,
+    importance: f32,
+    reliability_score: f32,
+    similarity: f32,
+}
+
+fn question_terms(value: &str) -> HashSet<String> {
+    value
+        .split_whitespace()
+        .map(|term| {
+            term.trim_matches(|character: char| !character.is_alphanumeric())
+                .to_lowercase()
+        })
+        .filter(|term| term.chars().count() >= 2)
+        .collect()
+}
+
+fn question_similarity(left: &str, right: &str) -> f32 {
+    let left_normalized = left
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    let right_normalized = right
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    if !left_normalized.is_empty() && left_normalized == right_normalized {
+        return 1.0;
+    }
+    let left = question_terms(left);
+    let right = question_terms(right);
+    if left.is_empty() || right.is_empty() {
+        return 0.0;
+    }
+    let intersection = left.intersection(&right).count() as f32;
+    let union = left.union(&right).count() as f32;
+    if union == 0.0 {
+        0.0
+    } else {
+        intersection / union
+    }
+}
+
+fn active_reservation_count(
+    connection: &Connection,
+    open_call_id: &str,
+) -> Result<usize, StoreError> {
+    Ok(connection.query_row(
+        "SELECT COUNT(*) FROM open_call_reservations
+         WHERE open_call_id = ?1 AND expires_at > ?2",
+        params![open_call_id, as_i64(now_ms())?],
+        |row| as_usize(row.get(0)?),
+    )?)
+}
+
+fn active_reservation_expiry(
+    connection: &Connection,
+    open_call_id: &str,
+    user_id: &str,
+) -> Result<Option<u64>, StoreError> {
+    Ok(connection
+        .query_row(
+            "SELECT expires_at FROM open_call_reservations
+             WHERE open_call_id = ?1 AND user_id = ?2 AND expires_at > ?3",
+            params![open_call_id, user_id, as_i64(now_ms())?],
+            |row| as_u64(row.get(0)?),
+        )
+        .optional()?)
+}
+
+fn call_recommendation(
+    connection: &Connection,
+    user_id: &str,
+    profile: &UserProfile,
+    call: &StoredCall,
+) -> Result<(f32, Vec<String>), StoreError> {
+    if call.owner_id == user_id
+        || call.status != "open"
+        || call.answered >= call.target
+        || !profile_matches(profile, &call.filters)
+        || profile.suspended
+    {
+        return Ok((0.0, Vec::new()));
+    }
+    let mut score = 0.55_f32;
+    let mut reasons = vec!["Profile matches every target band".to_owned()];
+    if profile.field == call.category {
+        score += 0.1;
+        reasons.push("This is your primary field".to_owned());
+    }
+    let mut statement = connection.prepare(
+        "SELECT question, shelf FROM memory_entries
+         WHERE user_id = ?1 AND status = 'settled' AND locked = 0
+         ORDER BY created_at DESC LIMIT 100",
+    )?;
+    let memories = statement
+        .query_map([user_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut best_similarity = 0.0_f32;
+    let mut same_shelf = false;
+    for (question, shelf) in memories {
+        best_similarity = best_similarity.max(question_similarity(&question, &call.question));
+        same_shelf |= shelf == call.shelf;
+    }
+    if same_shelf {
+        score += 0.08;
+        reasons.push("You already have memory on this shelf".to_owned());
+    }
+    if best_similarity >= 0.25 {
+        score += best_similarity.min(1.0) * 0.2;
+        reasons.push(format!(
+            "A prior memory is {:.0}% similar",
+            best_similarity * 100.0
+        ));
+    }
+    Ok((score.min(1.0), reasons))
+}
+
+fn best_agent_memory(
+    transaction: &Transaction<'_>,
+    user_id: &str,
+    call: &StoredCall,
+) -> Result<Option<AgentMemorySource>, StoreError> {
+    let mut statement = transaction.prepare(
+        "SELECT m.id, m.document_id, m.question, m.answer, m.content_hash,
+                m.importance, m.reliability_score, d.price_krw, m.shelf
+         FROM memory_entries m
+         JOIN documents d ON d.id = m.document_id
+         WHERE m.user_id = ?1 AND m.status = 'settled' AND m.locked = 0
+           AND d.locked = 0 AND d.category = ?2
+         ORDER BY m.created_at DESC LIMIT 100",
+    )?;
+    let candidates = statement
+        .query_map(params![user_id, call.category], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, f32>(5)?,
+                row.get::<_, f32>(6)?,
+                as_u64(row.get(7)?)?,
+                row.get::<_, String>(8)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut best: Option<AgentMemorySource> = None;
+    for (
+        memory_id,
+        document_id,
+        question,
+        answer,
+        content_hash,
+        importance,
+        reliability,
+        price,
+        _shelf,
+    ) in candidates
+    {
+        if price > call.unit_price {
+            continue;
+        }
+        let similarity = question_similarity(&question, &call.question);
+        if similarity < AGENT_MATCH_THRESHOLD {
+            continue;
+        }
+        if best
+            .as_ref()
+            .is_none_or(|current| similarity > current.similarity)
+        {
+            best = Some(AgentMemorySource {
+                memory_id,
+                document_id,
+                answer,
+                content_hash,
+                importance,
+                reliability_score: reliability,
+                similarity,
+            });
+        }
+    }
+    Ok(best)
+}
+
+fn settle_agent_match(
+    transaction: &Transaction<'_>,
+    call: &StoredCall,
+    user_id: &str,
+    _profile: &UserProfile,
+    source: &AgentMemorySource,
+) -> Result<(), StoreError> {
+    if call.escrow_remaining_krw < call.unit_price {
+        return Err(StoreError::Conflict(
+            "open-call escrow is exhausted".to_owned(),
+        ));
+    }
+    let created_at = now_ms();
+    let memory_id = new_id("memory");
+    transaction.execute(
+        "UPDATE open_calls SET answered = answered + 1,
+            escrow_remaining_krw = escrow_remaining_krw - unit_price_krw,
+            status = CASE WHEN answered + 1 >= target THEN 'filled' ELSE status END
+         WHERE id = ?1 AND status = 'open' AND answered < target",
+        [call.id.as_str()],
+    )?;
+    let changed = transaction.execute(
+        "UPDATE balances SET reserved_krw = reserved_krw - ?1, updated_at = ?2
+         WHERE user_id = ?3 AND reserved_krw >= ?1",
+        params![as_i64(call.unit_price)?, as_i64(created_at)?, call.owner_id],
+    )?;
+    if changed == 0 && call.unit_price > 0 {
+        return Err(StoreError::Conflict(
+            "reserved balance is inconsistent with this call".to_owned(),
+        ));
+    }
+    transaction.execute(
+        "INSERT INTO memory_entries
+         (id, user_id, open_call_id, document_id, question, answer, shelf,
+          earned_krw, created_at, via, status, flags_json, interview_json,
+          memory_type, importance, content_hash, reliability_score, source_ids_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'Auto-match', 'settled',
+                 '[]', '[]', 'observation', ?10, ?11, ?12, ?13)",
+        params![
+            memory_id,
+            user_id,
+            call.id,
+            source.document_id,
+            call.question,
+            source.answer,
+            call.shelf,
+            as_i64(call.unit_price)?,
+            as_i64(created_at)?,
+            source.importance,
+            if source.content_hash.is_empty() {
+                sha256_hex(&source.answer)
+            } else {
+                source.content_hash.clone()
+            },
+            source.reliability_score,
+            serde_json::to_string(&[source.memory_id.as_str()])
+                .expect("source ids are serialisable"),
+        ],
+    )?;
+    insert_earning_event(
+        transaction,
+        None,
+        Some(&memory_id),
+        Some(&source.document_id),
+        user_id,
+        "open_call",
+        call.unit_price,
+        created_at,
+    )?;
+    insert_notification(
+        transaction,
+        user_id,
+        "auto_matched",
+        "Your memory answered a new call",
+        &format!(
+            "A {:.0}% match reused your original answer and earned ₩{}.",
+            source.similarity * 100.0,
+            call.unit_price
+        ),
+        Some(&call.id),
+    )?;
+    insert_notification(
+        transaction,
+        &call.owner_id,
+        "answer_received",
+        "A new answer arrived",
+        &format!(
+            "{}/{} answers collected for {}",
+            call.answered + 1,
+            call.target,
+            call.question
+        ),
+        Some(&call.id),
+    )?;
+    if call.answered + 1 >= call.target {
+        insert_notification(
+            transaction,
+            &call.owner_id,
+            "call_filled",
+            "Your open call is complete",
+            &format!("All {} answers are ready to read.", call.target),
+            Some(&call.id),
+        )?;
+        transaction.execute(
+            "DELETE FROM open_call_reservations WHERE open_call_id = ?1",
+            [call.id.as_str()],
+        )?;
+    }
+    Ok(())
+}
+
+fn insert_notification(
+    transaction: &Transaction<'_>,
+    user_id: &str,
+    kind: &str,
+    title: &str,
+    body: &str,
+    open_call_id: Option<&str>,
+) -> Result<(), StoreError> {
+    let id = new_id("notification");
+    let created_at = now_ms();
+    let changed = transaction.execute(
+        "INSERT OR IGNORE INTO contributor_notifications
+         (id, user_id, kind, title, body, open_call_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            id,
+            user_id,
+            kind,
+            title,
+            body,
+            open_call_id,
+            as_i64(created_at)?
+        ],
+    )?;
+    if changed == 0 {
+        return Ok(());
+    }
+    let email = transaction
+        .query_row(
+            "SELECT u.email FROM users u JOIN profiles p ON p.user_id = u.id
+             WHERE u.id = ?1 AND u.deleted_at IS NULL AND p.email_alerts = 1",
+            [user_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(email) = email {
+        transaction.execute(
+            "INSERT OR IGNORE INTO email_outbox
+             (id, notification_id, recipient, subject, body, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                new_id("email"),
+                id,
+                email,
+                format!("OPENSHELF · {title}"),
+                body,
+                as_i64(created_at)?,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn create_call_notifications(
+    transaction: &Transaction<'_>,
+    call: &StoredCall,
+) -> Result<(), StoreError> {
+    if call.status != "open" || call.answered >= call.target {
+        return Ok(());
+    }
+    let mut statement = transaction.prepare(
+        "SELECT p.user_id FROM profiles p JOIN users u ON u.id = p.user_id
+         WHERE p.user_id <> ?1 AND u.deleted_at IS NULL",
+    )?;
+    let users = statement
+        .query_map([call.owner_id.as_str()], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    for user_id in users {
+        let Some(profile) = load_profile(transaction, &user_id)? else {
+            continue;
+        };
+        if profile.suspended || !profile_matches(&profile, &call.filters) {
+            continue;
+        }
+        let answered = transaction
+            .query_row(
+                "SELECT 1 FROM memory_entries WHERE open_call_id = ?1 AND user_id = ?2",
+                params![call.id, user_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if answered {
+            continue;
+        }
+        insert_notification(
+            transaction,
+            &user_id,
+            "call_available",
+            "A paid question fits you",
+            &format!("₩{} per answer · {}", call.unit_price, call.question),
+            Some(&call.id),
+        )?;
+    }
+    Ok(())
+}
+
+fn materialize_call_notifications(
+    transaction: &Transaction<'_>,
+    user_id: &str,
+) -> Result<(), StoreError> {
+    let user_exists = transaction
+        .query_row(
+            "SELECT 1 FROM users WHERE id = ?1 AND deleted_at IS NULL",
+            [user_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if !user_exists {
+        return Ok(());
+    }
+    let Some(profile) = load_profile(transaction, user_id)? else {
+        return Ok(());
+    };
+    if profile.suspended {
+        return Ok(());
+    }
+    let mut statement = transaction.prepare(
+        "SELECT id, owner_id, question, unit_price_krw, target, answered,
+                created_at, chat_id, shelf, category, target_age_band,
+                target_region, target_household, target_field,
+                escrow_remaining_krw, status
+         FROM open_calls WHERE status = 'open' AND answered < target AND owner_id <> ?1",
+    )?;
+    let calls = statement
+        .query_map([user_id], stored_call_from_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    for call in calls {
+        if !profile_matches(&profile, &call.filters) {
+            continue;
+        }
+        let answered = transaction
+            .query_row(
+                "SELECT 1 FROM memory_entries WHERE open_call_id = ?1 AND user_id = ?2",
+                params![call.id, user_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !answered {
+            insert_notification(
+                transaction,
+                user_id,
+                "call_available",
+                "A paid question fits you",
+                &format!("₩{} per answer · {}", call.unit_price, call.question),
+                Some(&call.id),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn notification_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ContributorNotification> {
+    Ok(ContributorNotification {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        title: row.get(2)?,
+        body: row.get(3)?,
+        open_call_id: row.get(4)?,
+        created_at: as_u64(row.get(5)?)?,
+        read_at: row.get::<_, Option<i64>>(6)?.map(as_u64).transpose()?,
+    })
+}
+
 fn load_profile(connection: &Connection, user_id: &str) -> Result<Option<UserProfile>, StoreError> {
     Ok(connection
         .query_row(
             "SELECT p.handle, p.age_band, p.region, p.household, p.field, p.years,
                     p.speaks_to_json, p.wallet, p.wallet_verified_at, p.agreed_at,
                     p.auto_match, p.agents, p.consent_version,
+                    p.browser_alerts, p.email_alerts,
                     (SELECT COUNT(*) FROM memory_entries m
                      WHERE m.user_id = p.user_id AND m.status = 'voided'),
                     EXISTS(SELECT 1 FROM dispute_events d WHERE d.user_id = p.user_id)
@@ -4578,7 +5438,7 @@ fn recompute_document_reliability(
 fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserProfile> {
     let speaks_to_json: String = row.get(6)?;
     let wallet_verified_at = row.get::<_, Option<i64>>(8)?.map(as_u64).transpose()?;
-    let strikes = as_usize(row.get(13)?)?;
+    let strikes = as_usize(row.get(15)?)?;
     let configured_auto_match = row.get::<_, i64>(10)? != 0;
     Ok(UserProfile {
         handle: row.get(0)?,
@@ -4595,8 +5455,10 @@ fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserProfile> {
         consent_version: row.get(12)?,
         auto_match: configured_auto_match && strikes < AUTO_MATCH_STRIKE_LIMIT,
         agents: row.get::<_, i64>(11)? != 0,
+        browser_alerts: row.get::<_, i64>(13)? != 0,
+        email_alerts: row.get::<_, i64>(14)? != 0,
         strikes,
-        dispute_used: row.get::<_, i64>(14)? != 0,
+        dispute_used: row.get::<_, i64>(16)? != 0,
         suspended: strikes >= STRIKE_LIMIT,
     })
 }
@@ -5543,6 +6405,8 @@ mod tests {
             wallet: Some("11111111111111111111111111111111".to_owned()),
             auto_match: true,
             agents: false,
+            browser_alerts: true,
+            email_alerts: false,
         }
     }
 
@@ -5750,6 +6614,8 @@ mod tests {
                 &UpdatePreferencesRequest {
                     auto_match: Some(false),
                     agents: Some(true),
+                    browser_alerts: None,
+                    email_alerts: None,
                 },
             )
             .unwrap();
@@ -6593,6 +7459,110 @@ mod tests {
                 .iter()
                 .all(|item| item.id != call.id)
         );
+    }
+
+    #[test]
+    fn one_active_reservation_protects_the_last_slot() {
+        let store = Store::in_memory().unwrap();
+        let call = create_svalbard_call(&store, "reservation-buyer", 1);
+        onboard(&store, "reservation-first");
+        onboard(&store, "reservation-second");
+
+        let reservation = store
+            .reserve_open_call(&call.id, "reservation-first")
+            .unwrap();
+        assert!(reservation.expires_at > now_ms());
+        let error = store
+            .reserve_open_call(&call.id, "reservation-second")
+            .unwrap_err();
+        assert!(error.to_string().contains("temporarily reserved"));
+
+        store
+            .release_open_call_reservation(&call.id, "reservation-first")
+            .unwrap();
+        store
+            .reserve_open_call(&call.id, "reservation-second")
+            .unwrap();
+    }
+
+    #[test]
+    fn matching_call_creates_an_unread_notification_and_email_outbox() {
+        let store = Store::in_memory().unwrap();
+        onboard(&store, "notified-contributor");
+        store
+            .update_preferences(
+                "notified-contributor",
+                &UpdatePreferencesRequest {
+                    auto_match: None,
+                    agents: None,
+                    browser_alerts: Some(true),
+                    email_alerts: Some(true),
+                },
+            )
+            .unwrap();
+
+        let call = create_svalbard_call(&store, "notification-buyer", 1);
+        let notifications = store.list_notifications("notified-contributor").unwrap();
+        let available = notifications
+            .iter()
+            .find(|notification| {
+                notification.kind == "call_available"
+                    && notification.open_call_id.as_deref() == Some(call.id.as_str())
+            })
+            .expect("matching contributor should be notified");
+        assert!(available.read_at.is_none());
+        assert!(
+            store
+                .pending_emails(10)
+                .unwrap()
+                .iter()
+                .any(|email| { email.recipient == "notified-contributor@test.invalid" })
+        );
+
+        store
+            .mark_notifications_read("notified-contributor", std::slice::from_ref(&available.id))
+            .unwrap();
+        assert!(
+            store
+                .list_notifications("notified-contributor")
+                .unwrap()
+                .iter()
+                .find(|notification| notification.id == available.id)
+                .and_then(|notification| notification.read_at)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn agent_reuses_only_a_high_confidence_paid_memory() {
+        let store = Store::in_memory().unwrap();
+        let first = create_svalbard_call(&store, "first-agent-buyer", 1);
+        let submitted = submit(&store, &first.id, "agent-contributor", strong_answer()).unwrap();
+        assert_eq!(submitted.memory.status, "settled");
+        store
+            .update_preferences(
+                "agent-contributor",
+                &UpdatePreferencesRequest {
+                    auto_match: Some(true),
+                    agents: Some(true),
+                    browser_alerts: None,
+                    email_alerts: None,
+                },
+            )
+            .unwrap();
+
+        let second = create_svalbard_call(&store, "second-agent-buyer", 1);
+        assert_eq!(second.answered, 1);
+        assert_eq!(second.status, "filled");
+        let auto = store
+            .list_memory("agent-contributor")
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.via == "Auto-match")
+            .expect("near-identical call should reuse the existing memory");
+        assert_eq!(auto.answer, strong_answer());
+        assert_eq!(auto.earned, second.unit_price);
+        assert_eq!(auto.source_ids, vec![submitted.memory.id]);
     }
 
     #[test]

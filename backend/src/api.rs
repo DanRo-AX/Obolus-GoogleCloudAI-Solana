@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use argon2::{
     Argon2,
@@ -18,10 +21,11 @@ use sha2::{Digest, Sha256};
 use crate::{
     domain::{
         AccountControls, AuthResponse, BalanceSummary, ChainSettlementReceipt, ChatAnswer,
-        ContributorManifest, ContributorMemoryLink, CorrectMemoryRequest,
+        ContributorManifest, ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
         CreateEvidenceEdgeRequest, CreateOpenCallRequest, CreatePaymentBundleRequest, DisputeCase,
-        DocumentFeedback, EarningsSummary, EvidenceEdge, LoginRequest, MemoryEntry, MemoryExport,
-        OpenCall, OpenDocumentsResponse, PaidDocument, PaymentBundleQuote, PaymentBundleSnapshot,
+        DocumentFeedback, EarningsSummary, EvidenceEdge, LoginRequest,
+        MarkNotificationsReadRequest, MemoryEntry, MemoryExport, OpenCall, OpenCallReservation,
+        OpenDocumentsResponse, PaidDocument, PaymentBundleQuote, PaymentBundleSnapshot,
         PaymentDocumentSnapshot, PaymentProgress, PaymentQuote, PublicDocument,
         RecordChainSettlementRequest, RecoveredPaidDocument, RegisterRequest, ResolveError,
         ResolveQuestionRequest, ResolveQuestionResponse, ReviewDisputeRequest,
@@ -51,6 +55,10 @@ pub struct AppState {
     secure_cookies: bool,
     environment: String,
     allow_demo_open: bool,
+    email_endpoint: Option<String>,
+    email_api_key: Option<String>,
+    email_from: Option<String>,
+    email_delivery_active: AtomicBool,
 }
 
 impl AppState {
@@ -124,6 +132,16 @@ impl AppState {
             secure_cookies,
             allow_demo_open,
             environment,
+            email_endpoint: std::env::var("OPENSHELF_EMAIL_ENDPOINT")
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
+            email_api_key: std::env::var("OPENSHELF_EMAIL_API_KEY")
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
+            email_from: std::env::var("OPENSHELF_EMAIL_FROM")
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
+            email_delivery_active: AtomicBool::new(false),
         }
     }
 
@@ -131,6 +149,77 @@ impl AppState {
     fn with_demo_open(mut self, allowed: bool) -> Self {
         self.allow_demo_open = allowed;
         self
+    }
+
+    async fn deliver_pending_emails(&self) {
+        let (Some(endpoint), Some(api_key), Some(from)) = (
+            self.email_endpoint.as_deref(),
+            self.email_api_key.as_deref(),
+            self.email_from.as_deref(),
+        ) else {
+            return;
+        };
+        if self
+            .email_delivery_active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let emails = match self.store.pending_emails(25) {
+            Ok(emails) => emails,
+            Err(error) => {
+                tracing::warn!(%error, "could not load notification email outbox");
+                self.email_delivery_active.store(false, Ordering::Release);
+                return;
+            }
+        };
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+        {
+            Ok(client) => client,
+            Err(error) => {
+                tracing::warn!(%error, "could not build notification email client");
+                self.email_delivery_active.store(false, Ordering::Release);
+                return;
+            }
+        };
+        for email in emails {
+            let response = client
+                .post(endpoint)
+                .bearer_auth(api_key)
+                .json(&serde_json::json!({
+                    "from": from,
+                    "to": [email.recipient],
+                    "subject": email.subject,
+                    "text": email.body,
+                }))
+                .send()
+                .await;
+            match response {
+                Ok(response) if response.status().is_success() => {
+                    let _ = self.store.mark_email_delivered(&email.id);
+                }
+                Ok(response) => {
+                    let status = response.status();
+                    let body = response.text().await.unwrap_or_default();
+                    let _ = self
+                        .store
+                        .mark_email_failed(&email.id, &format!("HTTP {status}: {body}"));
+                }
+                Err(error) => {
+                    let _ = self.store.mark_email_failed(&email.id, &error.to_string());
+                }
+            }
+        }
+        self.email_delivery_active.store(false, Ordering::Release);
+    }
+
+    fn dispatch_pending_emails(state: Arc<Self>) {
+        tokio::spawn(async move {
+            state.deliver_pending_emails().await;
+        });
     }
 }
 
@@ -161,7 +250,17 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(list_open_calls).post(create_open_call),
         )
         .route("/api/v1/open-calls/{id}/answers", post(submit_answer))
+        .route(
+            "/api/v1/open-calls/{id}/reservation",
+            post(reserve_open_call).delete(release_open_call_reservation),
+        )
+        .route(
+            "/api/v1/open-calls/{id}/reservation/release",
+            post(release_open_call_reservation),
+        )
         .route("/api/v1/open-calls/{id}", delete(cancel_open_call))
+        .route("/api/v1/notifications", get(list_notifications))
+        .route("/api/v1/notifications/read", post(mark_notifications_read))
         .route("/api/v1/chats/{id}/answers", get(chat_answers))
         .route("/api/v1/memory", get(list_memory))
         .route("/api/v1/memory/{id}", patch(update_memory))
@@ -423,7 +522,50 @@ async fn create_open_call(
 ) -> Result<(StatusCode, Json<OpenCall>), ApiError> {
     let user = authenticated(&state, &headers)?;
     let call = state.store.create_open_call(&user.id, &request)?;
+    AppState::dispatch_pending_emails(Arc::clone(&state));
     Ok((StatusCode::CREATED, Json(call)))
+}
+
+async fn reserve_open_call(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<OpenCallReservation>), ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(state.store.reserve_open_call(&id, &user.id)?),
+    ))
+}
+
+async fn release_open_call_reservation(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let user = authenticated(&state, &headers)?;
+    state.store.release_open_call_reservation(&id, &user.id)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_notifications(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ContributorNotification>>, ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok(Json(state.store.list_notifications(&user.id)?))
+}
+
+async fn mark_notifications_read(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<MarkNotificationsReadRequest>,
+) -> Result<StatusCode, ApiError> {
+    let user = authenticated(&state, &headers)?;
+    state
+        .store
+        .mark_notifications_read(&user.id, &request.ids)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn submit_answer(
@@ -670,7 +812,9 @@ async fn upsert_profile(
     Json(request): Json<UpsertProfileRequest>,
 ) -> Result<Json<UserProfile>, ApiError> {
     let user = authenticated(&state, &headers)?;
-    Ok(Json(state.store.upsert_profile(&user.id, &request)?))
+    let profile = state.store.upsert_profile(&user.id, &request)?;
+    AppState::dispatch_pending_emails(Arc::clone(&state));
+    Ok(Json(profile))
 }
 
 async fn update_preferences(
@@ -679,7 +823,9 @@ async fn update_preferences(
     Json(request): Json<UpdatePreferencesRequest>,
 ) -> Result<Json<UserProfile>, ApiError> {
     let user = authenticated(&state, &headers)?;
-    Ok(Json(state.store.update_preferences(&user.id, &request)?))
+    let profile = state.store.update_preferences(&user.id, &request)?;
+    AppState::dispatch_pending_emails(Arc::clone(&state));
+    Ok(Json(profile))
 }
 
 async fn create_wallet_challenge(

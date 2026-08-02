@@ -8,7 +8,8 @@ Updated: 2026-08-03
 | --- | --- | --- | --- | --- |
 | Visitor | Search public shelf metadata | None | Cannot read memory, profile, balance, disputes, or another user's chats | Home, chat, coverage |
 | Buyer | Buy existing passages or commission missing coverage | Authenticated account; sandbox balance for a call | Full call budget reserved; one unit released per accepted answer; unused amount refundable; returned answers scoped to owned `chatId` | Chat, “Posted by me”, balance |
-| Contributor | Answer matching calls and build reusable memory | Authenticated account and completed profile | Cannot answer own call, answer twice, answer a full/cancelled call, or bypass demographic/category targeting | Dashboard, answer flow, My memory |
+| Contributor | Receive and answer matching calls, then build reusable memory | Authenticated account and completed profile | Ranked in-app delivery, optional browser/email alerts, ten-minute slot hold; cannot answer own/full/cancelled call, answer twice, or bypass targeting | Dashboard, answer flow, My memory |
+| Memory-agent contributor | Reuse a previously paid answer without fabricating a new experience | Contributor with auto-match and Memory agent explicitly enabled | Exact old answer only; 82%+ question similarity, category/target match, unlocked document, price floor, and conduct limits are server-enforced | Dashboard preferences, My memory |
 | Restricted contributor | Continue after one or two quality failures | Same as contributor | 2 strikes remove auto-match and hold new earnings for 14 days; 3 strikes suspend new answers | Dashboard warning, memory ledger |
 | Disputant | Challenge one voided answer | One unused dispute | Submission remains pending and unpaid; submitter cannot approve it | My memory |
 | Reviewer | Approve or reject a pending dispute | Authenticated `admin` role | Approval restores document, slot, and escrow payment atomically; rejection changes none of them; decision cannot be replayed | `/admin/disputes` |
@@ -85,6 +86,18 @@ Updated: 2026-08-03
 - Accepted documents snapshot the profile bands shown to the buyer.
 - Quality checks run on the server even though the UI shows a preflight warning.
 - A voided answer fills no slot, creates no searchable document, and earns zero.
+- New matching calls create a durable unread notification. Dashboard order uses
+  the server recommendation score and explains profile, primary-field, shelf,
+  and prior-memory reasons.
+- The signed-in frontend refreshes notifications and calls every five seconds.
+  Browser system alerts require explicit browser permission; email delivery is
+  separately opt-in and uses a retryable SQLite outbox when a provider is configured.
+- Opening an answer deep link reserves one slot for ten minutes and renews it
+  every minute. Submitting, leaving through the SPA, or closing/navigating the
+  page releases it; expiration is the final server-side safety net.
+- Memory agent never invokes a generative model. It reuses the exact accepted
+  answer only above the strict similarity and policy boundary; otherwise the
+  contributor receives a fresh interview notification.
 
 ### Dispute and enforcement
 
@@ -111,7 +124,8 @@ Backend tests cover session creation, spoof rejection, escrow reservation,
 target mismatch, owner-only chat return, accepted payment, cancellation refund,
 quality voiding, duplicate/own-answer rejection, two- and three-strike rules,
 pending/approved/rejected disputes, idempotent document opens, migration, and
-account deletion, plus exact bundle creation, query-token rejection, quote
+account deletion, active-slot contention/release, contributor notification and
+email-outbox creation, strict Memory-agent reuse, plus exact bundle creation, query-token rejection, quote
 idempotency, one-signature settlement, multi-document recovery, per-document
 feedback, and per-beneficiary claim accounting. Frontend verification consists of TypeScript production build,
 Oxlint, and end-to-end Chrome walkthroughs of registration, onboarding, explicit
@@ -126,7 +140,10 @@ transfers. The new bundle gateway integration additionally verified that three
 bundle hash; the final Phantom signature remains a user-run Devnet check. It also
 confirmed projected subscriptions and agent payments remain disabled. Earlier
 passes covered Phantom reconnect, signed-out route guards, desktop and 390px
-mobile payment previews, and mobile navigation overlap.
+mobile payment previews, and mobile navigation overlap. The contributor-delivery
+pass verified the Dashboard alert controls/inbox/recommendation copy, direct
+notification deep links, a visible ten-minute slot hold, SPA and hard-navigation
+release, and a clean browser console after reload.
 
 ## Explicit production boundaries
 

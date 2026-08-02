@@ -313,6 +313,8 @@ export function getAccountControls(): Promise<{
 export type ServerProfile = Profile & {
   autoMatch: boolean
   agents: boolean
+  browserAlerts: boolean
+  emailAlerts: boolean
   suspended: boolean
 }
 
@@ -472,7 +474,12 @@ export function getProfile(): Promise<ServerProfile | null> {
 
 export function upsertProfile(
   profile: Omit<Profile, 'strikes' | 'disputeUsed' | 'agreedAt'>,
-  preferences: { autoMatch: boolean; agents: boolean },
+  preferences: {
+    autoMatch: boolean
+    agents: boolean
+    browserAlerts?: boolean
+    emailAlerts?: boolean
+  },
 ): Promise<ServerProfile> {
   return apiFetch('/api/v1/profile', {
     method: 'POST',
@@ -484,6 +491,8 @@ export function upsertProfile(
 export function updatePreferences(preferences: {
   autoMatch?: boolean
   agents?: boolean
+  browserAlerts?: boolean
+  emailAlerts?: boolean
 }): Promise<ServerProfile> {
   return apiFetch('/api/v1/profile/preferences', {
     method: 'POST',
@@ -542,6 +551,56 @@ export async function submitAnswer(
     },
   )
   return { ...result, order: orderFromApi(result.order) }
+}
+
+export type OpenCallReservation = {
+  openCallId: string
+  expiresAt: number
+}
+
+export function reserveOpenCall(orderId: string): Promise<OpenCallReservation> {
+  return apiFetch(
+    `/api/v1/open-calls/${encodeURIComponent(orderId)}/reservation`,
+    { method: 'POST' },
+  )
+}
+
+export function releaseOpenCallReservation(orderId: string): Promise<void> {
+  return apiFetch(
+    `/api/v1/open-calls/${encodeURIComponent(orderId)}/reservation/release`,
+    { method: 'POST', keepalive: true },
+  )
+}
+
+export function beaconReleaseOpenCallReservation(orderId: string): boolean {
+  if (typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function') {
+    return false
+  }
+  return navigator.sendBeacon(
+    `${API_BASE}/api/v1/open-calls/${encodeURIComponent(orderId)}/reservation/release`,
+  )
+}
+
+export type ContributorNotification = {
+  id: string
+  kind: 'call_available' | 'auto_matched' | 'answer_received' | 'call_filled' | string
+  title: string
+  body: string
+  openCallId?: string
+  createdAt: number
+  readAt?: number
+}
+
+export function listNotifications(): Promise<ContributorNotification[]> {
+  return apiFetch('/api/v1/notifications')
+}
+
+export function markNotificationsRead(ids: string[] = []): Promise<void> {
+  return apiFetch('/api/v1/notifications/read', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  })
 }
 
 export function disputeMemory(

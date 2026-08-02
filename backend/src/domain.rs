@@ -184,6 +184,39 @@ pub struct OpenCall {
     pub eligible: bool,
     pub escrow_remaining_krw: u64,
     pub status: String,
+    /// Active answer slots temporarily held by contributors who opened the interview.
+    pub reserved_slots: usize,
+    /// This viewer's reservation expiry, if they currently hold a slot.
+    pub reservation_expires_at: Option<u64>,
+    /// Server-side ranking signal. Zero means the viewer is not eligible.
+    pub recommendation_score: f32,
+    pub recommendation_reason: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCallReservation {
+    pub open_call_id: String,
+    pub expires_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributorNotification {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub body: String,
+    pub open_call_id: Option<String>,
+    pub created_at: u64,
+    pub read_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkNotificationsReadRequest {
+    #[serde(default)]
+    pub ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -357,6 +390,8 @@ pub struct UserProfile {
     pub consent_version: String,
     pub auto_match: bool,
     pub agents: bool,
+    pub browser_alerts: bool,
+    pub email_alerts: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -374,6 +409,10 @@ pub struct UpsertProfileRequest {
     pub auto_match: bool,
     #[serde(default)]
     pub agents: bool,
+    #[serde(default)]
+    pub browser_alerts: bool,
+    #[serde(default)]
+    pub email_alerts: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -404,6 +443,8 @@ pub struct VerifyWalletRequest {
 pub struct UpdatePreferencesRequest {
     pub auto_match: Option<bool>,
     pub agents: Option<bool>,
+    pub browser_alerts: Option<bool>,
+    pub email_alerts: Option<bool>,
 }
 
 fn default_true() -> bool {

@@ -183,6 +183,14 @@ remain visibly disabled until the controls in
 [`docs/agent-payment-threat-model.md`](./docs/agent-payment-threat-model.md) are
 implemented and reviewed. Browser settlement reconciliation is implemented;
 paid handles are recovered before any retry.
+
+Contributor question delivery now includes server-ranked recommendations, a
+durable in-app inbox, five-second browser refresh with optional system alerts,
+opt-in email outbox delivery, and ten-minute answer-slot reservations. The
+contributor memory agent is deliberately narrower than a generative responder:
+it reuses the exact original paid answer only for an opted-in, 82%+
+near-identical call that still meets targeting, pricing, lock, and conduct
+rules. Every other call still requires the person to answer.
 See `SCENARIO-AUDIT.md` for the Chrome-verified scenarios and prioritized gaps,
 [`docs/CODE-REVIEW.md`](./docs/CODE-REVIEW.md) for the PR #2/#9 consolidation
 and production audit, and `backend/README.md` for the exact backend boundary.

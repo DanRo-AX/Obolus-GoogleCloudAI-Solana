@@ -6,7 +6,9 @@ The Rust service owns the complete question lifecycle:
 question -> search/rank private MDs -> HIT -> quote safe metadata
                                   \-> MISS -> create an open call
 account -> HttpOnly session -> profile / private memory / balance
-open call -> reserve full sandbox budget -> accepted answer -> escrow release
+open call -> reserve full sandbox budget -> recommend + notify matching contributors
+          -> hold a 10-minute answer slot -> accepted answer -> escrow release
+          -> 82%+ near-identical paid memory + opted-in agent -> exact answer reuse
                                             \-> voided -> pending dispute
 pending dispute -> admin approve -> document + slot + escrow release
                 \-> admin reject  -> remains voided and unpaid
@@ -60,6 +62,9 @@ directory. Configuration:
 | `OPENSHELF_VERTEX_ENDPOINT` | none | Vertex generate-content endpoint |
 | `OPENSHELF_GOOGLE_ACCESS_TOKEN` | none | Vertex bearer token |
 | `GEMINI_API_KEY` | none | Local Gemini API fallback |
+| `OPENSHELF_EMAIL_ENDPOINT` | none | Optional Resend-compatible contributor-alert endpoint |
+| `OPENSHELF_EMAIL_API_KEY` | none | Bearer token for the email endpoint |
+| `OPENSHELF_EMAIL_FROM` | none | Verified sender used for contributor alerts |
 
 Production also refuses to start against a database that already contains the
 demo corpus. Use a clean production database rather than relabelling a populated
@@ -90,6 +95,10 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data \
 | `GET/POST` | `/api/v1/open-calls` | List or commission missing coverage |
 | `DELETE` | `/api/v1/open-calls/{id}` | Cancel an owned call and refund unused escrow |
 | `POST` | `/api/v1/open-calls/{id}/answers` | Validate an answer, retain private interview context, and add accepted memory |
+| `POST/DELETE` | `/api/v1/open-calls/{id}/reservation` | Hold, renew, or release one answer slot for ten minutes |
+| `POST` | `/api/v1/open-calls/{id}/reservation/release` | Keepalive-safe release used while the answer page is closing |
+| `GET` | `/api/v1/notifications` | Read ranked call, auto-match, and buyer-result notifications |
+| `POST` | `/api/v1/notifications/read` | Mark selected notifications, or the whole inbox, read |
 | `GET` | `/api/v1/chats/{id}/answers` | Return accepted answers only to the originating chat owner |
 | `GET` | `/api/v1/memory` | Read a user's answer and earnings ledger |
 | `PATCH` | `/api/v1/memory/{id}` | Lock/unlock memory and remove/restore it in matching |
@@ -105,7 +114,7 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data \
 | `GET` | `/api/v1/personas/{handle}` | PR #9 compatibility alias for a contributor manifest |
 | `GET` | `/api/v1/documents/{handle}` | Public hash/version/price metadata without content |
 | `GET/POST` | `/api/v1/profile` | Read or persist the anonymous profile and payout wallet |
-| `POST` | `/api/v1/profile/preferences` | Persist auto-match and agent-output preferences |
+| `POST` | `/api/v1/profile/preferences` | Persist search auto-match, exact-memory agent, browser, and email-alert preferences |
 | `POST` | `/api/v1/profile/wallet/challenge` `/verify` | Prove payout-wallet ownership with a signed message |
 | `GET` | `/api/v1/earnings` | Audit append-only earnings and wallet snapshots |
 | `GET` | `/api/flash-research` | Reveal only handles quoted for a query and accrue them once |
@@ -127,6 +136,21 @@ Answer submissions may include `interviewResponses` from the optional warm-up
 conversation. Those turns are returned only in the respondent's authenticated
 memory stream. They are not copied into the searchable document, quoted to a
 buyer, priced, or settled separately; the final `answer` remains the sale unit.
+
+Contributor delivery is server-owned. Eligible calls receive a recommendation
+score and an in-app notification; the frontend polls every five seconds and may
+surface new unread items through the browser Notification API. Email is opt-in
+and written to a durable SQLite outbox. Delivery runs only when all three email
+environment variables above are configured, so a missing provider never blocks
+call creation. Opening the interview reserves one remaining slot for ten minutes
+and renews it while the page stays open.
+
+The memory agent never generates a human experience. When explicitly enabled,
+it can reuse the contributor's exact previously paid answer only when the old
+and new questions score at least 82% similar, the category and demographic
+target match, the old document remains unlocked, its price floor is met, and
+the account is below the two-strike restriction. Otherwise the call is sent to
+the person for a fresh interview.
 
 Register and keep the cookie in a local cookie jar:
 

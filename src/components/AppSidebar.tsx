@@ -278,7 +278,7 @@ export function AppSidebar() {
                 aria-label="Agent payments are not available"
               />
               <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground/70">
-                Agent payments · future
+                Buyer-agent payments · future
               </span>
               {/* The original's theme toggle sits here. This build is light-mode
                   only, so the control is omitted rather than shipped dead. */}
