@@ -1,5 +1,7 @@
 pub mod api;
+pub mod authority;
 pub mod domain;
+pub mod orchestrator;
 pub mod quality;
 pub mod search;
 pub mod seed;
@@ -23,7 +25,7 @@ pub fn build_app(store: Store) -> Router {
         .unwrap_or_else(|error| panic!("invalid OPENSHELF_FRONTEND_ORIGIN: {error}"));
     let cors = CorsLayer::new()
         .allow_origin(frontend_origin)
-        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
         .allow_headers([
             header::CONTENT_TYPE,
             header::AUTHORIZATION,

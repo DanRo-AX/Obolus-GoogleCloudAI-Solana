@@ -14,6 +14,8 @@ quoted handle -> dynamic x402 quote -> USDC settlement -> reveal one passage
                  \-> progress/recovery token             \-> immutable chain receipt
 author wallet -> signed Ed25519 challenge -> verified payout destination
 paid passage -> buyer feedback/report -> admin review -> ranking reliability
+opened passages -> server-canonical evidence -> Gemini/Vertex cited synthesis
+memory -> hash/version/lock/correction -> public manifest + private export log
 ```
 
 SQLite persists users, Argon2id password hashes, hashed session and query tokens, balance
@@ -50,6 +52,11 @@ directory. Configuration:
 | `OPENSHELF_X402_ASSET` | Circle Devnet USDC | Mint committed into quotes |
 | `OPENSHELF_KRW_PER_USDC` | `1350` | Deterministic quote conversion rate |
 | `OPENSHELF_QUOTE_TTL_MS` | `300000` | Quote lifetime |
+| `OPENSHELF_ALLOW_DEMO_OPEN` | development-dependent | Enable the non-x402 demo opener; keep false publicly |
+| `OPENSHELF_GEMINI_MODEL` | `gemini-2.5-flash` | Evidence synthesis model |
+| `OPENSHELF_VERTEX_ENDPOINT` | none | Vertex generate-content endpoint |
+| `OPENSHELF_GOOGLE_ACCESS_TOKEN` | none | Vertex bearer token |
+| `GEMINI_API_KEY` | none | Local Gemini API fallback |
 
 Docker persists SQLite in `/data`:
 
@@ -67,6 +74,7 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data openshelf-api
 | `POST` | `/api/v1/auth/register` `/login` `/logout` | Create, issue, or revoke an HttpOnly session |
 | `GET` | `/api/v1/auth/me` | Read the authenticated account and sandbox balance |
 | `POST` | `/api/v1/questions/resolve` | Search, rank, and return HIT/MISS plus a safe quote |
+| `POST` | `/api/v1/answers/synthesize` | Synthesize only server-proven opened passages |
 | `GET` | `/api/v1/questions/{id}/payment-progress` | Reconcile settled/quoted/unpaid handles for a payer |
 | `GET` | `/api/v1/questions/{id}/paid-documents/{handle}` | Recover a previously settled passage without paying again |
 | `POST` | `/api/v1/questions/{id}/paid-documents/{handle}/feedback` | Record paid-buyer feedback or a report |
@@ -75,11 +83,17 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data openshelf-api
 | `POST` | `/api/v1/open-calls/{id}/answers` | Validate an answer, retain private interview context, and add accepted memory |
 | `GET` | `/api/v1/chats/{id}/answers` | Return accepted answers only to the originating chat owner |
 | `GET` | `/api/v1/memory` | Read a user's answer and earnings ledger |
+| `PATCH` | `/api/v1/memory/{id}` | Lock/unlock memory and remove/restore it in matching |
+| `POST` | `/api/v1/memory/{id}/corrections` | Create a new immutable version and lock the old one |
 | `POST` | `/api/v1/memory/{id}/dispute` | Submit the user's one dispute for review |
 | `GET/POST` | `/api/v1/admin/disputes[/{id}/review]` | List and review cases (admin role only) |
 | `GET/POST` | `/api/v1/admin/document-feedback[/{id}/review]` | List and review paid-buyer reports (admin only) |
+| `POST` | `/api/v1/admin/evidence-edges` | Add independently owned verified authority edges (admin only) |
 | `GET` | `/api/v1/account-controls` | Read server-authoritative strikes/dispute use |
 | `GET/DELETE` | `/api/v1/account/balance` `/api/v1/account` | Read the ledger or delete and anonymize the account |
+| `GET` | `/api/v1/account/export` | Export profile, private memories, and access log |
+| `GET` | `/api/v1/contributors/{handle}` | Public payment-safe contributor manifest |
+| `GET` | `/api/v1/documents/{handle}` | Public hash/version/price metadata without content |
 | `GET/POST` | `/api/v1/profile` | Read or persist the anonymous profile and payout wallet |
 | `POST` | `/api/v1/profile/preferences` | Persist auto-match and agent-output preferences |
 | `POST` | `/api/v1/profile/wallet/challenge` `/verify` | Prove payout-wallet ownership with a signed message |
@@ -109,7 +123,7 @@ Register and keep the cookie in a local cookie jar:
 curl -s -c /tmp/openshelf.cookies \
   http://localhost:8787/api/v1/auth/register \
   -H 'content-type: application/json' \
-  -d '{"email":"buyer@example.com","password":"correct-horse-42"}'
+  -d '{"email":"buyer@example.com","password":"correct-horse-42","ageConfirmed14":true}'
 ```
 
 All private examples use `-b /tmp/openshelf.cookies`. To provision the first
@@ -172,9 +186,10 @@ The Vite app performs the paid retry through Phantom. The facilitator pays the
 transaction fee; the buyer wallet needs Devnet USDC, and may need Devnet SOL for
 normal wallet setup. One document produces one transfer and one receipt.
 
-`backend/paywall.yml` remains only as a legacy static-gateway example. The
-implemented path is `payment-gateway/src/main.ts`, because recipients and prices
-must be generated per document rather than fixed in YAML.
+`backend/paywall.yml` is a static Pay.sh localnet compatibility example. The
+Devnet application path remains `payment-gateway/src/main.ts`, because recipients
+and prices must be generated per document rather than fixed in YAML. See
+[`../docs/PAY-SH.md`](../docs/PAY-SH.md).
 
 ## Verify
 

@@ -3,6 +3,19 @@ use thiserror::Error;
 
 pub const DEFAULT_REQUESTED_DOCUMENTS: usize = 5;
 pub const MAX_REQUESTED_DOCUMENTS: usize = 20;
+pub const CATEGORY_IDS: &[&str] = &[
+    "life",
+    "food",
+    "family",
+    "health",
+    "business",
+    "sales",
+    "engineering",
+    "education",
+    "sports",
+    "travel",
+    "money",
+];
 
 fn default_requested_documents() -> usize {
     DEFAULT_REQUESTED_DOCUMENTS
@@ -24,6 +37,28 @@ pub struct Document {
     pub reliability_score: f32,
     pub locked: bool,
     pub demographics: Option<DemographicBands>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvidenceEdge {
+    pub source_document_id: String,
+    pub target_document_id: String,
+    pub relation: String,
+    pub provenance: String,
+    pub topic: String,
+    pub weight: f32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateEvidenceEdgeRequest {
+    pub source_handle: String,
+    pub target_handle: String,
+    pub relation: String,
+    pub provenance: String,
+    pub topic: String,
+    pub weight: f32,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -78,6 +113,7 @@ pub enum DecisionReason {
 pub struct ScoreBreakdown {
     pub relevance: f32,
     pub term_coverage: f32,
+    pub authority: f32,
     pub trust: f32,
     pub freshness: f32,
 }
@@ -203,6 +239,86 @@ pub struct MemoryEntry {
     pub rating: Option<u8>,
     pub dispute_status: Option<String>,
     pub interview_responses: Vec<InterviewResponse>,
+    pub memory_type: String,
+    pub importance: f32,
+    pub reliability_score: f32,
+    pub content_hash: String,
+    pub version: u32,
+    pub locked: bool,
+    pub access_count: u64,
+    pub last_accessed_at: Option<u64>,
+    pub source_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateMemoryRequest {
+    pub locked: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CorrectMemoryRequest {
+    pub answer: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryExport {
+    pub exported_at: u64,
+    pub profile: Option<UserProfile>,
+    pub memories: Vec<MemoryEntry>,
+    pub access_log: Vec<MemoryAccessEvent>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryAccessEvent {
+    pub id: String,
+    pub memory_id: Option<String>,
+    pub purpose: String,
+    pub created_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributorMemoryLink {
+    pub id: String,
+    pub canonical_url: String,
+    pub content_hash: String,
+    pub version: u32,
+    pub memory_type: String,
+    pub importance: f32,
+    pub updated_at: u64,
+    pub x402_template: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributorManifest {
+    pub schema: &'static str,
+    pub canonical_url: String,
+    pub handle: String,
+    pub demographics: DemographicBands,
+    pub reliability_score: f32,
+    pub memory_count: usize,
+    pub updated_at: u64,
+    pub memories: Vec<ContributorMemoryLink>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicDocument {
+    pub schema: &'static str,
+    pub canonical_url: String,
+    pub handle: String,
+    pub contributor_handle: Option<String>,
+    pub shelf: String,
+    pub category: String,
+    pub content_hash: String,
+    pub version: u32,
+    pub price_krw: u64,
+    pub x402_template: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -238,6 +354,7 @@ pub struct UserProfile {
     pub wallet_verified: bool,
     pub wallet_verified_at: Option<u64>,
     pub agreed_at: u64,
+    pub consent_version: String,
     pub auto_match: bool,
     pub agents: bool,
 }
@@ -318,13 +435,53 @@ pub struct EarningsSummary {
     pub events: Vec<EarningEvent>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Citation {
     pub handle: String,
     pub shelf: String,
     pub excerpt: String,
     pub price: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SynthesizeAnswerRequest {
+    pub query_id: String,
+    pub question: String,
+    pub citations: Vec<Citation>,
+}
+
+/// Client input for synthesis. The client identifies already-opened passages,
+/// while the server reloads the canonical paid evidence before invoking a model.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SynthesizePaidAnswerRequest {
+    pub query_id: String,
+    pub handles: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvidenceContribution {
+    pub handle: String,
+    pub score: f32,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SynthesizeAnswerResponse {
+    pub answer: String,
+    pub confidence: f32,
+    pub consensus: Vec<String>,
+    pub disagreements: Vec<String>,
+    pub used_handles: Vec<String>,
+    pub contributions: Vec<EvidenceContribution>,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub mode: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -357,12 +514,20 @@ pub struct PaymentQuote {
     pub krw_per_usdc: u64,
     pub expires_at: u64,
     pub resource_path: String,
+    pub canonical_url: String,
+    pub content_hash: String,
+    pub document_version: u32,
+    pub status: String,
+    pub consent_version: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaidDocument {
     pub quote_id: String,
+    pub content_hash: String,
+    pub document_version: u32,
+    pub delivered_at: u64,
     pub citation: Citation,
 }
 
@@ -470,6 +635,8 @@ pub struct UserAccount {
 pub struct RegisterRequest {
     pub email: String,
     pub password: String,
+    #[serde(default)]
+    pub age_confirmed_14: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

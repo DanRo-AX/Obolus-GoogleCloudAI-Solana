@@ -9,7 +9,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
 };
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -18,15 +18,19 @@ use sha2::{Digest, Sha256};
 use crate::{
     domain::{
         AccountControls, AuthResponse, BalanceSummary, ChainSettlementReceipt, ChatAnswer,
-        CreateOpenCallRequest, DisputeCase, DocumentFeedback, EarningsSummary, LoginRequest,
-        MemoryEntry, OpenCall, OpenDocumentsResponse, PaidDocument, PaymentProgress, PaymentQuote,
-        RecordChainSettlementRequest, RecoveredPaidDocument, RegisterRequest, ResolveError,
-        ResolveQuestionRequest, ResolveQuestionResponse, ReviewDisputeRequest,
-        ReviewDocumentFeedbackRequest, SubmitAnswerRequest, SubmitAnswerResponse,
-        SubmitDisputeRequest, SubmitDocumentFeedbackRequest, UpdatePreferencesRequest,
+        ContributorManifest, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
+        CreateOpenCallRequest, DisputeCase, DocumentFeedback, EarningsSummary, EvidenceEdge,
+        LoginRequest, MemoryEntry, MemoryExport, OpenCall, OpenDocumentsResponse, PaidDocument,
+        PaymentProgress, PaymentQuote, PublicDocument, RecordChainSettlementRequest,
+        RecoveredPaidDocument, RegisterRequest, ResolveError, ResolveQuestionRequest,
+        ResolveQuestionResponse, ReviewDisputeRequest, ReviewDocumentFeedbackRequest,
+        SubmitAnswerRequest, SubmitAnswerResponse, SubmitDisputeRequest,
+        SubmitDocumentFeedbackRequest, SynthesizeAnswerRequest, SynthesizeAnswerResponse,
+        SynthesizePaidAnswerRequest, UpdateMemoryRequest, UpdatePreferencesRequest,
         UpsertProfileRequest, UserAccount, UserProfile, VerifyWalletRequest, WalletChallenge,
         WalletChallengeRequest,
     },
+    orchestrator,
     search::Resolver,
     store::{PaymentQuotePolicy, Store, StoreError},
 };
@@ -45,6 +49,7 @@ pub struct AppState {
     payment_policy: PaymentQuotePolicy,
     secure_cookies: bool,
     environment: String,
+    allow_demo_open: bool,
 }
 
 impl AppState {
@@ -89,8 +94,15 @@ impl AppState {
                 ttl_ms: env_u64("OPENSHELF_QUOTE_TTL_MS", 300_000),
             },
             secure_cookies: env_bool("OPENSHELF_SECURE_COOKIES", production),
+            allow_demo_open: env_bool("OPENSHELF_ALLOW_DEMO_OPEN", !production),
             environment,
         }
+    }
+
+    #[cfg(test)]
+    fn with_demo_open(mut self, allowed: bool) -> Self {
+        self.allow_demo_open = allowed;
+        self
     }
 }
 
@@ -103,6 +115,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/auth/logout", post(logout))
         .route("/api/v1/auth/me", get(me))
         .route("/api/v1/questions/resolve", post(resolve_question))
+        .route("/api/v1/answers/synthesize", post(synthesize_answer))
         .route(
             "/api/v1/questions/{id}/payment-progress",
             get(payment_progress),
@@ -123,9 +136,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/open-calls/{id}", delete(cancel_open_call))
         .route("/api/v1/chats/{id}/answers", get(chat_answers))
         .route("/api/v1/memory", get(list_memory))
+        .route("/api/v1/memory/{id}", patch(update_memory))
+        .route("/api/v1/memory/{id}/corrections", post(correct_memory))
         .route("/api/v1/memory/{id}/dispute", post(submit_dispute))
         .route("/api/v1/disputes/me", get(my_dispute))
         .route("/api/v1/admin/disputes", get(list_disputes))
+        .route("/api/v1/admin/evidence-edges", post(create_evidence_edge))
         .route("/api/v1/admin/disputes/{id}/review", post(review_dispute))
         .route(
             "/api/v1/admin/document-feedback",
@@ -137,7 +153,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/account-controls", get(account_controls))
         .route("/api/v1/account/balance", get(get_balance))
+        .route("/api/v1/account/export", get(export_account))
         .route("/api/v1/account", delete(delete_account))
+        .route("/api/v1/contributors/{handle}", get(contributor_manifest))
+        .route("/api/v1/documents/{handle}", get(public_document))
         .route("/api/v1/profile", get(get_profile).post(upsert_profile))
         .route("/api/v1/profile/preferences", post(update_preferences))
         .route(
@@ -181,6 +200,11 @@ async fn register(
     State(state): State<Arc<AppState>>,
     Json(request): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    if !request.age_confirmed_14 {
+        return Err(ApiError::validation(
+            "you must confirm that you are at least 14 years old",
+        ));
+    }
     validate_password(&request.password)?;
     let password_hash = hash_password(&request.password)?;
     let user = state.store.register_user(&request.email, &password_hash)?;
@@ -238,7 +262,8 @@ async fn resolve_question(
     Json(request): Json<ResolveQuestionRequest>,
 ) -> Result<Json<ResolveQuestionResponse>, ApiError> {
     let question = request.question.clone();
-    let resolver = Resolver::new(state.store.documents()?);
+    let resolver =
+        Resolver::new(state.store.documents()?).with_evidence_edges(state.store.evidence_edges()?);
     let mut response = resolver.resolve(request)?;
     let payment_access_token = random_token();
     state.store.record_resolution(
@@ -247,6 +272,27 @@ async fn resolve_question(
         Some(&token_hash(&payment_access_token)),
     )?;
     response.payment_access_token = Some(payment_access_token);
+    Ok(Json(response))
+}
+
+async fn synthesize_answer(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<SynthesizePaidAnswerRequest>,
+) -> Result<Json<SynthesizeAnswerResponse>, ApiError> {
+    let (question, citations) = state
+        .store
+        .opened_evidence(&request.query_id, &request.handles)?;
+    let canonical_request = SynthesizeAnswerRequest {
+        query_id: request.query_id.clone(),
+        question,
+        citations,
+    };
+    let response = orchestrator::synthesize(&canonical_request)
+        .await
+        .map_err(|error| ApiError::validation(&error.to_string()))?;
+    state
+        .store
+        .record_contributions(&request.query_id, &response.contributions)?;
     Ok(Json(response))
 }
 
@@ -359,6 +405,33 @@ async fn list_memory(
     Ok(Json(state.store.list_memory(&user.id)?))
 }
 
+async fn update_memory(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<UpdateMemoryRequest>,
+) -> Result<Json<MemoryEntry>, ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok(Json(state.store.set_memory_locked(
+        &user.id,
+        &id,
+        request.locked,
+    )?))
+}
+
+async fn correct_memory(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<CorrectMemoryRequest>,
+) -> Result<(StatusCode, Json<MemoryEntry>), ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(state.store.correct_memory(&user.id, &id, &request)?),
+    ))
+}
+
 async fn submit_dispute(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -384,6 +457,18 @@ async fn list_disputes(
 ) -> Result<Json<Vec<DisputeCase>>, ApiError> {
     let user = authenticated(&state, &headers)?;
     Ok(Json(state.store.list_disputes(&user.id)?))
+}
+
+async fn create_evidence_edge(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<CreateEvidenceEdgeRequest>,
+) -> Result<(StatusCode, Json<EvidenceEdge>), ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(state.store.create_evidence_edge(&user.id, &request)?),
+    ))
 }
 
 async fn review_dispute(
@@ -432,6 +517,28 @@ async fn get_balance(
 ) -> Result<Json<BalanceSummary>, ApiError> {
     let user = authenticated(&state, &headers)?;
     Ok(Json(state.store.balance(&user.id)?))
+}
+
+async fn export_account(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<MemoryExport>, ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok(Json(state.store.export_account(&user.id)?))
+}
+
+async fn contributor_manifest(
+    State(state): State<Arc<AppState>>,
+    Path(handle): Path<String>,
+) -> Result<Json<ContributorManifest>, ApiError> {
+    Ok(Json(state.store.contributor_manifest(&handle)?))
+}
+
+async fn public_document(
+    State(state): State<Arc<AppState>>,
+    Path(handle): Path<String>,
+) -> Result<Json<PublicDocument>, ApiError> {
+    Ok(Json(state.store.public_document(&handle)?))
 }
 
 async fn delete_account(
@@ -511,6 +618,11 @@ async fn open_documents(
     State(state): State<Arc<AppState>>,
     Query(query): Query<OpenDocumentsQuery>,
 ) -> Result<Json<OpenDocumentsResponse>, ApiError> {
+    if !state.allow_demo_open {
+        return Err(ApiError::forbidden(
+            "demo opening is disabled; use the x402 gateway",
+        ));
+    }
     let handles = query
         .docs
         .split(',')
@@ -762,6 +874,14 @@ impl ApiError {
         }
     }
 
+    fn forbidden(message: &str) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            code: "forbidden",
+            message: message.to_owned(),
+        }
+    }
+
     fn internal(error: impl std::fmt::Display) -> Self {
         tracing::error!(error = %error, "internal API error");
         Self {
@@ -824,6 +944,8 @@ impl IntoResponse for ApiError {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use axum::{
         body::Body,
         http::{Request, StatusCode, header},
@@ -833,9 +955,9 @@ mod tests {
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
-    use crate::demo_app;
+    use crate::{demo_app, store::Store};
 
-    use super::QUERY_TOKEN_HEADER;
+    use super::{AppState, QUERY_TOKEN_HEADER, router};
 
     async fn register(app: &axum::Router, email: &str) -> String {
         let response = app
@@ -844,7 +966,12 @@ mod tests {
                 Request::post("/api/v1/auth/register")
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
-                        json!({"email": email, "password": "correct-horse-42"}).to_string(),
+                        json!({
+                            "email": email,
+                            "password": "correct-horse-42",
+                            "ageConfirmed14": true
+                        })
+                        .to_string(),
                     ))
                     .unwrap(),
             )
@@ -882,6 +1009,27 @@ mod tests {
                 .unwrap();
         assert_eq!(body["user"]["email"], "buyer@example.com");
         assert_eq!(body["balance"]["availableKrw"], 100_000);
+    }
+
+    #[tokio::test]
+    async fn registration_requires_an_explicit_age_confirmation() {
+        let response = demo_app()
+            .oneshot(
+                Request::post("/api/v1/auth/register")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "email": "minor@example.com",
+                            "password": "correct-horse-42",
+                            "ageConfirmed14": false
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[tokio::test]
@@ -1061,6 +1209,20 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn deployment_can_disable_the_demo_payment_bypass() {
+        let state = AppState::new(Store::in_memory().unwrap()).with_demo_open(false);
+        let response = router(Arc::new(state))
+            .oneshot(
+                Request::get("/api/flash-research?queryId=q&docs=h")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

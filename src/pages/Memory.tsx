@@ -1,6 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
-import { Coins, Flame, Loader2, ShieldAlert, Sparkles, Star, Trash2, Wallet } from 'lucide-react'
+import {
+  Coins,
+  Download,
+  Flame,
+  Loader2,
+  Lock,
+  ShieldAlert,
+  Sparkles,
+  Star,
+  Trash2,
+  Unlock,
+  Wallet,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Badge,
@@ -10,6 +22,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/primitives'
 import { AUTO_MATCH_STRIKE_LIMIT, STRIKE_LIMIT } from '@/data/onboarding'
+import { exportAccount, setMemoryLocked } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
 import { shortKey } from '@/state/wallet'
@@ -40,6 +53,47 @@ export default function Memory() {
   const [disputeError, setDisputeError] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [lockingId, setLockingId] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const [memoryActionError, setMemoryActionError] = useState<string | null>(null)
+
+  const toggleMemoryLock = async (memoryId: string, locked: boolean) => {
+    setLockingId(memoryId)
+    setMemoryActionError(null)
+    try {
+      await setMemoryLocked(memoryId, locked)
+      await refreshLedger()
+    } catch (error) {
+      setMemoryActionError(
+        error instanceof Error ? error.message : 'The memory setting could not be updated.',
+      )
+    } finally {
+      setLockingId(null)
+    }
+  }
+
+  const downloadExport = async () => {
+    setExporting(true)
+    setMemoryActionError(null)
+    try {
+      const data = await exportAccount()
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: 'application/json',
+      })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `openshelf-export-${new Date().toISOString().slice(0, 10)}.json`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      setMemoryActionError(
+        error instanceof Error ? error.message : 'The account export could not be created.',
+      )
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const dispute = async (memoryId: string) => {
     if (disputingId) return
@@ -101,10 +155,31 @@ export default function Memory() {
       <div className="space-y-6 p-4 sm:p-6">
         <div className="flex min-h-8 items-center justify-between gap-4">
           <h1 className="font-sans text-base font-medium">My memory</h1>
-          <Button asChild variant="monoGhost" size="monoSm">
-            <Link to="/dashboard">Browse open calls</Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="monoGhost"
+              size="monoSm"
+              disabled={exporting}
+              onClick={() => void downloadExport()}
+            >
+              {exporting ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Download className="size-3" />
+              )}
+              Export
+            </Button>
+            <Button asChild variant="monoGhost" size="monoSm">
+              <Link to="/dashboard">Browse open calls</Link>
+            </Button>
+          </div>
         </div>
+
+        {memoryActionError ? (
+          <p className="rounded-[4px] border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            {memoryActionError}
+          </p>
+        ) : null}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Stat
@@ -332,6 +407,24 @@ export default function Memory() {
                         >
                           +₩{m.earned.toLocaleString()}
                         </span>
+                        {m.status !== 'voided' && m.memoryType !== 'reflection' ? (
+                          <button
+                            type="button"
+                            disabled={lockingId === m.id}
+                            onClick={() => void toggleMemoryLock(m.id, !m.locked)}
+                            className="inline-flex size-6 cursor-pointer items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground disabled:cursor-wait"
+                            title={m.locked ? 'Unlock for matching' : 'Lock and remove from matching'}
+                            aria-label={m.locked ? 'Unlock memory' : 'Lock memory'}
+                          >
+                            {lockingId === m.id ? (
+                              <Loader2 className="size-3 animate-spin" />
+                            ) : m.locked ? (
+                              <Lock className="size-3" />
+                            ) : (
+                              <Unlock className="size-3" />
+                            )}
+                          </button>
+                        ) : null}
                       </div>
                       <p className="mt-1.5 text-sm text-muted-foreground">
                         {m.question}

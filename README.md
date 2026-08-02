@@ -15,6 +15,7 @@ npm ci
 npm --prefix payment-gateway ci
 cp .env.example .env  # set OPENSHELF_DEFAULT_RECEIVER to your Devnet wallet
 npm run dev:stack     # frontend :4319, Rust :8787, x402 gateway :1402
+npm run x402:devnet:smoke # optional funded-wallet settlement verification
 ```
 
 Verification:
@@ -38,8 +39,12 @@ explicitly want the old sandbox-ledger path, or
 4. The browser x402 client has Phantom sign the exact USDC transfer and retries
    with `PAYMENT-SIGNATURE`.
 5. The public Devnet facilitator verifies and settles it, the gateway releases
-   one document, and Rust records the transaction signature idempotently.
-6. Direct-to-author payments are marked `onchain`; they are not added again to
+   the purchase-time content snapshot, and Rust records the signature
+   idempotently.
+6. Rust reloads only server-proven opened passages, then Gemini/Vertex produces
+   a cited synthesis. Without a provider, the UI shows an explicit evidence-only
+   result instead of inventing an answer.
+7. Direct-to-author payments are marked `onchain`; they are not added again to
    the sandbox KRW balance. Failed ledger mirrors remain in the gateway outbox
    and retry safely.
 
@@ -86,8 +91,10 @@ Devnet USDC at the default conversion rate).
 
 Matching, ranking, budget filtering, author deduplication, and the hit/miss
 decision now run in the Rust service. It combines deterministic 768-dimensional
-hash embeddings, word/character n-grams, entity anchors, trust, and freshness.
-The search response contains handles and prices but never paid passages.
+hash embeddings, word/character n-grams, entity anchors, trust, freshness, and
+topic-personalized PageRank over curator-verified independent evidence edges.
+Paid, self-owned, inferred, and raw UGC edges cannot buy authority. The search
+response contains handles and prices but never paid passages.
 
 ## Canvases
 
@@ -107,7 +114,8 @@ through an SVG or rasterised text). Both pause off-screen and honour
 
 The frontend now uses server-issued, HttpOnly session cookies; client-supplied
 `userId` values are not accepted. Registration creates ₩100,000 of explicitly
-labelled sandbox credit. A paid open call reserves its full maximum budget in a
+labelled sandbox credit and requires explicit confirmation that the user is at
+least 14. A paid open call reserves its full maximum budget in a
 SQLite ledger, accepted answers release one unit to the contributor, and
 cancellation refunds every unused unit. Open-call answers are readable only by
 the owner of the originating `chatId`. They are delivered back into that chat
@@ -124,6 +132,12 @@ Authenticated account deletion refunds unused reservations, revokes all
 sessions, deletes profile, memory, and document text, and anonymizes the minimal
 append-only financial audit rows.
 
+Accepted memories carry a SHA-256 content hash, immutable version, reliability
+and importance scores, lock state, and access count. Corrections create a new
+version and lock the superseded passage. Contributors can export their private
+memory/access log, while public contributor and document manifests expose only
+payment-safe hashes, versions, prices, and x402 links.
+
 ## Honest gaps
 
 Carried over from the meeting, and stated in the FAQ rather than smoothed over:
@@ -132,7 +146,9 @@ Carried over from the meeting, and stated in the FAQ rather than smoothed over:
    shelf leaves the librarian nothing to do. The dashboard ships with seeded
    open calls so a demo has something to show.
 2. **Voice vs chat collection.** Undecided; v1 uses the open-call answer flow.
-3. **Who gets picked when more documents match than are needed.** Undecided.
+3. **Cold-start authority.** Relevance exploration works, but production
+   calibration and Sybil-resistant identity are still required before graph
+   authority can be treated as mature.
 4. **Low-effort answers.** ID-verified identity is out of scope for v1.
 
 Profiles, payout wallets, auto-match preferences, open calls, answers, memory,
@@ -144,6 +160,8 @@ account, money, memory, and authorization state are server-owned.
 The KRW signup/open-call balance is still a clearly labelled sandbox ledger; it
 models reservations and refunds but is not fiat or on-chain escrow. Paid
 document opens now use actual x402 exact/SVM settlement on Solana Devnet.
+The official Pay.sh YAML is a separate static localnet compatibility path; it
+is not proof of Devnet settlement. See [`docs/PAY-SH.md`](./docs/PAY-SH.md).
 Production still requires a mainnet facilitator credential, managed RPC,
 durable outbox volume or queue, rate limiting, email verification/recovery, KMS
 secret management, and an external identity provider if social login is

@@ -233,6 +233,91 @@
         }
       }
     },
+    "/api/v1/answers/synthesize": {
+      "post": {
+        "summary": "Synthesize only server-canonical passages already opened for a query",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SynthesizePaidAnswerRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Cited Gemini/Vertex synthesis or an explicit evidence-only fallback",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EvidenceSynthesis" }
+              }
+            }
+          },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/memory/{memoryId}": {
+      "patch": {
+        "summary": "Lock or unlock one owned memory and its searchable document",
+        "security": [{ "sessionCookie": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/MemoryId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["locked"],
+                "properties": { "locked": { "type": "boolean" } }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Updated memory" } }
+      }
+    },
+    "/api/v1/memory/{memoryId}/corrections": {
+      "post": {
+        "summary": "Create a new immutable version and lock the superseded passage",
+        "security": [{ "sessionCookie": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/MemoryId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["answer"],
+                "properties": { "answer": { "type": "string", "maxLength": 10000 } }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "New correction memory version" } }
+      }
+    },
+    "/api/v1/account/export": {
+      "get": {
+        "summary": "Export the authenticated contributor's profile, memories, and access log",
+        "security": [{ "sessionCookie": [] }],
+        "responses": { "200": { "description": "Portable account JSON" } }
+      }
+    },
+    "/api/v1/contributors/{handle}": {
+      "get": {
+        "summary": "Public contributor manifest with hashes and versioned memory links",
+        "parameters": [{ "$ref": "#/components/parameters/Handle" }],
+        "responses": { "200": { "description": "Contributor manifest without private content" } }
+      }
+    },
+    "/api/v1/documents/{handle}": {
+      "get": {
+        "summary": "Public paid-document metadata without the protected passage",
+        "parameters": [{ "$ref": "#/components/parameters/Handle" }],
+        "responses": { "200": { "description": "Hash, version, price, and x402 template" } }
+      }
+    },
     "/api/flash-research": {
       "get": {
         "summary": "Sandbox-only idempotent document opening",
@@ -272,6 +357,12 @@
       },
       "Handle": {
         "name": "handle",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
+      "MemoryId": {
+        "name": "memoryId",
         "in": "path",
         "required": true,
         "schema": { "type": "string" }
@@ -360,6 +451,34 @@
         "properties": {
           "citation": { "type": "object" },
           "settlement": { "type": "object" }
+        }
+      },
+      "SynthesizePaidAnswerRequest": {
+        "type": "object",
+        "required": ["queryId", "handles"],
+        "properties": {
+          "queryId": { "type": "string" },
+          "handles": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "uniqueItems": true,
+            "items": { "type": "string" }
+          }
+        }
+      },
+      "EvidenceSynthesis": {
+        "type": "object",
+        "required": ["answer", "confidence", "usedHandles", "contributions", "mode"],
+        "properties": {
+          "answer": { "type": "string" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "consensus": { "type": "array", "items": { "type": "string" } },
+          "disagreements": { "type": "array", "items": { "type": "string" } },
+          "usedHandles": { "type": "array", "items": { "type": "string" } },
+          "contributions": { "type": "array", "items": { "type": "object" } },
+          "model": { "type": "string" },
+          "mode": { "type": "string" }
         }
       },
       "SubmitFeedback": {

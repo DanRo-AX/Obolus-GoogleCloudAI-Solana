@@ -19,6 +19,7 @@ import {
   getChatAnswers,
   resolveQuestion,
   submitDocumentFeedback,
+  synthesizeAnswer,
   type DocumentFeedback,
   type Resolution,
 } from '@/lib/api'
@@ -191,10 +192,22 @@ export default function Chat() {
         const remaining = citations.filter(
           (citation) => !openedHandles.has(citation.handle),
         )
+        let answer = `Opened ${result.citations.length} matching documents from the ${shelfName} shelf. Each passage below is quoted as written.${result.settlement.partial ? ' Payment stopped before the remaining documents, so they stayed closed.' : ''}`
+        if (result.citations.length > 0) {
+          try {
+            const synthesis = await synthesizeAnswer(
+              resolvedQueryId,
+              result.citations.map((citation) => citation.handle),
+            )
+            answer = synthesis.answer
+          } catch {
+            // Payment and evidence delivery remain successful if synthesis is unavailable.
+          }
+        }
         appendAssistant(chatId, {
           id: `${chatId}_paid_${Date.now().toString(36)}`,
           role: 'assistant',
-          content: `Opened ${result.citations.length} matching documents from the ${shelfName} shelf. Each passage below is quoted as written.${result.settlement.partial ? ' Payment stopped before the remaining documents, so they stayed closed.' : ''}`,
+          content: answer,
           citations: result.citations,
           settlement: {
             count: result.settlement.count,

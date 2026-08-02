@@ -27,6 +27,7 @@ type ScoreBreakdown = {
   termCoverage: number
   trust: number
   freshness: number
+  authority: number
 }
 
 export type ResolvedMatch = {
@@ -148,11 +149,15 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
-export function register(email: string, password: string): Promise<AuthSession> {
+export function register(
+  email: string,
+  password: string,
+  ageConfirmed14: boolean,
+): Promise<AuthSession> {
   return apiFetch('/api/v1/auth/register', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, ageConfirmed14 }),
   })
 }
 
@@ -234,6 +239,63 @@ export function getChatAnswers(chatId: string): Promise<ChatAnswer[]> {
 
 export function listMemory(): Promise<MemoryEntry[]> {
   return apiFetch('/api/v1/memory')
+}
+
+export function setMemoryLocked(
+  memoryId: string,
+  locked: boolean,
+): Promise<MemoryEntry> {
+  return apiFetch(`/api/v1/memory/${encodeURIComponent(memoryId)}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ locked }),
+  })
+}
+
+export function correctMemory(memoryId: string, answer: string): Promise<MemoryEntry> {
+  return apiFetch(`/api/v1/memory/${encodeURIComponent(memoryId)}/corrections`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ answer }),
+  })
+}
+
+export type MemoryExport = {
+  exportedAt: number
+  profile: ServerProfile | null
+  memories: MemoryEntry[]
+  accessLog: Array<{
+    id: string
+    memoryId?: string
+    purpose: string
+    createdAt: number
+  }>
+}
+
+export function exportAccount(): Promise<MemoryExport> {
+  return apiFetch('/api/v1/account/export')
+}
+
+export type EvidenceSynthesis = {
+  answer: string
+  confidence: number
+  consensus: string[]
+  disagreements: string[]
+  usedHandles: string[]
+  contributions: Array<{ handle: string; score: number; reason: string }>
+  model: string
+  mode: 'vertex' | 'gemini_api' | 'evidence_only_fallback' | string
+}
+
+export function synthesizeAnswer(
+  queryId: string,
+  handles: string[],
+): Promise<EvidenceSynthesis> {
+  return apiFetch('/api/v1/answers/synthesize', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ queryId, handles }),
+  })
 }
 
 export function getAccountControls(): Promise<{

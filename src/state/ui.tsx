@@ -156,7 +156,7 @@ export type MemoryEntry = {
   shelf: string
   earned: number
   createdAt: number
-  via: 'Open call' | 'Auto-match'
+  via: 'Open call' | 'Auto-match' | 'Correction' | 'Reflection'
   /** Voided entries keep the attempted answer but earn zero until disputed. */
   status: 'settled' | 'voided'
   disputeStatus?: 'pending' | 'approved' | 'rejected'
@@ -166,6 +166,15 @@ export type MemoryEntry = {
   rating?: number
   /** Private warm-up context. It is retained but never indexed or sold. */
   interviewResponses?: InterviewResponse[]
+  memoryType?: 'observation' | 'reflection' | 'correction'
+  importance?: number
+  reliabilityScore?: number
+  contentHash?: string
+  version?: number
+  locked?: boolean
+  accessCount?: number
+  lastAccessedAt?: number
+  sourceIds?: string[]
 }
 
 type UiValue = {
@@ -197,6 +206,7 @@ type UiValue = {
     email: string,
     password: string,
     signup: boolean,
+    ageConfirmed14?: boolean,
   ) => Promise<void>
   signOut: () => Promise<void>
   deleteCurrentAccount: () => Promise<void>
@@ -769,9 +779,14 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
   )
 
   const authenticate = useCallback(
-    async (email: string, password: string, signup: boolean) => {
+    async (
+      email: string,
+      password: string,
+      signup: boolean,
+      ageConfirmed14 = false,
+    ) => {
       const session = signup
-        ? await registerAccount(email, password)
+        ? await registerAccount(email, password, ageConfirmed14)
         : await loginAccount(email, password)
       const [remoteOrders, remoteMemory, remoteProfile, remoteEarnings] =
         await Promise.all([listOpenCalls(), listMemory(), getProfile(), getEarnings()])
