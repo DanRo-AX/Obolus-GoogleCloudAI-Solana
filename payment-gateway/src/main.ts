@@ -221,7 +221,10 @@ app.use((request, response, next) => {
   response.setHeader("access-control-allow-methods", "GET,OPTIONS");
   response.setHeader(
     "access-control-allow-headers",
-    "Content-Type,Payment-Signature,X-Payment",
+    // @x402/fetch adds Access-Control-Expose-Headers to its paid retry.
+    // It is unusual as a request header, but must be allowed or the browser
+    // blocks the signed retry during CORS preflight with `Failed to fetch`.
+    "Content-Type,Payment-Signature,X-Payment,Access-Control-Expose-Headers",
   );
   response.setHeader(
     "access-control-expose-headers",
