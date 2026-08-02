@@ -9,16 +9,20 @@ use std::{
 };
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::{
     domain::{
-        AccountControls, BalanceSummary, ChainSettlementReceipt, ChatAnswer, Citation,
+        AccountControls, AnswerIssue, BalanceSummary, CATEGORY_IDS, ChainSettlementReceipt,
+        ChatAnswer, Citation, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
         CreateOpenCallRequest, DemographicBands, DisputeCase, Document, EarningEvent,
-        EarningsSummary, MemoryEntry, OpenCall, OpenDocumentsResponse, PaidDocument, PaymentQuote,
-        RecordChainSettlementRequest, ResolveQuestionResponse, ReviewDisputeRequest, SearchFilters,
-        Settlement, SubmitAnswerResponse, UpdatePreferencesRequest, UpsertProfileRequest,
-        UserAccount, UserProfile,
+        EarningsSummary, EvidenceContribution, EvidenceEdge, InterviewTurn, MemoryAccessEvent,
+        MemoryEntry, MemoryExport, OpenCall, OpenDocumentsResponse, PaidDocument, PaymentQuote,
+        PersonaManifest, PersonaMemoryLink, PublicDocument, RecordChainSettlementRequest,
+        ResolveQuestionResponse, ReviewDisputeRequest, SearchFilters, Settlement,
+        SubmitAnswerResponse, UpdatePreferencesRequest, UpsertProfileRequest, UserAccount,
+        UserProfile,
     },
     quality, seed,
 };
@@ -28,24 +32,12 @@ const STRIKE_LIMIT: usize = 3;
 const AUTO_MATCH_STRIKE_LIMIT: usize = 2;
 const PAYOUT_HOLD_MS: u64 = 14 * 24 * 60 * 60 * 1_000;
 const SIGNUP_CREDIT_KRW: u64 = 100_000;
-const CATEGORY_IDS: &[&str] = &[
-    "life",
-    "food",
-    "family",
-    "health",
-    "business",
-    "sales",
-    "engineering",
-    "education",
-    "sports",
-    "travel",
-    "money",
-];
 const AGE_BANDS: &[&str] = &["under-25", "25-34", "35-44", "45-54", "55-plus"];
 const REGIONS: &[&str] = &["seoul", "gyeonggi", "metro", "town", "abroad"];
 const HOUSEHOLDS: &[&str] = &["alone", "partner", "kids", "parents", "shared"];
 const YEAR_BANDS: &[&str] = &["under-1", "1-3", "3-7", "7-plus"];
 const USDC_ATOMIC_UNITS: u128 = 1_000_000;
+const CURRENT_CONSENT_VERSION: &str = "2026-08-02.v1";
 
 #[derive(Debug, Clone)]
 pub struct PaymentQuotePolicy {
@@ -301,12 +293,17 @@ impl Store {
                  WHERE author_id = ?1 AND payout_status = 'held' AND available_at <= ?2",
                 params![user_id, as_i64(now)?],
             )?;
-            transaction.execute(
+            let changed = transaction.execute(
                 "UPDATE balances SET held_krw = held_krw - ?1,
                     available_krw = available_krw + ?1, updated_at = ?2
                  WHERE user_id = ?3 AND held_krw >= ?1",
                 params![as_i64(matured)?, as_i64(now)?, user_id],
             )?;
+            if changed == 0 {
+                return Err(StoreError::Conflict(
+                    "held balance is inconsistent with matured earnings".to_owned(),
+                ));
+            }
         }
         transaction.commit()?;
         Ok(())
@@ -371,6 +368,19 @@ impl Store {
                 created_at INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS evidence_edges (
+                id TEXT PRIMARY KEY,
+                source_document_id TEXT NOT NULL REFERENCES documents(id),
+                target_document_id TEXT NOT NULL REFERENCES documents(id),
+                relation TEXT NOT NULL,
+                provenance TEXT NOT NULL,
+                topic TEXT NOT NULL,
+                weight REAL NOT NULL CHECK (weight >= 0 AND weight <= 2),
+                actor TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                UNIQUE(source_document_id, target_document_id, relation, provenance, topic)
+            );
+
             CREATE TABLE IF NOT EXISTS query_matches (
                 query_id TEXT NOT NULL REFERENCES queries(id) ON DELETE CASCADE,
                 document_handle TEXT NOT NULL REFERENCES documents(handle),
@@ -411,6 +421,7 @@ impl Store {
                 via TEXT NOT NULL,
                 status TEXT NOT NULL,
                 flags_json TEXT NOT NULL DEFAULT '[]',
+                context_json TEXT NOT NULL DEFAULT '[]',
                 rating INTEGER
             );
 
@@ -438,7 +449,33 @@ impl Store {
                 krw_per_usdc INTEGER NOT NULL CHECK (krw_per_usdc > 0),
                 expires_at INTEGER NOT NULL,
                 settled_at INTEGER,
+                delivered_at INTEGER,
+                status TEXT NOT NULL DEFAULT 'quoted',
+                content_snapshot TEXT NOT NULL DEFAULT '',
+                shelf_snapshot TEXT NOT NULL DEFAULT '',
+                content_hash TEXT NOT NULL DEFAULT '',
+                document_version INTEGER NOT NULL DEFAULT 1,
+                consent_version TEXT NOT NULL DEFAULT 'legacy',
                 created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS memory_access_events (
+                id TEXT PRIMARY KEY,
+                memory_id TEXT,
+                document_id TEXT,
+                quote_id TEXT,
+                actor TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS evidence_contributions (
+                query_id TEXT NOT NULL,
+                document_id TEXT NOT NULL,
+                score REAL NOT NULL CHECK (score >= 0 AND score <= 1),
+                reason TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (query_id, document_id)
             );
 
             CREATE TABLE IF NOT EXISTS chain_settlements (
@@ -509,6 +546,7 @@ impl Store {
                 speaks_to_json TEXT NOT NULL,
                 wallet TEXT,
                 agreed_at INTEGER NOT NULL,
+                consent_version TEXT NOT NULL DEFAULT 'legacy',
                 auto_match INTEGER NOT NULL DEFAULT 1,
                 agents INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL,
@@ -531,6 +569,10 @@ impl Store {
 
             CREATE INDEX IF NOT EXISTS idx_documents_active
                 ON documents(locked, category);
+            CREATE INDEX IF NOT EXISTS idx_evidence_edges_source
+                ON evidence_edges(source_document_id);
+            CREATE INDEX IF NOT EXISTS idx_evidence_edges_target
+                ON evidence_edges(target_document_id, topic);
             CREATE INDEX IF NOT EXISTS idx_open_calls_created
                 ON open_calls(status, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_memory_user
@@ -558,6 +600,56 @@ impl Store {
             "earning_events",
             "available_at",
             "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        for (name, definition) in [
+            ("memory_type", "TEXT NOT NULL DEFAULT 'observation'"),
+            ("importance", "REAL NOT NULL DEFAULT 0.5"),
+            ("source_ids_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("content_hash", "TEXT NOT NULL DEFAULT ''"),
+            ("version", "INTEGER NOT NULL DEFAULT 1"),
+            ("locked", "INTEGER NOT NULL DEFAULT 0"),
+            ("access_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("last_accessed_at", "INTEGER"),
+            ("reliability_score", "REAL NOT NULL DEFAULT 0.5"),
+        ] {
+            add_column_if_missing(&connection, "memory_entries", name, definition)?;
+        }
+        for (name, definition) in [
+            ("content_hash", "TEXT NOT NULL DEFAULT ''"),
+            ("version", "INTEGER NOT NULL DEFAULT 1"),
+        ] {
+            add_column_if_missing(&connection, "documents", name, definition)?;
+        }
+        for (name, definition) in [
+            ("delivered_at", "INTEGER"),
+            ("status", "TEXT NOT NULL DEFAULT 'quoted'"),
+            ("content_snapshot", "TEXT NOT NULL DEFAULT ''"),
+            ("shelf_snapshot", "TEXT NOT NULL DEFAULT ''"),
+            ("content_hash", "TEXT NOT NULL DEFAULT ''"),
+            ("document_version", "INTEGER NOT NULL DEFAULT 1"),
+            ("consent_version", "TEXT NOT NULL DEFAULT 'legacy'"),
+        ] {
+            add_column_if_missing(&connection, "payment_quotes", name, definition)?;
+        }
+        add_column_if_missing(
+            &connection,
+            "profiles",
+            "consent_version",
+            "TEXT NOT NULL DEFAULT 'legacy'",
+        )?;
+        connection.execute(
+            "UPDATE documents SET content_hash = lower(hex(content)) WHERE content_hash = ''",
+            [],
+        )?;
+        connection.execute(
+            "UPDATE memory_entries SET content_hash = lower(hex(answer)) WHERE content_hash = ''",
+            [],
+        )?;
+        add_column_if_missing(
+            &connection,
+            "memory_entries",
+            "context_json",
+            "TEXT NOT NULL DEFAULT '[]'",
         )?;
         add_column_if_missing(
             &connection,
@@ -615,6 +707,7 @@ impl Store {
                 now_ms().saturating_sub(document.age_days as u64 * 86_400_000),
             )?;
         }
+        seed_evidence_edges(&transaction)?;
         seed_open_calls(&transaction)?;
         seed_memory(&transaction)?;
         transaction.commit()?;
@@ -639,6 +732,192 @@ impl Store {
             .query_map([AUTO_MATCH_STRIKE_LIMIT as i64], document_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(documents)
+    }
+
+    pub fn evidence_edges(&self) -> Result<Vec<EvidenceEdge>, StoreError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT e.source_document_id, e.target_document_id, e.relation,
+                    e.provenance, e.topic, e.weight
+             FROM evidence_edges e
+             JOIN documents source ON source.id = e.source_document_id
+             JOIN documents target ON target.id = e.target_document_id
+             WHERE source.locked = 0 AND target.locked = 0
+               AND source.author_id <> target.author_id",
+        )?;
+        let edges = statement
+            .query_map([], |row| {
+                Ok(EvidenceEdge {
+                    source_document_id: row.get(0)?,
+                    target_document_id: row.get(1)?,
+                    relation: row.get(2)?,
+                    provenance: row.get(3)?,
+                    topic: row.get(4)?,
+                    weight: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(edges)
+    }
+
+    pub fn verify_opened_documents(
+        &self,
+        query_id: &str,
+        handles: &[String],
+    ) -> Result<(), StoreError> {
+        self.opened_evidence(query_id, handles).map(|_| ())
+    }
+
+    pub fn opened_evidence(
+        &self,
+        query_id: &str,
+        handles: &[String],
+    ) -> Result<(String, Vec<Citation>), StoreError> {
+        if query_id.trim().is_empty() || handles.is_empty() || handles.len() > 20 {
+            return Err(StoreError::Validation(
+                "a query id and between 1 and 20 handles are required".to_owned(),
+            ));
+        }
+        if handles.iter().any(|handle| handle.trim().is_empty())
+            || handles.iter().collect::<HashSet<_>>().len() != handles.len()
+        {
+            return Err(StoreError::Validation(
+                "document handles must be non-empty and unique".to_owned(),
+            ));
+        }
+        let connection = self.connection()?;
+        let question = connection
+            .query_row(
+                "SELECT question FROM queries WHERE id = ?1",
+                [query_id.trim()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("query"))?;
+        let mut statement = connection
+            .prepare("SELECT document_handles_json FROM settlements WHERE query_id = ?1")?;
+        let rows = statement
+            .query_map([query_id.trim()], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let opened = rows
+            .iter()
+            .flat_map(|json| serde_json::from_str::<Vec<String>>(json).unwrap_or_default())
+            .collect::<HashSet<_>>();
+        if !handles.iter().all(|handle| opened.contains(handle)) {
+            return Err(StoreError::DocumentNotQuoted);
+        }
+
+        let mut citations = Vec::with_capacity(handles.len());
+        for handle in handles {
+            let settled_snapshot = connection
+                .query_row(
+                    "SELECT document_handle, shelf_snapshot, content_snapshot, price_krw
+                     FROM payment_quotes
+                     WHERE query_id = ?1 AND document_handle = ?2 AND settled_at IS NOT NULL
+                     ORDER BY settled_at DESC LIMIT 1",
+                    params![query_id.trim(), handle],
+                    |row| {
+                        Ok(Citation {
+                            handle: row.get(0)?,
+                            shelf: row.get(1)?,
+                            excerpt: row.get(2)?,
+                            price: as_u64(row.get(3)?)?,
+                        })
+                    },
+                )
+                .optional()?;
+            let citation = if let Some(snapshot) = settled_snapshot {
+                snapshot
+            } else {
+                connection
+                    .query_row(
+                        "SELECT d.handle, d.shelf, d.content, qm.quoted_price_krw
+                     FROM query_matches qm
+                     JOIN documents d ON d.handle = qm.document_handle
+                     LEFT JOIN profiles p ON p.user_id = d.author_id
+                     WHERE qm.query_id = ?1 AND qm.document_handle = ?2
+                       AND d.locked = 0 AND COALESCE(p.auto_match, 1) = 1
+                       AND (SELECT COUNT(*) FROM memory_entries strikes
+                            WHERE strikes.user_id = d.author_id
+                              AND strikes.status = 'voided') < ?3",
+                        params![query_id.trim(), handle, AUTO_MATCH_STRIKE_LIMIT as i64],
+                        |row| {
+                            Ok(Citation {
+                                handle: row.get(0)?,
+                                shelf: row.get(1)?,
+                                excerpt: row.get(2)?,
+                                price: as_u64(row.get(3)?)?,
+                            })
+                        },
+                    )
+                    .optional()?
+                    .ok_or(StoreError::DocumentNotQuoted)?
+            };
+            citations.push(citation);
+        }
+        Ok((question, citations))
+    }
+
+    pub fn record_contributions(
+        &self,
+        query_id: &str,
+        contributions: &[EvidenceContribution],
+    ) -> Result<(), StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        for contribution in contributions {
+            if !contribution.score.is_finite()
+                || !(0.0..=1.0).contains(&contribution.score)
+                || contribution.reason.chars().count() > 500
+            {
+                return Err(StoreError::Validation(
+                    "invalid evidence contribution".to_owned(),
+                ));
+            }
+            let matched = transaction
+                .query_row(
+                    "SELECT pq.document_id, d.reliability_score
+                     FROM payment_quotes pq
+                     JOIN documents d ON d.id = pq.document_id
+                     WHERE pq.query_id = ?1 AND pq.document_handle = ?2
+                       AND pq.settled_at IS NOT NULL
+                     ORDER BY pq.settled_at DESC LIMIT 1",
+                    params![query_id.trim(), contribution.handle.trim()],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, f32>(1)?)),
+                )
+                .optional()?;
+            let Some((document_id, current_reliability)) = matched else {
+                // Demo-mode settlements are intentionally excluded from
+                // reputation learning because no chain receipt exists.
+                continue;
+            };
+            transaction.execute(
+                "INSERT INTO evidence_contributions
+                 (query_id, document_id, score, reason, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(query_id, document_id) DO UPDATE SET
+                    score = excluded.score, reason = excluded.reason",
+                params![
+                    query_id.trim(),
+                    document_id,
+                    contribution.score,
+                    contribution.reason.trim(),
+                    as_i64(now_ms())?,
+                ],
+            )?;
+            let reliability =
+                (current_reliability * 0.9 + contribution.score * 0.1).clamp(0.05, 0.98);
+            transaction.execute(
+                "UPDATE documents SET reliability_score = ?1 WHERE id = ?2",
+                params![reliability, document_id],
+            )?;
+            transaction.execute(
+                "UPDATE memory_entries SET reliability_score = ?1 WHERE document_id = ?2",
+                params![reliability, document_id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn record_resolution(
@@ -792,6 +1071,7 @@ impl Store {
         open_call_id: &str,
         user_id: &str,
         answer: &str,
+        context: &[InterviewTurn],
     ) -> Result<SubmitAnswerResponse, StoreError> {
         if user_id.trim().is_empty() {
             return Err(StoreError::Validation("user id is required".to_owned()));
@@ -802,6 +1082,18 @@ impl Store {
         if answer.chars().count() > 10_000 {
             return Err(StoreError::Validation(
                 "answer must be 10000 characters or fewer".to_owned(),
+            ));
+        }
+        if context.len() > 8
+            || context.iter().any(|turn| {
+                turn.prompt.trim().is_empty()
+                    || turn.answer.trim().is_empty()
+                    || turn.prompt.chars().count() > 1_000
+                    || turn.answer.chars().count() > 1_000
+            })
+        {
+            return Err(StoreError::Validation(
+                "interview context must contain at most 8 non-empty prompt/answer pairs".to_owned(),
             ));
         }
 
@@ -854,10 +1146,29 @@ impl Store {
             ));
         }
 
-        let issues = quality::assess(&call.question, answer);
+        let mut issues = quality::assess(&call.question, answer);
+        let mut prior_answers = transaction.prepare(
+            "SELECT answer FROM memory_entries WHERE user_id = ?1 AND status = 'settled' LIMIT 100",
+        )?;
+        let duplicate = prior_answers
+            .query_map([user_id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|prior| quality::near_duplicate(prior, answer));
+        drop(prior_answers);
+        if duplicate {
+            issues.push(AnswerIssue {
+                rule: "Duplicate answer".to_owned(),
+                detail: "This substantially duplicates an answer already stored in your persona."
+                    .to_owned(),
+            });
+        }
         let voided = !issues.is_empty();
         let created_at = now_ms();
         let memory_id = new_id("memory");
+        let content_hash = sha256_hex(answer.trim());
+        let mut reliability = author_reliability(&transaction, user_id)?;
+        let importance = memory_importance(&call.question, answer, context);
         let document_id = (!voided).then(|| new_id("md"));
         let handle = document_id.as_ref().map(|id| handle_from_id(id));
 
@@ -870,17 +1181,21 @@ impl Store {
                 shelf: call.shelf.clone(),
                 category: call.category.clone(),
                 content: answer.trim().to_owned(),
-                tags: call
-                    .question
-                    .split_whitespace()
-                    .take(12)
+                tags: std::iter::once(call.question.as_str())
+                    .chain(
+                        context
+                            .iter()
+                            .flat_map(|turn| [turn.prompt.as_str(), turn.answer.as_str()]),
+                    )
+                    .flat_map(str::split_whitespace)
+                    .take(40)
                     .map(|term| term.trim_matches(|c: char| !c.is_alphanumeric()).to_owned())
                     .filter(|term| !term.is_empty())
                     .collect(),
                 price_krw: call.unit_price,
                 age_days: 0,
-                quality_score: 0.85,
-                reliability_score: 0.8,
+                quality_score: quality::quality_score(&call.question, answer),
+                reliability_score: reliability,
                 locked: false,
                 demographics: Some(DemographicBands {
                     age_band: profile.age_band.clone(),
@@ -902,18 +1217,25 @@ impl Store {
                  WHERE id = ?1",
                 [open_call_id],
             )?;
-            transaction.execute(
+            let changed = transaction.execute(
                 "UPDATE balances SET reserved_krw = reserved_krw - ?1, updated_at = ?2
                  WHERE user_id = ?3 AND reserved_krw >= ?1",
                 params![as_i64(call.unit_price)?, as_i64(created_at)?, call.owner_id],
             )?;
+            if changed == 0 && call.unit_price > 0 {
+                return Err(StoreError::Conflict(
+                    "reserved balance is inconsistent with this call".to_owned(),
+                ));
+            }
         }
 
         transaction.execute(
             "INSERT INTO memory_entries
              (id, user_id, open_call_id, document_id, question, answer, shelf,
-              earned_krw, created_at, via, status, flags_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'Open call', ?10, ?11)",
+              earned_krw, created_at, via, status, flags_json, context_json,
+              memory_type, importance, content_hash, reliability_score)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'Open call', ?10, ?11, ?12,
+                     'observation', ?13, ?14, ?15)",
             params![
                 memory_id,
                 user_id,
@@ -926,9 +1248,23 @@ impl Store {
                 as_i64(created_at)?,
                 if voided { "voided" } else { "settled" },
                 serde_json::to_string(&issues).expect("issues are serialisable"),
+                serde_json::to_string(context).expect("interview context is serialisable"),
+                importance,
+                content_hash,
+                reliability,
             ],
         )?;
         if !voided {
+            reliability = author_reliability(&transaction, user_id)?;
+            transaction.execute(
+                "UPDATE memory_entries SET reliability_score = ?1 WHERE id = ?2",
+                params![reliability, memory_id],
+            )?;
+            transaction.execute(
+                "UPDATE documents SET reliability_score = ?1 WHERE author_id = ?2",
+                params![reliability, user_id],
+            )?;
+            maybe_create_reflection(&transaction, user_id, created_at, reliability)?;
             insert_earning_event(
                 &transaction,
                 None,
@@ -967,6 +1303,16 @@ impl Store {
             flags: issues.clone(),
             rating: None,
             dispute_status: None,
+            memory_type: "observation".to_owned(),
+            importance,
+            reliability_score: reliability,
+            content_hash,
+            version: 1,
+            locked: false,
+            access_count: 0,
+            last_accessed_at: None,
+            context: context.to_vec(),
+            source_ids: Vec::new(),
         };
         transaction.commit()?;
 
@@ -982,13 +1328,288 @@ impl Store {
         let mut statement = connection.prepare(
             "SELECT id, question, answer, shelf, earned_krw, created_at, via,
                     status, flags_json, rating,
-                    (SELECT status FROM dispute_events d WHERE d.memory_id = memory_entries.id)
+                    (SELECT status FROM dispute_events d WHERE d.memory_id = memory_entries.id),
+                    memory_type, importance, reliability_score, content_hash, version,
+                    locked, access_count, last_accessed_at, context_json, source_ids_json
              FROM memory_entries WHERE user_id = ?1 ORDER BY created_at DESC",
         )?;
         let entries = statement
             .query_map([user_id], memory_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(entries)
+    }
+
+    pub fn set_memory_locked(
+        &self,
+        user_id: &str,
+        memory_id: &str,
+        locked: bool,
+    ) -> Result<MemoryEntry, StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let document_id = transaction
+            .query_row(
+                "SELECT document_id FROM memory_entries WHERE id = ?1 AND user_id = ?2",
+                params![memory_id.trim(), user_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("memory"))?;
+        transaction.execute(
+            "UPDATE memory_entries SET locked = ?1 WHERE id = ?2 AND user_id = ?3",
+            params![i64::from(locked), memory_id.trim(), user_id],
+        )?;
+        if let Some(document_id) = document_id {
+            transaction.execute(
+                "UPDATE documents SET locked = ?1 WHERE id = ?2",
+                params![i64::from(locked), document_id],
+            )?;
+        }
+        transaction.commit()?;
+        drop(connection);
+        self.list_memory(user_id)?
+            .into_iter()
+            .find(|memory| memory.id == memory_id.trim())
+            .ok_or(StoreError::NotFound("memory"))
+    }
+
+    pub fn correct_memory(
+        &self,
+        user_id: &str,
+        memory_id: &str,
+        request: &CorrectMemoryRequest,
+    ) -> Result<MemoryEntry, StoreError> {
+        if request.answer.trim().is_empty() || request.answer.chars().count() > 10_000 {
+            return Err(StoreError::Validation(
+                "corrected answer must contain 1 to 10000 characters".to_owned(),
+            ));
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let (question, shelf, old_document_id, old_version) = transaction
+            .query_row(
+                "SELECT question, shelf, document_id, version FROM memory_entries
+                 WHERE id = ?1 AND user_id = ?2 AND status = 'settled'",
+                params![memory_id.trim(), user_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        as_u64(row.get(3)?)?.min(u32::MAX as u64) as u32,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("settled memory"))?;
+        let issues = quality::assess(&question, &request.answer);
+        if !issues.is_empty() {
+            return Err(StoreError::Validation(format!(
+                "corrected answer failed quality checks: {}",
+                issues[0].detail
+            )));
+        }
+        let Some(old_document_id) = old_document_id else {
+            return Err(StoreError::Conflict(
+                "reflection memories cannot be corrected as paid passages".to_owned(),
+            ));
+        };
+        let (category, price_krw, author_id, prior_quality, reliability_score) = transaction
+            .query_row(
+                "SELECT category, price_krw, author_id, quality_score, reliability_score
+                 FROM documents WHERE id = ?1",
+                [&old_document_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        as_u64(row.get(1)?)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, f32>(3)?,
+                        row.get::<_, f32>(4)?,
+                    ))
+                },
+            )?;
+        let created_at = now_ms();
+        let new_document_id = new_id("md");
+        let new_memory_id = new_id("memory");
+        let version = old_version.saturating_add(1);
+        let document = Document {
+            id: new_document_id.clone(),
+            handle: handle_from_id(&new_document_id),
+            author_id,
+            shelf_id: slug(&shelf),
+            shelf: shelf.clone(),
+            category,
+            content: request.answer.trim().to_owned(),
+            tags: question
+                .split_whitespace()
+                .take(20)
+                .map(ToOwned::to_owned)
+                .collect(),
+            price_krw,
+            age_days: 0,
+            quality_score: prior_quality.max(quality::quality_score(&question, &request.answer)),
+            reliability_score,
+            locked: false,
+            demographics: None,
+        };
+        insert_document(&transaction, &document, created_at)?;
+        transaction.execute(
+            "UPDATE documents SET version = ?1 WHERE id = ?2",
+            params![version as i64, new_document_id],
+        )?;
+        transaction.execute(
+            "UPDATE documents SET locked = 1 WHERE id = ?1",
+            [&old_document_id],
+        )?;
+        transaction.execute(
+            "UPDATE memory_entries SET locked = 1 WHERE id = ?1",
+            [memory_id.trim()],
+        )?;
+        let hash = sha256_hex(request.answer.trim());
+        transaction.execute(
+            "INSERT INTO memory_entries
+             (id, user_id, document_id, question, answer, shelf, earned_krw, created_at,
+              via, status, flags_json, context_json, memory_type, importance,
+              source_ids_json, content_hash, version, reliability_score)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, 'Correction', 'settled', '[]', '[]',
+                     'correction', 0.9, ?8, ?9, ?10, ?11)",
+            params![
+                new_memory_id,
+                user_id,
+                new_document_id,
+                question,
+                request.answer.trim(),
+                shelf,
+                as_i64(created_at)?,
+                serde_json::to_string(&[memory_id.trim()]).expect("source is serialisable"),
+                hash,
+                version as i64,
+                reliability_score,
+            ],
+        )?;
+        transaction.commit()?;
+        drop(connection);
+        self.list_memory(user_id)?
+            .into_iter()
+            .find(|memory| memory.id == new_memory_id)
+            .ok_or(StoreError::NotFound("corrected memory"))
+    }
+
+    pub fn export_account(&self, user_id: &str) -> Result<MemoryExport, StoreError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT id, memory_id, purpose, created_at FROM memory_access_events
+             WHERE memory_id IN (SELECT id FROM memory_entries WHERE user_id = ?1)
+             ORDER BY created_at DESC",
+        )?;
+        let access_log = statement
+            .query_map([user_id], |row| {
+                Ok(MemoryAccessEvent {
+                    id: row.get(0)?,
+                    memory_id: row.get(1)?,
+                    purpose: row.get(2)?,
+                    created_at: as_u64(row.get(3)?)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+        drop(connection);
+        Ok(MemoryExport {
+            exported_at: now_ms(),
+            profile: self.get_profile(user_id)?,
+            memories: self.list_memory(user_id)?,
+            access_log,
+        })
+    }
+
+    pub fn persona_manifest(&self, handle: &str) -> Result<PersonaManifest, StoreError> {
+        let connection = self.connection()?;
+        let (user_id, profile, updated_at) = connection
+            .query_row(
+                "SELECT p.user_id, p.age_band, p.region, p.household, p.field, p.updated_at
+                 FROM profiles p JOIN users u ON u.id = p.user_id
+                 WHERE p.handle = ?1 COLLATE NOCASE AND p.auto_match = 1
+                   AND u.deleted_at IS NULL",
+                [handle.trim()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        DemographicBands {
+                            age_band: row.get(1)?,
+                            region: row.get(2)?,
+                            household: row.get(3)?,
+                            field: row.get(4)?,
+                        },
+                        as_u64(row.get(5)?)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("persona"))?;
+        let reliability = author_reliability_readonly(&connection, &user_id)?;
+        let mut statement = connection.prepare(
+            "SELECT m.id, m.content_hash, m.version, m.memory_type, m.importance, m.created_at
+             FROM memory_entries m JOIN documents d ON d.id = m.document_id
+             WHERE m.user_id = ?1 AND m.status = 'settled' AND m.locked = 0 AND d.locked = 0
+             ORDER BY m.importance DESC, m.created_at DESC LIMIT 100",
+        )?;
+        let safe_handle = handle.trim().to_owned();
+        let memories = statement
+            .query_map([&user_id], |row| {
+                let id: String = row.get(0)?;
+                Ok(PersonaMemoryLink {
+                    canonical_url: format!("/api/v1/personas/{safe_handle}/memories/{id}"),
+                    x402_template: "/api/v1/paid-documents/{queryId}/{documentHandle}".to_owned(),
+                    id,
+                    content_hash: row.get(1)?,
+                    version: as_u64(row.get(2)?)?.min(u32::MAX as u64) as u32,
+                    memory_type: row.get(3)?,
+                    importance: row.get(4)?,
+                    updated_at: as_u64(row.get(5)?)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(PersonaManifest {
+            schema: "https://openshelf.dev/schemas/persona-manifest/v1",
+            canonical_url: format!("/api/v1/personas/{safe_handle}"),
+            handle: safe_handle,
+            demographics: profile,
+            reliability_score: reliability,
+            memory_count: memories.len(),
+            updated_at,
+            memories,
+        })
+    }
+
+    pub fn public_document(&self, handle: &str) -> Result<PublicDocument, StoreError> {
+        self.connection()?
+            .query_row(
+                "SELECT d.handle, p.handle, d.shelf, d.category, d.content_hash,
+                        d.version, d.price_krw
+                 FROM documents d
+                 LEFT JOIN profiles p ON p.user_id = d.author_id
+                 WHERE d.handle = ?1 AND d.locked = 0 AND COALESCE(p.auto_match, 1) = 1",
+                [handle.trim()],
+                |row| {
+                    let document_handle = row.get::<_, String>(0)?;
+                    Ok(PublicDocument {
+                        schema: "https://openshelf.dev/schemas/paid-document/v1",
+                        canonical_url: format!("/api/v1/documents/{document_handle}"),
+                        handle: document_handle,
+                        persona_handle: row.get(1)?,
+                        shelf: row.get(2)?,
+                        category: row.get(3)?,
+                        content_hash: row.get(4)?,
+                        version: as_u64(row.get(5)?)?.min(u32::MAX as u64) as u32,
+                        price_krw: as_u64(row.get(6)?)?,
+                        x402_template: "/api/v1/paid-documents/{queryId}/{documentHandle}"
+                            .to_owned(),
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("public document"))
     }
 
     pub fn account_controls(&self, user_id: &str) -> Result<AccountControls, StoreError> {
@@ -1054,8 +1675,9 @@ impl Store {
             transaction.execute(
                 "INSERT INTO profiles
                  (user_id, handle, age_band, region, household, field, years,
-                  speaks_to_json, wallet, agreed_at, auto_match, agents, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?10, ?10)
+                  speaks_to_json, wallet, agreed_at, auto_match, agents, created_at, updated_at,
+                  consent_version)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?10, ?10, ?13)
                  ON CONFLICT(user_id) DO UPDATE SET
                    handle = excluded.handle,
                    age_band = excluded.age_band,
@@ -1067,6 +1689,7 @@ impl Store {
                    wallet = excluded.wallet,
                    auto_match = excluded.auto_match,
                    agents = excluded.agents,
+                   consent_version = excluded.consent_version,
                    updated_at = excluded.updated_at",
                 params![
                     user_id,
@@ -1082,6 +1705,7 @@ impl Store {
                     as_i64(now)?,
                     i64::from(request.auto_match),
                     i64::from(request.agents),
+                    CURRENT_CONSENT_VERSION,
                 ],
             )?;
             transaction.commit()?;
@@ -1233,6 +1857,91 @@ impl Store {
             .collect::<Result<Vec<_>, _>>()?)
     }
 
+    pub fn create_evidence_edge(
+        &self,
+        reviewer_id: &str,
+        request: &CreateEvidenceEdgeRequest,
+    ) -> Result<EvidenceEdge, StoreError> {
+        self.require_admin(reviewer_id)?;
+        if ![
+            "cites",
+            "corroborates",
+            "endorses",
+            "verified_outcome",
+            "contextualizes",
+            "contradicts",
+        ]
+        .contains(&request.relation.as_str())
+        {
+            return Err(StoreError::Validation(
+                "unsupported evidence relation".to_owned(),
+            ));
+        }
+        if !["admin_verified", "outcome_verified"].contains(&request.provenance.as_str()) {
+            return Err(StoreError::Validation(
+                "admin ingestion requires verified provenance".to_owned(),
+            ));
+        }
+        if request.topic.trim().is_empty()
+            || request.topic.chars().count() > 64
+            || !request.weight.is_finite()
+            || !(0.0..=2.0).contains(&request.weight)
+        {
+            return Err(StoreError::Validation(
+                "topic and weight must be valid".to_owned(),
+            ));
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let (source_id, source_author) = transaction
+            .query_row(
+                "SELECT id, author_id FROM documents WHERE handle = ?1 AND locked = 0",
+                [request.source_handle.trim()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("source document"))?;
+        let (target_id, target_author) = transaction
+            .query_row(
+                "SELECT id, author_id FROM documents WHERE handle = ?1 AND locked = 0",
+                [request.target_handle.trim()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("target document"))?;
+        if source_id == target_id || source_author == target_author {
+            return Err(StoreError::Conflict(
+                "authority edges require independently owned documents".to_owned(),
+            ));
+        }
+        transaction.execute(
+            "INSERT INTO evidence_edges
+             (id, source_document_id, target_document_id, relation, provenance,
+              topic, weight, actor, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                new_id("edge"),
+                source_id,
+                target_id,
+                request.relation,
+                request.provenance,
+                request.topic.trim(),
+                request.weight,
+                reviewer_id,
+                as_i64(now_ms())?,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(EvidenceEdge {
+            source_document_id: source_id,
+            target_document_id: target_id,
+            relation: request.relation.clone(),
+            provenance: request.provenance.clone(),
+            topic: request.topic.trim().to_owned(),
+            weight: request.weight,
+        })
+    }
+
     pub fn my_dispute(&self, user_id: &str) -> Result<Option<DisputeCase>, StoreError> {
         Ok(self
             .connection()?
@@ -1287,6 +1996,9 @@ impl Store {
                     "SELECT m.id, m.question, m.answer, m.shelf, m.earned_krw,
                             m.created_at, m.via, m.status, m.flags_json, m.rating,
                             (SELECT status FROM dispute_events d WHERE d.memory_id = m.id),
+                            m.memory_type, m.importance, m.reliability_score, m.content_hash,
+                            m.version, m.locked, m.access_count, m.last_accessed_at,
+                            m.context_json, m.source_ids_json,
                             m.open_call_id, c.category, c.unit_price_krw, c.owner_id
                      FROM memory_entries m
                      JOIN open_calls c ON c.id = m.open_call_id
@@ -1295,10 +2007,10 @@ impl Store {
                     |row| {
                         Ok((
                             memory_from_row(row)?,
-                            row.get::<_, String>(11)?,
-                            row.get::<_, String>(12)?,
-                            as_u64(row.get(13)?)?,
-                            row.get::<_, String>(14)?,
+                            row.get::<_, String>(21)?,
+                            row.get::<_, String>(22)?,
+                            as_u64(row.get(23)?)?,
+                            row.get::<_, String>(24)?,
                         ))
                     },
                 )
@@ -1357,11 +2069,16 @@ impl Store {
                  WHERE id = ?1",
                 [call_id.as_str()],
             )?;
-            transaction.execute(
+            let changed = transaction.execute(
                 "UPDATE balances SET reserved_krw = reserved_krw - ?1, updated_at = ?2
                  WHERE user_id = ?3 AND reserved_krw >= ?1",
                 params![as_i64(price)?, as_i64(reviewed_at)?, owner_id],
             )?;
+            if changed == 0 && price > 0 {
+                return Err(StoreError::Conflict(
+                    "reserved balance is inconsistent with this call".to_owned(),
+                ));
+            }
             insert_earning_event(
                 &transaction,
                 None,
@@ -1532,18 +2249,29 @@ impl Store {
             [user_id],
         )?;
         if refund > 0 {
-            transaction.execute(
+            let changed = transaction.execute(
                 "UPDATE balances SET available_krw = available_krw + ?1,
                     reserved_krw = reserved_krw - ?1, updated_at = ?2
                  WHERE user_id = ?3 AND reserved_krw >= ?1",
                 params![as_i64(refund)?, as_i64(now_ms())?, user_id],
             )?;
+            if changed == 0 {
+                return Err(StoreError::Conflict(
+                    "reserved balance is inconsistent with this account".to_owned(),
+                ));
+            }
         }
 
         let anonymous = format!("deleted:{}", new_id("account"));
         transaction.execute(
             "DELETE FROM query_matches WHERE document_handle IN
              (SELECT handle FROM documents WHERE author_id = ?1)",
+            [user_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM evidence_edges
+             WHERE source_document_id IN (SELECT id FROM documents WHERE author_id = ?1)
+                OR target_document_id IN (SELECT id FROM documents WHERE author_id = ?1)",
             [user_id],
         )?;
         transaction.execute(
@@ -1600,9 +2328,22 @@ impl Store {
         let now = now_ms();
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
-        let (document_id, document_handle, price_krw, profile_wallet) = transaction
+        let (
+            document_id,
+            document_handle,
+            price_krw,
+            profile_wallet,
+            persona_handle,
+            content_snapshot,
+            shelf_snapshot,
+            content_hash,
+            document_version,
+            consent_version,
+        ) = transaction
             .query_row(
-                "SELECT d.id, d.handle, qm.quoted_price_krw, p.wallet
+                "SELECT d.id, d.handle, qm.quoted_price_krw, p.wallet, p.handle,
+                        d.content, d.shelf, d.content_hash, d.version,
+                        COALESCE(p.consent_version, 'seed.v1')
                  FROM query_matches qm
                  JOIN documents d ON d.handle = qm.document_handle
                  LEFT JOIN profiles p ON p.user_id = d.author_id
@@ -1622,6 +2363,12 @@ impl Store {
                         row.get::<_, String>(1)?,
                         as_u64(row.get(2)?)?,
                         row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                        as_u64(row.get(8)?)?.min(u32::MAX as u64) as u32,
+                        row.get::<_, String>(9)?,
                     ))
                 },
             )
@@ -1658,6 +2405,8 @@ impl Store {
                    AND network = ?4 AND asset = ?5 AND amount_atomic = ?6
                    AND price_krw = ?7 AND krw_per_usdc = ?8
                    AND expires_at > ?9 AND settled_at IS NULL
+                   AND content_hash = ?10 AND document_version = ?11
+                   AND consent_version = ?12
                  ORDER BY created_at DESC LIMIT 1",
                 params![
                     query_id.trim(),
@@ -1669,6 +2418,9 @@ impl Store {
                     as_i64(price_krw)?,
                     as_i64(policy.krw_per_usdc)?,
                     as_i64(now)?,
+                    content_hash,
+                    document_version as i64,
+                    consent_version,
                 ],
                 |row| Ok((row.get::<_, String>(0)?, as_u64(row.get(1)?)?)),
             )
@@ -1681,8 +2433,11 @@ impl Store {
             transaction.execute(
                 "INSERT INTO payment_quotes
                  (id, query_id, document_id, document_handle, pay_to, network, asset,
-                  amount_atomic, price_krw, krw_per_usdc, expires_at, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                  amount_atomic, price_krw, krw_per_usdc, expires_at, created_at,
+                  content_snapshot, shelf_snapshot, content_hash, document_version, status,
+                  consent_version)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                         ?13, ?14, ?15, ?16, 'quoted', ?17)",
                 params![
                     id,
                     query_id.trim(),
@@ -1696,6 +2451,11 @@ impl Store {
                     as_i64(policy.krw_per_usdc)?,
                     as_i64(expires_at)?,
                     as_i64(now)?,
+                    content_snapshot,
+                    shelf_snapshot,
+                    content_hash,
+                    document_version as i64,
+                    consent_version,
                 ],
             )?;
             (id, expires_at)
@@ -1708,6 +2468,9 @@ impl Store {
                 query_id.trim(),
                 document_handle
             ),
+            canonical_url: persona_handle
+                .map(|persona| format!("/api/v1/personas/{persona}/documents/{document_handle}"))
+                .unwrap_or_else(|| format!("/api/v1/documents/{document_handle}")),
             id,
             query_id: query_id.trim().to_owned(),
             document_handle,
@@ -1718,41 +2481,106 @@ impl Store {
             price_krw,
             krw_per_usdc: policy.krw_per_usdc,
             expires_at,
+            content_hash,
+            document_version,
+            status: "quoted".to_owned(),
+            consent_version,
         })
     }
 
     pub fn paid_document(&self, quote_id: &str) -> Result<PaidDocument, StoreError> {
-        let now = now_ms();
-        self.connection()?
-            .query_row(
-                "SELECT pq.id, d.handle, d.shelf, d.content, pq.price_krw
-                 FROM payment_quotes pq
-                 JOIN documents d ON d.id = pq.document_id
-                 LEFT JOIN profiles p ON p.user_id = d.author_id
-                 WHERE pq.id = ?1 AND pq.expires_at > ?2 AND d.locked = 0
-                   AND COALESCE(p.auto_match, 1) = 1
-                   AND (SELECT COUNT(*) FROM memory_entries strikes
-                        WHERE strikes.user_id = d.author_id
-                          AND strikes.status = 'voided') < ?3",
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let (id, handle, shelf, content, price, content_hash, version, delivered_at, document_id) =
+            transaction
+                .query_row(
+                    "SELECT id, document_handle, shelf_snapshot, content_snapshot, price_krw,
+                            content_hash, document_version, delivered_at, document_id
+                     FROM payment_quotes WHERE id = ?1 AND settled_at IS NOT NULL",
+                    [quote_id.trim()],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            as_u64(row.get(4)?)?,
+                            row.get::<_, String>(5)?,
+                            as_u64(row.get(6)?)?.min(u32::MAX as u64) as u32,
+                            row.get::<_, Option<i64>>(7)?.map(as_u64).transpose()?,
+                            row.get::<_, String>(8)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(StoreError::NotFound("settled payment quote"))?;
+        let delivered_at = delivered_at.unwrap_or_else(now_ms);
+        let first_delivery = transaction.execute(
+            "UPDATE payment_quotes SET delivered_at = ?1, status = 'delivered'
+             WHERE id = ?2 AND delivered_at IS NULL",
+            params![as_i64(delivered_at)?, id],
+        )? == 1;
+        if first_delivery {
+            let memory_id = transaction
+                .query_row(
+                    "SELECT id FROM memory_entries WHERE document_id = ?1 LIMIT 1",
+                    [&document_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            transaction.execute(
+                "INSERT INTO memory_access_events
+                 (id, memory_id, document_id, quote_id, actor, purpose, created_at)
+                 VALUES (?1, ?2, ?3, ?4, 'x402_payer', 'paid_evidence', ?5)",
                 params![
-                    quote_id.trim(),
-                    as_i64(now)?,
-                    AUTO_MATCH_STRIKE_LIMIT as i64
+                    new_id("access"),
+                    memory_id,
+                    document_id,
+                    id,
+                    as_i64(delivered_at)?
                 ],
-                |row| {
-                    Ok(PaidDocument {
-                        quote_id: row.get(0)?,
-                        citation: Citation {
-                            handle: row.get(1)?,
-                            shelf: row.get(2)?,
-                            excerpt: row.get(3)?,
-                            price: as_u64(row.get(4)?)?,
-                        },
-                    })
-                },
+            )?;
+            transaction.execute(
+                "UPDATE memory_entries SET access_count = access_count + 1,
+                    last_accessed_at = ?1 WHERE document_id = ?2",
+                params![as_i64(delivered_at)?, document_id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(PaidDocument {
+            quote_id: id,
+            content_hash,
+            document_version: version,
+            delivered_at,
+            citation: Citation {
+                handle,
+                shelf,
+                excerpt: content,
+                price,
+            },
+        })
+    }
+
+    pub fn recover_paid_document(
+        &self,
+        quote_id: &str,
+        transaction_signature: &str,
+    ) -> Result<PaidDocument, StoreError> {
+        let matches = self
+            .connection()?
+            .query_row(
+                "SELECT 1 FROM chain_settlements WHERE quote_id = ?1 AND transaction_signature = ?2",
+                params![quote_id.trim(), transaction_signature.trim()],
+                |_| Ok(()),
             )
             .optional()?
-            .ok_or(StoreError::NotFound("active payment quote"))
+            .is_some();
+        if !matches {
+            return Err(StoreError::Unauthorized(
+                "quote and transaction signature do not identify a settled payment".to_owned(),
+            ));
+        }
+        self.paid_document(quote_id)
     }
 
     pub fn record_chain_settlement(
@@ -1760,16 +2588,22 @@ impl Store {
         request: &RecordChainSettlementRequest,
     ) -> Result<ChainSettlementReceipt, StoreError> {
         let signature = request.transaction_signature.trim();
-        if !(64..=128).contains(&signature.len()) || !is_base58(signature) {
+        if !valid_solana_signature(signature) {
             return Err(StoreError::Validation(
                 "transactionSignature must be a base58 Solana signature".to_owned(),
             ));
         }
         if !valid_solana_address(request.payer.trim())
             || !valid_solana_address(request.pay_to.trim())
+            || !valid_solana_address(request.asset.trim())
         {
             return Err(StoreError::Validation(
-                "payer and payTo must be base58 Solana public keys".to_owned(),
+                "payer, payTo, and asset must be base58 Solana public keys".to_owned(),
+            ));
+        }
+        if request.payer.trim() == request.pay_to.trim() {
+            return Err(StoreError::Conflict(
+                "payer and payment recipient must be different wallets".to_owned(),
             ));
         }
         let amount_atomic = request.amount_atomic.parse::<u64>().map_err(|_| {
@@ -1785,6 +2619,19 @@ impl Store {
 
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
+        let quoted_asset = transaction
+            .query_row(
+                "SELECT asset FROM payment_quotes WHERE id = ?1",
+                [request.quote_id.trim()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("payment quote"))?;
+        if quoted_asset != request.asset.trim() {
+            return Err(StoreError::Conflict(
+                "settlement does not match the payment quote".to_owned(),
+            ));
+        }
         let existing = transaction
             .query_row(
                 "SELECT id, quote_id, transaction_signature, payer, pay_to,
@@ -1798,13 +2645,25 @@ impl Store {
             if existing.transaction_signature == signature
                 && existing.payer == request.payer.trim()
                 && existing.pay_to == request.pay_to.trim()
-                && existing.amount_atomic == request.amount_atomic
+                && existing.amount_atomic == amount_atomic.to_string()
                 && existing.network == request.network.trim()
             {
                 return Ok(existing);
             }
             return Err(StoreError::Conflict(
                 "this payment quote has already been settled".to_owned(),
+            ));
+        }
+        let signature_used = transaction
+            .query_row(
+                "SELECT quote_id FROM chain_settlements WHERE transaction_signature = ?1",
+                [signature],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if signature_used.is_some() {
+            return Err(StoreError::Conflict(
+                "this transaction signature has already settled another quote".to_owned(),
             ));
         }
 
@@ -1898,7 +2757,7 @@ impl Store {
             ],
         )?;
         transaction.execute(
-            "UPDATE payment_quotes SET settled_at = ?1 WHERE id = ?2",
+            "UPDATE payment_quotes SET settled_at = ?1, status = 'settled' WHERE id = ?2",
             params![as_i64(confirmed_at)?, request.quote_id.trim()],
         )?;
         transaction.execute(
@@ -2175,6 +3034,7 @@ fn load_profile(connection: &Connection, user_id: &str) -> Result<Option<UserPro
                     (SELECT COUNT(*) FROM memory_entries m
                      WHERE m.user_id = p.user_id AND m.status = 'voided'),
                     EXISTS(SELECT 1 FROM dispute_events d WHERE d.user_id = p.user_id)
+                    , p.consent_version
              FROM profiles p WHERE p.user_id = ?1",
             [user_id],
             profile_from_row,
@@ -2231,6 +3091,7 @@ fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserProfile> {
         speaks_to: serde_json::from_str(&speaks_to_json).unwrap_or_default(),
         wallet: row.get(7)?,
         agreed_at: as_u64(row.get(8)?)?,
+        consent_version: row.get(13)?,
         auto_match: configured_auto_match && strikes < AUTO_MATCH_STRIKE_LIMIT,
         agents: row.get::<_, i64>(10)? != 0,
         strikes,
@@ -2274,13 +3135,16 @@ fn chain_settlement_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChainS
     })
 }
 
-fn is_base58(value: &str) -> bool {
-    const BASE58: &str = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-    !value.is_empty() && value.chars().all(|character| BASE58.contains(character))
+fn valid_solana_address(value: &str) -> bool {
+    bs58::decode(value)
+        .into_vec()
+        .is_ok_and(|decoded| decoded.len() == 32)
 }
 
-fn valid_solana_address(value: &str) -> bool {
-    (32..=44).contains(&value.len()) && is_base58(value)
+fn valid_solana_signature(value: &str) -> bool {
+    bs58::decode(value)
+        .into_vec()
+        .is_ok_and(|decoded| decoded.len() == 64)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2456,6 +3320,8 @@ fn stored_call_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredCall>
 
 fn memory_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
     let flags_json: String = row.get(8)?;
+    let context_json: String = row.get(19)?;
+    let source_ids_json: String = row.get(20)?;
     Ok(MemoryEntry {
         id: row.get(0)?,
         question: row.get(1)?,
@@ -2468,6 +3334,16 @@ fn memory_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
         flags: serde_json::from_str(&flags_json).unwrap_or_default(),
         rating: row.get(9)?,
         dispute_status: row.get(10)?,
+        memory_type: row.get(11)?,
+        importance: row.get(12)?,
+        reliability_score: row.get(13)?,
+        content_hash: row.get(14)?,
+        version: as_u64(row.get(15)?)?.min(u32::MAX as u64) as u32,
+        locked: row.get::<_, i64>(16)? != 0,
+        access_count: as_u64(row.get(17)?)?,
+        last_accessed_at: row.get::<_, Option<i64>>(18)?.map(as_u64).transpose()?,
+        context: serde_json::from_str(&context_json).unwrap_or_default(),
+        source_ids: serde_json::from_str(&source_ids_json).unwrap_or_default(),
     })
 }
 
@@ -2510,8 +3386,8 @@ fn insert_document(
     transaction.execute(
         "INSERT OR IGNORE INTO documents
          (id, handle, author_id, shelf_id, shelf, category, content, tags_json,
-          price_krw, created_at, quality_score, reliability_score, locked)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+          price_krw, created_at, quality_score, reliability_score, locked, content_hash, version)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 1)",
         params![
             document.id,
             document.handle,
@@ -2526,8 +3402,75 @@ fn insert_document(
             document.quality_score,
             document.reliability_score,
             i64::from(document.locked),
+            sha256_hex(&document.content),
         ],
     )?;
+    Ok(())
+}
+
+fn seed_evidence_edges(transaction: &Transaction<'_>) -> Result<(), StoreError> {
+    // Demo-only, curator-reviewed relationships between independently authored
+    // seed passages. Production edges are appended with provenance receipts.
+    let edges = [
+        (
+            "edge_seongsu_lunch",
+            "md_lunch_12",
+            "md_seongsu_11",
+            "corroborates",
+            "seongsu.food",
+            0.9_f32,
+        ),
+        (
+            "edge_seongsu_route",
+            "md_seongsu_12",
+            "md_seongsu_13",
+            "contextualizes",
+            "seongsu.mobility",
+            0.7_f32,
+        ),
+        (
+            "edge_paris_life",
+            "md_paris_11",
+            "md_paris_12",
+            "contextualizes",
+            "paris.food",
+            0.7_f32,
+        ),
+        (
+            "edge_wallet_separation",
+            "md_wallet_12",
+            "md_wallet_11",
+            "corroborates",
+            "solana.wallet-security",
+            0.95_f32,
+        ),
+        (
+            "edge_backend_production",
+            "md_backend_12",
+            "md_backend_11",
+            "contextualizes",
+            "engineering.production",
+            0.65_f32,
+        ),
+    ];
+    let created_at = now_ms();
+    for (id, source, target, relation, topic, weight) in edges {
+        transaction.execute(
+            "INSERT OR IGNORE INTO evidence_edges
+             (id, source_document_id, target_document_id, relation, provenance,
+              topic, weight, actor, created_at)
+             VALUES (?1, ?2, ?3, ?4, 'admin_verified', ?5, ?6, 'seed-curator-v1', ?7)",
+            params![
+                id,
+                source,
+                target,
+                relation,
+                topic,
+                weight,
+                as_i64(created_at)?,
+            ],
+        )?;
+    }
     Ok(())
 }
 
@@ -2658,17 +3601,134 @@ fn seed_memory(transaction: &Transaction<'_>) -> Result<(), StoreError> {
     Ok(())
 }
 
+fn maybe_create_reflection(
+    transaction: &Transaction<'_>,
+    user_id: &str,
+    created_at: u64,
+    reliability: f32,
+) -> Result<(), StoreError> {
+    let observation_count = transaction.query_row(
+        "SELECT COUNT(*) FROM memory_entries
+         WHERE user_id = ?1 AND status = 'settled' AND memory_type = 'observation'",
+        [user_id],
+        |row| as_usize(row.get(0)?),
+    )?;
+    if observation_count < 3 || observation_count % 3 != 0 {
+        return Ok(());
+    }
+    let mut statement = transaction.prepare(
+        "SELECT id, question, answer FROM memory_entries
+         WHERE user_id = ?1 AND status = 'settled' AND memory_type = 'observation'
+         ORDER BY created_at DESC LIMIT 3",
+    )?;
+    let sources = statement
+        .query_map([user_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    let source_ids = sources.iter().map(|source| &source.0).collect::<Vec<_>>();
+    let summary = sources
+        .iter()
+        .map(|(_, question, answer)| {
+            let excerpt = answer.chars().take(180).collect::<String>();
+            format!("{question}: {excerpt}")
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let id = new_id("reflection");
+    transaction.execute(
+        "INSERT INTO memory_entries
+         (id, user_id, question, answer, shelf, earned_krw, created_at, via, status,
+          flags_json, context_json, memory_type, importance, source_ids_json,
+          content_hash, reliability_score)
+         VALUES (?1, ?2, 'What patterns connect my recent experiences?', ?3,
+                 'Persona reflection', 0, ?4, 'Reflection', 'settled', '[]', '[]',
+                 'reflection', 0.8, ?5, ?6, ?7)",
+        params![
+            id,
+            user_id,
+            summary,
+            as_i64(created_at.saturating_add(1))?,
+            serde_json::to_string(&source_ids).expect("source ids are serialisable"),
+            sha256_hex(&summary),
+            reliability,
+        ],
+    )?;
+    Ok(())
+}
+
+fn author_reliability(transaction: &Transaction<'_>, user_id: &str) -> Result<f32, StoreError> {
+    let (accepted, voided, average_rating) = transaction.query_row(
+        "SELECT
+             SUM(CASE WHEN status = 'settled' THEN 1 ELSE 0 END),
+             SUM(CASE WHEN status = 'voided' THEN 1 ELSE 0 END),
+             AVG(CASE WHEN rating IS NOT NULL THEN rating END)
+         FROM memory_entries WHERE user_id = ?1 AND memory_type = 'observation'",
+        [user_id],
+        |row| {
+            Ok((
+                row.get::<_, Option<i64>>(0)?.unwrap_or(0) as f32,
+                row.get::<_, Option<i64>>(1)?.unwrap_or(0) as f32,
+                row.get::<_, Option<f32>>(2)?,
+            ))
+        },
+    )?;
+    let behavioral = (accepted + 2.0) / (accepted + voided + 4.0);
+    let rating = average_rating.map(|value| value / 5.0).unwrap_or(0.5);
+    Ok((behavioral * 0.75 + rating * 0.25).clamp(0.05, 0.98))
+}
+
+fn author_reliability_readonly(connection: &Connection, user_id: &str) -> Result<f32, StoreError> {
+    let (accepted, voided, average_rating) = connection.query_row(
+        "SELECT
+             SUM(CASE WHEN status = 'settled' THEN 1 ELSE 0 END),
+             SUM(CASE WHEN status = 'voided' THEN 1 ELSE 0 END),
+             AVG(CASE WHEN rating IS NOT NULL THEN rating END)
+         FROM memory_entries WHERE user_id = ?1 AND memory_type = 'observation'",
+        [user_id],
+        |row| {
+            Ok((
+                row.get::<_, Option<i64>>(0)?.unwrap_or(0) as f32,
+                row.get::<_, Option<i64>>(1)?.unwrap_or(0) as f32,
+                row.get::<_, Option<f32>>(2)?,
+            ))
+        },
+    )?;
+    let behavioral = (accepted + 2.0) / (accepted + voided + 4.0);
+    let rating = average_rating.map(|value| value / 5.0).unwrap_or(0.5);
+    Ok((behavioral * 0.75 + rating * 0.25).clamp(0.05, 0.98))
+}
+
+fn memory_importance(question: &str, answer: &str, context: &[InterviewTurn]) -> f32 {
+    let detail = (answer.chars().count() as f32 / 600.0).min(1.0);
+    let specificity = if answer.chars().any(|character| character.is_ascii_digit()) {
+        1.0
+    } else {
+        0.4
+    };
+    let interview_depth = (context.len() as f32 / 4.0).min(1.0);
+    let question_depth = (question.split_whitespace().count() as f32 / 12.0).min(1.0);
+    (0.2 + detail * 0.3 + specificity * 0.2 + interview_depth * 0.2 + question_depth * 0.1)
+        .clamp(0.0, 1.0)
+}
+
+fn sha256_hex(value: &str) -> String {
+    let digest = Sha256::digest(value.as_bytes());
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn new_id(prefix: &str) -> String {
     let counter = ID_COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("{prefix}_{:x}_{counter:x}", now_ms())
 }
 
 fn handle_from_id(id: &str) -> String {
-    id.replace(|character: char| !character.is_ascii_alphanumeric(), "")
-        .to_uppercase()
-        .chars()
-        .take(12)
-        .collect()
+    format!("MD{}", &sha256_hex(id)[..10]).to_uppercase()
 }
 
 fn slug(value: &str) -> String {
@@ -2763,9 +3823,9 @@ mod tests {
 
     use crate::{
         domain::{
-            CreateOpenCallRequest, Decision, RecordChainSettlementRequest, ResolveQuestionRequest,
-            ReviewDisputeRequest, SearchFilters, SubmitAnswerResponse, UpdatePreferencesRequest,
-            UpsertProfileRequest,
+            CreateEvidenceEdgeRequest, CreateOpenCallRequest, Decision,
+            RecordChainSettlementRequest, ResolveQuestionRequest, ReviewDisputeRequest,
+            SearchFilters, SubmitAnswerResponse, UpdatePreferencesRequest, UpsertProfileRequest,
         },
         search::Resolver,
     };
@@ -2848,7 +3908,7 @@ mod tests {
         answer: &str,
     ) -> Result<SubmitAnswerResponse, StoreError> {
         onboard(store, user_id);
-        store.submit_answer(call_id, user_id, answer)
+        store.submit_answer(call_id, user_id, answer, &[])
     }
 
     #[test]
@@ -2880,11 +3940,34 @@ mod tests {
     }
 
     #[test]
+    fn only_admins_can_create_independent_verified_authority_edges() {
+        let store = Store::in_memory().unwrap();
+        ensure_user(&store, "curator");
+        let request = CreateEvidenceEdgeRequest {
+            source_handle: "PARISR_11".to_owned(),
+            target_handle: "PARISR_12".to_owned(),
+            relation: "corroborates".to_owned(),
+            provenance: "admin_verified".to_owned(),
+            topic: "travel".to_owned(),
+            weight: 1.0,
+        };
+        assert!(store.create_evidence_edge("curator", &request).is_err());
+        store.set_user_role("curator", "admin").unwrap();
+        let edge = store.create_evidence_edge("curator", &request).unwrap();
+        assert_eq!(edge.provenance, "admin_verified");
+
+        let mut self_owned = request;
+        self_owned.source_handle = "PARISR_12".to_owned();
+        self_owned.target_handle = "PARISR_12".to_owned();
+        assert!(store.create_evidence_edge("curator", &self_owned).is_err());
+    }
+
+    #[test]
     fn answering_requires_a_completed_profile() {
         let store = Store::in_memory().unwrap();
         let call = create_svalbard_call(&store, "buyer", 1);
         let error = store
-            .submit_answer(&call.id, "anonymous-reader", strong_answer())
+            .submit_answer(&call.id, "anonymous-reader", strong_answer(), &[])
             .unwrap_err();
         assert!(error.to_string().contains("complete onboarding"));
         assert!(store.list_memory("anonymous-reader").unwrap().is_empty());
@@ -3021,9 +4104,21 @@ mod tests {
             .unwrap();
         let handles = vec![resolved.matches[0].handle.clone()];
 
+        let unopened = store
+            .verify_opened_documents(&resolved.query_id, &handles)
+            .unwrap_err();
+        assert!(matches!(unopened, StoreError::DocumentNotQuoted));
+
         store
             .open_documents(&resolved.query_id, &handles, Some("payer-1"))
             .unwrap();
+        store
+            .verify_opened_documents(&resolved.query_id, &handles)
+            .unwrap();
+        let (canonical_question, canonical_citations) =
+            store.opened_evidence(&resolved.query_id, &handles).unwrap();
+        assert_eq!(canonical_question, "Which Svalbard winter boots stay warm?");
+        assert_eq!(canonical_citations[0].excerpt, strong_answer());
         store
             .open_documents(&resolved.query_id, &handles, Some("payer-1"))
             .unwrap();
@@ -3072,16 +4167,20 @@ mod tests {
         assert_eq!(quote.price_krw, 700);
         assert_eq!(quote.amount_atomic, "518519");
         assert_eq!(quote.pay_to, "11111111111111111111111111111111");
-        assert_eq!(
-            store.paid_document(&quote.id).unwrap().citation.handle,
-            *handle
-        );
+        assert_eq!(quote.status, "quoted");
+        assert_eq!(quote.content_hash.len(), 64);
+        assert_eq!(quote.document_version, 1);
+        assert!(store.paid_document(&quote.id).is_err());
+        store
+            .set_memory_locked("researcher-1", &submitted.memory.id, true)
+            .unwrap();
 
         let request = RecordChainSettlementRequest {
             quote_id: quote.id.clone(),
-            transaction_signature: "2".repeat(88),
-            payer: "3".repeat(32),
+            transaction_signature: bs58::encode([2_u8; 64]).into_string(),
+            payer: bs58::encode([3_u8; 32]).into_string(),
             pay_to: quote.pay_to.clone(),
+            asset: quote.asset.clone(),
             amount_atomic: quote.amount_atomic.clone(),
             network: quote.network.clone(),
             raw_response: serde_json::json!({ "success": true, "transaction": "2".repeat(88) }),
@@ -3090,9 +4189,45 @@ mod tests {
         let repeated = store.record_chain_settlement(&request).unwrap();
         assert_eq!(receipt.id, repeated.id);
         assert_eq!(receipt.amount_atomic, quote.amount_atomic);
+        let delivered = store.paid_document(&quote.id).unwrap();
+        assert_eq!(delivered.citation.handle, *handle);
+        assert_eq!(delivered.content_hash, quote.content_hash);
+        assert_eq!(delivered.document_version, quote.document_version);
+        assert!(
+            store
+                .recover_paid_document(&quote.id, "wrong-signature")
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .recover_paid_document(&quote.id, &request.transaction_signature)
+                .unwrap()
+                .citation
+                .excerpt,
+            strong_answer()
+        );
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE payment_quotes SET expires_at = 0 WHERE id = ?1",
+                [&quote.id],
+            )
+            .unwrap();
+        assert_eq!(
+            store.paid_document(&quote.id).unwrap().citation.handle,
+            *handle
+        );
+
+        let mut wrong_asset = request.clone();
+        wrong_asset.asset = bs58::encode([8_u8; 32]).into_string();
+        assert!(matches!(
+            store.record_chain_settlement(&wrong_asset),
+            Err(StoreError::Conflict(_))
+        ));
 
         let mut conflicting = request.clone();
-        conflicting.transaction_signature = "4".repeat(88);
+        conflicting.transaction_signature = bs58::encode([4_u8; 64]).into_string();
         assert!(matches!(
             store.record_chain_settlement(&conflicting),
             Err(StoreError::Conflict(_))
@@ -3101,6 +4236,8 @@ mod tests {
         let memory = store.list_memory("researcher-1").unwrap();
         assert_eq!(memory[0].id, submitted.memory.id);
         assert_eq!(memory[0].earned, 1_400);
+        assert_eq!(memory[0].access_count, 1);
+        assert!(memory[0].last_accessed_at.is_some());
         let earnings = store.earnings("researcher-1").unwrap();
         assert_eq!(earnings.accrued_krw, 1_400);
         assert_eq!(earnings.available_krw, 700);
@@ -3109,6 +4246,85 @@ mod tests {
                 .events
                 .iter()
                 .any(|event| event.payout_status == "onchain")
+        );
+        store.delete_account("researcher-1").unwrap();
+        assert_eq!(
+            store
+                .recover_paid_document(&quote.id, &request.transaction_signature)
+                .unwrap()
+                .citation
+                .excerpt,
+            strong_answer()
+        );
+        let (_, evidence) = store
+            .opened_evidence(&resolved.query_id, std::slice::from_ref(handle))
+            .unwrap();
+        assert_eq!(evidence[0].excerpt, strong_answer());
+    }
+
+    #[test]
+    fn memory_stream_reflects_versions_and_publishes_a_manifest() {
+        let store = Store::in_memory().unwrap();
+        let answers = [
+            "In January 2025 near Longyearbyen I wore Baffin boots for 6 hours on snow. The felt liner stayed warm but needed drying every night before the next field shift.",
+            "During February 2025 outside Tromso I used leather mountaineering boots for 4 hours. Wet coastal snow soaked the seams, so I changed to a plastic shell after lunch.",
+            "On a March 2025 survey near Kiruna I packed two wool socks and vapor barrier liners. At minus 22C the system lasted 7 hours, although walking indoors became uncomfortable.",
+        ];
+        for (index, answer) in answers.iter().enumerate() {
+            let call = create_svalbard_call(&store, &format!("reflection-buyer-{index}"), 1);
+            submit(&store, &call.id, "reflective-user", answer)
+                .unwrap_or_else(|error| panic!("reflection submission {index}: {error:?}"));
+        }
+        let memories = store.list_memory("reflective-user").unwrap();
+        assert_eq!(
+            memories
+                .iter()
+                .filter(|memory| memory.memory_type == "observation")
+                .count(),
+            3
+        );
+        let reflection = memories
+            .iter()
+            .find(|memory| memory.memory_type == "reflection")
+            .unwrap();
+        assert!(reflection.importance >= 0.8);
+        assert_eq!(reflection.earned, 0);
+
+        let profile = store.get_profile("reflective-user").unwrap().unwrap();
+        let manifest = store.persona_manifest(&profile.handle).unwrap();
+        assert_eq!(manifest.memory_count, 3);
+        assert!(manifest.reliability_score > 0.5);
+        assert!(
+            manifest
+                .memories
+                .iter()
+                .all(|memory| memory.content_hash.len() == 64)
+        );
+
+        let original = memories
+            .iter()
+            .find(|memory| memory.memory_type == "observation")
+            .unwrap();
+        let corrected = store
+            .correct_memory(
+                "reflective-user",
+                &original.id,
+                &crate::domain::CorrectMemoryRequest {
+                    answer: "In January 2025 near Longyearbyen I wore Baffin boots for exactly 5 hours, not 6. The felt liner stayed warm and I dried it overnight before every field shift."
+                        .to_owned(),
+                },
+            )
+            .unwrap();
+        assert_eq!(corrected.memory_type, "correction");
+        assert_eq!(corrected.version, 2);
+        assert!(
+            store
+                .list_memory("reflective-user")
+                .unwrap()
+                .iter()
+                .find(|memory| memory.id == original.id)
+                .unwrap()
+                .locked
         );
     }
 
@@ -3235,7 +4451,7 @@ mod tests {
 
         onboard(&store, "seoul-researcher");
         let mismatch = store
-            .submit_answer(&call.id, "seoul-researcher", strong_answer())
+            .submit_answer(&call.id, "seoul-researcher", strong_answer(), &[])
             .unwrap_err();
         assert!(mismatch.to_string().contains("does not match"));
 
@@ -3248,7 +4464,7 @@ mod tests {
             .upsert_profile("svalbard-researcher", &matching)
             .unwrap();
         store
-            .submit_answer(&call.id, "svalbard-researcher", strong_answer())
+            .submit_answer(&call.id, "svalbard-researcher", strong_answer(), &[])
             .unwrap();
 
         let answers = store.chat_answers("target-buyer", "chat-targeted").unwrap();

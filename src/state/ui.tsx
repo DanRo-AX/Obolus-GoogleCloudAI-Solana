@@ -127,7 +127,7 @@ export type MemoryEntry = {
   shelf: string
   earned: number
   createdAt: number
-  via: 'Open call' | 'Auto-match'
+  via: 'Open call' | 'Auto-match' | 'Reflection' | 'Correction'
   /** Voided entries keep the attempted answer but earn zero until disputed. */
   status: 'settled' | 'voided'
   disputeStatus?: 'pending' | 'approved' | 'rejected'
@@ -135,6 +135,14 @@ export type MemoryEntry = {
   flags?: Issue[]
   /** Buyer rating out of 5, once someone has opened it. */
   rating?: number
+  memoryType?: 'observation' | 'reflection' | 'correction'
+  importance?: number
+  reliabilityScore?: number
+  contentHash?: string
+  version?: number
+  locked?: boolean
+  accessCount?: number
+  lastAccessedAt?: number
 }
 
 type UiValue = {
@@ -162,6 +170,7 @@ type UiValue = {
     email: string,
     password: string,
     signup: boolean,
+    ageConfirmed14?: boolean,
   ) => Promise<void>
   signOut: () => Promise<void>
   deleteCurrentAccount: () => Promise<void>
@@ -186,6 +195,7 @@ type UiValue = {
     orderId: string,
     answer: string,
     flags?: Issue[],
+    context?: { prompt: string; answer: string }[],
   ) => Promise<{ voided: boolean; issues: Issue[] }>
   cancelOrder: (orderId: string) => Promise<void>
   clearAll: () => void
@@ -460,7 +470,9 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
   const appendAssistant = useCallback((chatId: string, message: ChatMessage) => {
     setChats((prev) =>
       prev.map((c) =>
-        c.id === chatId ? { ...c, messages: [...c.messages, message] } : c,
+        c.id === chatId && !c.messages.some((item) => item.id === message.id)
+          ? { ...c, messages: [...c.messages, message] }
+          : c,
       ),
     )
   }, [])
@@ -537,14 +549,19 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
    * both updaters stay pure.
    */
   const answerOrder = useCallback(
-    async (orderId: string, answer: string, flags?: Issue[]) => {
+    async (
+      orderId: string,
+      answer: string,
+      flags?: Issue[],
+      context: { prompt: string; answer: string }[] = [],
+    ) => {
       const order = orders.find((o) => o.id === orderId)
       if (!order || order.answered >= order.target) {
         return { voided: false, issues: [] }
       }
 
       if (BACKEND_ENABLED) {
-        const result = await submitAnswer(orderId, answer)
+        const result = await submitAnswer(orderId, answer, context)
         setOrders((prev) =>
           prev.map((item) => (item.id === orderId ? result.order : item)),
         )
@@ -686,9 +703,9 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
   )
 
   const authenticate = useCallback(
-    async (email: string, password: string, signup: boolean) => {
+    async (email: string, password: string, signup: boolean, ageConfirmed14 = false) => {
       const session = signup
-        ? await registerAccount(email, password)
+        ? await registerAccount(email, password, ageConfirmed14)
         : await loginAccount(email, password)
       const [remoteOrders, remoteMemory, remoteProfile, remoteEarnings] =
         await Promise.all([listOpenCalls(), listMemory(), getProfile(), getEarnings()])

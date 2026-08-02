@@ -1,6 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
-import { Coins, Flame, Loader2, ShieldAlert, Sparkles, Star, Trash2, Wallet } from 'lucide-react'
+import {
+  Coins,
+  Download,
+  Flame,
+  Loader2,
+  Lock,
+  ShieldAlert,
+  Sparkles,
+  Star,
+  Trash2,
+  Unlock,
+  Wallet,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Badge,
@@ -10,6 +22,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/primitives'
 import { AUTO_MATCH_STRIKE_LIMIT, STRIKE_LIMIT } from '@/data/onboarding'
+import { exportAccount, setMemoryLocked } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
 import { shortKey } from '@/state/wallet'
@@ -40,6 +53,30 @@ export default function Memory() {
   const [disputeError, setDisputeError] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [lockingId, setLockingId] = useState<string | null>(null)
+
+  const toggleMemoryLock = async (memoryId: string, locked: boolean) => {
+    if (lockingId) return
+    setLockingId(memoryId)
+    try {
+      await setMemoryLocked(memoryId, locked)
+      await refreshLedger()
+    } finally {
+      setLockingId(null)
+    }
+  }
+
+  const downloadExport = async () => {
+    const payload = await exportAccount()
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
+    )
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `openshelf-${profile?.handle ?? 'persona'}-export.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
 
   const dispute = async (memoryId: string) => {
     if (disputingId) return
@@ -315,6 +352,24 @@ export default function Memory() {
                             {m.rating}.0
                           </span>
                         ) : null}
+                        {m.status === 'settled' && m.memoryType !== 'reflection' ? (
+                          <Button
+                            variant="monoGhost"
+                            size="monoSm"
+                            disabled={lockingId === m.id}
+                            onClick={() => void toggleMemoryLock(m.id, !m.locked)}
+                            title={m.locked ? 'Return this passage to search' : 'Remove this passage from search'}
+                          >
+                            {lockingId === m.id ? (
+                              <Loader2 className="size-3 animate-spin" />
+                            ) : m.locked ? (
+                              <Unlock className="size-3" />
+                            ) : (
+                              <Lock className="size-3" />
+                            )}
+                            {m.locked ? 'Unlock' : 'Lock'}
+                          </Button>
+                        ) : null}
                         <span
                           className={cn(
                             'ml-auto font-mono text-xs tabular-nums',
@@ -426,6 +481,9 @@ export default function Memory() {
             append-only financial audit rows.
           </p>
           <div className="mt-3 flex items-center gap-2">
+            <Button variant="monoGhost" size="monoSm" onClick={() => void downloadExport()}>
+              <Download className="size-3" /> Export JSON
+            </Button>
             {deleteConfirm ? (
               <>
                 <Button

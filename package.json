@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "dev:stack": "bash scripts/dev-stack.sh",
+    "pay:gateway:sandbox": "npx --yes @solana/pay --sandbox gate api backend/paywall.yml --bind 127.0.0.1:3402 --no-register",
+    "pay:version": "npx --yes @solana/pay --version",
+    "x402:devnet:smoke": "npx --yes tsx@4.21.0 scripts/devnet-x402-smoke.ts",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "check:all": "npm run build && npm run lint && npm --prefix payment-gateway run typecheck && cargo test --manifest-path backend/Cargo.toml && cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings",

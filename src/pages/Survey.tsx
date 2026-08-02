@@ -80,6 +80,10 @@ export default function Survey() {
         order.id,
         text,
         issues.length ? issues : undefined,
+        warmups.flatMap((warmup) => {
+          const answer = answers[warmup.id]?.trim()
+          return answer ? [{ prompt: warmup.prompt, answer }] : []
+        }),
       )
       setFlags(result.issues.length ? result.issues : null)
       setStruck(result.voided)

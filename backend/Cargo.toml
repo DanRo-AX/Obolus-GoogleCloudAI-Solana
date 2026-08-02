@@ -7,7 +7,9 @@ publish = false
 [dependencies]
 argon2 = "0.5.3"
 axum = "0.8.9"
+bs58 = "0.5.1"
 rand_core = { version = "0.6.4", features = ["getrandom"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10.9"

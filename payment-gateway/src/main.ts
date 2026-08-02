@@ -1,5 +1,5 @@
 import express, { type NextFunction, type Request, type Response } from "express";
-import { appendFile, readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { HTTPFacilitatorClient, type HTTPRequestContext } from "@x402/core/server";
 import type { Network } from "@x402/core/types";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
@@ -27,10 +27,18 @@ type PaymentQuote = {
   krwPerUsdc: number;
   expiresAt: number;
   resourcePath: string;
+  canonicalUrl: string;
+  contentHash: string;
+  documentVersion: number;
+  status: string;
+  consentVersion: string;
 };
 
 type PaidDocument = {
   quoteId: string;
+  contentHash: string;
+  documentVersion: number;
+  deliveredAt: number;
   citation: {
     handle: string;
     shelf: string;
@@ -46,6 +54,7 @@ type PendingSettlement = {
   transactionSignature: string;
   payer: string;
   payTo: string;
+  asset: string;
   amountAtomic: string;
   network: string;
   rawResponse: unknown;
@@ -60,6 +69,7 @@ const pendingSettlements = new Map<string, PendingSettlement>();
 async function internalJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${rustApiUrl}${path}`, {
     ...init,
+    signal: init.signal ?? AbortSignal.timeout(10_000),
     headers: {
       "content-type": "application/json",
       "x-openshelf-internal-token": internalToken,
@@ -132,7 +142,13 @@ async function recordSettlement(settlement: PendingSettlement): Promise<void> {
 }
 
 async function appendOutbox(record: OutboxRecord): Promise<void> {
-  await appendFile(outboxPath, `${JSON.stringify(record)}\n`, { encoding: "utf8", mode: 0o600 });
+  const file = await open(outboxPath, "a", 0o600);
+  try {
+    await file.appendFile(`${JSON.stringify(record)}\n`, "utf8");
+    await file.sync();
+  } finally {
+    await file.close();
+  }
 }
 
 async function restoreOutbox(): Promise<void> {
@@ -156,7 +172,7 @@ async function restoreOutbox(): Promise<void> {
         pendingSettlements.delete(record.transactionSignature);
       }
     } catch (error) {
-      console.error("ignoring malformed x402 outbox line", safeError(error));
+      throw new Error(`Malformed x402 outbox record: ${safeError(error)}`);
     }
   }
 }
@@ -192,12 +208,15 @@ resourceServer.onAfterSettle(async (context) => {
   )?.request?.path;
   const resourceUrl = context.paymentPayload.resource?.url;
   const identity = identityFromPath(requestPath ?? resourceUrl ?? "");
-  const quote = await getQuote(identity);
+  // Settlement must reconcile against the quote that produced this challenge.
+  // Near expiry, getQuote() may intentionally rotate to a new quote.
+  const quote = await (quotes.get(identity.key)?.quote ?? getQuote(identity));
   const settlement: PendingSettlement = {
     quoteId: quote.id,
     transactionSignature: context.result.transaction,
     payer: context.result.payer,
     payTo: context.requirements.payTo,
+    asset: context.requirements.asset,
     amountAtomic: context.result.amount ?? context.requirements.amount,
     network: context.result.network,
     rawResponse: context.result,
@@ -216,12 +235,19 @@ app.disable("x-powered-by");
 app.use(express.json({ limit: "32kb" }));
 app.use((request, response, next) => {
   const origin = request.headers.origin;
+  if (
+    request.path.startsWith("/api/v1/paid-documents/") ||
+    request.path.startsWith("/api/v1/payment-recovery/")
+  ) {
+    response.setHeader("cache-control", "private, no-store");
+    response.setHeader("pragma", "no-cache");
+  }
   if (origin === allowedOrigin) response.setHeader("access-control-allow-origin", origin);
   response.setHeader("vary", "Origin");
   response.setHeader("access-control-allow-methods", "GET,OPTIONS");
   response.setHeader(
     "access-control-allow-headers",
-    "Content-Type,Payment-Signature,X-Payment",
+    "Content-Type,Payment-Signature,X-Payment,X-Payment-Transaction",
   );
   response.setHeader(
     "access-control-expose-headers",
@@ -242,6 +268,26 @@ app.get("/healthz", (_request, response) => {
     pendingReconciliations: pendingSettlements.size,
   });
 });
+
+// A settled transaction is the recovery capability. This endpoint is outside
+// paymentMiddleware so a client is never challenged to pay twice after a
+// successful chain transfer whose first delivery response was interrupted.
+app.get(
+  "/api/v1/payment-recovery/:quoteId/:transactionSignature",
+  async (request, response, next) => {
+    try {
+      const document = await internalJson<PaidDocument>(
+        `/internal/v1/payment-quotes/${encodeURIComponent(request.params.quoteId)}` +
+          `/recover/${encodeURIComponent(request.params.transactionSignature)}`,
+      );
+      response.setHeader("cache-control", "private, no-store");
+      response.setHeader("pragma", "no-cache");
+      response.json(documentResponse(document, request.params.transactionSignature));
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 app.use(
   paymentMiddleware(
@@ -285,27 +331,59 @@ app.get("/api/v1/paid-documents/:queryId/:handle", async (request, response, nex
       key: `${request.params.queryId}\u0000${request.params.handle}`,
     };
     const quote = await getQuote(identity);
+    const pending = [...pendingSettlements.values()].find(
+      (settlement) => settlement.quoteId === quote.id,
+    );
+    if (pending) {
+      try {
+        await recordSettlement(pending);
+      } catch (error) {
+        response.status(202);
+        response.setHeader("cache-control", "private, no-store");
+        response.json({
+          status: "payment_verified",
+          quoteId: quote.id,
+          transactionSignature: pending.transactionSignature,
+          recoveryUrl:
+            `/api/v1/payment-recovery/${encodeURIComponent(quote.id)}` +
+            `/${encodeURIComponent(pending.transactionSignature)}`,
+          message: "Payment succeeded. Settlement reconciliation is pending; poll recoveryUrl without paying again.",
+          detail: safeError(error),
+        });
+        return;
+      }
+    }
     const document = await internalJson<PaidDocument>(
       `/internal/v1/payment-quotes/${encodeURIComponent(quote.id)}/document`,
     );
-    response.json({
-      citations: [document.citation],
-      settlement: {
-        id: quote.id,
-        count: 1,
-        total: quote.priceKrw,
-        network: quote.network,
-      },
-    });
+    response.setHeader("cache-control", "private, no-store");
+    response.setHeader("pragma", "no-cache");
+    response.json(documentResponse(document));
   } catch (error) {
     next(error);
   }
 });
 
+function documentResponse(document: PaidDocument, transactionSignature?: string) {
+  return {
+    citations: [document.citation],
+    settlement: {
+      id: document.quoteId,
+      count: 1,
+      total: document.citation.price,
+      network,
+      transactionSignature,
+      deliveredAt: document.deliveredAt,
+      contentHash: document.contentHash,
+      documentVersion: document.documentVersion,
+    },
+  };
+}
+
 app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
   console.error("gateway request failed", safeError(error));
   response.status(502).json({
-    error: { code: "gateway_error", message: safeError(error) },
+    error: { code: "gateway_error", message: "The payment gateway could not complete this request." },
   });
 });
 

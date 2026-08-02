@@ -15,6 +15,7 @@ npm ci
 npm --prefix payment-gateway ci
 cp .env.example .env  # set OPENSHELF_DEFAULT_RECEIVER to your Devnet wallet
 npm run dev:stack     # frontend :4319, Rust :8787, x402 gateway :1402
+npm run pay:gateway:sandbox # optional Pay.sh localnet compatibility gateway :3402
 ```
 
 Verification:
@@ -39,7 +40,10 @@ explicitly want the old sandbox-ledger path, or
    with `PAYMENT-SIGNATURE`.
 5. The public Devnet facilitator verifies and settles it, the gateway releases
    one document, and Rust records the transaction signature idempotently.
-6. Direct-to-author payments are marked `onchain`; they are not added again to
+6. Rust verifies that every handle was actually opened, then Gemini/Vertex
+   synthesizes only those paid passages into a cited answer with consensus,
+   disagreements, calibrated confidence, and per-passage contribution scores.
+7. Direct-to-author payments are marked `onchain`; they are not added again to
    the sandbox KRW balance. Failed ledger mirrors remain in the gateway outbox
    and retry safely.
 
@@ -77,8 +81,12 @@ to settle on the spot — the inverted order the meeting called out.
 
 Matching, ranking, budget filtering, author deduplication, and the hit/miss
 decision now run in the Rust service. It combines deterministic 768-dimensional
-hash embeddings, word/character n-grams, entity anchors, trust, and freshness.
-The search response contains handles and prices but never paid passages.
+hash embeddings, word/character n-grams, entity anchors, provenance-aware
+topic-personalized PageRank, trust, and freshness. Paid, self-authored, raw UGC,
+and inferred edges are stored for audit but cannot pass authority. The search
+response contains handles and prices but never paid passages. See
+[`docs/PERSONA-WEB-RANKING.md`](./docs/PERSONA-WEB-RANKING.md) for the Google
+link-graph deep dive and the exact Persona Web mapping.
 
 ## Canvases
 
@@ -122,7 +130,9 @@ Carried over from the meeting, and stated in the FAQ rather than smoothed over:
    shelf leaves the librarian nothing to do. The dashboard ships with seeded
    open calls so a demo has something to show.
 2. **Voice vs chat collection.** Undecided; v1 uses the open-call answer flow.
-3. **Who gets picked when more documents match than are needed.** Undecided.
+3. **Cold-start authority.** New contributors receive relevance-based
+   exploration, but production calibration and Sybil-resistant identity are
+   still required before graph authority can be treated as mature.
 4. **Low-effort answers.** ID-verified identity is out of scope for v1.
 
 Profiles, payout wallets, auto-match preferences, open calls, answers, memory,
@@ -134,6 +144,12 @@ account, money, memory, and authorization state are server-owned.
 The KRW signup/open-call balance is still a clearly labelled sandbox ledger; it
 models reservations and refunds but is not fiat or on-chain escrow. Paid
 document opens now use actual x402 exact/SVM settlement on Solana Devnet.
+
+The official Pay.sh CLI is also verified as a sandbox client/gateway path. It
+is intentionally separate from production document settlement: the static
+Pay.sh YAML is useful for local agent compatibility, while the dynamic x402
+gateway selects a different recipient and exact price for every persona
+passage. See [`docs/PAY-SH.md`](docs/PAY-SH.md).
 Production still requires a mainnet facilitator credential, managed RPC,
 durable outbox volume or queue, rate limiting, email verification/recovery, KMS
 secret management, and an external identity provider if social login is

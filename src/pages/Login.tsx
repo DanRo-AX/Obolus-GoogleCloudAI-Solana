@@ -15,6 +15,7 @@ export default function Login() {
   const signup = params.get('mode') === 'signup'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [ageConfirmed14, setAgeConfirmed14] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -32,10 +33,14 @@ export default function Login() {
       setError('Password must be at least 8 characters.')
       return
     }
+    if (signup && !ageConfirmed14) {
+      setError('Confirm that you are at least 14 years old.')
+      return
+    }
     setError(null)
     setSubmitting(true)
     try {
-      await authenticate(email, password, signup)
+      await authenticate(email, password, signup, ageConfirmed14)
       navigate(signup ? '/onboarding' : '/dashboard', { replace: true })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Authentication failed.')
@@ -91,6 +96,18 @@ export default function Login() {
                 className="h-9 w-full rounded-md border bg-transparent px-3 text-sm outline-none transition-[box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50"
               />
             </div>
+
+            {signup ? (
+              <label className="mt-4 flex cursor-pointer items-start gap-2 text-sm text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={ageConfirmed14}
+                  onChange={(event) => setAgeConfirmed14(event.target.checked)}
+                  className="mt-0.5 size-4"
+                />
+                <span>I confirm that I am at least 14 years old.</span>
+              </label>
+            ) : null}
 
             {error ? (
               <p className="mt-3 text-sm text-destructive">{error}</p>

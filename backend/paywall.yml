@@ -11,7 +11,7 @@ routing:
   url: http://127.0.0.1:8787/
 operator:
   currencies:
-    usd: ["USDC", "USDT", "CASH"]
+    usd: ["USDC"]
   network: localnet
   fee_payer: true
 
@@ -26,7 +26,7 @@ endpoints:
 
   - method: GET
     path: "api/flash-research"
-    description: "Open the MD passages previously quoted for a query"
+    description: "Open the memory passages previously quoted for a query"
     metering:
       dimensions:
         - direction: usage

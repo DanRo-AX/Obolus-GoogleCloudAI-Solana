@@ -11,7 +11,12 @@ import {
 import { Composer } from '@/components/Composer'
 import { Button } from '@/components/ui/button'
 import { SHELVES, type Shelf } from '@/data/shelf'
-import { getChatAnswers, resolveQuestion, type Resolution } from '@/lib/api'
+import {
+  getChatAnswers,
+  resolveQuestion,
+  synthesizeAnswer,
+  type Resolution,
+} from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { explorerUrl, openDocuments, PaymentError } from '@/lib/x402'
 import { useWallet } from '@/state/wallet'
@@ -85,6 +90,13 @@ export default function Chat() {
     [chat],
   )
   const hasAnswer = chat?.messages.some((m) => m.role === 'assistant') ?? false
+  const hasOnchainSettlement =
+    chat?.messages.some(
+      (message) =>
+        message.role === 'assistant' &&
+        Boolean(message.settlement?.txSig) &&
+        message.settlement?.network?.startsWith('solana:'),
+    ) ?? false
   const chatId = chat?.id
   const prompt = lastUser?.content
   const existingOrder = orders.find(
@@ -128,10 +140,22 @@ export default function Chat() {
             price: c.price,
           })),
         })
+        const synthesis = await synthesizeAnswer({
+          queryId: resolvedQueryId,
+          question: prompt ?? '',
+          citations: result.citations.map((citation) => ({
+            handle: citation.handle,
+            shelf: citation.shelf,
+            excerpt: citation.excerpt,
+            price: citation.price,
+          })),
+        }).catch(() => null)
         appendAssistant(chatId, {
           id: `${chatId}_a`,
           role: 'assistant',
-          content: `Opened ${result.citations.length} matching documents from the ${shelfName} shelf. Each passage below is quoted as written.${result.settlement.partial ? ' Payment stopped before the remaining documents, so they stayed closed.' : ''}`,
+          content:
+            synthesis?.answer ??
+            `Opened ${result.citations.length} matching documents from the ${shelfName} shelf. Each passage below is quoted as written.${result.settlement.partial ? ' Payment stopped before the remaining documents, so they stayed closed.' : ''}`,
           citations: result.citations,
           settlement: {
             count: result.settlement.count,
@@ -560,7 +584,9 @@ export default function Chat() {
 
           {hasAnswer ? (
             <p className="text-center font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
-              Each author was paid onchain · these documents can auto-match again
+              {hasOnchainSettlement
+                ? 'Each opened author was paid onchain · these documents can auto-match again'
+                : 'Accepted evidence is recorded · these documents can auto-match again'}
             </p>
           ) : null}
         </div>
