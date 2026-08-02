@@ -5,6 +5,9 @@ generates one exact quote per matched document, delegates Solana verification
 and settlement to an x402 facilitator, releases the passage only after a valid
 payment, and mirrors the receipt into Rust. Reconciliation entries are written
 to `X402_OUTBOX_PATH` before the mirror call and replayed idempotently.
+`/readyz` also verifies that the Rust ledger is reachable. Production startup
+rejects the local shared secret, and `OPENSHELF_REQUIRE_MAINNET=true` rejects the
+default Devnet network.
 
 The root `.env.example` documents every setting. For local development use
 `npm run dev:stack` from the repository root.

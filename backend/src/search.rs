@@ -190,6 +190,7 @@ impl Resolver {
 
         Ok(ResolveQuestionResponse {
             query_id: query_id(&question),
+            payment_access_token: None,
             decision,
             reason,
             requested_documents: request.requested_documents,

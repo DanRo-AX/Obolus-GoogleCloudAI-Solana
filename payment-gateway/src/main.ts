@@ -6,6 +6,8 @@ import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { registerExactSvmScheme } from "@x402/svm/exact/server";
 
 const DEVNET_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as Network;
+const environment = env("NODE_ENV", "development").toLowerCase();
+const production = environment === "production";
 const rustApiUrl = env("RUST_API_URL", "http://127.0.0.1:8787").replace(/\/$/, "");
 const internalToken = env("OPENSHELF_INTERNAL_TOKEN", "openshelf-local-internal");
 const facilitatorUrl = env("X402_FACILITATOR_URL", "https://x402.org/facilitator");
@@ -14,6 +16,13 @@ const rpcUrl = process.env.X402_RPC_URL?.trim() || undefined;
 const allowedOrigin = env("FRONTEND_ORIGIN", "http://localhost:4319");
 const port = integerEnv("PORT", 1402);
 const outboxPath = env("X402_OUTBOX_PATH", "x402-outbox.ndjson");
+
+if (production && ["openshelf-local-internal", "change-this-before-deploy"].includes(internalToken)) {
+  throw new Error("OPENSHELF_INTERNAL_TOKEN must be a non-default secret in production");
+}
+if (booleanEnv("OPENSHELF_REQUIRE_MAINNET", false) && network === DEVNET_NETWORK) {
+  throw new Error("mainnet mode cannot use the Solana Devnet network");
+}
 
 type PaymentQuote = {
   id: string;
@@ -218,6 +227,9 @@ app.use((request, response, next) => {
   const origin = request.headers.origin;
   if (origin === allowedOrigin) response.setHeader("access-control-allow-origin", origin);
   response.setHeader("vary", "Origin");
+  response.setHeader("cache-control", "no-store");
+  response.setHeader("x-content-type-options", "nosniff");
+  response.setHeader("x-frame-options", "DENY");
   response.setHeader("access-control-allow-methods", "GET,OPTIONS");
   response.setHeader(
     "access-control-allow-headers",
@@ -244,6 +256,23 @@ app.get("/healthz", (_request, response) => {
     facilitator: facilitatorUrl,
     pendingReconciliations: pendingSettlements.size,
   });
+});
+
+app.get("/readyz", async (_request, response) => {
+  try {
+    await internalJson<{ status: string }>("/readyz");
+    response.json({
+      status: "ready",
+      network,
+      pendingReconciliations: pendingSettlements.size,
+    });
+  } catch (error) {
+    console.error("gateway readiness check failed", safeError(error));
+    response.status(503).json({
+      status: "not_ready",
+      pendingReconciliations: pendingSettlements.size,
+    });
+  }
 });
 
 app.use(
@@ -308,7 +337,7 @@ app.get("/api/v1/paid-documents/:queryId/:handle", async (request, response, nex
 app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
   console.error("gateway request failed", safeError(error));
   response.status(502).json({
-    error: { code: "gateway_error", message: safeError(error) },
+    error: { code: "gateway_error", message: "Payment service is temporarily unavailable." },
   });
 });
 
@@ -325,6 +354,13 @@ function env(name: string, fallback: string): string {
 function integerEnv(name: string, fallback: number): number {
   const parsed = Number.parseInt(process.env[name] ?? "", 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function booleanEnv(name: string, fallback: boolean): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(value ?? "")) return true;
+  if (["0", "false", "no", "off"].includes(value ?? "")) return false;
+  return fallback;
 }
 
 function safeError(error: unknown): string {

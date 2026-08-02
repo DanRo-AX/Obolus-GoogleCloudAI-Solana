@@ -119,6 +119,9 @@ pub struct OpenCallDraft {
 #[serde(rename_all = "camelCase")]
 pub struct ResolveQuestionResponse {
     pub query_id: String,
+    /// Returned once by the HTTP API. Only its hash is persisted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payment_access_token: Option<String>,
     pub decision: Decision,
     pub reason: DecisionReason,
     pub requested_documents: usize,
@@ -218,6 +221,8 @@ pub struct UserProfile {
     pub dispute_used: bool,
     pub suspended: bool,
     pub wallet: Option<String>,
+    pub wallet_verified: bool,
+    pub wallet_verified_at: Option<u64>,
     pub agreed_at: u64,
     pub auto_match: bool,
     pub agents: bool,
@@ -238,6 +243,29 @@ pub struct UpsertProfileRequest {
     pub auto_match: bool,
     #[serde(default)]
     pub agents: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WalletChallengeRequest {
+    pub wallet: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WalletChallenge {
+    pub id: String,
+    pub wallet: String,
+    pub message: String,
+    pub expires_at: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyWalletRequest {
+    pub challenge_id: String,
+    /// Base58-encoded Ed25519 signature returned by a Solana wallet's signMessage.
+    pub signature: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -348,6 +376,70 @@ pub struct ChainSettlementReceipt {
     pub amount_atomic: String,
     pub network: String,
     pub confirmed_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentDocumentProgress {
+    pub handle: String,
+    pub price_krw: u64,
+    pub status: String,
+    pub quote_id: Option<String>,
+    pub quote_expires_at: Option<u64>,
+    pub transaction_signature: Option<String>,
+    pub network: Option<String>,
+    pub settled_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentProgress {
+    pub query_id: String,
+    pub payer: String,
+    pub document_count: usize,
+    pub settled_count: usize,
+    pub unpaid_count: usize,
+    pub total_price_krw: u64,
+    pub settled_price_krw: u64,
+    pub documents: Vec<PaymentDocumentProgress>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveredPaidDocument {
+    pub citation: Citation,
+    pub settlement: ChainSettlementReceipt,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitDocumentFeedbackRequest {
+    /// One of: helpful, not_helpful, report.
+    pub outcome: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewDocumentFeedbackRequest {
+    /// One of: upheld, dismissed.
+    pub decision: String,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentFeedback {
+    pub id: String,
+    pub query_id: String,
+    pub document_handle: String,
+    pub payer: String,
+    pub outcome: String,
+    pub reason: Option<String>,
+    pub status: String,
+    pub review_note: Option<String>,
+    pub created_at: u64,
+    pub reviewed_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

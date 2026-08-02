@@ -11,12 +11,14 @@ open call -> reserve full sandbox budget -> accepted answer -> escrow release
 pending dispute -> admin approve -> document + slot + escrow release
                 \-> admin reject  -> remains voided and unpaid
 quoted handle -> dynamic x402 quote -> USDC settlement -> reveal one passage
-                                           \-> immutable chain receipt
+                 \-> progress/recovery token             \-> immutable chain receipt
+author wallet -> signed Ed25519 challenge -> verified payout destination
+paid passage -> buyer feedback/report -> admin review -> ranking reliability
 ```
 
-SQLite persists users, Argon2id password hashes, hashed session tokens, balance
+SQLite persists users, Argon2id password hashes, hashed session and query tokens, balance
 reservations, profiles, payout wallets, demographic filters, documents, queries,
-open calls, answers, reviewed disputes, earning events, and settlement records.
+open calls, answers, reviewed disputes and buyer reports, earning events, and settlement records.
 Search never returns an MD passage;
 `/api/flash-research` releases content only for handles quoted under that exact
 query ID.
@@ -37,6 +39,10 @@ directory. Configuration:
 | --- | --- | --- |
 | `OPENSHELF_BIND` | `0.0.0.0:8787` | Listen address |
 | `OPENSHELF_DATABASE` | `openshelf.db` | SQLite path |
+| `OPENSHELF_ENV` | `development` | Enables production secret and secure-cookie guards |
+| `OPENSHELF_FRONTEND_ORIGIN` | `http://localhost:4319` | Exact credentialed CORS origin |
+| `OPENSHELF_SECURE_COOKIES` | production-dependent | Force the `Secure` session-cookie flag |
+| `OPENSHELF_REQUIRE_MAINNET` | `false` | Reject default Devnet network/mint configuration |
 | `RUST_LOG` | `openshelf_api=info,tower_http=info` | Log filter |
 | `OPENSHELF_INTERNAL_TOKEN` | local development token | Shared secret used only by the x402 gateway |
 | `OPENSHELF_DEFAULT_RECEIVER` | none | Devnet wallet for seeded documents with no author profile |
@@ -57,9 +63,13 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data openshelf-api
 | Method | Path | Responsibility |
 | --- | --- | --- |
 | `GET` | `/healthz` | Liveness |
+| `GET` | `/readyz` | SQLite readiness and deployment environment |
 | `POST` | `/api/v1/auth/register` `/login` `/logout` | Create, issue, or revoke an HttpOnly session |
 | `GET` | `/api/v1/auth/me` | Read the authenticated account and sandbox balance |
 | `POST` | `/api/v1/questions/resolve` | Search, rank, and return HIT/MISS plus a safe quote |
+| `GET` | `/api/v1/questions/{id}/payment-progress` | Reconcile settled/quoted/unpaid handles for a payer |
+| `GET` | `/api/v1/questions/{id}/paid-documents/{handle}` | Recover a previously settled passage without paying again |
+| `POST` | `/api/v1/questions/{id}/paid-documents/{handle}/feedback` | Record paid-buyer feedback or a report |
 | `GET/POST` | `/api/v1/open-calls` | List or commission missing coverage |
 | `DELETE` | `/api/v1/open-calls/{id}` | Cancel an owned call and refund unused escrow |
 | `POST` | `/api/v1/open-calls/{id}/answers` | Validate an answer and add accepted memory |
@@ -67,10 +77,12 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data openshelf-api
 | `GET` | `/api/v1/memory` | Read a user's answer and earnings ledger |
 | `POST` | `/api/v1/memory/{id}/dispute` | Submit the user's one dispute for review |
 | `GET/POST` | `/api/v1/admin/disputes[/{id}/review]` | List and review cases (admin role only) |
+| `GET/POST` | `/api/v1/admin/document-feedback[/{id}/review]` | List and review paid-buyer reports (admin only) |
 | `GET` | `/api/v1/account-controls` | Read server-authoritative strikes/dispute use |
 | `GET/DELETE` | `/api/v1/account/balance` `/api/v1/account` | Read the ledger or delete and anonymize the account |
 | `GET/POST` | `/api/v1/profile` | Read or persist the anonymous profile and payout wallet |
 | `POST` | `/api/v1/profile/preferences` | Persist auto-match and agent-output preferences |
+| `POST` | `/api/v1/profile/wallet/challenge` `/verify` | Prove payout-wallet ownership with a signed message |
 | `GET` | `/api/v1/earnings` | Audit append-only earnings and wallet snapshots |
 | `GET` | `/api/flash-research` | Reveal only handles quoted for a query and accrue them once |
 | `GET` | `/internal/v1/payment-quotes/{queryId}/{handle}` | Create/reuse an exact short-lived x402 quote (internal token required) |
@@ -81,6 +93,10 @@ The conduct ladder is enforced in the service, not just the UI. At two strikes,
 the author's documents leave auto-match and new payouts are held for 14 days;
 at three, further answers are rejected. Submitting a dispute never changes a
 strike or payment. An admin approval performs the restoration atomically.
+
+An unverified profile wallet is never used as an on-chain recipient. Updating the
+address revokes verification, one verified wallet cannot belong to two accounts,
+and user-authored documents cannot fall back to the seeded-content receiver.
 
 Register and keep the cookie in a local cookie jar:
 
@@ -110,6 +126,13 @@ curl -s http://localhost:8787/api/v1/questions/resolve \
     "budgetKrw": 2500
   }'
 ```
+
+The resolution includes a one-time `paymentAccessToken`. Persist it only with
+that local query and send it as `x-openshelf-query-token` when reading payment
+progress, recovering already-paid passages, or submitting feedback. Only the
+SHA-256 token hash is stored. Progress and recovery additionally require the
+settling payer public key, so a UI retry can recover settled handles and pay only
+the remaining ones.
 
 The signup balance and open-call escrow are deliberately marked
 `KRW_SANDBOX`; they verify money invariants without pretending to hold fiat or
@@ -157,5 +180,6 @@ cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 ```
 
-`openapi.json` describes the three endpoints exposed through the Pay gateway;
-all other backend routes remain outside that public payment surface.
+`openapi.json` describes the browser integration contracts for payment recovery,
+wallet verification, and paid-document feedback. The three `/internal/v1/*`
+routes remain restricted to the gateway's shared secret.

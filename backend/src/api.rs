@@ -18,11 +18,14 @@ use sha2::{Digest, Sha256};
 use crate::{
     domain::{
         AccountControls, AuthResponse, BalanceSummary, ChainSettlementReceipt, ChatAnswer,
-        CreateOpenCallRequest, DisputeCase, EarningsSummary, LoginRequest, MemoryEntry, OpenCall,
-        OpenDocumentsResponse, PaidDocument, PaymentQuote, RecordChainSettlementRequest,
-        RegisterRequest, ResolveError, ResolveQuestionRequest, ResolveQuestionResponse,
-        ReviewDisputeRequest, SubmitAnswerRequest, SubmitAnswerResponse, SubmitDisputeRequest,
-        UpdatePreferencesRequest, UpsertProfileRequest, UserAccount, UserProfile,
+        CreateOpenCallRequest, DisputeCase, DocumentFeedback, EarningsSummary, LoginRequest,
+        MemoryEntry, OpenCall, OpenDocumentsResponse, PaidDocument, PaymentProgress, PaymentQuote,
+        RecordChainSettlementRequest, RecoveredPaidDocument, RegisterRequest, ResolveError,
+        ResolveQuestionRequest, ResolveQuestionResponse, ReviewDisputeRequest,
+        ReviewDocumentFeedbackRequest, SubmitAnswerRequest, SubmitAnswerResponse,
+        SubmitDisputeRequest, SubmitDocumentFeedbackRequest, UpdatePreferencesRequest,
+        UpsertProfileRequest, UserAccount, UserProfile, VerifyWalletRequest, WalletChallenge,
+        WalletChallengeRequest,
     },
     search::Resolver,
     store::{PaymentQuotePolicy, Store, StoreError},
@@ -31,6 +34,7 @@ use crate::{
 const SESSION_COOKIE: &str = "openshelf_session";
 const SESSION_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
 const INTERNAL_TOKEN_HEADER: &str = "x-openshelf-internal-token";
+const QUERY_TOKEN_HEADER: &str = "x-openshelf-query-token";
 const DEFAULT_INTERNAL_TOKEN: &str = "openshelf-local-internal";
 const DEVNET_NETWORK: &str = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 const DEVNET_USDC: &str = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
@@ -39,12 +43,39 @@ pub struct AppState {
     store: Store,
     internal_token_hash: String,
     payment_policy: PaymentQuotePolicy,
+    secure_cookies: bool,
+    environment: String,
 }
 
 impl AppState {
     pub fn new(store: Store) -> Self {
-        let internal_token = std::env::var("OPENSHELF_INTERNAL_TOKEN")
-            .unwrap_or_else(|_| DEFAULT_INTERNAL_TOKEN.to_owned());
+        let environment =
+            std::env::var("OPENSHELF_ENV").unwrap_or_else(|_| "development".to_owned());
+        let production = matches!(
+            environment.to_ascii_lowercase().as_str(),
+            "production" | "prod"
+        );
+        let configured_internal_token = std::env::var("OPENSHELF_INTERNAL_TOKEN")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        if production
+            && configured_internal_token
+                .as_deref()
+                .is_none_or(|value| value == DEFAULT_INTERNAL_TOKEN)
+        {
+            panic!("OPENSHELF_INTERNAL_TOKEN must be set to a non-default secret in production");
+        }
+        let internal_token =
+            configured_internal_token.unwrap_or_else(|| DEFAULT_INTERNAL_TOKEN.to_owned());
+        let network =
+            std::env::var("OPENSHELF_X402_NETWORK").unwrap_or_else(|_| DEVNET_NETWORK.to_owned());
+        let asset =
+            std::env::var("OPENSHELF_X402_ASSET").unwrap_or_else(|_| DEVNET_USDC.to_owned());
+        if env_bool("OPENSHELF_REQUIRE_MAINNET", false)
+            && (network == DEVNET_NETWORK || asset == DEVNET_USDC)
+        {
+            panic!("mainnet mode cannot use the default Solana Devnet network or USDC mint");
+        }
         Self {
             store,
             internal_token_hash: token_hash(&internal_token),
@@ -52,13 +83,13 @@ impl AppState {
                 fallback_recipient: std::env::var("OPENSHELF_DEFAULT_RECEIVER")
                     .ok()
                     .filter(|value| !value.trim().is_empty()),
-                network: std::env::var("OPENSHELF_X402_NETWORK")
-                    .unwrap_or_else(|_| DEVNET_NETWORK.to_owned()),
-                asset: std::env::var("OPENSHELF_X402_ASSET")
-                    .unwrap_or_else(|_| DEVNET_USDC.to_owned()),
+                network,
+                asset,
                 krw_per_usdc: env_u64("OPENSHELF_KRW_PER_USDC", 1_350),
                 ttl_ms: env_u64("OPENSHELF_QUOTE_TTL_MS", 300_000),
             },
+            secure_cookies: env_bool("OPENSHELF_SECURE_COOKIES", production),
+            environment,
         }
     }
 }
@@ -66,11 +97,24 @@ impl AppState {
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/healthz", get(health))
+        .route("/readyz", get(ready))
         .route("/api/v1/auth/register", post(register))
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/auth/logout", post(logout))
         .route("/api/v1/auth/me", get(me))
         .route("/api/v1/questions/resolve", post(resolve_question))
+        .route(
+            "/api/v1/questions/{id}/payment-progress",
+            get(payment_progress),
+        )
+        .route(
+            "/api/v1/questions/{query_id}/paid-documents/{handle}",
+            get(recover_paid_document),
+        )
+        .route(
+            "/api/v1/questions/{query_id}/paid-documents/{handle}/feedback",
+            post(submit_document_feedback),
+        )
         .route(
             "/api/v1/open-calls",
             get(list_open_calls).post(create_open_call),
@@ -83,11 +127,24 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/disputes/me", get(my_dispute))
         .route("/api/v1/admin/disputes", get(list_disputes))
         .route("/api/v1/admin/disputes/{id}/review", post(review_dispute))
+        .route(
+            "/api/v1/admin/document-feedback",
+            get(list_document_feedback),
+        )
+        .route(
+            "/api/v1/admin/document-feedback/{id}/review",
+            post(review_document_feedback),
+        )
         .route("/api/v1/account-controls", get(account_controls))
         .route("/api/v1/account/balance", get(get_balance))
         .route("/api/v1/account", delete(delete_account))
         .route("/api/v1/profile", get(get_profile).post(upsert_profile))
         .route("/api/v1/profile/preferences", post(update_preferences))
+        .route(
+            "/api/v1/profile/wallet/challenge",
+            post(create_wallet_challenge),
+        )
+        .route("/api/v1/profile/wallet/verify", post(verify_wallet))
         .route("/api/v1/earnings", get(get_earnings))
         .route("/api/flash-research", get(open_documents))
         .route(
@@ -106,7 +163,18 @@ pub fn router(state: Arc<AppState>) -> Router {
 }
 
 async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse { status: "ok" })
+    Json(HealthResponse {
+        status: "ok",
+        environment: None,
+    })
+}
+
+async fn ready(State(state): State<Arc<AppState>>) -> Result<Json<HealthResponse>, ApiError> {
+    state.store.ready()?;
+    Ok(Json(HealthResponse {
+        status: "ready",
+        environment: Some(state.environment.clone()),
+    }))
 }
 
 async fn register(
@@ -116,19 +184,32 @@ async fn register(
     validate_password(&request.password)?;
     let password_hash = hash_password(&request.password)?;
     let user = state.store.register_user(&request.email, &password_hash)?;
-    session_response(&state.store, user, StatusCode::CREATED)
+    session_response(&state, user, StatusCode::CREATED)
 }
 
 async fn login(
     State(state): State<Arc<AppState>>,
     Json(request): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let (user, password_hash) = state.store.password_record(&request.email)?;
+    state.store.check_login_allowed(&request.email)?;
+    let (user, password_hash) = match state.store.password_record(&request.email) {
+        Ok(record) => record,
+        Err(error @ StoreError::Unauthorized(_)) => {
+            state.store.record_login_failure(&request.email)?;
+            return Err(error.into());
+        }
+        Err(error) => return Err(error.into()),
+    };
     let parsed = PasswordHash::new(&password_hash).map_err(ApiError::internal)?;
-    Argon2::default()
+    if Argon2::default()
         .verify_password(request.password.as_bytes(), &parsed)
-        .map_err(|_| ApiError::unauthorized("invalid email or password"))?;
-    session_response(&state.store, user, StatusCode::OK)
+        .is_err()
+    {
+        state.store.record_login_failure(&request.email)?;
+        return Err(ApiError::unauthorized("invalid email or password"));
+    }
+    state.store.clear_login_failures(&request.email)?;
+    session_response(&state, user, StatusCode::OK)
 }
 
 async fn logout(
@@ -139,10 +220,7 @@ async fn logout(
         state.store.revoke_session(&token_hash(&token))?;
     }
     let mut response_headers = HeaderMap::new();
-    response_headers.insert(
-        header::SET_COOKIE,
-        HeaderValue::from_static("openshelf_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"),
-    );
+    response_headers.insert(header::SET_COOKIE, expired_session_cookie(&state)?);
     Ok((StatusCode::NO_CONTENT, response_headers))
 }
 
@@ -161,9 +239,62 @@ async fn resolve_question(
 ) -> Result<Json<ResolveQuestionResponse>, ApiError> {
     let question = request.question.clone();
     let resolver = Resolver::new(state.store.documents()?);
-    let response = resolver.resolve(request)?;
-    state.store.record_resolution(&question, &response)?;
+    let mut response = resolver.resolve(request)?;
+    let payment_access_token = random_token();
+    state.store.record_resolution(
+        &question,
+        &response,
+        Some(&token_hash(&payment_access_token)),
+    )?;
+    response.payment_access_token = Some(payment_access_token);
     Ok(Json(response))
+}
+
+async fn payment_progress(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(query): Query<PayerQuery>,
+) -> Result<Json<PaymentProgress>, ApiError> {
+    let access_token = query_access_token(&headers)?;
+    Ok(Json(state.store.payment_progress(
+        &id,
+        &query.payer,
+        &token_hash(access_token),
+    )?))
+}
+
+async fn recover_paid_document(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((query_id, handle)): Path<(String, String)>,
+    Query(query): Query<PayerQuery>,
+) -> Result<Json<RecoveredPaidDocument>, ApiError> {
+    let access_token = query_access_token(&headers)?;
+    Ok(Json(state.store.recover_paid_document(
+        &query_id,
+        &handle,
+        &query.payer,
+        &token_hash(access_token),
+    )?))
+}
+
+async fn submit_document_feedback(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((query_id, handle)): Path<(String, String)>,
+    Query(query): Query<PayerQuery>,
+    Json(request): Json<SubmitDocumentFeedbackRequest>,
+) -> Result<(StatusCode, Json<DocumentFeedback>), ApiError> {
+    let access_token = query_access_token(&headers)?;
+    let feedback = state.store.submit_document_feedback(
+        &query_id,
+        &handle,
+        &query.payer,
+        &token_hash(access_token),
+        &request,
+    )?;
+    Ok((StatusCode::CREATED, Json(feedback)))
 }
 
 async fn list_open_calls(
@@ -260,6 +391,28 @@ async fn review_dispute(
     Ok(Json(state.store.review_dispute(&user.id, &id, &request)?))
 }
 
+async fn list_document_feedback(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<DocumentFeedback>>, ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok(Json(state.store.list_document_feedback(&user.id)?))
+}
+
+async fn review_document_feedback(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<ReviewDocumentFeedbackRequest>,
+) -> Result<Json<DocumentFeedback>, ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok(Json(
+        state
+            .store
+            .review_document_feedback(&user.id, &id, &request)?,
+    ))
+}
+
 async fn account_controls(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -283,10 +436,7 @@ async fn delete_account(
     let user = authenticated(&state, &headers)?;
     state.store.delete_account(&user.id)?;
     let mut response_headers = HeaderMap::new();
-    response_headers.insert(
-        header::SET_COOKIE,
-        HeaderValue::from_static("openshelf_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"),
-    );
+    response_headers.insert(header::SET_COOKIE, expired_session_cookie(&state)?);
     Ok((StatusCode::NO_CONTENT, response_headers))
 }
 
@@ -314,6 +464,34 @@ async fn update_preferences(
 ) -> Result<Json<UserProfile>, ApiError> {
     let user = authenticated(&state, &headers)?;
     Ok(Json(state.store.update_preferences(&user.id, &request)?))
+}
+
+async fn create_wallet_challenge(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<WalletChallengeRequest>,
+) -> Result<(StatusCode, Json<WalletChallenge>), ApiError> {
+    let user = authenticated(&state, &headers)?;
+    let challenge = state.store.create_wallet_challenge(
+        &user.id,
+        &request.wallet,
+        &random_token(),
+        5 * 60 * 1_000,
+    )?;
+    Ok((StatusCode::CREATED, Json(challenge)))
+}
+
+async fn verify_wallet(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<VerifyWalletRequest>,
+) -> Result<Json<UserProfile>, ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok(Json(state.store.verify_wallet_challenge(
+        &user.id,
+        &request.challenge_id,
+        &request.signature,
+    )?))
 }
 
 async fn get_earnings(
@@ -391,7 +569,7 @@ fn hash_password(password: &str) -> Result<String, ApiError> {
 }
 
 fn session_response(
-    store: &Store,
+    state: &AppState,
     user: UserAccount,
     status: StatusCode,
 ) -> Result<(StatusCode, HeaderMap, Json<AuthResponse>), ApiError> {
@@ -401,22 +579,33 @@ fn session_response(
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    store.create_session(
+    state.store.create_session(
         &user.id,
         &token_hash(&token),
         now_ms().saturating_add(SESSION_TTL_MS),
     )?;
-    let balance = store.balance(&user.id)?;
-    let cookie = format!(
+    let balance = state.store.balance(&user.id)?;
+    let mut cookie = format!(
         "{SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}",
         SESSION_TTL_MS / 1_000
     );
+    if state.secure_cookies {
+        cookie.push_str("; Secure");
+    }
     let mut headers = HeaderMap::new();
     headers.insert(
         header::SET_COOKIE,
         HeaderValue::from_str(&cookie).map_err(ApiError::internal)?,
     );
     Ok((status, headers, Json(AuthResponse { user, balance })))
+}
+
+fn expired_session_cookie(state: &AppState) -> Result<HeaderValue, ApiError> {
+    let mut cookie = format!("{SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+    if state.secure_cookies {
+        cookie.push_str("; Secure");
+    }
+    HeaderValue::from_str(&cookie).map_err(ApiError::internal)
 }
 
 fn authenticated(state: &AppState, headers: &HeaderMap) -> Result<UserAccount, ApiError> {
@@ -459,6 +648,24 @@ fn token_hash(token: &str) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+fn random_token() -> String {
+    let mut bytes = [0_u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
+fn query_access_token(headers: &HeaderMap) -> Result<&str, ApiError> {
+    headers
+        .get(QUERY_TOKEN_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::unauthorized("invalid query payment token"))
+}
+
 fn require_internal(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
     let token = headers
         .get(INTERNAL_TOKEN_HEADER)
@@ -474,6 +681,17 @@ fn env_u64(name: &str, fallback: u64) -> u64 {
     std::env::var(name)
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(fallback)
+}
+
+fn env_bool(name: &str, fallback: bool) -> bool {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        })
         .unwrap_or(fallback)
 }
 
@@ -493,9 +711,16 @@ struct OpenDocumentsQuery {
     payer: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct PayerQuery {
+    payer: String,
+}
+
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    environment: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -533,10 +758,11 @@ impl ApiError {
     }
 
     fn internal(error: impl std::fmt::Display) -> Self {
+        tracing::error!(error = %error, "internal API error");
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "internal_error",
-            message: error.to_string(),
+            message: "an internal error occurred".to_owned(),
         }
     }
 }
@@ -553,14 +779,19 @@ impl From<ResolveError> for ApiError {
 
 impl From<StoreError> for ApiError {
     fn from(error: StoreError) -> Self {
-        let (status, code) = match error {
+        let (status, code) = match &error {
             StoreError::NotFound(_) => (StatusCode::NOT_FOUND, "not_found"),
             StoreError::Validation(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid_request"),
             StoreError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             StoreError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
             StoreError::DocumentNotQuoted => (StatusCode::FORBIDDEN, "document_not_quoted"),
             StoreError::Database(_) | StoreError::LockPoisoned => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
+                tracing::error!(error = %error, "backend store error");
+                return Self {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    code: "internal_error",
+                    message: "an internal error occurred".to_owned(),
+                };
             }
         };
         Self {
@@ -592,11 +823,14 @@ mod tests {
         body::Body,
         http::{Request, StatusCode, header},
     };
+    use ed25519_dalek::{Signer, SigningKey};
     use http_body_util::BodyExt;
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
     use crate::demo_app;
+
+    use super::QUERY_TOKEN_HEADER;
 
     async fn register(app: &axum::Router, email: &str) -> String {
         let response = app
@@ -643,6 +877,158 @@ mod tests {
                 .unwrap();
         assert_eq!(body["user"]["email"], "buyer@example.com");
         assert_eq!(body["balance"]["availableKrw"], 100_000);
+    }
+
+    #[tokio::test]
+    async fn readiness_checks_the_store() {
+        let response = demo_app()
+            .oneshot(Request::get("/readyz").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn resolution_issues_a_token_that_guards_payment_progress() {
+        let app = demo_app();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/questions/resolve")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "question": "Where do Seongsu residents eat lunch when the queue is long?",
+                            "requestedDocuments": 1
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        let query_id = body["queryId"].as_str().unwrap();
+        let token = body["paymentAccessToken"].as_str().unwrap();
+        assert_eq!(token.len(), 64);
+
+        let progress_path = format!(
+            "/api/v1/questions/{query_id}/payment-progress?payer=11111111111111111111111111111111"
+        );
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::get(&progress_path)
+                    .header(QUERY_TOKEN_HEADER, "wrong-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let progress = app
+            .oneshot(
+                Request::get(&progress_path)
+                    .header(QUERY_TOKEN_HEADER, token)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(progress.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn wallet_verification_api_accepts_a_valid_signed_challenge() {
+        let app = demo_app();
+        let cookie = register(&app, "wallet-api@example.com").await;
+        let profile = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/profile")
+                    .header(header::COOKIE, &cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "handle": "wallet_api",
+                            "ageBand": "35-44",
+                            "region": "seoul",
+                            "household": "alone",
+                            "field": "engineering",
+                            "years": "7-plus",
+                            "speaksTo": ["engineering"],
+                            "autoMatch": true,
+                            "agents": false
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(profile.status(), StatusCode::OK);
+
+        let signing_key = SigningKey::from_bytes(&[11; 32]);
+        let wallet = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
+        let challenge_response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/profile/wallet/challenge")
+                    .header(header::COOKIE, &cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({ "wallet": wallet }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(challenge_response.status(), StatusCode::CREATED);
+        let challenge: Value = serde_json::from_slice(
+            &challenge_response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .unwrap();
+        let signature = bs58::encode(
+            signing_key
+                .sign(challenge["message"].as_str().unwrap().as_bytes())
+                .to_bytes(),
+        )
+        .into_string();
+        let verify_response = app
+            .oneshot(
+                Request::post("/api/v1/profile/wallet/verify")
+                    .header(header::COOKIE, cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "challengeId": challenge["id"],
+                            "signature": signature
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(verify_response.status(), StatusCode::OK);
+        let verified: Value = serde_json::from_slice(
+            &verify_response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .unwrap();
+        assert_eq!(verified["walletVerified"], true);
+        assert_eq!(verified["wallet"], wallet);
     }
 
     #[tokio::test]

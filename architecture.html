@@ -570,8 +570,8 @@
         </div>
         <aside class="release" aria-label="문서 기준">
           <strong>As implemented</strong>
-          <span>2026-08-01 · local sandbox ledger</span>
-          <span>13 tables · 23 API operations + health check</span>
+          <span>2026-08-02 · Devnet settlement + recovery</span>
+          <span>18 tables · 33 route contracts</span>
           <span>Rust modular monolith</span>
         </aside>
       </header>
@@ -679,11 +679,11 @@ flowchart LR
   end
 
   subgraph DATA["SQLite · source of truth"]
-    IDENTITY[("Identity\nusers · sessions · profiles")]
+    IDENTITY[("Identity\nusers · sessions · profiles\nwallet challenges · auth limits")]
     MARKET[("Marketplace\nopen_calls · memory · documents")]
     SEARCHDB[("Retrieval\nqueries · query_matches")]
     LEDGER[("Ledger\nbalances · funding · settlements · earnings")]
-    REVIEW[("Enforcement\ndispute_events")]
+    REVIEW[("Enforcement\ndisputes · paid feedback")]
   end
 
   subgraph EXTERNAL["External payment boundary"]
@@ -796,6 +796,7 @@ flowchart LR
           <pre class="mermaid">
 erDiagram
   USERS ||--o{ SESSIONS : "owns FK"
+  USERS ||--o{ WALLET_CHALLENGES : "proves wallet FK"
   USERS ||--|| BALANCES : "owns FK"
   USERS ||..o| PROFILES : "has logical"
 
@@ -806,6 +807,8 @@ erDiagram
   DOCUMENTS ||..o{ PAYMENT_QUOTES : "recipient snapshot"
   PAYMENT_QUOTES ||--o| CHAIN_SETTLEMENTS : "settles once FK"
   SETTLEMENTS ||--o| CHAIN_SETTLEMENTS : "mirrors FK"
+  CHAIN_SETTLEMENTS ||..o| DOCUMENT_FEEDBACK : "permits feedback"
+  DOCUMENTS ||..o{ DOCUMENT_FEEDBACK : "changes reliability"
 
   OPEN_CALLS ||--o{ MEMORY_ENTRIES : "receives FK"
   DOCUMENTS o|--o| MEMORY_ENTRIES : "materializes FK"
@@ -832,6 +835,14 @@ erDiagram
     INTEGER created_at
   }
 
+  AUTH_FAILURES {
+    TEXT email PK
+    INTEGER failure_count
+    INTEGER window_started_at
+    INTEGER blocked_until
+    INTEGER updated_at
+  }
+
   BALANCES {
     TEXT user_id PK
     INTEGER available_krw
@@ -850,9 +861,20 @@ erDiagram
     TEXT years
     TEXT speaks_to_json
     TEXT wallet
+    INTEGER wallet_verified_at
     INTEGER agreed_at
     INTEGER auto_match
     INTEGER agents
+  }
+
+  WALLET_CHALLENGES {
+    TEXT id PK
+    TEXT user_id FK
+    TEXT wallet
+    TEXT message
+    INTEGER expires_at
+    INTEGER consumed_at
+    INTEGER created_at
   }
 
   OPEN_CALLS {
@@ -907,6 +929,7 @@ erDiagram
     TEXT id PK
     TEXT question
     TEXT decision
+    TEXT payment_token_hash
     INTEGER created_at
   }
 
@@ -990,6 +1013,22 @@ erDiagram
     INTEGER reviewed_at
     INTEGER created_at
   }
+
+  DOCUMENT_FEEDBACK {
+    TEXT id PK
+    TEXT query_id
+    TEXT document_id
+    TEXT document_handle
+    TEXT settlement_id UK
+    TEXT payer
+    TEXT outcome
+    TEXT reason
+    TEXT status
+    TEXT reviewer_id
+    TEXT review_note
+    INTEGER reviewed_at
+    INTEGER created_at
+  }
           </pre>
         </div>
 
@@ -1029,6 +1068,10 @@ erDiagram
             <strong>온체인 중복 정산 차단</strong>
             <span>quote_id와 transaction_signature UNIQUE, 수취인·network·atomic amount 완전 일치.</span>
           </article>
+          <article class="invariant">
+            <strong>검증된 저자에게만 지급</strong>
+            <span>Ed25519 서명 완료 지갑만 payout에 사용하고 주소 변경 시 검증을 폐기.</span>
+          </article>
         </div>
       </section>
 
@@ -1063,7 +1106,7 @@ erDiagram
               </li>
               <li class="step">
                 <span class="step-number">02</span>
-                <div><strong>Quote 고정</strong><p>queries와 query_matches에 순위와 quoted price를 기록.</p></div>
+                <div><strong>Quote·복구 권한 고정</strong><p>순위와 가격, 해시된 payment access token을 기록.</p></div>
               </li>
               <li class="step">
                 <span class="step-number">03</span>
@@ -1071,7 +1114,7 @@ erDiagram
               </li>
               <li class="step">
                 <span class="step-number">04</span>
-                <div><strong>본문·온체인 영수증</strong><p>본문 반환 뒤 chain_settlements와 onchain earning을 idempotent하게 mirror.</p></div>
+                <div><strong>본문·온체인 영수증</strong><p>정산을 idempotent하게 mirror하고 응답 손실 시 payer별 상태와 본문을 복구.</p></div>
               </li>
             </ol>
           </article>

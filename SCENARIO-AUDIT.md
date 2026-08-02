@@ -112,10 +112,10 @@ desktop and 390px mobile payment previews, and mobile navigation overlap.
 
 ## Remaining product and production work, in priority order
 
-1. **Settlement reconciliation before retry.** Add a payment-intent/read model
-   keyed by query and document, expose settled/unpaid state to the client, and
-   resume only unpaid documents after a response loss. This is the prerequisite
-   for a safe Retry button.
+1. **Settlement reconciliation before retry — backend complete.** The Rust API
+   now exposes token-protected settled/quoted/unpaid state and paid-document
+   recovery keyed by query, handle, and payer. The frontend still needs to
+   persist the token, recover settled handles, and retry only unpaid ones.
 2. **Autonomous agent wallet.** Agent mode is presently a display toggle. Add a
    policy-limited wallet/session key with per-open, per-query, and daily caps;
    expiry; allowlisted asset/network; and revocation. Until then, claims of
@@ -123,9 +123,9 @@ desktop and 390px mobile payment previews, and mobile navigation overlap.
 3. **Approval batching.** The human demo currently asks once per author. A
    batch-capable signer can reduce wallet interruptions, but receipts and payout
    accounting must remain per author.
-4. **Real author payout coverage.** Seeded documents intentionally use one
-   fallback receiver. Production import must reject any document without a
-   verified author payout wallet rather than silently pooling revenue.
+4. **Real author payout coverage — backend complete.** Wallet ownership now uses
+   a signed Ed25519 challenge. User-authored content is unpurchasable until its
+   author verifies a payout wallet; only seeded documents may use the fallback.
 5. **Mainnet operations.** Managed RPC/facilitator, KMS-backed secrets, durable
    reconciliation queue, monitoring, alerts, rate limits, backups, abuse
    controls, and incident runbooks are required before real value.
@@ -135,6 +135,7 @@ desktop and 390px mobile payment previews, and mobile navigation overlap.
 7. **Identity clarity.** Wallet connection and OPENSHELF account authentication
    are separate today. Link and label them explicitly so two browser profiles or
    Phantom accounts cannot be mistaken for two application accounts.
-8. **Quality and moderation.** Add report intake, ranking feedback, review SLAs,
-   provenance checks, and privacy/redaction operations beyond the current strike
-   and single-dispute mechanics.
+8. **Quality and moderation — core backend complete.** Paid-buyer feedback,
+   report intake, admin adjudication, Bayesian reliability updates, and automatic
+   locking after repeated upheld reports are implemented. Review SLAs,
+   provenance checks, and privacy/redaction operations remain production work.

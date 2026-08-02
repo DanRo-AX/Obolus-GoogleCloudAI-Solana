@@ -5,20 +5,23 @@ use std::{
         Arc, Mutex, MutexGuard,
         atomic::{AtomicU64, Ordering},
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use ed25519_dalek::{Signature, VerifyingKey};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
 use crate::{
     domain::{
         AccountControls, BalanceSummary, ChainSettlementReceipt, ChatAnswer, Citation,
-        CreateOpenCallRequest, DemographicBands, DisputeCase, Document, EarningEvent,
-        EarningsSummary, MemoryEntry, OpenCall, OpenDocumentsResponse, PaidDocument, PaymentQuote,
-        RecordChainSettlementRequest, ResolveQuestionResponse, ReviewDisputeRequest, SearchFilters,
-        Settlement, SubmitAnswerResponse, UpdatePreferencesRequest, UpsertProfileRequest,
-        UserAccount, UserProfile,
+        CreateOpenCallRequest, DemographicBands, DisputeCase, Document, DocumentFeedback,
+        EarningEvent, EarningsSummary, MemoryEntry, OpenCall, OpenDocumentsResponse, PaidDocument,
+        PaymentDocumentProgress, PaymentProgress, PaymentQuote, RecordChainSettlementRequest,
+        RecoveredPaidDocument, ResolveQuestionResponse, ReviewDisputeRequest,
+        ReviewDocumentFeedbackRequest, SearchFilters, Settlement, SubmitAnswerResponse,
+        SubmitDocumentFeedbackRequest, UpdatePreferencesRequest, UpsertProfileRequest, UserAccount,
+        UserProfile, WalletChallenge,
     },
     quality, seed,
 };
@@ -28,6 +31,9 @@ const STRIKE_LIMIT: usize = 3;
 const AUTO_MATCH_STRIKE_LIMIT: usize = 2;
 const PAYOUT_HOLD_MS: u64 = 14 * 24 * 60 * 60 * 1_000;
 const SIGNUP_CREDIT_KRW: u64 = 100_000;
+const LOGIN_FAILURE_WINDOW_MS: u64 = 15 * 60 * 1_000;
+const LOGIN_BLOCK_MS: u64 = 15 * 60 * 1_000;
+const LOGIN_FAILURE_LIMIT: u64 = 5;
 const CATEGORY_IDS: &[&str] = &[
     "life",
     "food",
@@ -130,7 +136,10 @@ impl Store {
     }
 
     fn from_connection(connection: Connection) -> Result<Self, StoreError> {
+        connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
+        connection.pragma_update(None, "journal_mode", "WAL")?;
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
         let store = Self {
             connection: Arc::new(Mutex::new(connection)),
         };
@@ -215,6 +224,94 @@ impl Store {
             )
             .optional()?
             .ok_or_else(|| StoreError::Unauthorized("invalid email or password".to_owned()))
+    }
+
+    pub fn check_login_allowed(&self, email: &str) -> Result<(), StoreError> {
+        let email = email.trim().to_lowercase();
+        let now = now_ms();
+        let blocked_until = self
+            .connection()?
+            .query_row(
+                "SELECT blocked_until FROM auth_failures WHERE email = ?1",
+                [email],
+                |row| as_u64(row.get(0)?),
+            )
+            .optional()?;
+        if blocked_until.is_some_and(|blocked_until| blocked_until > now) {
+            return Err(StoreError::Unauthorized(
+                "too many sign-in attempts; try again later".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn record_login_failure(&self, email: &str) -> Result<(), StoreError> {
+        let email = email.trim().to_lowercase();
+        if email.len() > 320 {
+            return Ok(());
+        }
+        let now = now_ms();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM auth_failures WHERE blocked_until < ?1 AND window_started_at < ?2",
+            params![
+                as_i64(now)?,
+                as_i64(now.saturating_sub(24 * 60 * 60 * 1_000))?
+            ],
+        )?;
+        let existing = transaction
+            .query_row(
+                "SELECT failure_count, window_started_at FROM auth_failures WHERE email = ?1",
+                [&email],
+                |row| Ok((as_u64(row.get(0)?)?, as_u64(row.get(1)?)?)),
+            )
+            .optional()?;
+        let (failure_count, window_started_at) = match existing {
+            Some((count, started_at))
+                if started_at.saturating_add(LOGIN_FAILURE_WINDOW_MS) > now =>
+            {
+                (count.saturating_add(1), started_at)
+            }
+            _ => (1, now),
+        };
+        let blocked_until = if failure_count >= LOGIN_FAILURE_LIMIT {
+            now.saturating_add(LOGIN_BLOCK_MS)
+        } else {
+            0
+        };
+        transaction.execute(
+            "INSERT INTO auth_failures
+             (email, failure_count, window_started_at, blocked_until, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(email) DO UPDATE SET
+               failure_count = excluded.failure_count,
+               window_started_at = excluded.window_started_at,
+               blocked_until = excluded.blocked_until,
+               updated_at = excluded.updated_at",
+            params![
+                email,
+                as_i64(failure_count)?,
+                as_i64(window_started_at)?,
+                as_i64(blocked_until)?,
+                as_i64(now)?,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn clear_login_failures(&self, email: &str) -> Result<(), StoreError> {
+        self.connection()?.execute(
+            "DELETE FROM auth_failures WHERE email = ?1",
+            [email.trim().to_lowercase()],
+        )?;
+        Ok(())
+    }
+
+    pub fn ready(&self) -> Result<(), StoreError> {
+        self.connection()?.query_row("SELECT 1", [], |_| Ok(()))?;
+        Ok(())
     }
 
     pub fn create_session(
@@ -368,6 +465,7 @@ impl Store {
                 id TEXT PRIMARY KEY,
                 question TEXT NOT NULL,
                 decision TEXT NOT NULL,
+                payment_token_hash TEXT,
                 created_at INTEGER NOT NULL
             );
 
@@ -481,6 +579,14 @@ impl Store {
                 created_at INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS auth_failures (
+                email TEXT PRIMARY KEY COLLATE NOCASE,
+                failure_count INTEGER NOT NULL,
+                window_started_at INTEGER NOT NULL,
+                blocked_until INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS balances (
                 user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
                 available_krw INTEGER NOT NULL CHECK (available_krw >= 0),
@@ -508,6 +614,7 @@ impl Store {
                 years TEXT NOT NULL,
                 speaks_to_json TEXT NOT NULL,
                 wallet TEXT,
+                wallet_verified_at INTEGER,
                 agreed_at INTEGER NOT NULL,
                 auto_match INTEGER NOT NULL DEFAULT 1,
                 agents INTEGER NOT NULL DEFAULT 0,
@@ -526,6 +633,32 @@ impl Store {
                 recipient_wallet TEXT,
                 payout_status TEXT NOT NULL,
                 available_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS wallet_challenges (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                wallet TEXT NOT NULL,
+                message TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                consumed_at INTEGER,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS document_feedback (
+                id TEXT PRIMARY KEY,
+                query_id TEXT NOT NULL,
+                document_id TEXT NOT NULL,
+                document_handle TEXT NOT NULL,
+                settlement_id TEXT NOT NULL UNIQUE,
+                payer TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                reason TEXT,
+                status TEXT NOT NULL,
+                reviewer_id TEXT,
+                review_note TEXT,
+                reviewed_at INTEGER,
                 created_at INTEGER NOT NULL
             );
 
@@ -551,7 +684,19 @@ impl Store {
                 ON payment_quotes(query_id, document_handle, expires_at DESC);
             CREATE INDEX IF NOT EXISTS idx_chain_settlements_signature
                 ON chain_settlements(transaction_signature);
+            CREATE INDEX IF NOT EXISTS idx_wallet_challenges_user
+                ON wallet_challenges(user_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_document_feedback_status
+                ON document_feedback(status, created_at ASC);
             "#,
+        )?;
+        add_column_if_missing(&connection, "queries", "payment_token_hash", "TEXT")?;
+        add_column_if_missing(&connection, "profiles", "wallet_verified_at", "INTEGER")?;
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_verified_wallet_owner
+             ON profiles(wallet)
+             WHERE wallet IS NOT NULL AND wallet_verified_at IS NOT NULL",
+            [],
         )?;
         add_column_if_missing(
             &connection,
@@ -658,15 +803,18 @@ impl Store {
         &self,
         question: &str,
         response: &ResolveQuestionResponse,
+        payment_token_hash: Option<&str>,
     ) -> Result<(), StoreError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
         transaction.execute(
-            "INSERT INTO queries (id, question, decision, created_at) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO queries (id, question, decision, payment_token_hash, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 response.query_id,
                 question,
                 format!("{:?}", response.decision).to_lowercase(),
+                payment_token_hash,
                 as_i64(now_ms())?
             ],
         )?;
@@ -684,6 +832,291 @@ impl Store {
         }
         transaction.commit()?;
         Ok(())
+    }
+
+    pub fn payment_progress(
+        &self,
+        query_id: &str,
+        payer: &str,
+        payment_token_hash: &str,
+    ) -> Result<PaymentProgress, StoreError> {
+        let query_id = query_id.trim();
+        let payer = payer.trim();
+        if !valid_solana_address(payer) {
+            return Err(StoreError::Validation(
+                "payer must be a base58 Solana public key".to_owned(),
+            ));
+        }
+        let connection = self.connection()?;
+        require_query_access(&connection, query_id, payment_token_hash)?;
+
+        let mut statement = connection.prepare(
+            "SELECT document_handle, quoted_price_krw
+             FROM query_matches WHERE query_id = ?1 ORDER BY rank ASC",
+        )?;
+        let matches = statement
+            .query_map([query_id], |row| {
+                Ok((row.get::<_, String>(0)?, as_u64(row.get(1)?)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let now = now_ms();
+        let mut documents = Vec::with_capacity(matches.len());
+        let mut settled_count = 0_usize;
+        let mut settled_price_krw = 0_u64;
+        let mut total_price_krw = 0_u64;
+        for (handle, price_krw) in matches {
+            total_price_krw = total_price_krw.saturating_add(price_krw);
+            let settlement = connection
+                .query_row(
+                    "SELECT pq.id, cs.transaction_signature, cs.network, cs.confirmed_at
+                     FROM payment_quotes pq
+                     JOIN chain_settlements cs ON cs.quote_id = pq.id
+                     WHERE pq.query_id = ?1 AND pq.document_handle = ?2
+                       AND cs.payer = ?3
+                     ORDER BY cs.confirmed_at DESC LIMIT 1",
+                    params![query_id, handle, payer],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            as_u64(row.get(3)?)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            if let Some((quote_id, signature, network, settled_at)) = settlement {
+                settled_count += 1;
+                settled_price_krw = settled_price_krw.saturating_add(price_krw);
+                documents.push(PaymentDocumentProgress {
+                    handle,
+                    price_krw,
+                    status: "settled".to_owned(),
+                    quote_id: Some(quote_id),
+                    quote_expires_at: None,
+                    transaction_signature: Some(signature),
+                    network: Some(network),
+                    settled_at: Some(settled_at),
+                });
+                continue;
+            }
+
+            let active_quote = connection
+                .query_row(
+                    "SELECT id, expires_at, network FROM payment_quotes
+                     WHERE query_id = ?1 AND document_handle = ?2
+                       AND settled_at IS NULL AND expires_at > ?3
+                     ORDER BY created_at DESC LIMIT 1",
+                    params![query_id, handle, as_i64(now)?],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            as_u64(row.get(1)?)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            let (status, quote_id, quote_expires_at, network) =
+                if let Some((quote_id, expires_at, network)) = active_quote {
+                    (
+                        "quoted".to_owned(),
+                        Some(quote_id),
+                        Some(expires_at),
+                        Some(network),
+                    )
+                } else {
+                    ("unpaid".to_owned(), None, None, None)
+                };
+            documents.push(PaymentDocumentProgress {
+                handle,
+                price_krw,
+                status,
+                quote_id,
+                quote_expires_at,
+                transaction_signature: None,
+                network,
+                settled_at: None,
+            });
+        }
+
+        Ok(PaymentProgress {
+            query_id: query_id.to_owned(),
+            payer: payer.to_owned(),
+            document_count: documents.len(),
+            settled_count,
+            unpaid_count: documents.len().saturating_sub(settled_count),
+            total_price_krw,
+            settled_price_krw,
+            documents,
+        })
+    }
+
+    pub fn recover_paid_document(
+        &self,
+        query_id: &str,
+        handle: &str,
+        payer: &str,
+        payment_token_hash: &str,
+    ) -> Result<RecoveredPaidDocument, StoreError> {
+        let query_id = query_id.trim();
+        let handle = handle.trim();
+        let payer = payer.trim();
+        if !valid_solana_address(payer) {
+            return Err(StoreError::Validation(
+                "payer must be a base58 Solana public key".to_owned(),
+            ));
+        }
+        let connection = self.connection()?;
+        require_query_access(&connection, query_id, payment_token_hash)?;
+        connection
+            .query_row(
+                "SELECT d.handle, d.shelf, d.content, pq.price_krw,
+                        cs.id, cs.quote_id, cs.transaction_signature, cs.payer,
+                        cs.pay_to, cs.amount_atomic, cs.network, cs.confirmed_at
+                 FROM payment_quotes pq
+                 JOIN chain_settlements cs ON cs.quote_id = pq.id
+                 JOIN documents d ON d.id = pq.document_id
+                 WHERE pq.query_id = ?1 AND pq.document_handle = ?2
+                   AND cs.payer = ?3
+                 ORDER BY cs.confirmed_at DESC LIMIT 1",
+                params![query_id, handle, payer],
+                |row| {
+                    Ok(RecoveredPaidDocument {
+                        citation: Citation {
+                            handle: row.get(0)?,
+                            shelf: row.get(1)?,
+                            excerpt: row.get(2)?,
+                            price: as_u64(row.get(3)?)?,
+                        },
+                        settlement: ChainSettlementReceipt {
+                            id: row.get(4)?,
+                            quote_id: row.get(5)?,
+                            transaction_signature: row.get(6)?,
+                            payer: row.get(7)?,
+                            pay_to: row.get(8)?,
+                            amount_atomic: as_u64(row.get(9)?)?.to_string(),
+                            network: row.get(10)?,
+                            confirmed_at: as_u64(row.get(11)?)?,
+                        },
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("settled document"))
+    }
+
+    pub fn submit_document_feedback(
+        &self,
+        query_id: &str,
+        handle: &str,
+        payer: &str,
+        payment_token_hash: &str,
+        request: &SubmitDocumentFeedbackRequest,
+    ) -> Result<DocumentFeedback, StoreError> {
+        let query_id = query_id.trim();
+        let handle = handle.trim();
+        let payer = payer.trim();
+        let outcome = request.outcome.trim();
+        if !valid_solana_address(payer) {
+            return Err(StoreError::Validation(
+                "payer must be a base58 Solana public key".to_owned(),
+            ));
+        }
+        if !["helpful", "not_helpful", "report"].contains(&outcome) {
+            return Err(StoreError::Validation(
+                "outcome must be helpful, not_helpful, or report".to_owned(),
+            ));
+        }
+        let reason = request
+            .reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if reason.is_some_and(|value| value.chars().count() > 1_000) {
+            return Err(StoreError::Validation(
+                "feedback reason must be 1000 characters or fewer".to_owned(),
+            ));
+        }
+        if outcome == "report" && !reason.is_some_and(|value| value.chars().count() >= 20) {
+            return Err(StoreError::Validation(
+                "a report reason must be between 20 and 1000 characters".to_owned(),
+            ));
+        }
+
+        let mut connection = self.connection()?;
+        require_query_access(&connection, query_id, payment_token_hash)?;
+        let transaction = connection.transaction()?;
+        let (document_id, settlement_id) = transaction
+            .query_row(
+                "SELECT pq.document_id, cs.id
+                 FROM payment_quotes pq
+                 JOIN chain_settlements cs ON cs.quote_id = pq.id
+                 WHERE pq.query_id = ?1 AND pq.document_handle = ?2 AND cs.payer = ?3
+                 ORDER BY cs.confirmed_at DESC LIMIT 1",
+                params![query_id, handle, payer],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("settled document"))?;
+        let existing = transaction
+            .query_row(
+                "SELECT id, query_id, document_handle, payer, outcome, reason, status,
+                        review_note, created_at, reviewed_at
+                 FROM document_feedback WHERE settlement_id = ?1",
+                [&settlement_id],
+                document_feedback_from_row,
+            )
+            .optional()?;
+        if let Some(existing) = existing {
+            if existing.outcome == outcome && existing.reason.as_deref() == reason {
+                return Ok(existing);
+            }
+            return Err(StoreError::Conflict(
+                "feedback has already been submitted for this purchase".to_owned(),
+            ));
+        }
+
+        let id = new_id("feedback");
+        let created_at = now_ms();
+        let status = if outcome == "report" {
+            "pending"
+        } else {
+            "recorded"
+        };
+        transaction.execute(
+            "INSERT INTO document_feedback
+             (id, query_id, document_id, document_handle, settlement_id, payer,
+              outcome, reason, status, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                id,
+                query_id,
+                document_id,
+                handle,
+                settlement_id,
+                payer,
+                outcome,
+                reason,
+                status,
+                as_i64(created_at)?,
+            ],
+        )?;
+        recompute_document_reliability(&transaction, &document_id)?;
+        transaction.commit()?;
+        Ok(DocumentFeedback {
+            id,
+            query_id: query_id.to_owned(),
+            document_handle: handle.to_owned(),
+            payer: payer.to_owned(),
+            outcome: outcome.to_owned(),
+            reason: reason.map(ToOwned::to_owned),
+            status: status.to_owned(),
+            review_note: None,
+            created_at,
+            reviewed_at: None,
+        })
     }
 
     pub fn list_open_calls(&self, user_id: Option<&str>) -> Result<Vec<OpenCall>, StoreError> {
@@ -1067,8 +1500,9 @@ impl Store {
             transaction.execute(
                 "INSERT INTO profiles
                  (user_id, handle, age_band, region, household, field, years,
-                  speaks_to_json, wallet, agreed_at, auto_match, agents, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?10, ?10)
+                  speaks_to_json, wallet, wallet_verified_at, agreed_at, auto_match, agents,
+                  created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11, ?12, ?10, ?10)
                  ON CONFLICT(user_id) DO UPDATE SET
                    handle = excluded.handle,
                    age_band = excluded.age_band,
@@ -1078,6 +1512,10 @@ impl Store {
                    years = excluded.years,
                    speaks_to_json = excluded.speaks_to_json,
                    wallet = excluded.wallet,
+                   wallet_verified_at = CASE
+                     WHEN profiles.wallet = excluded.wallet THEN profiles.wallet_verified_at
+                     ELSE NULL
+                   END,
                    auto_match = excluded.auto_match,
                    agents = excluded.agents,
                    updated_at = excluded.updated_at",
@@ -1133,6 +1571,182 @@ impl Store {
         if changed == 0 {
             return Err(StoreError::NotFound("profile"));
         }
+        self.get_profile(user_id)?
+            .ok_or(StoreError::NotFound("profile"))
+    }
+
+    pub fn create_wallet_challenge(
+        &self,
+        user_id: &str,
+        wallet: &str,
+        nonce: &str,
+        ttl_ms: u64,
+    ) -> Result<WalletChallenge, StoreError> {
+        let user_id = user_id.trim();
+        let wallet = wallet.trim();
+        let nonce = nonce.trim();
+        if user_id.is_empty() {
+            return Err(StoreError::Validation("user id is required".to_owned()));
+        }
+        if !valid_solana_address(wallet) {
+            return Err(StoreError::Validation(
+                "wallet must be a base58 Solana public key".to_owned(),
+            ));
+        }
+        if nonce.len() != 64 || !nonce.chars().all(|character| character.is_ascii_hexdigit()) {
+            return Err(StoreError::Validation(
+                "wallet challenge nonce must be 32 bytes of hex".to_owned(),
+            ));
+        }
+        if !(60_000..=10 * 60_000).contains(&ttl_ms) {
+            return Err(StoreError::Validation(
+                "wallet challenge ttl must be between one and ten minutes".to_owned(),
+            ));
+        }
+
+        let now = now_ms();
+        let expires_at = now.saturating_add(ttl_ms);
+        let id = new_id("wallet_challenge");
+        let message = format!(
+            "OPENSHELF wallet verification\nAccount: {user_id}\nWallet: {wallet}\nNonce: {nonce}\nExpires: {expires_at}"
+        );
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let has_profile = transaction
+            .query_row(
+                "SELECT 1 FROM profiles WHERE user_id = ?1",
+                [user_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !has_profile {
+            return Err(StoreError::Conflict(
+                "complete onboarding before verifying a wallet".to_owned(),
+            ));
+        }
+        transaction.execute(
+            "UPDATE wallet_challenges SET consumed_at = ?1
+             WHERE user_id = ?2 AND consumed_at IS NULL",
+            params![as_i64(now)?, user_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM wallet_challenges WHERE expires_at < ?1",
+            [as_i64(now.saturating_sub(24 * 60 * 60 * 1_000))?],
+        )?;
+        transaction.execute(
+            "INSERT INTO wallet_challenges
+             (id, user_id, wallet, message, expires_at, consumed_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)",
+            params![
+                id,
+                user_id,
+                wallet,
+                message,
+                as_i64(expires_at)?,
+                as_i64(now)?,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(WalletChallenge {
+            id,
+            wallet: wallet.to_owned(),
+            message,
+            expires_at,
+        })
+    }
+
+    pub fn verify_wallet_challenge(
+        &self,
+        user_id: &str,
+        challenge_id: &str,
+        signature: &str,
+    ) -> Result<UserProfile, StoreError> {
+        let user_id = user_id.trim();
+        let challenge_id = challenge_id.trim();
+        let signature = signature.trim();
+        if user_id.is_empty() || challenge_id.is_empty() {
+            return Err(StoreError::Validation(
+                "user id and challengeId are required".to_owned(),
+            ));
+        }
+
+        let now = now_ms();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let (wallet, message, expires_at, consumed_at) = transaction
+            .query_row(
+                "SELECT wallet, message, expires_at, consumed_at
+                 FROM wallet_challenges WHERE id = ?1 AND user_id = ?2",
+                params![challenge_id, user_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        as_u64(row.get(2)?)?,
+                        row.get::<_, Option<i64>>(3)?.map(as_u64).transpose()?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("wallet challenge"))?;
+        if consumed_at.is_some() {
+            return Err(StoreError::Conflict(
+                "this wallet challenge has already been used".to_owned(),
+            ));
+        }
+        if expires_at < now {
+            return Err(StoreError::Conflict(
+                "this wallet challenge has expired".to_owned(),
+            ));
+        }
+
+        let public_key = bs58::decode(&wallet)
+            .into_vec()
+            .map_err(|_| StoreError::Validation("wallet is not valid base58".to_owned()))?;
+        let public_key: [u8; 32] = public_key
+            .try_into()
+            .map_err(|_| StoreError::Validation("wallet must decode to 32 bytes".to_owned()))?;
+        let verifying_key = VerifyingKey::from_bytes(&public_key).map_err(|_| {
+            StoreError::Validation("wallet is not a valid Ed25519 public key".to_owned())
+        })?;
+        let signature = bs58::decode(signature)
+            .into_vec()
+            .map_err(|_| StoreError::Unauthorized("wallet signature is invalid".to_owned()))?;
+        let signature = Signature::from_slice(&signature)
+            .map_err(|_| StoreError::Unauthorized("wallet signature is invalid".to_owned()))?;
+        verifying_key
+            .verify_strict(message.as_bytes(), &signature)
+            .map_err(|_| StoreError::Unauthorized("wallet signature is invalid".to_owned()))?;
+
+        let owner = transaction
+            .query_row(
+                "SELECT user_id FROM profiles
+                 WHERE wallet = ?1 AND wallet_verified_at IS NOT NULL AND user_id <> ?2",
+                params![wallet, user_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if owner.is_some() {
+            return Err(StoreError::Conflict(
+                "this wallet is already verified by another account".to_owned(),
+            ));
+        }
+        let changed = transaction.execute(
+            "UPDATE profiles SET wallet = ?1, wallet_verified_at = ?2, updated_at = ?2
+             WHERE user_id = ?3",
+            params![wallet, as_i64(now)?, user_id],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound("profile"));
+        }
+        transaction.execute(
+            "UPDATE wallet_challenges SET consumed_at = ?1
+             WHERE id = ?2 AND consumed_at IS NULL",
+            params![as_i64(now)?, challenge_id],
+        )?;
+        transaction.commit()?;
+        drop(connection);
         self.get_profile(user_id)?
             .ok_or(StoreError::NotFound("profile"))
     }
@@ -1407,6 +2021,87 @@ impl Store {
         })
     }
 
+    pub fn list_document_feedback(
+        &self,
+        reviewer_id: &str,
+    ) -> Result<Vec<DocumentFeedback>, StoreError> {
+        self.require_admin(reviewer_id)?;
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT id, query_id, document_handle, payer, outcome, reason, status,
+                    review_note, created_at, reviewed_at
+             FROM document_feedback
+             ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at ASC",
+        )?;
+        Ok(statement
+            .query_map([], document_feedback_from_row)?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn review_document_feedback(
+        &self,
+        reviewer_id: &str,
+        feedback_id: &str,
+        request: &ReviewDocumentFeedbackRequest,
+    ) -> Result<DocumentFeedback, StoreError> {
+        self.require_admin(reviewer_id)?;
+        if !["upheld", "dismissed"].contains(&request.decision.as_str()) {
+            return Err(StoreError::Validation(
+                "decision must be upheld or dismissed".to_owned(),
+            ));
+        }
+        let note = request.note.trim();
+        if !(5..=1_000).contains(&note.chars().count()) {
+            return Err(StoreError::Validation(
+                "review note must be between 5 and 1000 characters".to_owned(),
+            ));
+        }
+
+        let reviewed_at = now_ms();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let feedback = transaction
+            .query_row(
+                "SELECT id, query_id, document_handle, payer, outcome, reason, status,
+                        review_note, created_at, reviewed_at
+                 FROM document_feedback WHERE id = ?1",
+                [feedback_id.trim()],
+                document_feedback_from_row,
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("document feedback"))?;
+        if feedback.outcome != "report" || feedback.status != "pending" {
+            return Err(StoreError::Conflict(
+                "only a pending report can be reviewed".to_owned(),
+            ));
+        }
+        let document_id = transaction.query_row(
+            "SELECT document_id FROM document_feedback WHERE id = ?1",
+            [feedback_id.trim()],
+            |row| row.get::<_, String>(0),
+        )?;
+        transaction.execute(
+            "UPDATE document_feedback
+             SET status = ?1, reviewer_id = ?2, review_note = ?3, reviewed_at = ?4
+             WHERE id = ?5 AND status = 'pending'",
+            params![
+                request.decision,
+                reviewer_id,
+                note,
+                as_i64(reviewed_at)?,
+                feedback_id.trim(),
+            ],
+        )?;
+        recompute_document_reliability(&transaction, &document_id)?;
+        transaction.commit()?;
+        Ok(DocumentFeedback {
+            status: request.decision.clone(),
+            review_note: Some(note.to_owned()),
+            reviewed_at: Some(reviewed_at),
+            ..feedback
+        })
+    }
+
     fn require_admin(&self, user_id: &str) -> Result<(), StoreError> {
         let role = self
             .connection()?
@@ -1613,9 +2308,17 @@ impl Store {
         let now = now_ms();
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
-        let (document_id, document_handle, price_krw, profile_wallet) = transaction
+        let (
+            document_id,
+            document_handle,
+            price_krw,
+            author_id,
+            profile_wallet,
+            wallet_verified_at,
+        ) = transaction
             .query_row(
-                "SELECT d.id, d.handle, qm.quoted_price_krw, p.wallet
+                "SELECT d.id, d.handle, qm.quoted_price_krw, d.author_id,
+                        p.wallet, p.wallet_verified_at
                  FROM query_matches qm
                  JOIN documents d ON d.handle = qm.document_handle
                  LEFT JOIN profiles p ON p.user_id = d.author_id
@@ -1634,22 +2337,31 @@ impl Store {
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         as_u64(row.get(2)?)?,
-                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<i64>>(5)?,
                     ))
                 },
             )
             .optional()?
             .ok_or(StoreError::DocumentNotQuoted)?;
 
-        let pay_to = profile_wallet
-            .filter(|wallet| !wallet.trim().is_empty())
-            .or_else(|| policy.fallback_recipient.clone())
-            .ok_or_else(|| {
-                StoreError::Conflict(
-                    "this document has no payout wallet; configure OPENSHELF_DEFAULT_RECEIVER for seeded content"
-                        .to_owned(),
-                )
-            })?;
+        let pay_to = if wallet_verified_at.is_some() {
+            profile_wallet.filter(|wallet| !wallet.trim().is_empty())
+        } else if author_id.starts_with("author_") {
+            policy.fallback_recipient.clone()
+        } else {
+            return Err(StoreError::Conflict(
+                "this author must verify a payout wallet before the document can be purchased"
+                    .to_owned(),
+            ));
+        }
+        .ok_or_else(|| {
+            StoreError::Conflict(
+                "this document has no verified payout wallet; configure OPENSHELF_DEFAULT_RECEIVER only for seeded content"
+                    .to_owned(),
+            )
+        })?;
         if !valid_solana_address(&pay_to) {
             return Err(StoreError::Validation(
                 "payment recipient must be a base58 Solana public key".to_owned(),
@@ -2084,6 +2796,37 @@ impl Store {
     }
 }
 
+fn require_query_access(
+    connection: &Connection,
+    query_id: &str,
+    payment_token_hash: &str,
+) -> Result<(), StoreError> {
+    if payment_token_hash.len() != 64
+        || !payment_token_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(StoreError::Unauthorized(
+            "invalid query payment token".to_owned(),
+        ));
+    }
+    let allowed = connection
+        .query_row(
+            "SELECT 1 FROM queries
+             WHERE id = ?1 AND payment_token_hash = ?2",
+            params![query_id, payment_token_hash],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if !allowed {
+        return Err(StoreError::Unauthorized(
+            "invalid query payment token".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_profile(request: &UpsertProfileRequest) -> Result<(), StoreError> {
     let handle = request.handle.trim();
     if !(3..=32).contains(&handle.len())
@@ -2184,7 +2927,8 @@ fn load_profile(connection: &Connection, user_id: &str) -> Result<Option<UserPro
     Ok(connection
         .query_row(
             "SELECT p.handle, p.age_band, p.region, p.household, p.field, p.years,
-                    p.speaks_to_json, p.wallet, p.agreed_at, p.auto_match, p.agents,
+                    p.speaks_to_json, p.wallet, p.wallet_verified_at, p.agreed_at,
+                    p.auto_match, p.agents,
                     (SELECT COUNT(*) FROM memory_entries m
                      WHERE m.user_id = p.user_id AND m.status = 'voided'),
                     EXISTS(SELECT 1 FROM dispute_events d WHERE d.user_id = p.user_id)
@@ -2230,10 +2974,58 @@ fn dispute_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DisputeCase> {
     })
 }
 
+fn document_feedback_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocumentFeedback> {
+    Ok(DocumentFeedback {
+        id: row.get(0)?,
+        query_id: row.get(1)?,
+        document_handle: row.get(2)?,
+        payer: row.get(3)?,
+        outcome: row.get(4)?,
+        reason: row.get(5)?,
+        status: row.get(6)?,
+        review_note: row.get(7)?,
+        created_at: as_u64(row.get(8)?)?,
+        reviewed_at: row.get::<_, Option<i64>>(9)?.map(as_u64).transpose()?,
+    })
+}
+
+fn recompute_document_reliability(
+    transaction: &Transaction<'_>,
+    document_id: &str,
+) -> Result<(), StoreError> {
+    let (positive, negative, upheld_reports) = transaction.query_row(
+        "SELECT
+           SUM(CASE WHEN outcome = 'helpful' THEN 1 ELSE 0 END),
+           SUM(CASE WHEN outcome = 'not_helpful' OR
+                         (outcome = 'report' AND status = 'upheld') THEN 1 ELSE 0 END),
+           SUM(CASE WHEN outcome = 'report' AND status = 'upheld' THEN 1 ELSE 0 END)
+         FROM document_feedback WHERE document_id = ?1",
+        [document_id],
+        |row| {
+            Ok((
+                row.get::<_, Option<i64>>(0)?.unwrap_or(0).max(0) as u64,
+                row.get::<_, Option<i64>>(1)?.unwrap_or(0).max(0) as u64,
+                row.get::<_, Option<i64>>(2)?.unwrap_or(0).max(0) as u64,
+            ))
+        },
+    )?;
+    let prior_weight = 10.0_f64;
+    let reliability =
+        (prior_weight * 0.8 + positive as f64) / (prior_weight + positive as f64 + negative as f64);
+    transaction.execute(
+        "UPDATE documents SET reliability_score = ?1,
+                locked = CASE WHEN ?2 >= 2 THEN 1 ELSE locked END
+         WHERE id = ?3",
+        params![reliability, upheld_reports, document_id],
+    )?;
+    Ok(())
+}
+
 fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserProfile> {
     let speaks_to_json: String = row.get(6)?;
-    let strikes = as_usize(row.get(11)?)?;
-    let configured_auto_match = row.get::<_, i64>(9)? != 0;
+    let wallet_verified_at = row.get::<_, Option<i64>>(8)?.map(as_u64).transpose()?;
+    let strikes = as_usize(row.get(12)?)?;
+    let configured_auto_match = row.get::<_, i64>(10)? != 0;
     Ok(UserProfile {
         handle: row.get(0)?,
         age_band: row.get(1)?,
@@ -2243,11 +3035,13 @@ fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserProfile> {
         years: row.get(5)?,
         speaks_to: serde_json::from_str(&speaks_to_json).unwrap_or_default(),
         wallet: row.get(7)?,
-        agreed_at: as_u64(row.get(8)?)?,
+        wallet_verified: wallet_verified_at.is_some(),
+        wallet_verified_at,
+        agreed_at: as_u64(row.get(9)?)?,
         auto_match: configured_auto_match && strikes < AUTO_MATCH_STRIKE_LIMIT,
-        agents: row.get::<_, i64>(10)? != 0,
+        agents: row.get::<_, i64>(11)? != 0,
         strikes,
-        dispute_used: row.get::<_, i64>(12)? != 0,
+        dispute_used: row.get::<_, i64>(13)? != 0,
         suspended: strikes >= STRIKE_LIMIT,
     })
 }
@@ -2293,7 +3087,11 @@ fn is_base58(value: &str) -> bool {
 }
 
 fn valid_solana_address(value: &str) -> bool {
-    (32..=44).contains(&value.len()) && is_base58(value)
+    (32..=44).contains(&value.len())
+        && is_base58(value)
+        && bs58::decode(value)
+            .into_vec()
+            .is_ok_and(|decoded| decoded.len() == 32)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2774,16 +3572,19 @@ fn valid_email(email: &str) -> bool {
 mod tests {
     use std::path::PathBuf;
 
+    use ed25519_dalek::{Signer, SigningKey};
+
     use crate::{
         domain::{
             CreateOpenCallRequest, Decision, RecordChainSettlementRequest, ResolveQuestionRequest,
-            ReviewDisputeRequest, SearchFilters, SubmitAnswerResponse, UpdatePreferencesRequest,
+            ReviewDisputeRequest, ReviewDocumentFeedbackRequest, SearchFilters,
+            SubmitAnswerResponse, SubmitDocumentFeedbackRequest, UpdatePreferencesRequest,
             UpsertProfileRequest,
         },
         search::Resolver,
     };
 
-    use super::{PaymentQuotePolicy, Store, StoreError, now_ms};
+    use super::{LOGIN_FAILURE_LIMIT, PaymentQuotePolicy, Store, StoreError, now_ms};
 
     fn create_svalbard_call(store: &Store, owner: &str, target: usize) -> crate::domain::OpenCall {
         ensure_user(store, owner);
@@ -2854,6 +3655,25 @@ mod tests {
             .unwrap();
     }
 
+    fn verify_wallet(store: &Store, user_id: &str, secret: u8) -> String {
+        let signing_key = SigningKey::from_bytes(&[secret; 32]);
+        let wallet = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
+        let challenge = store
+            .create_wallet_challenge(user_id, &wallet, &"ab".repeat(32), 300_000)
+            .unwrap();
+        let signature = signing_key.sign(challenge.message.as_bytes());
+        let verified = store
+            .verify_wallet_challenge(
+                user_id,
+                &challenge.id,
+                &bs58::encode(signature.to_bytes()).into_string(),
+            )
+            .unwrap();
+        assert!(verified.wallet_verified);
+        assert_eq!(verified.wallet.as_deref(), Some(wallet.as_str()));
+        wallet
+    }
+
     fn submit(
         store: &Store,
         call_id: &str,
@@ -2873,6 +3693,7 @@ mod tests {
         assert_eq!(created.handle, "SEOUL_OPS");
         assert!(created.auto_match);
         assert!(!created.suspended);
+        assert!(!created.wallet_verified);
 
         let updated = store
             .update_preferences(
@@ -2890,6 +3711,65 @@ mod tests {
             .upsert_profile("researcher-2", &profile_request("SEOUL_OPS"))
             .unwrap_err();
         assert!(conflict.to_string().contains("already in use"));
+    }
+
+    #[test]
+    fn repeated_login_failures_are_temporarily_blocked_and_can_be_cleared() {
+        let store = Store::in_memory().unwrap();
+        for _ in 0..LOGIN_FAILURE_LIMIT - 1 {
+            store.record_login_failure("RATE@example.com").unwrap();
+            store.check_login_allowed("rate@example.com").unwrap();
+        }
+        store.record_login_failure("rate@example.com").unwrap();
+        assert!(matches!(
+            store.check_login_allowed("rate@example.com"),
+            Err(StoreError::Unauthorized(_))
+        ));
+        store.clear_login_failures("rate@example.com").unwrap();
+        store.check_login_allowed("rate@example.com").unwrap();
+    }
+
+    #[test]
+    fn wallet_verification_proves_ownership_is_single_use_and_unique() {
+        let store = Store::in_memory().unwrap();
+        onboard(&store, "wallet-owner");
+        let signing_key = SigningKey::from_bytes(&[9; 32]);
+        let wallet = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
+        let challenge = store
+            .create_wallet_challenge("wallet-owner", &wallet, &"cd".repeat(32), 300_000)
+            .unwrap();
+        let signature =
+            bs58::encode(signing_key.sign(challenge.message.as_bytes()).to_bytes()).into_string();
+        let profile = store
+            .verify_wallet_challenge("wallet-owner", &challenge.id, &signature)
+            .unwrap();
+        assert!(profile.wallet_verified);
+        assert!(profile.wallet_verified_at.is_some());
+        assert!(matches!(
+            store.verify_wallet_challenge("wallet-owner", &challenge.id, &signature),
+            Err(StoreError::Conflict(_))
+        ));
+
+        onboard(&store, "other-owner");
+        let other_challenge = store
+            .create_wallet_challenge("other-owner", &wallet, &"ef".repeat(32), 300_000)
+            .unwrap();
+        let other_signature = bs58::encode(
+            signing_key
+                .sign(other_challenge.message.as_bytes())
+                .to_bytes(),
+        )
+        .into_string();
+        assert!(matches!(
+            store.verify_wallet_challenge("other-owner", &other_challenge.id, &other_signature),
+            Err(StoreError::Conflict(_))
+        ));
+
+        let mut changed = profile_request("wallet_owner");
+        changed.wallet = Some("11111111111111111111111111111111".to_owned());
+        let changed = store.upsert_profile("wallet-owner", &changed).unwrap();
+        assert!(!changed.wallet_verified);
+        assert!(changed.wallet_verified_at.is_none());
     }
 
     #[test]
@@ -3030,7 +3910,7 @@ mod tests {
             })
             .unwrap();
         store
-            .record_resolution("Which Svalbard winter boots stay warm?", &resolved)
+            .record_resolution("Which Svalbard winter boots stay warm?", &resolved, None)
             .unwrap();
         let handles = vec![resolved.matches[0].handle.clone()];
 
@@ -3069,7 +3949,10 @@ mod tests {
                 filters: SearchFilters::default(),
             })
             .unwrap();
-        store.record_resolution(question, &resolved).unwrap();
+        let payment_token_hash = "a".repeat(64);
+        store
+            .record_resolution(question, &resolved, Some(&payment_token_hash))
+            .unwrap();
 
         let policy = PaymentQuotePolicy {
             fallback_recipient: None,
@@ -3079,21 +3962,40 @@ mod tests {
             ttl_ms: 300_000,
         };
         let handle = &resolved.matches[0].handle;
+        let payer =
+            bs58::encode(SigningKey::from_bytes(&[8; 32]).verifying_key().as_bytes()).into_string();
+        let before_quote = store
+            .payment_progress(&resolved.query_id, &payer, &payment_token_hash)
+            .unwrap();
+        assert_eq!(before_quote.documents[0].status, "unpaid");
+        assert!(matches!(
+            store.payment_progress(&resolved.query_id, &payer, &"b".repeat(64)),
+            Err(StoreError::Unauthorized(_))
+        ));
+        assert!(matches!(
+            store.payment_quote(&resolved.query_id, handle, &policy),
+            Err(StoreError::Conflict(_))
+        ));
+        let verified_wallet = verify_wallet(&store, "researcher-1", 7);
         let quote = store
             .payment_quote(&resolved.query_id, handle, &policy)
             .unwrap();
         assert_eq!(quote.price_krw, 700);
         assert_eq!(quote.amount_atomic, "518519");
-        assert_eq!(quote.pay_to, "11111111111111111111111111111111");
+        assert_eq!(quote.pay_to, verified_wallet);
         assert_eq!(
             store.paid_document(&quote.id).unwrap().citation.handle,
             *handle
         );
+        let quoted = store
+            .payment_progress(&resolved.query_id, &payer, &payment_token_hash)
+            .unwrap();
+        assert_eq!(quoted.documents[0].status, "quoted");
 
         let request = RecordChainSettlementRequest {
             quote_id: quote.id.clone(),
             transaction_signature: "2".repeat(88),
-            payer: "3".repeat(32),
+            payer: payer.clone(),
             pay_to: quote.pay_to.clone(),
             amount_atomic: quote.amount_atomic.clone(),
             network: quote.network.clone(),
@@ -3103,6 +4005,69 @@ mod tests {
         let repeated = store.record_chain_settlement(&request).unwrap();
         assert_eq!(receipt.id, repeated.id);
         assert_eq!(receipt.amount_atomic, quote.amount_atomic);
+        let progress = store
+            .payment_progress(&resolved.query_id, &payer, &payment_token_hash)
+            .unwrap();
+        assert_eq!(progress.settled_count, 1);
+        assert_eq!(progress.unpaid_count, 0);
+        assert_eq!(
+            progress.documents[0].transaction_signature.as_deref(),
+            Some(request.transaction_signature.as_str())
+        );
+        let recovered = store
+            .recover_paid_document(&resolved.query_id, handle, &payer, &payment_token_hash)
+            .unwrap();
+        assert_eq!(recovered.citation.handle, *handle);
+        assert_eq!(recovered.settlement.id, receipt.id);
+        let feedback = store
+            .submit_document_feedback(
+                &resolved.query_id,
+                handle,
+                &payer,
+                &payment_token_hash,
+                &SubmitDocumentFeedbackRequest {
+                    outcome: "report".to_owned(),
+                    reason: Some(
+                        "The passage contains a material factual claim that needs review."
+                            .to_owned(),
+                    ),
+                },
+            )
+            .unwrap();
+        assert_eq!(feedback.status, "pending");
+        let repeated_feedback = store
+            .submit_document_feedback(
+                &resolved.query_id,
+                handle,
+                &payer,
+                &payment_token_hash,
+                &SubmitDocumentFeedbackRequest {
+                    outcome: "report".to_owned(),
+                    reason: feedback.reason.clone(),
+                },
+            )
+            .unwrap();
+        assert_eq!(feedback.id, repeated_feedback.id);
+        ensure_user(&store, "feedback-reviewer");
+        store.set_user_role("feedback-reviewer", "admin").unwrap();
+        assert_eq!(
+            store
+                .list_document_feedback("feedback-reviewer")
+                .unwrap()
+                .len(),
+            1
+        );
+        let reviewed = store
+            .review_document_feedback(
+                "feedback-reviewer",
+                &feedback.id,
+                &ReviewDocumentFeedbackRequest {
+                    decision: "upheld".to_owned(),
+                    note: "The claim cannot be supported by the submitted evidence.".to_owned(),
+                },
+            )
+            .unwrap();
+        assert_eq!(reviewed.status, "upheld");
 
         let mut conflicting = request.clone();
         conflicting.transaction_signature = "4".repeat(88);
@@ -3188,7 +4153,7 @@ mod tests {
             })
             .unwrap();
         store
-            .record_resolution("Svalbard winter boots", &resolved)
+            .record_resolution("Svalbard winter boots", &resolved, None)
             .unwrap();
 
         for index in 0..2 {
