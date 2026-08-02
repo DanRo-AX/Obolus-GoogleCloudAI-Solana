@@ -32,6 +32,7 @@ import {
   upsertProfile,
   verifyWalletChallenge,
   type EarningsSummary,
+  type AiBaseline,
   type Account,
   type BalanceSummary,
   type DemographicBands,
@@ -96,6 +97,8 @@ export type Chat = {
   filters?: TargetFilters
   ownerId?: string
   paymentSession?: PaymentSession
+  /** Ephemeral zero-price context; never a citation, memory, or shelf asset. */
+  aiBaseline?: AiBaseline
 }
 
 /** An open call. Posted on the spot when the shelves come up empty. */
@@ -167,7 +170,7 @@ export type MemoryEntry = {
   shelf: string
   earned: number
   createdAt: number
-  via: 'Open call' | 'Auto-match' | 'Correction' | 'Reflection'
+  via: 'Open call' | 'Auto-match' | 'Shelf starter' | 'Correction' | 'Reflection'
   /** Voided entries keep the attempted answer but earn zero until disputed. */
   status: 'settled' | 'voided'
   disputeStatus?: 'pending' | 'approved' | 'rejected'

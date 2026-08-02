@@ -51,6 +51,8 @@ export type Resolution = {
     | 'no_relevant_documents'
     | 'insufficient_coverage'
     | 'budget_too_low'
+  liquidityState: 'ai_liquidity_only' | 'hybrid_coverage' | 'human_covered'
+  aiBaselineEligible: boolean
   requestedDocuments: number
   candidateCount: number
   matches: ResolvedMatch[]
@@ -67,6 +69,46 @@ export type Resolution = {
     suggestedUnitPriceKrw: number
     suggestedBudgetKrw: number
   }
+}
+
+export type AiBaseline = {
+  id: string
+  queryId: string
+  kind: 'ai_baseline'
+  orientation: string
+  generalPoints: string[]
+  humanGaps: string[]
+  questionsForPeople: string[]
+  model: string
+  mode: 'vertex' | 'gemini_api' | string
+  policyVersion: string
+  generatedAt: number
+  expiresAt: number
+  priceKrw: 0
+  sellable: false
+  countsAsHumanCoverage: false
+}
+
+export type AiBaselineResult = {
+  status: 'generated' | 'cached' | 'unavailable'
+  baseline?: AiBaseline | null
+}
+
+export type ShelfStarter = {
+  id: string
+  prompt: string
+  rationale: string
+  category: CategoryId
+  source: 'ai_interview_prompt'
+  buyerWaiting: false
+  guaranteedRewardKrw: 0
+  generatedAt: number
+  expiresAt: number
+}
+
+export type ShelfStarterResult = {
+  status: 'generated' | 'cached' | 'unavailable'
+  starters: ShelfStarter[]
 }
 
 export type Account = {
@@ -194,6 +236,36 @@ export function resolveQuestion(
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ question, requestedDocuments, filters }),
+  })
+}
+
+export function generateAiBaseline(
+  queryId: string,
+  paymentAccessToken: string,
+): Promise<AiBaselineResult> {
+  return apiFetch(`/api/v1/questions/${encodeURIComponent(queryId)}/ai-baseline`, {
+    method: 'POST',
+    headers: { 'x-openshelf-query-token': paymentAccessToken },
+  })
+}
+
+export function listShelfStarters(): Promise<ShelfStarter[]> {
+  return apiFetch('/api/v1/shelf-starters')
+}
+
+export function generateShelfStarters(): Promise<ShelfStarterResult> {
+  return apiFetch('/api/v1/shelf-starters', { method: 'POST' })
+}
+
+export function submitShelfStarterAnswer(
+  starterId: string,
+  answer: string,
+  priceKrw: number,
+): Promise<{ memory: MemoryEntry; documentHandle: string }> {
+  return apiFetch(`/api/v1/shelf-starters/${encodeURIComponent(starterId)}/answer`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ answer, priceKrw }),
   })
 }
 

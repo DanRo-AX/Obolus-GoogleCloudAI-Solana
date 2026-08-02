@@ -160,6 +160,15 @@ export function Composer({
           <ArrowUp className="size-4" />
         </button>
       </div>
+      <p
+        className={cn(
+          'px-4 pb-3 font-mono text-[9px] leading-4 tracking-[0.35px]',
+          dark ? 'text-white/40' : 'text-muted-foreground',
+        )}
+      >
+        If human coverage is thin, this question alone may be sent to Gemini for
+        a free general baseline. Private shelf passages are never sent.
+      </p>
     </form>
   )
 }

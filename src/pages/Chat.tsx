@@ -9,6 +9,7 @@ import {
   Menu,
   Search,
   SlidersHorizontal,
+  Sparkles,
   ThumbsDown,
   ThumbsUp,
 } from 'lucide-react'
@@ -17,10 +18,12 @@ import { Button } from '@/components/ui/button'
 import { SHELVES, type Shelf } from '@/data/shelf'
 import {
   getChatAnswers,
+  generateAiBaseline,
   resolveQuestion,
   submitDocumentFeedback,
   synthesizeAnswer,
   type DocumentFeedback,
+  type AiBaseline,
   type Resolution,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -33,9 +36,9 @@ import { useUi, type Citation, type PaymentContext } from '@/state/ui'
  *
  *   1 ask  2 search  3 rank  4 hit/miss  5 open call  6 x402  7 accrue
  *
- * Step 4 is the whole service. A hit ends as search; a miss posts an open call
- * on the spot. The browser-wallet demo confirms every spend because Phantom
- * asks the person to sign one exact direct or aggregate payment.
+ * Step 4 is the whole service. A human hit ends as paid search; a miss may add
+ * zero-price general AI liquidity while keeping the human gap open for a call.
+ * Phantom still confirms every spend for the exact direct or aggregate set.
  */
 
 type Phase =
@@ -56,7 +59,7 @@ const KRW_PER_USDC = Number(import.meta.env.VITE_KRW_PER_USDC ?? 1350)
 const STEPS = [
   { n: 2, label: 'Search the shelves', blurb: 'People\u2019s documents, not the web' },
   { n: 3, label: 'Rank by similarity', blurb: 'The closest few, not everything' },
-  { n: 4, label: 'Hit or miss', blurb: 'A miss posts an open call' },
+  { n: 4, label: 'Human coverage', blurb: 'AI bridges a miss; people fill it' },
 ]
 
 const COUNT_CHOICES = [3, 7, 12]
@@ -101,6 +104,12 @@ export default function Chat() {
   const [openCallDraft, setOpenCallDraft] = useState<Resolution['openCall'] | null>(
     null,
   )
+  const [aiBaseline, setAiBaseline] = useState<AiBaseline | null>(
+    () => chat?.aiBaseline ?? null,
+  )
+  const [aiBaselineStatus, setAiBaselineStatus] = useState<
+    'idle' | 'loading' | 'ready' | 'unavailable'
+  >(() => (chat?.aiBaseline ? 'ready' : 'idle'))
   const startedRef = useRef<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -263,6 +272,8 @@ export default function Chat() {
     setQueryId(null)
     setResolutionReason(null)
     setOpenCallDraft(null)
+    setAiBaseline(null)
+    setAiBaselineStatus('idle')
 
     const run = async () => {
       try {
@@ -292,6 +303,27 @@ export default function Chat() {
         // the open call asks only for the missing number of answers.
         if (resolution.decision === 'miss') {
           setPhase('ask-order')
+          if (resolution.aiBaselineEligible) {
+            setAiBaselineStatus('loading')
+            void generateAiBaseline(
+              resolution.queryId,
+              resolution.paymentAccessToken,
+            ).then(
+              (result) => {
+                if (cancelled) return
+                if (result.baseline) {
+                  setAiBaseline(result.baseline)
+                  setAiBaselineStatus('ready')
+                  patchChat(chatId, { aiBaseline: result.baseline })
+                } else {
+                  setAiBaselineStatus('unavailable')
+                }
+              },
+              () => {
+                if (!cancelled) setAiBaselineStatus('unavailable')
+              },
+            )
+          }
           return
         }
         const cites: Citation[] = resolution.matches.map((match) => ({
@@ -556,6 +588,23 @@ export default function Chat() {
                         : 'Nothing on the shelves matches. Want me to ask people?'
                   }
                 >
+                  {aiBaselineStatus === 'loading' ? (
+                    <div className="w-full rounded-[5px] border border-[#6D5BD0]/20 bg-[#6D5BD0]/[0.04] p-4">
+                      <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[1px] text-[#5540BE]">
+                        <Loader2 className="size-3 animate-spin" />
+                        AI liquidity · preparing general context
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                        This will not count as human coverage or become a sellable document.
+                      </p>
+                    </div>
+                  ) : null}
+                  {aiBaseline ? <AiBaselineCard baseline={aiBaseline} /> : null}
+                  {aiBaselineStatus === 'unavailable' ? (
+                    <div className="w-full rounded-[4px] border border-border px-3 py-2 text-xs leading-5 text-muted-foreground">
+                      The general AI baseline is unavailable. The human call remains available and unchanged.
+                    </div>
+                  ) : null}
                   <Button
                     variant="mono"
                     size="mono"
@@ -745,6 +794,49 @@ export default function Chat() {
         </div>
       </div>
     </div>
+  )
+}
+
+function AiBaselineCard({ baseline }: { baseline: AiBaseline }) {
+  return (
+    <section className="w-full rounded-[6px] border border-[#6D5BD0]/25 bg-[#6D5BD0]/[0.045] p-4 text-left">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[1px] text-[#5540BE]">
+          <Sparkles className="size-3" />
+          AI general baseline
+        </div>
+        <span className="rounded-full border border-[#6D5BD0]/20 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.7px] text-[#6D5BD0]">
+          Free · not human evidence
+        </span>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-foreground/85">
+        {baseline.orientation}
+      </p>
+      <ul className="mt-3 space-y-1.5 text-[13px] leading-5 text-foreground/75">
+        {baseline.generalPoints.map((point) => (
+          <li key={point} className="flex gap-2">
+            <span aria-hidden className="text-[#6D5BD0]">·</span>
+            <span>{point}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-4 border-t border-[#6D5BD0]/15 pt-3">
+        <p className="font-mono text-[9px] font-medium uppercase tracking-[1px] text-muted-foreground">
+          Still needs people
+        </p>
+        <ul className="mt-2 space-y-1.5 text-[13px] leading-5 text-foreground/75">
+          {baseline.humanGaps.map((gap) => (
+            <li key={gap} className="flex gap-2">
+              <span aria-hidden className="text-[#C24D32]">—</span>
+              <span>{gap}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <p className="mt-3 font-mono text-[9px] uppercase leading-4 tracking-[0.7px] text-muted-foreground">
+        ₩0 · question sent to Gemini without private shelf passages · cannot be bought or resold · never enters Shelf ranking
+      </p>
+    </section>
   )
 }
 

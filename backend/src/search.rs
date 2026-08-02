@@ -6,9 +6,9 @@ use std::{
 
 use crate::authority::personalized_page_rank;
 use crate::domain::{
-    CATEGORY_IDS, Decision, DecisionReason, Document, EvidenceEdge, MAX_REQUESTED_DOCUMENTS,
-    MatchedDocument, OpenCallDraft, Quote, ResolveError, ResolveQuestionRequest,
-    ResolveQuestionResponse, ScoreBreakdown,
+    CATEGORY_IDS, Decision, DecisionReason, Document, EvidenceEdge, LiquidityState,
+    MAX_REQUESTED_DOCUMENTS, MatchedDocument, OpenCallDraft, Quote, ResolveError,
+    ResolveQuestionRequest, ResolveQuestionResponse, ScoreBreakdown,
 };
 
 const EMBEDDING_DIMENSIONS: usize = 768;
@@ -179,6 +179,16 @@ impl Resolver {
         } else {
             (Decision::Miss, DecisionReason::InsufficientCoverage)
         };
+        // Budget can prevent a transaction without creating a knowledge gap.
+        // AI liquidity is therefore controlled by the available human supply,
+        // not by whether the current buyer can afford the selected bundle.
+        let liquidity_state = if candidate_count == 0 {
+            LiquidityState::AiLiquidityOnly
+        } else if candidate_count < request.requested_documents {
+            LiquidityState::HybridCoverage
+        } else {
+            LiquidityState::HumanCovered
+        };
 
         let quote = (!matches.is_empty()).then_some(Quote {
             currency: "KRW",
@@ -203,6 +213,8 @@ impl Resolver {
             payment_access_token: None,
             decision,
             reason,
+            liquidity_state,
+            ai_baseline_eligible: liquidity_state != LiquidityState::HumanCovered,
             requested_documents: request.requested_documents,
             candidate_count,
             matches,

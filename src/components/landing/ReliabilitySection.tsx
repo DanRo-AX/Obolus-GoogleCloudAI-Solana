@@ -10,7 +10,7 @@ const PILLARS = [
   {
     n: '02',
     title: 'Branch',
-    body: 'It opens only the closest few. If nothing matches, it posts an open call on the spot.',
+    body: 'If human coverage is thin, free AI context bridges the wait without becoming a sellable MD.',
   },
   {
     n: '03',
@@ -27,7 +27,7 @@ export function ReliabilitySection() {
         <h2 className="max-w-4xl font-sans text-2xl font-[450] sm:text-3xl">
           <span className="text-foreground">Search comes first. </span>
           <span className="text-muted-foreground">
-            The survey only fires when the shelves come up empty.{' '}
+            AI covers the general floor; the human gap becomes an open call.{' '}
           </span>
           <span className="text-foreground">
             Nobody feels like they are commissioning research. They are just

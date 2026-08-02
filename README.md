@@ -105,6 +105,25 @@ topic-personalized PageRank over curator-verified independent evidence edges.
 Paid, self-owned, inferred, and raw UGC edges cannot buy authority. The search
 response contains handles and prices but never paid passages.
 
+## AI supplies liquidity; people create the asset
+
+When human coverage is empty or thin, Gemini may provide a free **AI general
+baseline** so a questioner does not hit a blank screen. That baseline lives in
+`ai_baselines`, never `documents`: it has zero price, expires, cannot be resold,
+earns no authority, cannot satisfy an open-call slot, and is never used by the
+contributor Memory agent. Its structured output is limited to stable
+orientation and decision criteria, then explicitly lists the current,
+firsthand gaps that still require people. If enough human documents exist—even
+when the buyer's budget is too low—the server refuses to generate a baseline.
+
+The opposite cold start is explicit too. A contributor can ask Gemini for
+three **Shelf starter** interview prompts based only on broad fields they
+agreed to answer in. The UI states that no buyer is waiting and no upfront
+reward is guaranteed. A prompt has no price or evidence status; only the
+contributor's quality-checked firsthand answer becomes a sellable human
+document. Gemini supplies demand-side context, supply-side interviewing, and
+post-purchase synthesis without ever becoming a marketplace author.
+
 ## Canvases
 
 `src/components/GlitterWrap.tsx` — the hero starfield, ported from the

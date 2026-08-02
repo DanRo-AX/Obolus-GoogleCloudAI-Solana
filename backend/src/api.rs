@@ -23,21 +23,22 @@ use crate::{
         AccountControls, AuthResponse, BalanceSummary, ChainSettlementReceipt, ChatAnswer,
         ContributorManifest, ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
         CreateEvidenceEdgeRequest, CreateOpenCallRequest, CreatePaymentBundleRequest, DisputeCase,
-        DocumentFeedback, EarningsSummary, EvidenceEdge, LoginRequest,
-        MarkNotificationsReadRequest, MemoryEntry, MemoryExport, OpenCall, OpenCallReservation,
-        OpenDocumentsResponse, PaidDocument, PaymentBundleQuote, PaymentBundleSnapshot,
-        PaymentDocumentSnapshot, PaymentProgress, PaymentQuote, PublicDocument,
-        RecordChainSettlementRequest, RecoveredPaidDocument, RegisterRequest, ResolveError,
-        ResolveQuestionRequest, ResolveQuestionResponse, ReviewDisputeRequest,
-        ReviewDocumentFeedbackRequest, SubmitAnswerRequest, SubmitAnswerResponse,
-        SubmitDisputeRequest, SubmitDocumentFeedbackRequest, SynthesizeAnswerRequest,
+        DocumentFeedback, EarningsSummary, EvidenceEdge, GenerateAiBaselineResponse,
+        GenerateShelfStartersResponse, LoginRequest, MarkNotificationsReadRequest, MemoryEntry,
+        MemoryExport, OpenCall, OpenCallReservation, OpenDocumentsResponse, PaidDocument,
+        PaymentBundleQuote, PaymentBundleSnapshot, PaymentDocumentSnapshot, PaymentProgress,
+        PaymentQuote, PublicDocument, RecordChainSettlementRequest, RecoveredPaidDocument,
+        RegisterRequest, ResolveError, ResolveQuestionRequest, ResolveQuestionResponse,
+        ReviewDisputeRequest, ReviewDocumentFeedbackRequest, ShelfStarter, SubmitAnswerRequest,
+        SubmitAnswerResponse, SubmitDisputeRequest, SubmitDocumentFeedbackRequest,
+        SubmitShelfStarterAnswerRequest, SubmitShelfStarterAnswerResponse, SynthesizeAnswerRequest,
         SynthesizeAnswerResponse, SynthesizePaidAnswerRequest, UpdateMemoryRequest,
         UpdatePreferencesRequest, UpsertProfileRequest, UserAccount, UserProfile,
         VerifyWalletRequest, WalletChallenge, WalletChallengeRequest,
     },
     orchestrator,
     search::Resolver,
-    store::{PaymentQuotePolicy, Store, StoreError},
+    store::{AiArtifactMetadata, PaymentQuotePolicy, Store, StoreError},
 };
 
 const SESSION_COOKIE: &str = "openshelf_session";
@@ -232,6 +233,18 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/auth/logout", post(logout))
         .route("/api/v1/auth/me", get(me))
         .route("/api/v1/questions/resolve", post(resolve_question))
+        .route(
+            "/api/v1/questions/{id}/ai-baseline",
+            post(generate_ai_baseline),
+        )
+        .route(
+            "/api/v1/shelf-starters",
+            get(list_shelf_starters).post(generate_shelf_starters),
+        )
+        .route(
+            "/api/v1/shelf-starters/{id}/answer",
+            post(submit_shelf_starter_answer),
+        )
         .route("/api/v1/answers/synthesize", post(synthesize_answer))
         .route(
             "/api/v1/questions/{id}/payment-progress",
@@ -428,6 +441,115 @@ async fn resolve_question(
     )?;
     response.payment_access_token = Some(payment_access_token);
     Ok(Json(response))
+}
+
+async fn generate_ai_baseline(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(query_id): Path<String>,
+) -> Result<Json<GenerateAiBaselineResponse>, ApiError> {
+    let access_token = query_access_token(&headers)?;
+    let access_token_hash = token_hash(access_token);
+    let (question, cached) = state
+        .store
+        .ai_baseline_context(&query_id, &access_token_hash)?;
+    if let Some(baseline) = cached {
+        return Ok(Json(GenerateAiBaselineResponse {
+            status: "cached",
+            baseline: Some(baseline),
+        }));
+    }
+
+    let generated = orchestrator::generate_ai_baseline(&question)
+        .await
+        .map_err(|error| ApiError::validation(&error.to_string()))?;
+    let Some(generated) = generated else {
+        return Ok(Json(GenerateAiBaselineResponse {
+            status: "unavailable",
+            baseline: None,
+        }));
+    };
+    let ttl_ms = std::env::var("OPENSHELF_AI_BASELINE_TTL_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(6 * 60 * 60 * 1_000);
+    let baseline = state.store.record_ai_baseline(
+        &query_id,
+        &access_token_hash,
+        &generated.draft,
+        &AiArtifactMetadata {
+            model: &generated.model,
+            mode: &generated.mode,
+            policy_version: orchestrator::AI_BASELINE_POLICY_VERSION,
+            ttl_ms,
+        },
+    )?;
+    Ok(Json(GenerateAiBaselineResponse {
+        status: "generated",
+        baseline: Some(baseline),
+    }))
+}
+
+async fn list_shelf_starters(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ShelfStarter>>, ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok(Json(state.store.list_shelf_starters(&user.id)?))
+}
+
+async fn generate_shelf_starters(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<GenerateShelfStartersResponse>, ApiError> {
+    let user = authenticated(&state, &headers)?;
+    let existing = state.store.list_shelf_starters(&user.id)?;
+    if !existing.is_empty() {
+        return Ok(Json(GenerateShelfStartersResponse {
+            status: "cached",
+            starters: existing,
+        }));
+    }
+    let profile = state.store.get_profile(&user.id)?.ok_or_else(|| {
+        StoreError::Conflict("complete onboarding before building your shelf".to_owned())
+    })?;
+    let generated = orchestrator::generate_shelf_starters(&profile.field, &profile.speaks_to)
+        .await
+        .map_err(|error| ApiError::validation(&error.to_string()))?;
+    let Some(generated) = generated else {
+        return Ok(Json(GenerateShelfStartersResponse {
+            status: "unavailable",
+            starters: Vec::new(),
+        }));
+    };
+    let starters = state.store.record_shelf_starters(
+        &user.id,
+        &generated.starters,
+        &generated.model,
+        &generated.mode,
+        orchestrator::AI_BASELINE_POLICY_VERSION,
+        24 * 60 * 60 * 1_000,
+    )?;
+    Ok(Json(GenerateShelfStartersResponse {
+        status: "generated",
+        starters,
+    }))
+}
+
+async fn submit_shelf_starter_answer(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(starter_id): Path<String>,
+    Json(request): Json<SubmitShelfStarterAnswerRequest>,
+) -> Result<(StatusCode, Json<SubmitShelfStarterAnswerResponse>), ApiError> {
+    let user = authenticated(&state, &headers)?;
+    let response = state.store.submit_shelf_starter_answer(
+        &user.id,
+        &starter_id,
+        &request.answer,
+        request.price_krw,
+    )?;
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 async fn synthesize_answer(

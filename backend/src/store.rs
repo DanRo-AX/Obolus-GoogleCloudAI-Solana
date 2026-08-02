@@ -15,17 +15,18 @@ use thiserror::Error;
 
 use crate::{
     domain::{
-        AccountControls, AnswerIssue, BalanceSummary, ChainSettlementReceipt, ChatAnswer, Citation,
-        ContributorManifest, ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
-        CreateEvidenceEdgeRequest, CreateOpenCallRequest, CreatePaymentBundleRequest,
-        DemographicBands, DisputeCase, Document, DocumentFeedback, EarningEvent, EarningsSummary,
-        EvidenceContribution, EvidenceEdge, InterviewResponse, MemoryAccessEvent, MemoryEntry,
-        MemoryExport, OpenCall, OpenCallReservation, OpenDocumentsResponse, PaidDocument,
-        PaymentBundleQuote, PaymentBundleSnapshot, PaymentDocumentProgress,
-        PaymentDocumentSnapshot, PaymentProgress, PaymentQuote, PublicDocument,
-        RecordChainSettlementRequest, RecoveredPaidDocument, ResolveQuestionResponse,
-        ReviewDisputeRequest, ReviewDocumentFeedbackRequest, SearchFilters, Settlement,
-        SubmitAnswerResponse, SubmitDocumentFeedbackRequest, UpdatePreferencesRequest,
+        AccountControls, AiBaseline, AiBaselineDraft, AnswerIssue, BalanceSummary,
+        ChainSettlementReceipt, ChatAnswer, Citation, ContributorManifest, ContributorMemoryLink,
+        ContributorNotification, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
+        CreateOpenCallRequest, CreatePaymentBundleRequest, DemographicBands, DisputeCase, Document,
+        DocumentFeedback, EarningEvent, EarningsSummary, EvidenceContribution, EvidenceEdge,
+        InterviewResponse, LiquidityState, MemoryAccessEvent, MemoryEntry, MemoryExport, OpenCall,
+        OpenCallReservation, OpenDocumentsResponse, PaidDocument, PaymentBundleQuote,
+        PaymentBundleSnapshot, PaymentDocumentProgress, PaymentDocumentSnapshot, PaymentProgress,
+        PaymentQuote, PublicDocument, RecordChainSettlementRequest, RecoveredPaidDocument,
+        ResolveQuestionResponse, ReviewDisputeRequest, ReviewDocumentFeedbackRequest,
+        SearchFilters, Settlement, ShelfStarter, ShelfStarterDraft, SubmitAnswerResponse,
+        SubmitDocumentFeedbackRequest, SubmitShelfStarterAnswerResponse, UpdatePreferencesRequest,
         UpsertProfileRequest, UserAccount, UserProfile, WalletChallenge,
     },
     quality, seed,
@@ -77,6 +78,13 @@ pub struct PendingEmail {
     pub recipient: String,
     pub subject: String,
     pub body: String,
+}
+
+pub struct AiArtifactMetadata<'a> {
+    pub model: &'a str,
+    pub mode: &'a str,
+    pub policy_version: &'a str,
+    pub ttl_ms: u64,
 }
 
 #[derive(Clone)]
@@ -505,8 +513,38 @@ impl Store {
                 id TEXT PRIMARY KEY,
                 question TEXT NOT NULL,
                 decision TEXT NOT NULL,
+                liquidity_state TEXT NOT NULL DEFAULT 'human_covered',
                 payment_token_hash TEXT,
                 created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_baselines (
+                id TEXT PRIMARY KEY,
+                query_id TEXT NOT NULL UNIQUE REFERENCES queries(id) ON DELETE CASCADE,
+                orientation TEXT NOT NULL,
+                general_points_json TEXT NOT NULL,
+                human_gaps_json TEXT NOT NULL,
+                questions_for_people_json TEXT NOT NULL,
+                model TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                policy_version TEXT NOT NULL,
+                generated_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS shelf_starters (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                prompt TEXT NOT NULL,
+                rationale TEXT NOT NULL,
+                category TEXT NOT NULL,
+                model TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                policy_version TEXT NOT NULL,
+                generated_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                answered_at INTEGER,
+                document_id TEXT REFERENCES documents(id) ON DELETE SET NULL
             );
 
             CREATE TABLE IF NOT EXISTS evidence_edges (
@@ -879,9 +917,19 @@ impl Store {
                 ON contributor_notifications(user_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_email_outbox_pending
                 ON email_outbox(status, created_at ASC);
+            CREATE INDEX IF NOT EXISTS idx_ai_baselines_expiry
+                ON ai_baselines(expires_at);
+            CREATE INDEX IF NOT EXISTS idx_shelf_starters_user
+                ON shelf_starters(user_id, answered_at, expires_at DESC);
             "#,
         )?;
         add_column_if_missing(&connection, "queries", "payment_token_hash", "TEXT")?;
+        add_column_if_missing(
+            &connection,
+            "queries",
+            "liquidity_state",
+            "TEXT NOT NULL DEFAULT 'human_covered'",
+        )?;
         add_column_if_missing(
             &connection,
             "memory_entries",
@@ -1242,12 +1290,14 @@ impl Store {
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
         transaction.execute(
-            "INSERT INTO queries (id, question, decision, payment_token_hash, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO queries
+             (id, question, decision, liquidity_state, payment_token_hash, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 response.query_id,
                 question,
                 format!("{:?}", response.decision).to_lowercase(),
+                liquidity_state_name(response.liquidity_state),
                 payment_token_hash,
                 as_i64(now_ms())?
             ],
@@ -1266,6 +1316,339 @@ impl Store {
         }
         transaction.commit()?;
         Ok(())
+    }
+
+    /// Returns the server-owned question and a still-live cached baseline.
+    /// Human-covered queries are rejected before any model call can happen.
+    pub fn ai_baseline_context(
+        &self,
+        query_id: &str,
+        payment_token_hash: &str,
+    ) -> Result<(String, Option<AiBaseline>), StoreError> {
+        let query_id = query_id.trim();
+        let connection = self.connection()?;
+        require_query_access(&connection, query_id, payment_token_hash)?;
+        let (question, liquidity_state) = connection
+            .query_row(
+                "SELECT question, liquidity_state FROM queries WHERE id = ?1",
+                [query_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("query"))?;
+        if liquidity_state == "human_covered" {
+            return Err(StoreError::Conflict(
+                "human coverage is sufficient; AI liquidity is disabled".to_owned(),
+            ));
+        }
+        let baseline = load_ai_baseline(&connection, query_id, now_ms())?;
+        Ok((question, baseline))
+    }
+
+    pub fn record_ai_baseline(
+        &self,
+        query_id: &str,
+        payment_token_hash: &str,
+        draft: &AiBaselineDraft,
+        metadata: &AiArtifactMetadata<'_>,
+    ) -> Result<AiBaseline, StoreError> {
+        let query_id = query_id.trim();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        require_query_access(&transaction, query_id, payment_token_hash)?;
+        let liquidity_state = transaction
+            .query_row(
+                "SELECT liquidity_state FROM queries WHERE id = ?1",
+                [query_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("query"))?;
+        if liquidity_state == "human_covered" {
+            return Err(StoreError::Conflict(
+                "human coverage is sufficient; AI liquidity is disabled".to_owned(),
+            ));
+        }
+        let generated_at = now_ms();
+        let expires_at = generated_at.saturating_add(metadata.ttl_ms.max(60_000));
+        transaction.execute(
+            "INSERT INTO ai_baselines
+             (id, query_id, orientation, general_points_json, human_gaps_json,
+              questions_for_people_json, model, mode, policy_version, generated_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(query_id) DO UPDATE SET
+               id = excluded.id,
+               orientation = excluded.orientation,
+               general_points_json = excluded.general_points_json,
+               human_gaps_json = excluded.human_gaps_json,
+               questions_for_people_json = excluded.questions_for_people_json,
+               model = excluded.model,
+               mode = excluded.mode,
+               policy_version = excluded.policy_version,
+               generated_at = excluded.generated_at,
+               expires_at = excluded.expires_at
+             WHERE ai_baselines.expires_at <= ?10",
+            params![
+                new_id("baseline"),
+                query_id,
+                draft.orientation.trim(),
+                serde_json::to_string(&draft.general_points)
+                    .expect("AI baseline points are serialisable"),
+                serde_json::to_string(&draft.human_gaps)
+                    .expect("AI baseline gaps are serialisable"),
+                serde_json::to_string(&draft.questions_for_people)
+                    .expect("AI baseline questions are serialisable"),
+                metadata.model.trim(),
+                metadata.mode.trim(),
+                metadata.policy_version.trim(),
+                as_i64(generated_at)?,
+                as_i64(expires_at)?,
+            ],
+        )?;
+        transaction.commit()?;
+        load_ai_baseline(&connection, query_id, generated_at)?
+            .ok_or_else(|| StoreError::Validation("AI baseline was not persisted".to_owned()))
+    }
+
+    pub fn list_shelf_starters(&self, user_id: &str) -> Result<Vec<ShelfStarter>, StoreError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT id, prompt, rationale, category, generated_at, expires_at
+             FROM shelf_starters
+             WHERE user_id = ?1 AND answered_at IS NULL AND expires_at > ?2
+             ORDER BY generated_at DESC LIMIT 3",
+        )?;
+        Ok(statement
+            .query_map(params![user_id, as_i64(now_ms())?], shelf_starter_from_row)?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn record_shelf_starters(
+        &self,
+        user_id: &str,
+        drafts: &[ShelfStarterDraft],
+        model: &str,
+        mode: &str,
+        policy_version: &str,
+        ttl_ms: u64,
+    ) -> Result<Vec<ShelfStarter>, StoreError> {
+        if drafts.len() != 3 {
+            return Err(StoreError::Validation(
+                "exactly three shelf starters are required".to_owned(),
+            ));
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let profile = load_profile(&transaction, user_id)?.ok_or_else(|| {
+            StoreError::Conflict("complete onboarding before building your shelf".to_owned())
+        })?;
+        let generated_at = now_ms();
+        let expires_at = generated_at.saturating_add(ttl_ms.max(60_000));
+        transaction.execute(
+            "DELETE FROM shelf_starters
+             WHERE user_id = ?1 AND answered_at IS NULL",
+            [user_id],
+        )?;
+        for draft in drafts {
+            if !profile.speaks_to.contains(&draft.category)
+                || !CATEGORY_IDS.contains(&draft.category.as_str())
+                || draft.prompt.trim().chars().count() < 20
+                || draft.prompt.chars().count() > 400
+            {
+                return Err(StoreError::Validation(
+                    "AI shelf starter is outside the contributor profile".to_owned(),
+                ));
+            }
+            transaction.execute(
+                "INSERT INTO shelf_starters
+                 (id, user_id, prompt, rationale, category, model, mode, policy_version,
+                  generated_at, expires_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    new_id("starter"),
+                    user_id,
+                    draft.prompt.trim(),
+                    draft.rationale.trim(),
+                    draft.category,
+                    model.trim(),
+                    mode.trim(),
+                    policy_version.trim(),
+                    as_i64(generated_at)?,
+                    as_i64(expires_at)?,
+                ],
+            )?;
+        }
+        transaction.commit()?;
+        drop(connection);
+        self.list_shelf_starters(user_id)
+    }
+
+    pub fn submit_shelf_starter_answer(
+        &self,
+        user_id: &str,
+        starter_id: &str,
+        answer: &str,
+        price_krw: u64,
+    ) -> Result<SubmitShelfStarterAnswerResponse, StoreError> {
+        if answer.trim().is_empty() || answer.chars().count() > 10_000 {
+            return Err(StoreError::Validation(
+                "answer must contain 1 to 10000 characters".to_owned(),
+            ));
+        }
+        if !(5..=10_000).contains(&price_krw) {
+            return Err(StoreError::Validation(
+                "future open price must be between ₩5 and ₩10,000".to_owned(),
+            ));
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let strikes = transaction.query_row(
+            "SELECT COUNT(*) FROM memory_entries WHERE user_id = ?1 AND status = 'voided'",
+            [user_id],
+            |row| as_usize(row.get(0)?),
+        )?;
+        if strikes >= STRIKE_LIMIT {
+            return Err(StoreError::Conflict(
+                "this account is suspended after three strikes".to_owned(),
+            ));
+        }
+        let profile = load_profile(&transaction, user_id)?.ok_or_else(|| {
+            StoreError::Conflict("complete onboarding before building your shelf".to_owned())
+        })?;
+        let now = now_ms();
+        let starter = transaction
+            .query_row(
+                "SELECT prompt, category FROM shelf_starters
+                 WHERE id = ?1 AND user_id = ?2 AND answered_at IS NULL AND expires_at > ?3",
+                params![starter_id, user_id, as_i64(now)?],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("active shelf starter"))?;
+        let mut issues = quality::assess(&starter.0, answer);
+        let mut prior = transaction.prepare(
+            "SELECT answer FROM memory_entries WHERE user_id = ?1 AND status = 'settled' LIMIT 100",
+        )?;
+        let duplicate = prior
+            .query_map([user_id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|existing| quality::near_duplicate(existing, answer));
+        drop(prior);
+        if duplicate {
+            issues.push(AnswerIssue {
+                rule: "Duplicate answer".to_owned(),
+                detail: "This substantially duplicates an answer already stored in your memory."
+                    .to_owned(),
+            });
+        }
+        if let Some(issue) = issues.first() {
+            return Err(StoreError::Validation(format!(
+                "{}: {}",
+                issue.rule, issue.detail
+            )));
+        }
+
+        let document_id = new_id("md");
+        let handle = handle_from_id(&document_id);
+        let memory_id = new_id("memory");
+        let reliability = author_reliability(&transaction, user_id)?;
+        let shelf = format!("{} field notes", starter.1);
+        let content_hash = sha256_hex(answer.trim());
+        let importance = memory_importance(&starter.0, answer, &[]);
+        insert_document(
+            &transaction,
+            &Document {
+                id: document_id.clone(),
+                handle: handle.clone(),
+                author_id: user_id.to_owned(),
+                shelf_id: slug(&shelf),
+                shelf: shelf.clone(),
+                category: starter.1.clone(),
+                content: answer.trim().to_owned(),
+                tags: starter
+                    .0
+                    .split_whitespace()
+                    .take(12)
+                    .map(|term| term.trim_matches(|c: char| !c.is_alphanumeric()).to_owned())
+                    .filter(|term| !term.is_empty())
+                    .collect(),
+                price_krw,
+                age_days: 0,
+                quality_score: quality::quality_score(&starter.0, answer),
+                reliability_score: reliability,
+                locked: false,
+                demographics: Some(DemographicBands {
+                    age_band: profile.age_band.clone(),
+                    region: profile.region.clone(),
+                    household: profile.household.clone(),
+                    field: profile.field.clone(),
+                }),
+            },
+            now,
+        )?;
+        transaction.execute(
+            "INSERT INTO memory_entries
+             (id, user_id, document_id, question, answer, shelf, earned_krw, created_at,
+              via, status, flags_json, interview_json, memory_type, importance,
+              reliability_score, content_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, 'Shelf starter', 'settled',
+                     '[]', '[]', 'observation', ?8, ?9, ?10)",
+            params![
+                memory_id,
+                user_id,
+                document_id,
+                starter.0,
+                answer.trim(),
+                shelf,
+                as_i64(now)?,
+                importance,
+                reliability,
+                content_hash,
+            ],
+        )?;
+        transaction.execute(
+            "UPDATE shelf_starters SET answered_at = ?1, document_id = ?2 WHERE id = ?3",
+            params![as_i64(now)?, document_id, starter_id],
+        )?;
+        let updated_reliability = author_reliability(&transaction, user_id)?;
+        transaction.execute(
+            "UPDATE memory_entries SET reliability_score = ?1 WHERE id = ?2",
+            params![updated_reliability, memory_id],
+        )?;
+        transaction.execute(
+            "UPDATE documents SET reliability_score = ?1 WHERE author_id = ?2",
+            params![updated_reliability, user_id],
+        )?;
+        maybe_create_reflection(&transaction, user_id, now, updated_reliability)?;
+        transaction.commit()?;
+
+        Ok(SubmitShelfStarterAnswerResponse {
+            document_handle: handle,
+            memory: MemoryEntry {
+                id: memory_id,
+                question: starter.0,
+                answer: answer.trim().to_owned(),
+                shelf,
+                earned: 0,
+                created_at: now,
+                via: "Shelf starter".to_owned(),
+                status: "settled".to_owned(),
+                flags: Vec::new(),
+                rating: None,
+                dispute_status: None,
+                interview_responses: Vec::new(),
+                memory_type: "observation".to_owned(),
+                importance,
+                reliability_score: updated_reliability,
+                content_hash,
+                version: 1,
+                locked: false,
+                access_count: 0,
+                last_accessed_at: None,
+                source_ids: Vec::new(),
+            },
+        })
     }
 
     pub fn payment_progress(
@@ -4746,6 +5129,93 @@ fn require_query_access(
     Ok(())
 }
 
+fn liquidity_state_name(state: LiquidityState) -> &'static str {
+    match state {
+        LiquidityState::AiLiquidityOnly => "ai_liquidity_only",
+        LiquidityState::HybridCoverage => "hybrid_coverage",
+        LiquidityState::HumanCovered => "human_covered",
+    }
+}
+
+fn load_ai_baseline(
+    connection: &Connection,
+    query_id: &str,
+    now: u64,
+) -> Result<Option<AiBaseline>, StoreError> {
+    type StoredBaseline = (
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        u64,
+        u64,
+    );
+    let stored = connection
+        .query_row(
+            "SELECT id, orientation, general_points_json, human_gaps_json,
+                    questions_for_people_json, model, mode, policy_version,
+                    generated_at, expires_at
+             FROM ai_baselines
+             WHERE query_id = ?1 AND expires_at > ?2",
+            params![query_id, as_i64(now)?],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    as_u64(row.get(8)?)?,
+                    as_u64(row.get(9)?)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some(stored) = stored else {
+        return Ok(None);
+    };
+    let (
+        id,
+        orientation,
+        general_points_json,
+        human_gaps_json,
+        questions_for_people_json,
+        model,
+        mode,
+        policy_version,
+        generated_at,
+        expires_at,
+    ): StoredBaseline = stored;
+    let parse_list = |json: &str| {
+        serde_json::from_str::<Vec<String>>(json)
+            .map_err(|_| StoreError::Validation("stored AI baseline is malformed".to_owned()))
+    };
+    Ok(Some(AiBaseline {
+        id,
+        query_id: query_id.to_owned(),
+        kind: "ai_baseline",
+        orientation,
+        general_points: parse_list(&general_points_json)?,
+        human_gaps: parse_list(&human_gaps_json)?,
+        questions_for_people: parse_list(&questions_for_people_json)?,
+        model,
+        mode,
+        policy_version,
+        generated_at,
+        expires_at,
+        price_krw: 0,
+        sellable: false,
+        counts_as_human_coverage: false,
+    }))
+}
+
 fn production_environment() -> bool {
     std::env::var("OPENSHELF_ENV").ok().is_some_and(|value| {
         matches!(
@@ -5333,6 +5803,20 @@ fn notification_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Contributo
         open_call_id: row.get(4)?,
         created_at: as_u64(row.get(5)?)?,
         read_at: row.get::<_, Option<i64>>(6)?.map(as_u64).transpose()?,
+    })
+}
+
+fn shelf_starter_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ShelfStarter> {
+    Ok(ShelfStarter {
+        id: row.get(0)?,
+        prompt: row.get(1)?,
+        rationale: row.get(2)?,
+        category: row.get(3)?,
+        source: "ai_interview_prompt",
+        buyer_waiting: false,
+        guaranteed_reward_krw: 0,
+        generated_at: as_u64(row.get(4)?)?,
+        expires_at: as_u64(row.get(5)?)?,
     })
 }
 
@@ -6356,16 +6840,19 @@ mod tests {
 
     use crate::{
         domain::{
-            CorrectMemoryRequest, CreateEvidenceEdgeRequest, CreateOpenCallRequest,
-            CreatePaymentBundleRequest, Decision, EvidenceContribution, InterviewResponse,
-            RecordChainSettlementRequest, ResolveQuestionRequest, ReviewDisputeRequest,
-            ReviewDocumentFeedbackRequest, SearchFilters, SubmitAnswerResponse,
-            SubmitDocumentFeedbackRequest, UpdatePreferencesRequest, UpsertProfileRequest,
+            AiBaselineDraft, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
+            CreateOpenCallRequest, CreatePaymentBundleRequest, Decision, EvidenceContribution,
+            InterviewResponse, LiquidityState, RecordChainSettlementRequest,
+            ResolveQuestionRequest, ReviewDisputeRequest, ReviewDocumentFeedbackRequest,
+            SearchFilters, ShelfStarterDraft, SubmitAnswerResponse, SubmitDocumentFeedbackRequest,
+            UpdatePreferencesRequest, UpsertProfileRequest,
         },
         search::Resolver,
     };
 
-    use super::{LOGIN_FAILURE_LIMIT, PaymentQuotePolicy, Store, StoreError, now_ms};
+    use super::{
+        AiArtifactMetadata, LOGIN_FAILURE_LIMIT, PaymentQuotePolicy, Store, StoreError, now_ms,
+    };
 
     fn create_svalbard_call(store: &Store, owner: &str, target: usize) -> crate::domain::OpenCall {
         ensure_user(store, owner);
@@ -7563,6 +8050,151 @@ mod tests {
         assert_eq!(auto.answer, strong_answer());
         assert_eq!(auto.earned, second.unit_price);
         assert_eq!(auto.source_ids, vec![submitted.memory.id]);
+    }
+
+    #[test]
+    fn ai_liquidity_is_ephemeral_and_never_enters_the_human_index() {
+        let store = Store::in_memory().unwrap();
+        let documents_before = store.documents().unwrap().len();
+        let question = "How should someone generally evaluate a new kind of local workspace?";
+        let resolver = Resolver::new(store.documents().unwrap());
+        let response = resolver
+            .resolve(ResolveQuestionRequest {
+                question: question.to_owned(),
+                requested_documents: 5,
+                budget_krw: None,
+                filters: SearchFilters::default(),
+            })
+            .unwrap();
+        assert_eq!(response.liquidity_state, LiquidityState::AiLiquidityOnly);
+        assert!(response.ai_baseline_eligible);
+        let token_hash = "ab".repeat(32);
+        store
+            .record_resolution(question, &response, Some(&token_hash))
+            .unwrap();
+        let (_, cached) = store
+            .ai_baseline_context(&response.query_id, &token_hash)
+            .unwrap();
+        assert!(cached.is_none());
+
+        let baseline = store
+            .record_ai_baseline(
+                &response.query_id,
+                &token_hash,
+                &AiBaselineDraft {
+                    orientation: "Workspaces are generally evaluated through access, comfort, and operating rules."
+                        .to_owned(),
+                    general_points: vec!["Compare noise, seating, power, and time limits."
+                        .to_owned()],
+                    human_gaps: vec![
+                        "Recent crowding and staff practice require a firsthand visitor."
+                            .to_owned(),
+                    ],
+                    questions_for_people: vec![
+                        "When did you last stay there for more than two hours?".to_owned(),
+                    ],
+                },
+                &AiArtifactMetadata {
+                    model: "gemini-test",
+                    mode: "test",
+                    policy_version: "general-liquidity-v1",
+                    ttl_ms: 60_000,
+                },
+            )
+            .unwrap();
+        assert_eq!(baseline.price_krw, 0);
+        assert!(!baseline.sellable);
+        assert!(!baseline.counts_as_human_coverage);
+        assert_eq!(store.documents().unwrap().len(), documents_before);
+
+        let (_, cached) = store
+            .ai_baseline_context(&response.query_id, &token_hash)
+            .unwrap();
+        assert_eq!(cached.unwrap().id, baseline.id);
+    }
+
+    #[test]
+    fn sufficient_human_supply_disables_ai_liquidity_even_when_budget_blocks_purchase() {
+        let store = Store::in_memory().unwrap();
+        let question = "Where do Seongsu residents eat weekday lunch without a long queue?";
+        let response = Resolver::new(store.documents().unwrap())
+            .resolve(ResolveQuestionRequest {
+                question: question.to_owned(),
+                requested_documents: 1,
+                budget_krw: Some(0),
+                filters: SearchFilters::default(),
+            })
+            .unwrap();
+        assert_eq!(response.liquidity_state, LiquidityState::HumanCovered);
+        assert!(!response.ai_baseline_eligible);
+        let token_hash = "cd".repeat(32);
+        store
+            .record_resolution(question, &response, Some(&token_hash))
+            .unwrap();
+        let error = store
+            .ai_baseline_context(&response.query_id, &token_hash)
+            .unwrap_err();
+        assert!(error.to_string().contains("AI liquidity is disabled"));
+    }
+
+    #[test]
+    fn ai_starter_is_only_a_prompt_until_a_human_creates_the_sellable_document() {
+        let store = Store::in_memory().unwrap();
+        onboard(&store, "starter-contributor");
+        let documents_before = store.documents().unwrap().len();
+        let drafts = vec![
+            ShelfStarterDraft {
+                prompt: "Think of your latest winter field trip. Which boots did you use, when, and what changed after several hours?".to_owned(),
+                rationale: "A delayed field outcome requires firsthand experience.".to_owned(),
+                category: "travel".to_owned(),
+            },
+            ShelfStarterDraft {
+                prompt: "Describe the last on-call alert you removed and what happened during the following 30 days.".to_owned(),
+                rationale: "The operational tradeoff cannot be generated honestly.".to_owned(),
+                category: "engineering".to_owned(),
+            },
+            ShelfStarterDraft {
+                prompt: "What changed after you moved away from Seoul while keeping the same work, including one concrete weekly routine?".to_owned(),
+                rationale: "A lived routine adds evidence beyond general guidance.".to_owned(),
+                category: "life".to_owned(),
+            },
+        ];
+        let starters = store
+            .record_shelf_starters(
+                "starter-contributor",
+                &drafts,
+                "gemini-test",
+                "test",
+                "general-liquidity-v1",
+                60_000,
+            )
+            .unwrap();
+        assert_eq!(starters.len(), 3);
+        assert!(starters.iter().all(|starter| !starter.buyer_waiting));
+        assert!(
+            starters
+                .iter()
+                .all(|starter| starter.guaranteed_reward_krw == 0)
+        );
+        assert_eq!(store.documents().unwrap().len(), documents_before);
+
+        let travel = starters
+            .iter()
+            .find(|starter| starter.category == "travel")
+            .unwrap();
+        let submitted = store
+            .submit_shelf_starter_answer("starter-contributor", &travel.id, strong_answer(), 300)
+            .unwrap();
+        assert_eq!(submitted.memory.via, "Shelf starter");
+        assert_eq!(submitted.memory.earned, 0);
+        assert_eq!(store.documents().unwrap().len(), documents_before + 1);
+        assert!(
+            !store
+                .list_shelf_starters("starter-contributor")
+                .unwrap()
+                .iter()
+                .any(|starter| starter.id == travel.id)
+        );
     }
 
     #[test]

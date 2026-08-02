@@ -108,6 +108,98 @@ pub enum DecisionReason {
     BudgetTooLow,
 }
 
+/// Human supply and AI liquidity are deliberately separate. This state is
+/// computed only from human documents; an AI baseline can never promote a
+/// question into a covered state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LiquidityState {
+    AiLiquidityOnly,
+    HybridCoverage,
+    HumanCovered,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiBaselineDraft {
+    pub orientation: String,
+    pub general_points: Vec<String>,
+    pub human_gaps: Vec<String>,
+    pub questions_for_people: Vec<String>,
+}
+
+/// An ephemeral, zero-price market-liquidity response. It is not a Document,
+/// cannot enter ranking/authority/memory, and never counts toward a call.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiBaseline {
+    pub id: String,
+    pub query_id: String,
+    pub kind: &'static str,
+    pub orientation: String,
+    pub general_points: Vec<String>,
+    pub human_gaps: Vec<String>,
+    pub questions_for_people: Vec<String>,
+    pub model: String,
+    pub mode: String,
+    pub policy_version: String,
+    pub generated_at: u64,
+    pub expires_at: u64,
+    pub price_krw: u64,
+    pub sellable: bool,
+    pub counts_as_human_coverage: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateAiBaselineResponse {
+    pub status: &'static str,
+    pub baseline: Option<AiBaseline>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShelfStarterDraft {
+    pub prompt: String,
+    pub rationale: String,
+    pub category: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShelfStarter {
+    pub id: String,
+    pub prompt: String,
+    pub rationale: String,
+    pub category: String,
+    pub source: &'static str,
+    pub buyer_waiting: bool,
+    pub guaranteed_reward_krw: u64,
+    pub generated_at: u64,
+    pub expires_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateShelfStartersResponse {
+    pub status: &'static str,
+    pub starters: Vec<ShelfStarter>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitShelfStarterAnswerRequest {
+    pub answer: String,
+    pub price_krw: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitShelfStarterAnswerResponse {
+    pub memory: MemoryEntry,
+    pub document_handle: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScoreBreakdown {
@@ -160,6 +252,8 @@ pub struct ResolveQuestionResponse {
     pub payment_access_token: Option<String>,
     pub decision: Decision,
     pub reason: DecisionReason,
+    pub liquidity_state: LiquidityState,
+    pub ai_baseline_eligible: bool,
     pub requested_documents: usize,
     pub candidate_count: usize,
     pub matches: Vec<MatchedDocument>,

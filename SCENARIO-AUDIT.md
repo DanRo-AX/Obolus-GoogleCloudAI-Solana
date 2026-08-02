@@ -16,6 +16,8 @@ Updated: 2026-08-03
 | Departing user | Remove their account | Authenticated session | Open reservations refunded, sessions revoked, profile/memory/document text deleted, financial rows anonymized | My memory → Delete account |
 | Browser-wallet buyer | Inspect and pay for existing passages | Phantom on Solana Devnet with SOL and Devnet USDC | Exact direct quote for one document or one committed bundle for many; passages stay closed until settlement | Chat payment preview |
 | Autonomous buyer agent | Open documents within a policy without repeated human approval | Policy-limited wallet or spending delegation | **Not implemented yet**; the current Phantom path is intentionally interactive | Agent-readable mode (preview only) |
+| Buyer before human supply | Get immediate orientation without mistaking AI for experience | A question with zero/thin human coverage | General baseline is zero-price, expiring, non-sellable, excluded from human HIT/authority/Memory; human gaps stay open | Chat → AI general baseline → Ask people |
+| Contributor before buyer demand | Build useful supply without a fake buyer or fake bounty | Authenticated contributor profile | Gemini creates prompts only; no buyer/upfront reward is represented; only the quality-checked human answer becomes a priced document | Dashboard → Shelf starters |
 
 ## Scenario checks
 
@@ -99,6 +101,23 @@ Updated: 2026-08-03
   answer only above the strict similarity and policy boundary; otherwise the
   contributor receives a fresh interview notification.
 
+### AI market liquidity
+
+- Human documents are searched first. Human candidate count alone produces
+  `ai_liquidity_only`, `hybrid_coverage`, or `human_covered`.
+- A human-covered query cannot call the baseline endpoint, including when a low
+  buyer budget prevents purchase. AI cannot undercut available human supply.
+- A thin query can request a token-scoped Gemini baseline. It contains general
+  orientation, neutral decision factors, explicit firsthand gaps, and questions
+  for people; it contains no shelf passages and creates no `documents` row.
+- Baselines are cached for a bounded lifetime in `ai_baselines`, fixed at ₩0,
+  and marked non-sellable/non-covering in the response contract.
+- Contributor Shelf starters are explicitly generated interview prompts, not
+  open calls. They state `buyerWaiting=false` and `guaranteedRewardKrw=0`.
+- Publishing a starter runs the normal human specificity, identifier,
+  duplicate, profile, and conduct checks. Only the accepted human answer enters
+  `documents`; it starts with zero earned and can earn on future opens.
+
 ### Dispute and enforcement
 
 - One dispute can be submitted per account and requires a written rationale.
@@ -125,7 +144,9 @@ target mismatch, owner-only chat return, accepted payment, cancellation refund,
 quality voiding, duplicate/own-answer rejection, two- and three-strike rules,
 pending/approved/rejected disputes, idempotent document opens, migration, and
 account deletion, active-slot contention/release, contributor notification and
-email-outbox creation, strict Memory-agent reuse, plus exact bundle creation, query-token rejection, quote
+email-outbox creation, strict Memory-agent reuse, AI-baseline isolation and
+human-coverage shutoff, AI-interview prompt validation, Shelf-starter human
+publication, plus exact bundle creation, query-token rejection, quote
 idempotency, one-signature settlement, multi-document recovery, per-document
 feedback, and per-beneficiary claim accounting. Frontend verification consists of TypeScript production build,
 Oxlint, and end-to-end Chrome walkthroughs of registration, onboarding, explicit

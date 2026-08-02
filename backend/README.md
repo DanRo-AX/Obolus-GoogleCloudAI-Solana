@@ -59,6 +59,7 @@ directory. Configuration:
 | `OPENSHELF_QUOTE_TTL_MS` | `300000` | Quote lifetime |
 | `OPENSHELF_ALLOW_DEMO_OPEN` | development-dependent | Enable the non-x402 demo opener; keep false publicly |
 | `OPENSHELF_GEMINI_MODEL` | `gemini-2.5-flash` | Evidence synthesis model |
+| `OPENSHELF_AI_BASELINE_TTL_MS` | `21600000` | Lifetime of a zero-price general AI baseline; never a human document |
 | `OPENSHELF_VERTEX_ENDPOINT` | none | Vertex generate-content endpoint |
 | `OPENSHELF_GOOGLE_ACCESS_TOKEN` | none | Vertex bearer token |
 | `GEMINI_API_KEY` | none | Local Gemini API fallback |
@@ -88,7 +89,10 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data \
 | `POST` | `/api/v1/auth/register` `/login` `/logout` | Create, issue, or revoke an HttpOnly session |
 | `GET` | `/api/v1/auth/me` | Read the authenticated account and sandbox balance |
 | `POST` | `/api/v1/questions/resolve` | Search, rank, and return HIT/MISS plus a safe quote |
+| `POST` | `/api/v1/questions/{id}/ai-baseline` | Generate/cache general AI liquidity only when human coverage is thin (query token required) |
 | `POST` | `/api/v1/answers/synthesize` | Synthesize only server-proven opened passages (query token required) |
+| `GET/POST` | `/api/v1/shelf-starters` | List or explicitly generate AI interview prompts; never fake buyers or bounties |
+| `POST` | `/api/v1/shelf-starters/{id}/answer` | Turn a quality-checked human answer—not the AI prompt—into a priced document |
 | `GET` | `/api/v1/questions/{id}/payment-progress` | Reconcile settled/quoted/unpaid handles for a payer |
 | `GET` | `/api/v1/questions/{id}/paid-documents/{handle}` | Recover a previously settled passage without paying again |
 | `POST` | `/api/v1/questions/{id}/paid-documents/{handle}/feedback` | Record paid-buyer feedback or a report |
@@ -151,6 +155,22 @@ and new questions score at least 82% similar, the category and demographic
 target match, the old document remains unlocked, its price floor is met, and
 the account is below the two-strike restriction. Otherwise the call is sent to
 the person for a fresh interview.
+
+AI market liquidity is a separate provenance lane. A resolve response reports
+`ai_liquidity_only`, `hybrid_coverage`, or `human_covered` from human supply
+alone. Only the first two permit the token-scoped baseline endpoint. The model
+returns general orientation, stable decision factors, human evidence gaps, and
+questions for people under `general-liquidity-v1`; a deterministic post-check
+rejects first-person or direct recommendation language. The result lives in
+`ai_baselines`, expires, costs zero, and has no path into documents, authority,
+memory, matching, or settlement.
+
+Shelf starters cover the inverse cold start. Gemini receives only the
+contributor's broad field and opted-in categories and returns prompts, not
+answers. They live in `shelf_starters` with `buyerWaiting=false` and
+`guaranteedRewardKrw=0`. A human may answer one and choose a future per-open
+price; normal specificity, identifier, duplicate, profile, and suspension
+checks run before Rust creates a document with `via = Shelf starter`.
 
 Register and keep the cookie in a local cookie jar:
 

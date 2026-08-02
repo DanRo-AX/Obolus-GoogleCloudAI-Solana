@@ -45,7 +45,7 @@ export const LIFECYCLE = [
   { n: 1, step: 'Ask', what: 'A question goes into the chat box.', pivot: false },
   { n: 2, step: 'Search the shelves', what: 'People’s documents, not the web.', pivot: false },
   { n: 3, step: 'Rank by similarity', what: 'The closest few, never the whole shelf.', pivot: false },
-  { n: 4, step: 'Hit or miss', what: 'A hit ends as search. A miss commissions the answer.', pivot: true },
+  { n: 4, step: 'Human coverage', what: 'A hit sells evidence. A miss gets an AI baseline and keeps the human gap open.', pivot: true },
   { n: 5, step: 'Open call', what: 'Price per answer, posted to the dashboard.', pivot: false },
   { n: 6, step: 'x402 settlement', what: 'Only the documents actually opened are billed.', pivot: false },
   { n: 7, step: 'Accrue', what: 'The answer joins the author’s memory. Next time it auto-matches.', pivot: false },
@@ -61,7 +61,7 @@ export const OPEN_PROBLEMS: OpenProblem[] = [
   {
     status: 'Critical',
     title: 'How the shelves get filled at launch',
-    body: 'An empty shelf leaves the librarian nothing to do. We know the first documents have to be living-level detail rather than anything financial, and that deletion has to burn them. We do not know how many documents make an answer, or how the first hundred people arrive.',
+    body: 'An empty shelf now has a liquidity bridge, not fake inventory. Questioners receive a free general AI baseline while the human gap stays open; contributors can ask Gemini for interview prompts with no fake buyer or bounty. The remaining problem is distribution: how the first hundred people arrive and which narrow market reaches density first.',
   },
   {
     status: 'Open',
@@ -139,7 +139,7 @@ export const SECTIONS: Section[] = [
     blocks: [
       {
         kind: 'p',
-        text: 'A language model fills gaps with the most probable continuation. Give it a thin prompt and it returns the average of everything it has read — fluent, plausible, and worth nothing you could not have guessed.',
+        text: 'A language model is good at the average: stable background, common criteria, and the questions worth asking next. That makes it useful as free liquidity, but not as a person or a sellable source.',
       },
       {
         kind: 'p',
@@ -175,7 +175,7 @@ export const SECTIONS: Section[] = [
   {
     n: '03',
     eyebrow: 'The branch',
-    title: 'If the shelves come up empty, it commissions the answer',
+    title: 'If the shelves come up empty, AI bridges the wait and people fill the gap',
     blocks: [
       {
         kind: 'p',
@@ -183,13 +183,14 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'p',
-        text: 'A hit behaves like search: open the closest documents, quote them, settle, done. A miss does not return “no results”. It offers to go and get them.',
+        text: 'A hit behaves like search: open the closest human documents, quote them, settle, done. A miss returns a free general AI baseline, marks what still requires firsthand evidence, and offers to go and get it.',
       },
       {
         kind: 'code',
         caption: 'The miss path, as the agent says it',
         lines: [
-          '“Nobody has covered this yet. Want me to ask people?”',
+          '“Here is the general baseline. It is AI, free, and not evidence.”',
+          '“These current, local details still need people. Want me to ask?”',
           '“How many people?”',
           '“What do you want to pay per answer?”',
           '→ call posted · answers return to this chat',

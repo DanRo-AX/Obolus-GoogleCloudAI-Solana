@@ -14,7 +14,7 @@ export const HOME_FAQ: Faq[] = [
   },
   {
     q: 'Why not just ask a general AI?',
-    a: 'A general AI fills the blank with conditional probability. Ask it “what do people in Paris like?” and it assembles the most plausible sentence out of what it learned about the city. Cafes, bakeries, the Seine. Not wrong, but nothing you could not have guessed.\n\nOPENSHELF opens only the MDs of people who actually live in Paris, and pays each of them for the open. If the answer is not on the shelves, it posts an open call to Paris residents and asks.\n\nThat is also why MDs are left rough on purpose. The more the sentences get polished, the closer they drift back to what a general AI would have said. Raw, specific records are the ones that sell.'
+    a: 'A general AI is useful for the part that is genuinely general. When human coverage is empty, OPENSHELF can show a free AI baseline with stable background, decision criteria, and a clear list of what still needs firsthand evidence. It never presents that output as somebody’s experience.\n\nAI baselines have zero price, expire, cannot be resold, and never enter Shelf ranking, authority, or Memory. If enough human documents already exist, the server switches the baseline off instead of letting free AI undercut them.\n\nOPENSHELF pays for the scarce layer: what people actually did, when they did it, what changed, and where their experiences disagree. Gemini supplies liquidity and organizes purchased evidence; people create the asset.'
   },
   {
     q: 'How is this different from a survey panel?',
@@ -26,7 +26,7 @@ export const HOME_FAQ: Faq[] = [
   },
   {
     q: 'What happens if the shelves are empty at launch?',
-    a: 'This is the hardest problem we have. We have not solved it, and we are not going to talk around it here. When the shelves are empty, the librarian has nothing to do.\n\nEarly on, most questions will land on “this has not been researched yet.” That means posting an open call and waiting for answers, so OPENSHELF at the start is not an instant-answer service. It is closer to asking a question and waiting hours or days.\n\nThe direction we are looking at is narrow rather than wide. Build density in one region or one subject first, and once search starts working inside it, widen sideways. Which subject to start with, and how to gather the first respondents, is still undecided.'
+    a: 'The user does not get a blank page. Gemini provides a clearly labelled general baseline immediately, then shows the specific local, current, or experiential gaps it cannot honestly fill. The question can continue as an open call without pretending the AI result is human coverage.\n\nIf contributors arrive before buyers, Gemini acts as an interviewer instead. It creates optional Shelf starter prompts from the contributor’s broad fields, but no fake buyer or bounty. Only the person’s quality-checked answer becomes a priced document and starts with zero earnings until somebody opens it.\n\nThis does not eliminate cold start; it makes it survivable. The product still needs density in a narrow region or subject, but both sides can get useful work done while that density forms.'
   },
   {
     q: 'What if the answers are careless?',

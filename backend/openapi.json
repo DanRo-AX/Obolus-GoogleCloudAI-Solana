@@ -46,6 +46,89 @@
         }
       }
     },
+    "/api/v1/questions/{queryId}/ai-baseline": {
+      "post": {
+        "summary": "Generate or reuse a zero-price general baseline only while human coverage is thin",
+        "parameters": [
+          { "$ref": "#/components/parameters/QueryId" },
+          { "$ref": "#/components/parameters/QueryToken" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Generated, cached, or explicitly unavailable AI liquidity",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AiBaselineResult" }
+              }
+            }
+          },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/shelf-starters": {
+      "get": {
+        "summary": "List active AI interview prompts for the authenticated contributor",
+        "security": [{ "sessionCookie": [] }],
+        "responses": {
+          "200": {
+            "description": "Prompts only; no buyer or reward is implied",
+            "content": {
+              "application/json": {
+                "schema": { "type": "array", "items": { "$ref": "#/components/schemas/ShelfStarter" } }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Explicitly ask Gemini to create three contributor interview prompts",
+        "security": [{ "sessionCookie": [] }],
+        "responses": {
+          "200": {
+            "description": "Generated, cached, or unavailable prompts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["status", "starters"],
+                  "properties": {
+                    "status": { "type": "string", "enum": ["generated", "cached", "unavailable"] },
+                    "starters": { "type": "array", "items": { "$ref": "#/components/schemas/ShelfStarter" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/shelf-starters/{starterId}/answer": {
+      "post": {
+        "summary": "Publish a quality-checked human answer as a priced document",
+        "security": [{ "sessionCookie": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/StarterId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["answer", "priceKrw"],
+                "properties": {
+                  "answer": { "type": "string", "maxLength": 10000 },
+                  "priceKrw": { "type": "integer", "minimum": 5, "maximum": 10000 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Human memory and document created; earned amount starts at zero" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/v1/questions/{queryId}/payment-progress": {
       "get": {
         "summary": "Reconcile settled, quoted, and unpaid documents before retry",
@@ -376,6 +459,12 @@
         "required": true,
         "schema": { "type": "string" }
       },
+      "StarterId": {
+        "name": "starterId",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
       "Payer": {
         "name": "payer",
         "in": "query",
@@ -413,15 +502,63 @@
       },
       "Resolution": {
         "type": "object",
-        "required": ["queryId", "paymentAccessToken", "decision", "matches"],
+        "required": ["queryId", "paymentAccessToken", "decision", "liquidityState", "aiBaselineEligible", "matches"],
         "properties": {
           "queryId": { "type": "string" },
           "paymentAccessToken": { "type": "string", "description": "Returned once; persist locally for safe recovery" },
           "decision": { "type": "string", "enum": ["hit", "miss"] },
+          "liquidityState": { "type": "string", "enum": ["ai_liquidity_only", "hybrid_coverage", "human_covered"] },
+          "aiBaselineEligible": { "type": "boolean", "description": "Computed only from human supply" },
           "matches": {
             "type": "array",
             "items": { "type": "object", "description": "Payment-safe metadata; paid content is excluded" }
           }
+        }
+      },
+      "AiBaselineResult": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": { "type": "string", "enum": ["generated", "cached", "unavailable"] },
+          "baseline": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/AiBaseline" },
+              { "type": "null" }
+            ]
+          }
+        }
+      },
+      "AiBaseline": {
+        "type": "object",
+        "required": ["id", "queryId", "kind", "orientation", "generalPoints", "humanGaps", "questionsForPeople", "priceKrw", "sellable", "countsAsHumanCoverage", "expiresAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "queryId": { "type": "string" },
+          "kind": { "const": "ai_baseline" },
+          "orientation": { "type": "string" },
+          "generalPoints": { "type": "array", "items": { "type": "string" } },
+          "humanGaps": { "type": "array", "items": { "type": "string" } },
+          "questionsForPeople": { "type": "array", "items": { "type": "string" } },
+          "model": { "type": "string" },
+          "policyVersion": { "type": "string" },
+          "expiresAt": { "type": "integer" },
+          "priceKrw": { "const": 0 },
+          "sellable": { "const": false },
+          "countsAsHumanCoverage": { "const": false }
+        }
+      },
+      "ShelfStarter": {
+        "type": "object",
+        "required": ["id", "prompt", "rationale", "category", "source", "buyerWaiting", "guaranteedRewardKrw", "expiresAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "prompt": { "type": "string" },
+          "rationale": { "type": "string" },
+          "category": { "type": "string" },
+          "source": { "const": "ai_interview_prompt" },
+          "buyerWaiting": { "const": false },
+          "guaranteedRewardKrw": { "const": 0 },
+          "expiresAt": { "type": "integer" }
         }
       },
       "PaymentProgress": {
