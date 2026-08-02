@@ -13,7 +13,7 @@ test("signed retries see stable SVM payment requirements", async () => {
     network,
     amount: "7408",
     asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
-    payTo: "FhRsUMzQieS8TXacCaGhLZrFNEQrUwqGkYBVzLeiUP8H",
+    payTo: "11111111111111111111111111111111",
     maxTimeoutSeconds: 60,
     extra: {},
   };

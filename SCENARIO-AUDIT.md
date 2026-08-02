@@ -58,7 +58,7 @@ Updated: 2026-08-02
    Seongsu example currently resolves to ₩50, about 0.03704 USDC at
    ₩1,350/USDC.
 5. A failure finishes the hit/miss trace instead of leaving Step 4 spinning.
-6. The browser stores the query recovery token with the local chat, asks Rust
+6. The browser stores the query recovery token with the tab-session chat, asks Rust
    which handles already settled for the connected payer, recovers those paid
    passages, and retries only the unpaid remainder. A connected-wallet mismatch
    is stopped before a payment request is created.
@@ -129,7 +129,7 @@ mobile payment previews, and mobile navigation overlap.
   signer, confirmation/reconciliation workers, and gateway hardening.
 - Social login, email verification/recovery, abuse rate limits, observability,
   backups, and a separately staffed review operation remain deployment work.
-- Chat transcripts are browser-local; money, identity, authorization, calls,
+- Chat transcripts are tab-session local; money, identity, authorization, calls,
   answers, and memory are server-owned.
 
 ## Remaining product and production work, in priority order

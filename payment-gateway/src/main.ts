@@ -7,19 +7,35 @@ import { createStableExactSvmServerScheme } from "./x402-svm.js";
 
 const DEVNET_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as Network;
 const DEFAULT_DEVNET_RPC_URL = "https://api.devnet.solana.com";
-const environment = env("NODE_ENV", "development").toLowerCase();
-const production = environment === "production";
+const environment = env("OPENSHELF_ENV", env("NODE_ENV", "development")).toLowerCase();
+const production = ["production", "prod"].includes(environment);
 const rustApiUrl = env("RUST_API_URL", "http://127.0.0.1:8787").replace(/\/$/, "");
 const internalToken = env("OPENSHELF_INTERNAL_TOKEN", "openshelf-local-internal");
 const facilitatorUrl = env("X402_FACILITATOR_URL", "https://x402.org/facilitator");
-const network = env("X402_NETWORK", DEVNET_NETWORK) as Network;
+const network = env("X402_NETWORK", env("OPENSHELF_X402_NETWORK", DEVNET_NETWORK)) as Network;
 const rpcUrl = process.env.X402_RPC_URL?.trim() || DEFAULT_DEVNET_RPC_URL;
-const allowedOrigin = env("FRONTEND_ORIGIN", "http://localhost:4319");
+const allowedOrigin = env(
+  "FRONTEND_ORIGIN",
+  env("OPENSHELF_FRONTEND_ORIGIN", "http://localhost:4319"),
+);
 const port = integerEnv("PORT", 1402);
 const outboxPath = env("X402_OUTBOX_PATH", "x402-outbox.ndjson");
+const rpcRateLimitPerMinute = integerEnv("X402_RPC_RATE_LIMIT_PER_MINUTE", 120);
 
-if (production && ["openshelf-local-internal", "change-this-before-deploy"].includes(internalToken)) {
-  throw new Error("OPENSHELF_INTERNAL_TOKEN must be a non-default secret in production");
+if (
+  production &&
+  (internalToken.length < 32 ||
+    ["openshelf-local-internal", "change-this-before-deploy"].includes(internalToken))
+) {
+  throw new Error(
+    "OPENSHELF_INTERNAL_TOKEN must be a non-default secret of at least 32 characters in production",
+  );
+}
+if (production && !allowedOrigin.startsWith("https://")) {
+  throw new Error("FRONTEND_ORIGIN must use HTTPS in production");
+}
+if (production && rpcUrl === DEFAULT_DEVNET_RPC_URL) {
+  throw new Error("X402_RPC_URL must use a managed RPC endpoint in production");
 }
 if (booleanEnv("OPENSHELF_REQUIRE_MAINNET", false) && network === DEVNET_NETWORK) {
   throw new Error("mainnet mode cannot use the Solana Devnet network");
@@ -69,6 +85,7 @@ type OutboxRecord =
 const quotes = new Map<string, QuoteCacheEntry>();
 const pendingSettlements = new Map<string, PendingSettlement>();
 const allowedBrowserRpcMethods = new Set(["getAccountInfo", "getLatestBlockhash"]);
+const rpcRateWindows = new Map<string, { startedAt: number; count: number }>();
 
 async function internalJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${rustApiUrl}${path}`, {
@@ -266,6 +283,23 @@ app.use((request, response, next) => {
 // remain server-side and browser bursts can honor upstream Retry-After headers.
 app.post("/rpc", async (request, response, next) => {
   try {
+    if (production && request.headers.origin !== allowedOrigin) {
+      response.status(403).json({
+        jsonrpc: "2.0",
+        error: { code: -32003, message: "RPC browser origin is not allowed" },
+        id: rpcRequestId(request.body),
+      });
+      return;
+    }
+    if (!consumeRpcRateLimit(request.socket.remoteAddress ?? "unknown")) {
+      response.setHeader("retry-after", "60");
+      response.status(429).json({
+        jsonrpc: "2.0",
+        error: { code: -32005, message: "RPC proxy rate limit exceeded" },
+        id: rpcRequestId(request.body),
+      });
+      return;
+    }
     const body = request.body as unknown;
     if (!isAllowedBrowserRpcRequest(body)) {
       response.status(400).json({
@@ -389,6 +423,7 @@ app.use((error: unknown, _request: Request, response: ExpressResponse, _next: Ne
 
 await restoreOutbox();
 setInterval(() => void retryPendingSettlements(), 5_000).unref();
+setInterval(() => pruneRpcRateWindows(), 60_000).unref();
 app.listen(port, "0.0.0.0", () => {
   console.log(`OPENSHELF x402 gateway listening on http://0.0.0.0:${port}`);
 });
@@ -430,6 +465,25 @@ function rpcRequestId(body: unknown): unknown {
   return body && typeof body === "object" && !Array.isArray(body)
     ? (body as Record<string, unknown>).id ?? null
     : null;
+}
+
+function consumeRpcRateLimit(client: string): boolean {
+  const now = Date.now();
+  const current = rpcRateWindows.get(client);
+  if (!current || now - current.startedAt >= 60_000) {
+    rpcRateWindows.set(client, { startedAt: now, count: 1 });
+    return true;
+  }
+  if (current.count >= rpcRateLimitPerMinute) return false;
+  current.count += 1;
+  return true;
+}
+
+function pruneRpcRateWindows(): void {
+  const cutoff = Date.now() - 120_000;
+  for (const [client, window] of rpcRateWindows) {
+    if (window.startedAt < cutoff) rpcRateWindows.delete(client);
+  }
 }
 
 async function fetchRpcWithBackoff(body: unknown): Promise<Response> {

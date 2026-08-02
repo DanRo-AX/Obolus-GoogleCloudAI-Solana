@@ -133,14 +133,21 @@ impl Store {
         let connection = Connection::open(path)?;
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
-        Self::from_connection(connection)
+        let production = production_environment();
+        let seed_demo = env_flag("OPENSHELF_SEED_DEMO", !production);
+        if production && seed_demo {
+            return Err(StoreError::Validation(
+                "OPENSHELF_SEED_DEMO cannot be enabled in production".to_owned(),
+            ));
+        }
+        Self::from_connection(connection, seed_demo)
     }
 
     pub fn in_memory() -> Result<Self, StoreError> {
-        Self::from_connection(Connection::open_in_memory()?)
+        Self::from_connection(Connection::open_in_memory()?, true)
     }
 
-    fn from_connection(connection: Connection) -> Result<Self, StoreError> {
+    fn from_connection(connection: Connection, seed_demo: bool) -> Result<Self, StoreError> {
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -149,7 +156,9 @@ impl Store {
             connection: Arc::new(Mutex::new(connection)),
         };
         store.migrate()?;
-        store.seed()?;
+        if seed_demo {
+            store.seed()?;
+        }
         Ok(store)
     }
 
@@ -317,6 +326,14 @@ impl Store {
     pub fn ready(&self) -> Result<(), StoreError> {
         self.connection()?.query_row("SELECT 1", [], |_| Ok(()))?;
         Ok(())
+    }
+
+    pub fn contains_demo_seed_data(&self) -> Result<bool, StoreError> {
+        Ok(self.connection()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM documents WHERE author_id GLOB 'author_*')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )?)
     }
 
     pub fn create_session(
@@ -941,6 +958,7 @@ impl Store {
         &self,
         query_id: &str,
         handles: &[String],
+        payment_token_hash: &str,
     ) -> Result<(String, Vec<Citation>), StoreError> {
         if query_id.trim().is_empty() || handles.is_empty() || handles.len() > 20 {
             return Err(StoreError::Validation(
@@ -955,6 +973,7 @@ impl Store {
             ));
         }
         let connection = self.connection()?;
+        require_query_access(&connection, query_id.trim(), payment_token_hash)?;
         let question = connection
             .query_row(
                 "SELECT question FROM queries WHERE id = ?1",
@@ -1059,12 +1078,10 @@ impl Store {
             let Some((document_id, current_reliability)) = matched else {
                 continue;
             };
-            transaction.execute(
-                "INSERT INTO evidence_contributions
+            let inserted = transaction.execute(
+                "INSERT OR IGNORE INTO evidence_contributions
                  (query_id, document_id, score, reason, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(query_id, document_id) DO UPDATE SET
-                    score = excluded.score, reason = excluded.reason",
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
                     query_id.trim(),
                     document_id,
@@ -1073,6 +1090,11 @@ impl Store {
                     as_i64(now_ms())?,
                 ],
             )?;
+            // A synthesis retry must not repeatedly compound one model score
+            // into the contributor's reputation.
+            if inserted == 0 {
+                continue;
+            }
             let reliability =
                 (current_reliability * 0.9 + contribution.score * 0.1).clamp(0.05, 0.98);
             transaction.execute(
@@ -3668,6 +3690,27 @@ fn require_query_access(
     Ok(())
 }
 
+fn production_environment() -> bool {
+    std::env::var("OPENSHELF_ENV").ok().is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "production" | "prod"
+        )
+    })
+}
+
+fn env_flag(name: &str, fallback: bool) -> bool {
+    match std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("1" | "true" | "yes" | "on") => true,
+        Some("0" | "false" | "no" | "off") => false,
+        _ => fallback,
+    }
+}
+
 fn validate_profile(request: &UpsertProfileRequest) -> Result<(), StoreError> {
     let handle = request.handle.trim();
     if !(3..=32).contains(&handle.len())
@@ -4699,10 +4742,10 @@ mod tests {
     use crate::{
         domain::{
             CorrectMemoryRequest, CreateEvidenceEdgeRequest, CreateOpenCallRequest, Decision,
-            InterviewResponse, RecordChainSettlementRequest, ResolveQuestionRequest,
-            ReviewDisputeRequest, ReviewDocumentFeedbackRequest, SearchFilters,
-            SubmitAnswerResponse, SubmitDocumentFeedbackRequest, UpdatePreferencesRequest,
-            UpsertProfileRequest,
+            EvidenceContribution, InterviewResponse, RecordChainSettlementRequest,
+            ResolveQuestionRequest, ReviewDisputeRequest, ReviewDocumentFeedbackRequest,
+            SearchFilters, SubmitAnswerResponse, SubmitDocumentFeedbackRequest,
+            UpdatePreferencesRequest, UpsertProfileRequest,
         },
         search::Resolver,
     };
@@ -5324,6 +5367,33 @@ mod tests {
             .unwrap();
         assert_eq!(recovered.citation.handle, *handle);
         assert_eq!(recovered.settlement.id, receipt.id);
+        let reliability = || {
+            store
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT reliability_score FROM documents WHERE handle = ?1",
+                    [handle],
+                    |row| row.get::<_, f32>(0),
+                )
+                .unwrap()
+        };
+        let reliability_before = reliability();
+        let contributions = vec![EvidenceContribution {
+            handle: handle.clone(),
+            score: 0.1,
+            reason: "A bounded model contribution used for an idempotency test.".to_owned(),
+        }];
+        store
+            .record_contributions(&resolved.query_id, &contributions)
+            .unwrap();
+        let reliability_after_first = reliability();
+        store
+            .record_contributions(&resolved.query_id, &contributions)
+            .unwrap();
+        let reliability_after_retry = reliability();
+        assert!(reliability_after_first < reliability_before);
+        assert_eq!(reliability_after_retry, reliability_after_first);
         let feedback = store
             .submit_document_feedback(
                 &resolved.query_id,

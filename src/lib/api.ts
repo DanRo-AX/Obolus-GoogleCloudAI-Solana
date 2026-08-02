@@ -290,10 +290,14 @@ export type EvidenceSynthesis = {
 export function synthesizeAnswer(
   queryId: string,
   handles: string[],
+  accessToken: string,
 ): Promise<EvidenceSynthesis> {
   return apiFetch('/api/v1/answers/synthesize', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      [QUERY_TOKEN_HEADER]: accessToken,
+    },
     body: JSON.stringify({ queryId, handles }),
   })
 }

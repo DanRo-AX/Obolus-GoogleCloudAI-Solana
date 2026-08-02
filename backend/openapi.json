@@ -236,6 +236,7 @@
     "/api/v1/answers/synthesize": {
       "post": {
         "summary": "Synthesize only server-canonical passages already opened for a query",
+        "parameters": [{ "$ref": "#/components/parameters/QueryToken" }],
         "requestBody": {
           "required": true,
           "content": {
@@ -253,6 +254,7 @@
               }
             }
           },
+          "401": { "$ref": "#/components/responses/Error" },
           "403": { "$ref": "#/components/responses/Error" }
         }
       }
@@ -307,6 +309,13 @@
     "/api/v1/contributors/{handle}": {
       "get": {
         "summary": "Public contributor manifest with hashes and versioned memory links",
+        "parameters": [{ "$ref": "#/components/parameters/Handle" }],
+        "responses": { "200": { "description": "Contributor manifest without private content" } }
+      }
+    },
+    "/api/v1/personas/{handle}": {
+      "get": {
+        "summary": "Compatibility alias for the public contributor manifest",
         "parameters": [{ "$ref": "#/components/parameters/Handle" }],
         "responses": { "200": { "description": "Contributor manifest without private content" } }
       }

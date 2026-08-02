@@ -240,6 +240,7 @@ type UiValue = {
 
 const UiContext = createContext<UiValue | null>(null)
 const STORAGE_KEY = 'openshelf:v1'
+const SESSION_STORAGE_KEY = 'openshelf:session:v1'
 
 const HOUR = 1000 * 60 * 60
 
@@ -373,21 +374,31 @@ function profileFromServer(profile: ServerProfile): Profile {
 function load(): Persisted {
   const fallback: Persisted = {
     chats: [],
-    orders: SEED_ORDERS,
-    memory: SEED_MEMORY,
+    orders: BACKEND_ENABLED ? [] : SEED_ORDERS,
+    memory: BACKEND_ENABLED ? [] : SEED_MEMORY,
     profile: null,
     agents: false,
     autoMatch: true,
   }
   if (typeof window === 'undefined') return fallback
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
+    // Server-backed chats contain paid passages and query capabilities. Keep
+    // them only for the current browser session, and remove the legacy durable
+    // copy left by earlier builds.
+    if (BACKEND_ENABLED) window.localStorage.removeItem(STORAGE_KEY)
+    const storage = BACKEND_ENABLED ? window.sessionStorage : window.localStorage
+    const key = BACKEND_ENABLED ? SESSION_STORAGE_KEY : STORAGE_KEY
+    const raw = storage.getItem(key)
     if (!raw) return fallback
     const parsed = JSON.parse(raw) as Partial<Persisted>
     return {
       chats: parsed.chats ?? [],
-      orders: parsed.orders ? normalise(parsed.orders) : SEED_ORDERS,
-      memory: parsed.memory ? normaliseMemory(parsed.memory) : SEED_MEMORY,
+      orders: parsed.orders
+        ? normalise(parsed.orders)
+        : BACKEND_ENABLED ? [] : SEED_ORDERS,
+      memory: parsed.memory
+        ? normaliseMemory(parsed.memory)
+        : BACKEND_ENABLED ? [] : SEED_MEMORY,
       profile: parsed.profile ?? null,
       agents: parsed.agents ?? false,
       autoMatch: parsed.autoMatch ?? true,
@@ -416,8 +427,9 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(
-        STORAGE_KEY,
+      const storage = BACKEND_ENABLED ? window.sessionStorage : window.localStorage
+      storage.setItem(
+        BACKEND_ENABLED ? SESSION_STORAGE_KEY : STORAGE_KEY,
         JSON.stringify({ chats, orders, memory, profile, agents, autoMatch }),
       )
     } catch {
@@ -816,7 +828,8 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     setEarnings(null)
     setChats([])
     if (BACKEND_ENABLED) {
-      setOrders(await listOpenCalls().catch(() => SEED_ORDERS))
+      window.sessionStorage.removeItem(SESSION_STORAGE_KEY)
+      setOrders(await listOpenCalls().catch(() => []))
     }
   }, [])
 
@@ -828,9 +841,10 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     setMemory([])
     setEarnings(null)
     setChats([])
-    setOrders(BACKEND_ENABLED ? await listOpenCalls().catch(() => SEED_ORDERS) : SEED_ORDERS)
+    setOrders(BACKEND_ENABLED ? await listOpenCalls().catch(() => []) : SEED_ORDERS)
     try {
       window.localStorage.removeItem(STORAGE_KEY)
+      window.sessionStorage.removeItem(SESSION_STORAGE_KEY)
     } catch {
       // Storage is optional.
     }
@@ -854,8 +868,8 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
 
   const clearAll = useCallback(() => {
     setChats([])
-    setOrders(SEED_ORDERS)
-    setMemory(SEED_MEMORY)
+    setOrders(BACKEND_ENABLED ? [] : SEED_ORDERS)
+    setMemory(BACKEND_ENABLED ? [] : SEED_MEMORY)
     setEarnings(null)
   }, [])
 

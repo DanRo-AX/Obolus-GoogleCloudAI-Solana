@@ -18,17 +18,17 @@ use sha2::{Digest, Sha256};
 use crate::{
     domain::{
         AccountControls, AuthResponse, BalanceSummary, ChainSettlementReceipt, ChatAnswer,
-        ContributorManifest, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
-        CreateOpenCallRequest, DisputeCase, DocumentFeedback, EarningsSummary, EvidenceEdge,
-        LoginRequest, MemoryEntry, MemoryExport, OpenCall, OpenDocumentsResponse, PaidDocument,
-        PaymentDocumentSnapshot, PaymentProgress, PaymentQuote, PublicDocument,
-        RecordChainSettlementRequest, RecoveredPaidDocument, RegisterRequest, ResolveError,
-        ResolveQuestionRequest, ResolveQuestionResponse, ReviewDisputeRequest,
-        ReviewDocumentFeedbackRequest, SubmitAnswerRequest, SubmitAnswerResponse,
-        SubmitDisputeRequest, SubmitDocumentFeedbackRequest, SynthesizeAnswerRequest,
-        SynthesizeAnswerResponse, SynthesizePaidAnswerRequest, UpdateMemoryRequest,
-        UpdatePreferencesRequest, UpsertProfileRequest, UserAccount, UserProfile,
-        VerifyWalletRequest, WalletChallenge, WalletChallengeRequest,
+        ContributorManifest, ContributorMemoryLink, CorrectMemoryRequest,
+        CreateEvidenceEdgeRequest, CreateOpenCallRequest, DisputeCase, DocumentFeedback,
+        EarningsSummary, EvidenceEdge, LoginRequest, MemoryEntry, MemoryExport, OpenCall,
+        OpenDocumentsResponse, PaidDocument, PaymentDocumentSnapshot, PaymentProgress,
+        PaymentQuote, PublicDocument, RecordChainSettlementRequest, RecoveredPaidDocument,
+        RegisterRequest, ResolveError, ResolveQuestionRequest, ResolveQuestionResponse,
+        ReviewDisputeRequest, ReviewDocumentFeedbackRequest, SubmitAnswerRequest,
+        SubmitAnswerResponse, SubmitDisputeRequest, SubmitDocumentFeedbackRequest,
+        SynthesizeAnswerRequest, SynthesizeAnswerResponse, SynthesizePaidAnswerRequest,
+        UpdateMemoryRequest, UpdatePreferencesRequest, UpsertProfileRequest, UserAccount,
+        UserProfile, VerifyWalletRequest, WalletChallenge, WalletChallengeRequest,
     },
     orchestrator,
     search::Resolver,
@@ -60,15 +60,26 @@ impl AppState {
             environment.to_ascii_lowercase().as_str(),
             "production" | "prod"
         );
+        if production
+            && store
+                .contains_demo_seed_data()
+                .unwrap_or_else(|error| panic!("failed to inspect production database: {error}"))
+        {
+            panic!(
+                "production database contains demo seed data; migrate to a clean production database"
+            );
+        }
         let configured_internal_token = std::env::var("OPENSHELF_INTERNAL_TOKEN")
             .ok()
             .filter(|value| !value.trim().is_empty());
         if production
             && configured_internal_token
                 .as_deref()
-                .is_none_or(|value| value == DEFAULT_INTERNAL_TOKEN)
+                .is_none_or(|value| value == DEFAULT_INTERNAL_TOKEN || value.len() < 32)
         {
-            panic!("OPENSHELF_INTERNAL_TOKEN must be set to a non-default secret in production");
+            panic!(
+                "OPENSHELF_INTERNAL_TOKEN must be a non-default secret of at least 32 characters in production"
+            );
         }
         let internal_token =
             configured_internal_token.unwrap_or_else(|| DEFAULT_INTERNAL_TOKEN.to_owned());
@@ -80,6 +91,14 @@ impl AppState {
             && (network == DEVNET_NETWORK || asset == DEVNET_USDC)
         {
             panic!("mainnet mode cannot use the default Solana Devnet network or USDC mint");
+        }
+        let secure_cookies = env_bool("OPENSHELF_SECURE_COOKIES", production);
+        if production && !secure_cookies {
+            panic!("OPENSHELF_SECURE_COOKIES cannot be disabled in production");
+        }
+        let allow_demo_open = env_bool("OPENSHELF_ALLOW_DEMO_OPEN", !production);
+        if production && allow_demo_open {
+            panic!("OPENSHELF_ALLOW_DEMO_OPEN cannot be enabled in production");
         }
         Self {
             store,
@@ -93,8 +112,8 @@ impl AppState {
                 krw_per_usdc: env_u64("OPENSHELF_KRW_PER_USDC", 1_350),
                 ttl_ms: env_u64("OPENSHELF_QUOTE_TTL_MS", 300_000),
             },
-            secure_cookies: env_bool("OPENSHELF_SECURE_COOKIES", production),
-            allow_demo_open: env_bool("OPENSHELF_ALLOW_DEMO_OPEN", !production),
+            secure_cookies,
+            allow_demo_open,
             environment,
         }
     }
@@ -156,6 +175,17 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/account/export", get(export_account))
         .route("/api/v1/account", delete(delete_account))
         .route("/api/v1/contributors/{handle}", get(contributor_manifest))
+        // Compatibility aliases for PR #9's original public persona contract.
+        // The canonical terminology is now "contributor".
+        .route("/api/v1/personas/{handle}", get(persona_manifest))
+        .route(
+            "/api/v1/personas/{persona}/documents/{handle}",
+            get(persona_document),
+        )
+        .route(
+            "/api/v1/personas/{handle}/memories/{id}",
+            get(persona_memory),
+        )
         .route("/api/v1/documents/{handle}", get(public_document))
         .route("/api/v1/profile", get(get_profile).post(upsert_profile))
         .route("/api/v1/profile/preferences", post(update_preferences))
@@ -281,11 +311,15 @@ async fn resolve_question(
 
 async fn synthesize_answer(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(request): Json<SynthesizePaidAnswerRequest>,
-) -> Result<Json<SynthesizeAnswerResponse>, ApiError> {
-    let (question, citations) = state
-        .store
-        .opened_evidence(&request.query_id, &request.handles)?;
+) -> Result<(HeaderMap, Json<SynthesizeAnswerResponse>), ApiError> {
+    let access_token = query_access_token(&headers)?;
+    let (question, citations) = state.store.opened_evidence(
+        &request.query_id,
+        &request.handles,
+        &token_hash(access_token),
+    )?;
     let canonical_request = SynthesizeAnswerRequest {
         query_id: request.query_id.clone(),
         question,
@@ -297,7 +331,7 @@ async fn synthesize_answer(
     state
         .store
         .record_contributions(&request.query_id, &response.contributions)?;
-    Ok(Json(response))
+    Ok((private_no_store_headers(), Json(response)))
 }
 
 async fn payment_progress(
@@ -319,14 +353,17 @@ async fn recover_paid_document(
     headers: HeaderMap,
     Path((query_id, handle)): Path<(String, String)>,
     Query(query): Query<PayerQuery>,
-) -> Result<Json<RecoveredPaidDocument>, ApiError> {
+) -> Result<(HeaderMap, Json<RecoveredPaidDocument>), ApiError> {
     let access_token = query_access_token(&headers)?;
-    Ok(Json(state.store.recover_paid_document(
-        &query_id,
-        &handle,
-        &query.payer,
-        &token_hash(access_token),
-    )?))
+    Ok((
+        private_no_store_headers(),
+        Json(state.store.recover_paid_document(
+            &query_id,
+            &handle,
+            &query.payer,
+            &token_hash(access_token),
+        )?),
+    ))
 }
 
 async fn submit_document_feedback(
@@ -534,15 +571,56 @@ async fn export_account(
 async fn contributor_manifest(
     State(state): State<Arc<AppState>>,
     Path(handle): Path<String>,
-) -> Result<Json<ContributorManifest>, ApiError> {
-    Ok(Json(state.store.contributor_manifest(&handle)?))
+) -> Result<(HeaderMap, Json<ContributorManifest>), ApiError> {
+    Ok((
+        public_manifest_headers(),
+        Json(state.store.contributor_manifest(&handle)?),
+    ))
+}
+
+async fn persona_manifest(
+    State(state): State<Arc<AppState>>,
+    Path(handle): Path<String>,
+) -> Result<(HeaderMap, Json<ContributorManifest>), ApiError> {
+    contributor_manifest(State(state), Path(handle)).await
+}
+
+async fn persona_document(
+    State(state): State<Arc<AppState>>,
+    Path((persona, handle)): Path<(String, String)>,
+) -> Result<(HeaderMap, Json<PublicDocument>), ApiError> {
+    let document = state.store.public_document(&handle)?;
+    if !document
+        .contributor_handle
+        .as_deref()
+        .is_some_and(|owner| owner.eq_ignore_ascii_case(&persona))
+    {
+        return Err(StoreError::NotFound("persona document").into());
+    }
+    Ok((public_manifest_headers(), Json(document)))
+}
+
+async fn persona_memory(
+    State(state): State<Arc<AppState>>,
+    Path((handle, id)): Path<(String, String)>,
+) -> Result<(HeaderMap, Json<ContributorMemoryLink>), ApiError> {
+    let manifest = state.store.contributor_manifest(&handle)?;
+    let memory = manifest
+        .memories
+        .into_iter()
+        .find(|memory| memory.id == id)
+        .ok_or(StoreError::NotFound("persona memory"))?;
+    Ok((public_manifest_headers(), Json(memory)))
 }
 
 async fn public_document(
     State(state): State<Arc<AppState>>,
     Path(handle): Path<String>,
-) -> Result<Json<PublicDocument>, ApiError> {
-    Ok(Json(state.store.public_document(&handle)?))
+) -> Result<(HeaderMap, Json<PublicDocument>), ApiError> {
+    Ok((
+        public_manifest_headers(),
+        Json(state.store.public_document(&handle)?),
+    ))
 }
 
 async fn delete_account(
@@ -658,18 +736,24 @@ async fn paid_document(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(id): Path<String>,
-) -> Result<Json<PaidDocument>, ApiError> {
+) -> Result<(HeaderMap, Json<PaidDocument>), ApiError> {
     require_internal(&state, &headers)?;
-    Ok(Json(state.store.paid_document(&id)?))
+    Ok((
+        private_no_store_headers(),
+        Json(state.store.paid_document(&id)?),
+    ))
 }
 
 async fn payment_document_snapshot(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(id): Path<String>,
-) -> Result<Json<PaymentDocumentSnapshot>, ApiError> {
+) -> Result<(HeaderMap, Json<PaymentDocumentSnapshot>), ApiError> {
     require_internal(&state, &headers)?;
-    Ok(Json(state.store.payment_document_snapshot(&id)?))
+    Ok((
+        private_no_store_headers(),
+        Json(state.store.payment_document_snapshot(&id)?),
+    ))
 }
 
 async fn record_chain_settlement(
@@ -679,6 +763,25 @@ async fn record_chain_settlement(
 ) -> Result<Json<ChainSettlementReceipt>, ApiError> {
     require_internal(&state, &headers)?;
     Ok(Json(state.store.record_chain_settlement(&request)?))
+}
+
+fn private_no_store_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-store"),
+    );
+    headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+    headers
+}
+
+fn public_manifest_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=60, stale-while-revalidate=300"),
+    );
+    headers
 }
 
 fn validate_password(password: &str) -> Result<(), ApiError> {
@@ -1109,6 +1212,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn synthesis_requires_the_query_payment_token() {
+        let response = demo_app()
+            .oneshot(
+                Request::post("/api/v1/answers/synthesize")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "queryId": "qry_not_a_capability",
+                            "handles": ["SEONGSU_101"]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
+    }
+
+    #[tokio::test]
     async fn wallet_verification_api_accepts_a_valid_signed_challenge() {
         let app = demo_app();
         let cookie = register(&app, "wallet-api@example.com").await;
@@ -1371,6 +1498,7 @@ mod tests {
         );
 
         let memory = app
+            .clone()
             .oneshot(
                 Request::get("/api/v1/memory")
                     .header(header::COOKIE, respondent_cookie)
@@ -1384,5 +1512,55 @@ mod tests {
             serde_json::from_slice(&memory.into_body().collect().await.unwrap().to_bytes())
                 .unwrap();
         assert_eq!(memory[0]["interviewResponses"][0]["answer"], "January 2025");
+
+        let manifest = app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/personas/survey_respondent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(manifest.status(), StatusCode::OK);
+        assert_eq!(
+            manifest.headers().get(header::CACHE_CONTROL).unwrap(),
+            "public, max-age=60, stale-while-revalidate=300"
+        );
+        let manifest: Value =
+            serde_json::from_slice(&manifest.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        let memory_id = manifest["memories"][0]["id"].as_str().unwrap();
+        let document_handle = manifest["memories"][0]["canonicalUrl"]
+            .as_str()
+            .unwrap()
+            .rsplit('/')
+            .next()
+            .unwrap();
+
+        let persona_memory = app
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/api/v1/personas/survey_respondent/memories/{memory_id}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(persona_memory.status(), StatusCode::OK);
+
+        let persona_document = app
+            .oneshot(
+                Request::get(format!(
+                    "/api/v1/personas/survey_respondent/documents/{document_handle}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(persona_document.status(), StatusCode::OK);
     }
 }

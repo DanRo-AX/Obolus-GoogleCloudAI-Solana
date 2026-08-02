@@ -6,11 +6,14 @@ and settlement to an x402 facilitator, releases the passage only after a valid
 payment, and mirrors the receipt into Rust. Reconciliation entries are written
 to `X402_OUTBOX_PATH` before the mirror call and replayed idempotently.
 `/readyz` also verifies that the Rust ledger is reachable. Production startup
-rejects the local shared secret, and `OPENSHELF_REQUIRE_MAINNET=true` rejects the
-default Devnet network.
+rejects a short/local shared secret, an insecure frontend origin, and the public
+Devnet RPC fallback. `OPENSHELF_REQUIRE_MAINNET=true` rejects the default Devnet
+network.
 
 The browser obtains mint metadata and recent blockhashes through the restricted
 `POST /rpc` proxy, which allows only `getAccountInfo` and `getLatestBlockhash`.
+It applies a per-process limit configured by `X402_RPC_RATE_LIMIT_PER_MINUTE`;
+production still needs a distributed edge rate limit.
 The resource server deliberately does not embed a blockhash in the 402 payment
 requirements: the middleware rebuilds those requirements for the signed retry,
 so a changing blockhash would make an otherwise valid V2 payload fail matching.

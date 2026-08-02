@@ -34,14 +34,15 @@ cd backend
 cargo run
 ```
 
-The API listens on `0.0.0.0:8787` and writes `openshelf.db` in the current
+The API listens on `127.0.0.1:8787` and writes `openshelf.db` in the current
 directory. Configuration:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `OPENSHELF_BIND` | `0.0.0.0:8787` | Listen address |
+| `OPENSHELF_BIND` | `127.0.0.1:8787` | Listen address; non-loopback requires a strong internal token |
 | `OPENSHELF_DATABASE` | `openshelf.db` | SQLite path |
 | `OPENSHELF_ENV` | `development` | Enables production secret and secure-cookie guards |
+| `OPENSHELF_SEED_DEMO` | non-production-dependent | Seed demo personas/calls; forbidden in production |
 | `OPENSHELF_FRONTEND_ORIGIN` | `http://localhost:4319` | Exact credentialed CORS origin |
 | `OPENSHELF_SECURE_COOKIES` | production-dependent | Force the `Secure` session-cookie flag |
 | `OPENSHELF_REQUIRE_MAINNET` | `false` | Reject default Devnet network/mint configuration |
@@ -58,11 +59,17 @@ directory. Configuration:
 | `OPENSHELF_GOOGLE_ACCESS_TOKEN` | none | Vertex bearer token |
 | `GEMINI_API_KEY` | none | Local Gemini API fallback |
 
+Production also refuses to start against a database that already contains the
+demo corpus. Use a clean production database rather than relabelling a populated
+development volume.
+
 Docker persists SQLite in `/data`:
 
 ```bash
 docker build -t openshelf-api backend
-docker run --rm -p 8787:8787 -v openshelf-data:/data openshelf-api
+docker run --rm -p 8787:8787 -v openshelf-data:/data \
+  -e OPENSHELF_INTERNAL_TOKEN='replace-with-at-least-32-random-characters' \
+  openshelf-api
 ```
 
 ## API
@@ -74,7 +81,7 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data openshelf-api
 | `POST` | `/api/v1/auth/register` `/login` `/logout` | Create, issue, or revoke an HttpOnly session |
 | `GET` | `/api/v1/auth/me` | Read the authenticated account and sandbox balance |
 | `POST` | `/api/v1/questions/resolve` | Search, rank, and return HIT/MISS plus a safe quote |
-| `POST` | `/api/v1/answers/synthesize` | Synthesize only server-proven opened passages |
+| `POST` | `/api/v1/answers/synthesize` | Synthesize only server-proven opened passages (query token required) |
 | `GET` | `/api/v1/questions/{id}/payment-progress` | Reconcile settled/quoted/unpaid handles for a payer |
 | `GET` | `/api/v1/questions/{id}/paid-documents/{handle}` | Recover a previously settled passage without paying again |
 | `POST` | `/api/v1/questions/{id}/paid-documents/{handle}/feedback` | Record paid-buyer feedback or a report |
@@ -93,6 +100,7 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data openshelf-api
 | `GET/DELETE` | `/api/v1/account/balance` `/api/v1/account` | Read the ledger or delete and anonymize the account |
 | `GET` | `/api/v1/account/export` | Export profile, private memories, and access log |
 | `GET` | `/api/v1/contributors/{handle}` | Public payment-safe contributor manifest |
+| `GET` | `/api/v1/personas/{handle}` | PR #9 compatibility alias for a contributor manifest |
 | `GET` | `/api/v1/documents/{handle}` | Public hash/version/price metadata without content |
 | `GET/POST` | `/api/v1/profile` | Read or persist the anonymous profile and payout wallet |
 | `POST` | `/api/v1/profile/preferences` | Persist auto-match and agent-output preferences |
@@ -101,6 +109,7 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data openshelf-api
 | `GET` | `/api/flash-research` | Reveal only handles quoted for a query and accrue them once |
 | `GET` | `/internal/v1/payment-quotes/{queryId}/{handle}` | Create/reuse an exact short-lived x402 quote (internal token required) |
 | `GET` | `/internal/v1/payment-quotes/{id}/document` | Retrieve one quoted passage for the verified gateway |
+| `GET` | `/internal/v1/payment-quotes/{id}/snapshot` | Buffer the immutable quote snapshot without marking delivery |
 | `POST` | `/internal/v1/chain-settlements` | Idempotently mirror a confirmed facilitator receipt |
 
 The conduct ladder is enforced in the service, not just the UI. At two strikes,
@@ -148,7 +157,8 @@ curl -s http://localhost:8787/api/v1/questions/resolve \
 
 The resolution includes a one-time `paymentAccessToken`. Persist it only with
 that local query and send it as `x-openshelf-query-token` when reading payment
-progress, recovering already-paid passages, or submitting feedback. Only the
+progress, recovering already-paid passages, synthesizing paid evidence, or
+submitting feedback. Only the
 SHA-256 token hash is stored. Progress and recovery additionally require the
 settling payer public key, so a UI retry can recover settled handles and pay only
 the remaining ones.
@@ -201,5 +211,5 @@ cargo clippy --locked --all-targets -- -D warnings
 ```
 
 `openapi.json` describes the browser integration contracts for payment recovery,
-wallet verification, and paid-document feedback. The three `/internal/v1/*`
+wallet verification, and paid-document feedback. The `/internal/v1/*`
 routes remain restricted to the gateway's shared secret.

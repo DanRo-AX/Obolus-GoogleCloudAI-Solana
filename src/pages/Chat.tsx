@@ -198,6 +198,7 @@ export default function Chat() {
             const synthesis = await synthesizeAnswer(
               resolvedQueryId,
               result.citations.map((citation) => citation.handle),
+              session.accessToken,
             )
             answer = synthesis.answer
           } catch {

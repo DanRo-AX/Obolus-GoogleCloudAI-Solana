@@ -55,7 +55,8 @@ documents pay the wallet saved on that author's profile.
 If a browser loses the response after settlement, the client reconciles the
 query with Rust, recovers passages that are already proven paid, and retries
 only unpaid handles. The query recovery token is scoped to the original query
-and payer; it is never a general document-access credential.
+and payer-sensitive recovery APIs; it is also required for paid-evidence
+synthesis and is never a general document-access credential.
 
 ## The three screens the meeting locked
 
@@ -136,7 +137,9 @@ Accepted memories carry a SHA-256 content hash, immutable version, reliability
 and importance scores, lock state, and access count. Corrections create a new
 version and lock the superseded passage. Contributors can export their private
 memory/access log, while public contributor and document manifests expose only
-payment-safe hashes, versions, prices, and x402 links.
+matching metadata (including profile demographic bands), hashes, versions,
+prices, and x402 links. Those bands therefore require an explicit disclosure
+and consent treatment before a public launch.
 
 ## Honest gaps
 
@@ -154,7 +157,8 @@ Carried over from the meeting, and stated in the FAQ rather than smoothed over:
 Profiles, payout wallets, auto-match preferences, open calls, answers, memory,
 query quotes, disputes, and append-only settlement/accrual events persist in
 SQLite. The server also enforces the two-strike auto-match/payout hold and the
-three-strike suspension. Chat transcripts remain browser-local; authenticated
+three-strike suspension. Chat transcripts remain tab-session local in backend
+mode (durable local storage is reserved for the offline demo); authenticated
 account, money, memory, and authorization state are server-owned.
 
 The KRW signup/open-call balance is still a clearly labelled sandbox ledger; it
@@ -172,6 +176,7 @@ remain visibly disabled until the controls in
 implemented and reviewed. Browser settlement reconciliation is implemented;
 paid handles are recovered before any retry.
 See `SCENARIO-AUDIT.md` for the Chrome-verified scenarios and prioritized gaps,
-and `backend/README.md` for the exact backend boundary.
+[`docs/CODE-REVIEW.md`](./docs/CODE-REVIEW.md) for the PR #2/#9 consolidation
+and production audit, and `backend/README.md` for the exact backend boundary.
 
 `BRIEF.md` holds the source-of-truth product brief the copy was written against.
