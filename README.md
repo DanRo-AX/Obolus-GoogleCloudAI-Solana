@@ -47,6 +47,11 @@ The seeded corpus has no real author wallets, so
 `OPENSHELF_DEFAULT_RECEIVER` receives those demo payments. User-authored
 documents pay the wallet saved on that author's profile.
 
+If a browser loses the response after settlement, the client reconciles the
+query with Rust, recovers passages that are already proven paid, and retries
+only unpaid handles. The query recovery token is scoped to the original query
+and payer; it is never a general document-access credential.
+
 ## The three screens the meeting locked
 
 | Route | Screen | What it does |
@@ -76,8 +81,8 @@ Phantom signs one author payment per document. The preview shows KRW, estimated
 Devnet USDC, approval count, network, and the token mint. A question that already
 has enough matching documents skips the call entirely and offers to settle on
 the spot — the inverted order the meeting called out. Seeded opens cost ₩5–₩25;
-the five-document Seongsu example is ₩50 (about 0.037040 Devnet USDC at the
-default conversion rate).
+the five-document Seongsu example currently resolves to ₩40 (about 0.029632
+Devnet USDC at the default conversion rate).
 
 Matching, ranking, budget filtering, author deduplication, and the hit/miss
 decision now run in the Rust service. It combines deterministic 768-dimensional
@@ -105,7 +110,8 @@ The frontend now uses server-issued, HttpOnly session cookies; client-supplied
 labelled sandbox credit. A paid open call reserves its full maximum budget in a
 SQLite ledger, accepted answers release one unit to the contributor, and
 cancellation refunds every unused unit. Open-call answers are readable only by
-the owner of the originating `chatId` and are delivered back into that chat.
+the owner of the originating `chatId`. They are delivered back into that chat
+and can also be reloaded from “Posted by me” after a browser or device change.
 
 Age, region, household, and field bands can be selected in the composer. The
 same filters are enforced during document search and when an answerer tries to
@@ -141,8 +147,12 @@ document opens now use actual x402 exact/SVM settlement on Solana Devnet.
 Production still requires a mainnet facilitator credential, managed RPC,
 durable outbox volume or queue, rate limiting, email verification/recovery, KMS
 secret management, and an external identity provider if social login is
-desired. A policy-limited agent wallet, safe settlement reconciliation before
-retry, and the projected monthly top-up product are also not implemented yet.
+desired. A policy-limited agent wallet and the projected monthly top-up product
+are not implemented yet. Agent payments
+remain visibly disabled until the controls in
+[`docs/agent-payment-threat-model.md`](./docs/agent-payment-threat-model.md) are
+implemented and reviewed. Browser settlement reconciliation is implemented;
+paid handles are recovered before any retry.
 See `SCENARIO-AUDIT.md` for the Chrome-verified scenarios and prioritized gaps,
 and `backend/README.md` for the exact backend boundary.
 

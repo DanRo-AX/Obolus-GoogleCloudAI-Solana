@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Clock,
   Coins,
+  MessageSquareText,
   ShieldAlert,
   UserRound,
 } from 'lucide-react'
@@ -18,6 +19,7 @@ import {
 } from '@/components/ui/primitives'
 import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from '@/data/categories'
 import { STRIKE_LIMIT } from '@/data/onboarding'
+import { ApiError, getChatAnswers, type ChatAnswer } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useUi, type Order } from '@/state/ui'
 
@@ -59,7 +61,17 @@ const MIN_PAY: Array<{ value: number; label: string }> = [
 ]
 
 export default function Dashboard() {
-  const { orders, memory, earnings, profile, suspended, cancelOrder, balance } = useUi()
+  const {
+    orders,
+    memory,
+    earnings,
+    profile,
+    suspended,
+    cancelOrder,
+    balance,
+    chats,
+    refreshLedger,
+  } = useUi()
   const navigate = useNavigate()
   const [params] = useSearchParams()
 
@@ -74,6 +86,39 @@ export default function Dashboard() {
   const [fitsMe, setFitsMe] = useState(false)
   const [hideFilled, setHideFilled] = useState(true)
   const [opening, setOpening] = useState<string | null>(null)
+  const [answerPanels, setAnswerPanels] = useState<Record<string, ChatAnswer[]>>({})
+  const [answersLoading, setAnswersLoading] = useState<string | null>(null)
+  const [answersError, setAnswersError] = useState<Record<string, string>>({})
+
+  async function toggleAnswers(order: Order) {
+    if (!order.chatId) return
+    if (answerPanels[order.id]) {
+      setAnswerPanels((current) => {
+        const next = { ...current }
+        delete next[order.id]
+        return next
+      })
+      return
+    }
+
+    setAnswersLoading(order.id)
+    setAnswersError((current) => ({ ...current, [order.id]: '' }))
+    try {
+      const answers = await getChatAnswers(order.chatId)
+      setAnswerPanels((current) => ({ ...current, [order.id]: answers }))
+      void refreshLedger().catch(() => undefined)
+    } catch (error) {
+      setAnswersError((current) => ({
+        ...current,
+        [order.id]:
+          error instanceof ApiError
+            ? error.message
+            : 'The returned answers could not be loaded.',
+      }))
+    } finally {
+      setAnswersLoading((current) => (current === order.id ? null : current))
+    }
+  }
 
   const base = useMemo(
     () =>
@@ -432,20 +477,76 @@ export default function Dashboard() {
                   ) : null}
 
                   {tab === 'mine' ? (
-                    <div className="mt-4 flex items-center gap-2">
-                      {order.chatId ? (
-                        <Button asChild variant="monoGhost" size="monoSm">
-                          <Link to={`/chat/${order.chatId}`}>Back to the chat</Link>
-                        </Button>
+                    <div className="mt-4 space-y-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {order.chatId ? (
+                          <Button
+                            variant="monoGhost"
+                            size="monoSm"
+                            onClick={() => void toggleAnswers(order)}
+                            disabled={answersLoading === order.id}
+                          >
+                            <MessageSquareText className="size-3.5" />
+                            {answersLoading === order.id
+                              ? 'Loading answers…'
+                              : answerPanels[order.id]
+                                ? 'Hide returned answers'
+                                : `View returned answers · ${order.answered}`}
+                          </Button>
+                        ) : null}
+                        {order.chatId && chats.some((chat) => chat.id === order.chatId) ? (
+                          <Button asChild variant="monoGhost" size="monoSm">
+                            <Link to={`/chat/${order.chatId}`}>Back to this browser's chat</Link>
+                          </Button>
+                        ) : null}
+                        {order.status !== 'filled' && order.status !== 'cancelled' ? (
+                          <Button
+                            variant="monoMuted"
+                            size="monoSm"
+                            onClick={() => void cancelOrder(order.id)}
+                          >
+                            Cancel · refund ₩{(order.escrowRemainingKrw ?? 0).toLocaleString()}
+                          </Button>
+                        ) : null}
+                      </div>
+
+                      {answersError[order.id] ? (
+                        <p className="text-xs leading-relaxed text-destructive">
+                          {answersError[order.id]}
+                        </p>
                       ) : null}
-                      {order.status !== 'filled' && order.status !== 'cancelled' ? (
-                        <Button
-                          variant="monoMuted"
-                          size="monoSm"
-                          onClick={() => void cancelOrder(order.id)}
-                        >
-                          Cancel · refund ₩{(order.escrowRemainingKrw ?? 0).toLocaleString()}
-                        </Button>
+
+                      {answerPanels[order.id] ? (
+                        answerPanels[order.id].length > 0 ? (
+                          <div className="space-y-2 border-t border-border pt-3">
+                            {answerPanels[order.id].map((answer) => (
+                              <div
+                                key={answer.id}
+                                className="rounded-[4px] border border-border bg-background/70 p-3"
+                              >
+                                <div className="flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                                  <span className="text-foreground">{answer.handle}</span>
+                                  <span>· {answer.shelf}</span>
+                                  {answer.demographics ? (
+                                    <span>
+                                      · {answer.demographics.ageBand} · {answer.demographics.region}
+                                    </span>
+                                  ) : null}
+                                  <span className="ml-auto tabular-nums">
+                                    ₩{answer.price.toLocaleString()} settled
+                                  </span>
+                                </div>
+                                <p className="mt-2 text-sm leading-relaxed text-foreground">
+                                  {answer.excerpt}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="border-t border-border pt-3 text-xs leading-relaxed text-muted-foreground">
+                            No accepted answers yet. This stays available across browsers and devices.
+                          </p>
+                        )
                       ) : null}
                     </div>
                   ) : null}

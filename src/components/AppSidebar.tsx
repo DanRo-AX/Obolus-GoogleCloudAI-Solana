@@ -30,7 +30,7 @@ function WorkspaceMark({ size = 'size-6' }: { size?: string }) {
  * rule you only ever see once, on the way in, is not a rule anybody remembers.
  */
 function ProfileChip() {
-  const { profile, signOut, suspended } = useUi()
+  const { account, profile, signOut, suspended } = useUi()
   if (!profile) return null
   const cat = CATEGORY_BY_ID[profile.field]
   return (
@@ -72,12 +72,18 @@ function ProfileChip() {
           {profile.strikes}/{STRIKE_LIMIT} strikes
         </span>
       </div>
+      <div className="mt-2 border-t border-border/70 pt-2 font-mono text-[9px] leading-relaxed text-muted-foreground">
+        <p className="truncate normal-case tracking-normal">Account · {account?.email}</p>
+        <p className="mt-0.5 truncate uppercase tracking-[0.7px]">
+          Payout · {profile.wallet ? `${profile.wallet.slice(0, 4)}…${profile.wallet.slice(-4)} · ${profile.walletVerified ? 'verified' : 'unverified'}` : 'not set'}
+        </p>
+      </div>
     </div>
   )
 }
 
 export function AppSidebar() {
-  const { collapsed, setCollapsed, agents, setAgents, profile, account, signOut, balance } = useUi()
+  const { collapsed, setCollapsed, profile, account, signOut, balance } = useUi()
 
   return (
     <div
@@ -193,7 +199,7 @@ export function AppSidebar() {
                     }
                   >
                     <ShieldCheck className="text-muted-foreground/60" />
-                    <span>Review disputes</span>
+                    <span>Review queue</span>
                   </NavLink>
                 </li>
               ) : null}
@@ -267,12 +273,12 @@ export function AppSidebar() {
             </ul>
             <div className="-mx-2 -mb-2 flex items-center gap-2 px-3 pb-2.5 pt-1">
               <Switch
-                checked={agents}
-                onCheckedChange={setAgents}
-                aria-label="Show agent-readable output"
+                checked={false}
+                disabled
+                aria-label="Agent payments are not available"
               />
               <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground/70">
-                Agent mode
+                Agent payments · future
               </span>
               {/* The original's theme toggle sits here. This build is light-mode
                   only, so the control is omitted rather than shipped dead. */}

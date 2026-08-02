@@ -2202,7 +2202,7 @@ impl Store {
     ) -> Result<Vec<ChatAnswer>, StoreError> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT m.id, m.open_call_id, d.handle, m.shelf, m.answer, m.earned_krw,
+            "SELECT m.id, m.open_call_id, COALESCE(p.handle, d.handle), m.shelf, m.answer, m.earned_krw,
                     m.created_at, p.age_band, p.region, p.household, p.field
              FROM memory_entries m
              JOIN open_calls c ON c.id = m.open_call_id
@@ -4366,6 +4366,7 @@ mod tests {
 
         let answers = store.chat_answers("target-buyer", "chat-targeted").unwrap();
         assert_eq!(answers.len(), 1);
+        assert_eq!(answers[0].handle, "SVALBARD_01");
         assert!(answers[0].excerpt.contains("Longyearbyen"));
         assert_eq!(answers[0].demographics.as_ref().unwrap().region, "abroad");
         assert!(

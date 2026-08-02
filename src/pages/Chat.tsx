@@ -4,19 +4,28 @@ import {
   ArrowUpRight,
   Check,
   Coins,
+  Flag,
   Loader2,
   Menu,
   Search,
   SlidersHorizontal,
+  ThumbsDown,
+  ThumbsUp,
 } from 'lucide-react'
 import { Composer } from '@/components/Composer'
 import { Button } from '@/components/ui/button'
 import { SHELVES, type Shelf } from '@/data/shelf'
-import { getChatAnswers, resolveQuestion, type Resolution } from '@/lib/api'
+import {
+  getChatAnswers,
+  resolveQuestion,
+  submitDocumentFeedback,
+  type DocumentFeedback,
+  type Resolution,
+} from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { explorerUrl, openDocuments, PaymentError } from '@/lib/x402'
 import { DEVNET_USDC, shortKey, useWallet } from '@/state/wallet'
-import { useUi, type Citation } from '@/state/ui'
+import { useUi, type Citation, type PaymentContext } from '@/state/ui'
 
 /**
  * The life of one question — the 7 steps the meeting locked, as state.
@@ -58,23 +67,35 @@ export default function Chat() {
   const {
     chats,
     appendAssistant,
+    patchChat,
     placeOrder,
     cancelOrder,
     orders,
     refreshLedger,
     account,
+    createChat,
     setMobileSidebar,
   } = useUi()
   const wallet = useWallet()
   const chat = chats.find((c) => c.id === id)
 
-  const [phase, setPhase] = useState<Phase>('searching')
+  const [phase, setPhase] = useState<Phase>(() =>
+    chat?.paymentSession
+      ? chat.messages.some((message) => message.settlement?.partial)
+        ? 'failed'
+        : 'confirm'
+      : 'searching',
+  )
   const [hits, setHits] = useState<{ shelf: Shelf; score: number }[]>([])
-  const [pending, setPending] = useState<Citation[]>([])
+  const [pending, setPending] = useState<Citation[]>(
+    () => chat?.paymentSession?.docs ?? [],
+  )
   const [count, setCount] = useState<number | null>(null)
   const [placedOrderId, setPlacedOrderId] = useState<string | null>(null)
   const [payError, setPayError] = useState<string | null>(null)
-  const [queryId, setQueryId] = useState<string | null>(null)
+  const [queryId, setQueryId] = useState<string | null>(
+    () => chat?.paymentSession?.queryId ?? null,
+  )
   const [resolutionReason, setResolutionReason] = useState<Resolution['reason'] | null>(null)
   const [openCallDraft, setOpenCallDraft] = useState<Resolution['openCall'] | null>(
     null,
@@ -92,6 +113,13 @@ export default function Chat() {
   const existingOrder = orders.find(
     (order) => order.mine && order.chatId === chatId && order.status !== 'cancelled',
   )
+  const paymentSession = chat?.paymentSession
+  const paymentPayerMismatch = Boolean(
+    paymentSession?.payer &&
+      wallet.pubkey &&
+      paymentSession.payer !== wallet.pubkey,
+  )
+  const paymentIncomplete = phase === 'failed' && Boolean(paymentSession?.docs.length)
 
   const total = pending.reduce((sum, c) => sum + c.price, 0)
   const estimatedUsdc =
@@ -123,6 +151,28 @@ export default function Chat() {
       resolvedQueryId: string | null,
     ) => {
       if (!chatId || !resolvedQueryId) return
+      const session = chat?.paymentSession
+      if (!session) {
+        setPayError('The payment recovery session is missing. Start a new query.')
+        setPhase('failed')
+        return
+      }
+      if (!wallet.pubkey) {
+        await wallet.connect()
+        return
+      }
+      if (session.payer && session.payer !== wallet.pubkey) {
+        setPayError(
+          `This query belongs to ${shortKey(session.payer)}. The connected wallet is ${shortKey(wallet.pubkey)}. Switch back to recover settled documents without paying twice.`,
+        )
+        setPhase('failed')
+        return
+      }
+      if (!session.payer) {
+        patchChat(chatId, {
+          paymentSession: { ...session, payer: wallet.pubkey },
+        })
+      }
       setPhase('settling')
       setPayError(null)
       try {
@@ -130,14 +180,19 @@ export default function Chat() {
           queryId: resolvedQueryId,
           question: prompt ?? '',
           payer: wallet.pubkey,
+          accessToken: session.accessToken,
           docs: citations.map((c) => ({
             handle: c.handle,
             shelf: c.shelf,
             price: c.price,
           })),
         })
+        const openedHandles = new Set(result.citations.map((citation) => citation.handle))
+        const remaining = citations.filter(
+          (citation) => !openedHandles.has(citation.handle),
+        )
         appendAssistant(chatId, {
-          id: `${chatId}_a`,
+          id: `${chatId}_paid_${Date.now().toString(36)}`,
           role: 'assistant',
           content: `Opened ${result.citations.length} matching documents from the ${shelfName} shelf. Each passage below is quoted as written.${result.settlement.partial ? ' Payment stopped before the remaining documents, so they stayed closed.' : ''}`,
           citations: result.citations,
@@ -149,9 +204,26 @@ export default function Chat() {
             network: result.settlement.network,
             partial: result.settlement.partial,
           },
+          paymentContext: {
+            queryId: session.queryId,
+            accessToken: session.accessToken,
+            payer: wallet.pubkey,
+          },
         })
         void refreshLedger().catch(() => undefined)
-        setPhase('answered')
+        if (result.settlement.partial && remaining.length) {
+          const nextSession = { ...session, payer: wallet.pubkey, docs: remaining }
+          patchChat(chatId, { paymentSession: nextSession })
+          setPending(remaining)
+          setPayError(
+            `${result.citations.length} document${result.citations.length === 1 ? '' : 's'} settled and were recovered. ${remaining.length} remain unpaid.`,
+          )
+          setPhase('failed')
+        } else {
+          patchChat(chatId, { paymentSession: undefined })
+          setPending([])
+          setPhase('answered')
+        }
       } catch (e) {
         setPayError(
           e instanceof PaymentError ? e.message : 'Settlement did not go through.',
@@ -159,13 +231,13 @@ export default function Chat() {
         setPhase('failed')
       }
     },
-    [appendAssistant, chatId, prompt, refreshLedger, wallet.pubkey],
+    [appendAssistant, chat?.paymentSession, chatId, patchChat, prompt, refreshLedger, wallet],
   )
 
   // search → rank → branch. The guard is released in cleanup so StrictMode's
   // remount reschedules instead of leaving the run half-finished.
   useEffect(() => {
-    if (!chatId || !prompt || hasAnswer || existingOrder) return
+    if (!chatId || !prompt || hasAnswer || existingOrder || chat?.paymentSession) return
     if (startedRef.current === chatId) return
     startedRef.current = chatId
 
@@ -213,6 +285,14 @@ export default function Chat() {
           excerpt: '',
           price: match.priceKrw,
         }))
+        patchChat(chatId, {
+          paymentSession: {
+            queryId: resolution.queryId,
+            accessToken: resolution.paymentAccessToken,
+            docs: cites,
+            shelfName: cites[0]?.shelf ?? 'Unsorted',
+          },
+        })
         setPending(cites)
         setPhase('confirm')
       } catch (error) {
@@ -227,7 +307,7 @@ export default function Chat() {
       cancelled = true
       startedRef.current = null
     }
-  }, [chat?.filters, chatId, existingOrder, prompt, hasAnswer, settle])
+  }, [chat?.filters, chat?.paymentSession, chatId, existingOrder, prompt, hasAnswer, patchChat])
 
   useEffect(() => {
     if (!chatId || !existingOrder || !account) return
@@ -344,6 +424,12 @@ export default function Chat() {
                             {c.demographics.household} · {c.demographics.field}
                           </p>
                         ) : null}
+                        {m.paymentContext ? (
+                          <FeedbackActions
+                            citation={c}
+                            context={m.paymentContext}
+                          />
+                        ) : null}
                       </li>
                     ))}
                   </ul>
@@ -393,7 +479,7 @@ export default function Chat() {
             ),
           )}
 
-          {!hasAnswer ? (
+          {!hasAnswer || paymentIncomplete ? (
             <div className="flex flex-col gap-4 rounded-[6px] border border-border bg-card p-4">
               <TraceSteps phase={phase} hits={hits} />
 
@@ -409,7 +495,7 @@ export default function Chat() {
                     </span>{' '}
                     and network Devnet before approving.
                   </div>
-                  {wallet.pubkey ? (
+                  {wallet.pubkey && !paymentPayerMismatch ? (
                     <Button
                       variant="mono"
                       size="mono"
@@ -429,7 +515,7 @@ export default function Chat() {
                       size="mono"
                       onClick={() => void wallet.connect()}
                     >
-                      Connect Phantom to pay
+                      {paymentPayerMismatch ? 'Switch to the original wallet' : 'Connect wallet to pay'}
                     </Button>
                   )}
                   <Button
@@ -586,7 +672,35 @@ export default function Chat() {
                     payError ??
                     'The documents stayed closed. If Phantom already showed a confirmed transfer, check the explorer before retrying.'
                   }
-                />
+                >
+                  {queryId && pending.length && !paymentPayerMismatch ? (
+                    <Button
+                      variant="mono"
+                      size="mono"
+                      onClick={() =>
+                        void settle(
+                          pending,
+                          paymentSession?.shelfName ?? pending[0]?.shelf ?? 'Unsorted',
+                          queryId,
+                        )
+                      }
+                    >
+                      Check ledger and retry {pending.length} remaining
+                    </Button>
+                  ) : null}
+                  {paymentPayerMismatch ? (
+                    <Button
+                      variant="monoMuted"
+                      size="mono"
+                      onClick={() => {
+                        const next = createChat(prompt ?? '', chat.filters)
+                        navigate(`/chat/${next}`)
+                      }}
+                    >
+                      Start a separate query with this wallet
+                    </Button>
+                  ) : null}
+                </Branch>
               ) : null}
 
               {phase === 'declined' ? (
@@ -598,7 +712,7 @@ export default function Chat() {
             </div>
           ) : null}
 
-          {hasAnswer ? (
+          {hasAnswer && !paymentIncomplete ? (
             <p className="text-center font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
               Each author was paid onchain · these documents can auto-match again
             </p>
@@ -624,6 +738,112 @@ function AgentLabel() {
       <span className="font-mono text-xs font-medium uppercase tracking-[1px] text-muted-foreground">
         SHELF-1
       </span>
+    </div>
+  )
+}
+
+function FeedbackActions({
+  citation,
+  context,
+}: {
+  citation: Citation
+  context: PaymentContext
+}) {
+  const [recorded, setRecorded] = useState<DocumentFeedback | null>(null)
+  const [reporting, setReporting] = useState(false)
+  const [reason, setReason] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const send = async (
+    outcome: 'helpful' | 'not_helpful' | 'report',
+  ) => {
+    if (submitting || recorded) return
+    if (outcome === 'report' && reason.trim().length < 20) return
+    setSubmitting(true)
+    setError(null)
+    try {
+      const feedback = await submitDocumentFeedback(
+        context.queryId,
+        citation.handle,
+        context.payer,
+        context.accessToken,
+        outcome,
+        outcome === 'report' ? reason.trim() : undefined,
+      )
+      setRecorded(feedback)
+      setReporting(false)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Feedback could not be saved.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (recorded) {
+    return (
+      <p className="mt-3 border-t border-border/70 pt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+        {recorded.outcome === 'report'
+          ? 'Report submitted · admin review pending'
+          : `${recorded.outcome.replace('_', ' ')} · recorded`}
+      </p>
+    )
+  }
+
+  return (
+    <div className="mt-3 border-t border-border/70 pt-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="mr-1 font-mono text-[9px] uppercase tracking-[1px] text-muted-foreground">
+          Paid buyer feedback
+        </span>
+        <Button
+          variant="monoGhost"
+          size="monoSm"
+          disabled={submitting}
+          onClick={() => void send('helpful')}
+        >
+          <ThumbsUp className="size-3" /> Helpful
+        </Button>
+        <Button
+          variant="monoGhost"
+          size="monoSm"
+          disabled={submitting}
+          onClick={() => void send('not_helpful')}
+        >
+          <ThumbsDown className="size-3" /> Not helpful
+        </Button>
+        <Button
+          variant="monoGhost"
+          size="monoSm"
+          disabled={submitting}
+          onClick={() => setReporting((value) => !value)}
+        >
+          <Flag className="size-3" /> Report
+        </Button>
+      </div>
+      {reporting ? (
+        <div className="mt-2 grid gap-2">
+          <textarea
+            rows={3}
+            maxLength={1000}
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Describe the specific safety, authenticity, or abuse issue (20–1000 characters)."
+            className="w-full resize-y rounded-[3px] border border-border bg-background p-2 text-sm outline-none focus:ring-1 focus:ring-foreground/30"
+          />
+          <Button
+            variant="mono"
+            size="monoSm"
+            className="justify-self-start"
+            disabled={submitting || reason.trim().length < 20}
+            onClick={() => void send('report')}
+          >
+            {submitting ? <Loader2 className="size-3 animate-spin" /> : null}
+            Submit report
+          </Button>
+        </div>
+      ) : null}
+      {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
     </div>
   )
 }

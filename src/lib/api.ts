@@ -42,6 +42,8 @@ export type ResolvedMatch = {
 
 export type Resolution = {
   queryId: string
+  /** Returned once and kept with the local chat for safe payment recovery. */
+  paymentAccessToken: string
   decision: 'hit' | 'miss'
   reason:
     | 'coverage_ready'
@@ -246,6 +248,156 @@ export type ServerProfile = Profile & {
   autoMatch: boolean
   agents: boolean
   suspended: boolean
+}
+
+export type WalletChallenge = {
+  id: string
+  wallet: string
+  message: string
+  expiresAt: number
+}
+
+export function createWalletChallenge(wallet: string): Promise<WalletChallenge> {
+  return apiFetch('/api/v1/profile/wallet/challenge', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet }),
+  })
+}
+
+export function verifyWalletChallenge(
+  challengeId: string,
+  signature: string,
+): Promise<ServerProfile> {
+  return apiFetch('/api/v1/profile/wallet/verify', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ challengeId, signature }),
+  })
+}
+
+const QUERY_TOKEN_HEADER = 'x-openshelf-query-token'
+
+export type PaymentDocumentProgress = {
+  handle: string
+  priceKrw: number
+  status: 'unpaid' | 'quoted' | 'settled'
+  quoteId?: string
+  quoteExpiresAt?: number
+  transactionSignature?: string
+  network?: string
+  settledAt?: number
+}
+
+export type PaymentProgress = {
+  queryId: string
+  payer: string
+  documentCount: number
+  settledCount: number
+  unpaidCount: number
+  totalPriceKrw: number
+  settledPriceKrw: number
+  documents: PaymentDocumentProgress[]
+}
+
+export type ChainSettlementReceipt = {
+  id: string
+  quoteId: string
+  transactionSignature: string
+  payer: string
+  payTo: string
+  amountAtomic: string
+  network: string
+  confirmedAt: number
+}
+
+export type RecoveredPaidDocument = {
+  citation: {
+    handle: string
+    shelf: string
+    excerpt: string
+    price: number
+  }
+  settlement: ChainSettlementReceipt
+}
+
+export function getPaymentProgress(
+  queryId: string,
+  payer: string,
+  accessToken: string,
+): Promise<PaymentProgress> {
+  const params = new URLSearchParams({ payer })
+  return apiFetch(
+    `/api/v1/questions/${encodeURIComponent(queryId)}/payment-progress?${params}`,
+    { headers: { [QUERY_TOKEN_HEADER]: accessToken } },
+  )
+}
+
+export function recoverPaidDocument(
+  queryId: string,
+  handle: string,
+  payer: string,
+  accessToken: string,
+): Promise<RecoveredPaidDocument> {
+  const params = new URLSearchParams({ payer })
+  return apiFetch(
+    `/api/v1/questions/${encodeURIComponent(queryId)}/paid-documents/${encodeURIComponent(handle)}?${params}`,
+    { headers: { [QUERY_TOKEN_HEADER]: accessToken } },
+  )
+}
+
+export type DocumentFeedback = {
+  id: string
+  queryId: string
+  documentHandle: string
+  payer: string
+  outcome: 'helpful' | 'not_helpful' | 'report'
+  reason?: string
+  status: 'recorded' | 'pending' | 'upheld' | 'dismissed'
+  reviewNote?: string
+  createdAt: number
+  reviewedAt?: number
+}
+
+export function submitDocumentFeedback(
+  queryId: string,
+  handle: string,
+  payer: string,
+  accessToken: string,
+  outcome: DocumentFeedback['outcome'],
+  reason?: string,
+): Promise<DocumentFeedback> {
+  const params = new URLSearchParams({ payer })
+  return apiFetch(
+    `/api/v1/questions/${encodeURIComponent(queryId)}/paid-documents/${encodeURIComponent(handle)}/feedback?${params}`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [QUERY_TOKEN_HEADER]: accessToken,
+      },
+      body: JSON.stringify({ outcome, reason }),
+    },
+  )
+}
+
+export function listDocumentFeedback(): Promise<DocumentFeedback[]> {
+  return apiFetch('/api/v1/admin/document-feedback')
+}
+
+export function reviewDocumentFeedback(
+  feedbackId: string,
+  decision: 'upheld' | 'dismissed',
+  note: string,
+): Promise<DocumentFeedback> {
+  return apiFetch(
+    `/api/v1/admin/document-feedback/${encodeURIComponent(feedbackId)}/review`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ decision, note }),
+    },
+  )
 }
 
 export function getProfile(): Promise<ServerProfile | null> {

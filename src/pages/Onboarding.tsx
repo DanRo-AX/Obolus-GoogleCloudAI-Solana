@@ -57,6 +57,7 @@ export default function Onboarding() {
   const [field, setField] = useState<CategoryId | ''>(profile?.field ?? '')
   const [years, setYears] = useState(profile?.years ?? '')
   const [speaksTo, setSpeaksTo] = useState<CategoryId[]>(profile?.speaksTo ?? [])
+  const [payoutWallet, setPayoutWallet] = useState(profile?.wallet ?? '')
   const [agreed, setAgreed] = useState(false)
   const [done, setDone] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -99,7 +100,7 @@ export default function Onboarding() {
         field,
         years,
         speaksTo,
-        wallet: wallet.pubkey ?? undefined,
+        wallet: payoutWallet || undefined,
       })
       setDone(true)
       window.setTimeout(() => navigate('/dashboard'), 1400)
@@ -308,26 +309,54 @@ export default function Onboarding() {
           {step === 4 ? (
             <Screen
               title="Where the money lands"
-              note="Settlement is USDC on Solana over x402, so a payout needs an address. You can skip this and connect later — you just cannot be paid until you do."
+              note="Settlement is Devnet USDC over x402. You can save a browser-wallet address now and verify ownership after onboarding, or skip it. Phantom is supported first, but it is not a required provider."
             >
               {wallet.pubkey ? (
-                <div className="flex flex-wrap items-center gap-3 rounded-[6px] border border-[#0F766E]/30 bg-[#0F766E]/[0.05] p-4">
-                  <span className="size-2 shrink-0 rounded-full bg-[#0F766E]" />
-                  <span className="font-mono text-sm">
-                    {shortKey(wallet.pubkey)}
-                  </span>
-                  <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                    devnet
-                  </span>
-                  <Button
-                    variant="monoGhost"
-                    size="monoSm"
-                    className="ml-auto"
-                    onClick={() => void wallet.disconnect()}
-                    type="button"
-                  >
-                    Disconnect
-                  </Button>
+                <div className="space-y-3 rounded-[6px] border border-border p-4">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="size-2 shrink-0 rounded-full bg-[#0F766E]" />
+                    <span className="font-mono text-sm">
+                      Browser wallet · {shortKey(wallet.pubkey)}
+                    </span>
+                    <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                      devnet
+                    </span>
+                  </div>
+                  <p className="text-[13px] leading-relaxed text-muted-foreground">
+                    Connecting the extension does not change your OPENSHELF payout
+                    profile. Choose explicitly whether this address should receive
+                    earnings for this account.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant={payoutWallet === wallet.pubkey ? 'mono' : 'monoMuted'}
+                      size="monoSm"
+                      onClick={() => setPayoutWallet(wallet.pubkey ?? '')}
+                      type="button"
+                    >
+                      {payoutWallet === wallet.pubkey ? (
+                        <Check className="size-3.5" />
+                      ) : (
+                        <Wallet className="size-3.5" />
+                      )}
+                      {payoutWallet === wallet.pubkey
+                        ? 'Selected as payout address'
+                        : 'Use this as payout address'}
+                    </Button>
+                    <Button
+                      variant="monoGhost"
+                      size="monoSm"
+                      onClick={() => setPayoutWallet('')}
+                      type="button"
+                    >
+                      Skip for now
+                    </Button>
+                  </div>
+                  {payoutWallet && payoutWallet !== wallet.pubkey ? (
+                    <p className="font-mono text-[11px] text-muted-foreground">
+                      Existing payout address kept · {shortKey(payoutWallet)}
+                    </p>
+                  ) : null}
                 </div>
               ) : (
                 <div className="rounded-[6px] border border-border p-4">
@@ -340,7 +369,7 @@ export default function Onboarding() {
                       type="button"
                     >
                       <Wallet className="size-3.5" />
-                      {wallet.connecting ? 'Connecting…' : 'Connect Phantom'}
+                      {wallet.connecting ? 'Connecting…' : 'Connect browser wallet'}
                     </Button>
                   ) : (
                     <a
@@ -360,7 +389,8 @@ export default function Onboarding() {
                     </p>
                   ) : null}
                   <p className="mt-3 text-[13px] leading-relaxed text-muted-foreground">
-                    Nothing is signed here — only the public key is read. A fresh
+                    Nothing is signed on this screen — only the public key is read.
+                    Payout ownership is verified separately with signMessage. A fresh
                     devnet wallet has neither the SOL for fees nor the USDC to
                     settle with:{' '}
                     <a

@@ -7,6 +7,7 @@
  */
 
 import type { Citation } from '@/state/ui'
+import { getPaymentProgress, recoverPaidDocument } from '@/lib/api'
 import { getPhantom } from '@/state/wallet'
 
 export type OpenRequest = {
@@ -14,6 +15,7 @@ export type OpenRequest = {
   docs: { handle: string; shelf: string; price: number }[]
   question: string
   payer?: string | null
+  accessToken: string
 }
 
 export type OpenResult = {
@@ -37,7 +39,17 @@ const X402_GATEWAY_BASE = (
 const RESOURCE = '/api/flash-research'
 const DEVNET_NETWORK = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
 
-export class PaymentError extends Error {}
+export class PaymentError extends Error {
+  code: 'cancelled' | 'identity_mismatch' | 'failed'
+
+  constructor(
+    message: string,
+    code: PaymentError['code'] = 'failed',
+  ) {
+    super(message)
+    this.code = code
+  }
+}
 
 export function explorerUrl(sig: string, network = 'devnet') {
   const cluster = network.includes('mainnet') ? '' : '?cluster=devnet'
@@ -78,13 +90,62 @@ export async function openDocuments(req: OpenRequest): Promise<OpenResult> {
 async function openOverX402(req: OpenRequest): Promise<OpenResult> {
   const provider = getPhantom()
   if (!provider?.publicKey) {
-    throw new PaymentError('Connect Phantom before opening paid documents.')
+    throw new PaymentError('Connect a Solana browser wallet before opening paid documents.')
+  }
+  const connectedPayer = provider.publicKey.toString()
+  if (req.payer && req.payer !== connectedPayer) {
+    throw new PaymentError(
+      `This payment session belongs to ${req.payer}. The connected wallet is ${connectedPayer}. Switch back to recover it without duplicate charges.`,
+      'identity_mismatch',
+    )
+  }
+  if (!req.accessToken) {
+    throw new PaymentError('The payment recovery token is missing. Start a new query.')
   }
 
   const citations: Citation[] = []
   const transactions: string[] = []
   let settledNetwork = DEVNET_NETWORK
+  const requestedHandles = new Set(req.docs.map((document) => document.handle))
+  const openedHandles = new Set<string>()
+
+  const recoverSettled = async () => {
+    const progress = await getPaymentProgress(
+      req.queryId,
+      connectedPayer,
+      req.accessToken,
+    )
+    const newlySettled = progress.documents.filter(
+      (document) =>
+        document.status === 'settled' &&
+        requestedHandles.has(document.handle) &&
+        !openedHandles.has(document.handle),
+    )
+    const recovered = await Promise.all(
+      newlySettled.map((document) =>
+        recoverPaidDocument(
+          req.queryId,
+          document.handle,
+          connectedPayer,
+          req.accessToken,
+        ),
+      ),
+    )
+    for (const document of recovered) {
+      openedHandles.add(document.citation.handle)
+      citations.push(document.citation)
+      if (!transactions.includes(document.settlement.transactionSignature)) {
+        transactions.push(document.settlement.transactionSignature)
+      }
+      settledNetwork = document.settlement.network
+    }
+    return progress
+  }
+
   try {
+    // A prior transfer may have settled even if the browser lost its response.
+    // Recover those passages before requesting any new wallet approval.
+    await recoverSettled()
     const [
       { x402Client },
       { wrapFetchWithPayment, decodePaymentResponseHeader },
@@ -105,6 +166,7 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
     const paidFetch = wrapFetchWithPayment(window.fetch.bind(window), client)
     // Each document is its own author payment and therefore its own x402 resource.
     for (const document of req.docs) {
+      if (openedHandles.has(document.handle)) continue
       const resource = `${X402_GATEWAY_BASE}/api/v1/paid-documents/${encodeURIComponent(
         req.queryId,
       )}/${encodeURIComponent(document.handle)}`
@@ -119,7 +181,11 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
         throw new Error(payload?.error?.message ?? `x402 gateway returned ${response.status}.`)
       }
       const payload = (await response.json()) as OpenResult
-      citations.push(...payload.citations)
+      for (const citation of payload.citations) {
+        if (openedHandles.has(citation.handle)) continue
+        openedHandles.add(citation.handle)
+        citations.push(citation)
+      }
       const paymentResponse = response.headers.get('PAYMENT-RESPONSE')
       if (paymentResponse) {
         const settlement = decodePaymentResponseHeader(paymentResponse)
@@ -139,6 +205,26 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
       },
     }
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const cancelled = /reject|declin|cancel/i.test(message)
+
+    // Settlement confirmation can lag behind a lost gateway response. Poll a
+    // bounded number of times, then return only what the Rust ledger proves.
+    const attempts = cancelled ? 1 : 4
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        await recoverSettled()
+      } catch {
+        // Preserve the original payment error; Retry can reconcile again.
+      }
+      if (openedHandles.size === requestedHandles.size) {
+        return paymentResult(citations, transactions, settledNetwork, false)
+      }
+      if (attempt + 1 < attempts) {
+        await new Promise((resolve) => window.setTimeout(resolve, 750))
+      }
+    }
+
     if (citations.length > 0) {
       return {
         citations,
@@ -153,11 +239,29 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
       }
     }
     if (error instanceof PaymentError) throw error
-    const message = error instanceof Error ? error.message : String(error)
-    if (/reject|declin|cancel/i.test(message)) {
-      throw new PaymentError('Payment approval was cancelled in Phantom.')
+    if (cancelled) {
+      throw new PaymentError('Payment approval was cancelled in the wallet.', 'cancelled')
     }
     throw new PaymentError(`x402 payment failed: ${message}`)
+  }
+}
+
+function paymentResult(
+  citations: Citation[],
+  transactions: string[],
+  network: string,
+  partial: boolean,
+): OpenResult {
+  return {
+    citations,
+    settlement: {
+      count: citations.length,
+      total: citations.reduce((sum, citation) => sum + citation.price, 0),
+      txSig: transactions[0],
+      txSigs: transactions,
+      network,
+      partial,
+    },
   }
 }
 

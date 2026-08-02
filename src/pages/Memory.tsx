@@ -142,14 +142,14 @@ export default function Memory() {
               Payouts to{' '}
               {profile.wallet ? (
                 <span className="text-foreground">
-                  {shortKey(profile.wallet)}
+                  {shortKey(profile.wallet)} · {profile.walletVerified ? 'verified' : 'unverified'} · Devnet
                 </span>
               ) : (
                 <Link
                   to="/onboarding"
                   className="text-foreground underline decoration-dotted underline-offset-4"
                 >
-                  no wallet connected
+                  payout wallet not set
                 </Link>
               )}
             </span>

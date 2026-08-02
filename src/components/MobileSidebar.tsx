@@ -82,7 +82,7 @@ export function MobileSidebar() {
                     }
                   >
                     <ShieldCheck className="text-muted-foreground/60" />
-                    <span>Review disputes</span>
+                    <span>Review queue</span>
                   </NavLink>
                 </li>
               ) : null}

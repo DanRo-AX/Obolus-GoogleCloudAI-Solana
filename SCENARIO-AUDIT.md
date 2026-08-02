@@ -37,9 +37,12 @@ Updated: 2026-08-02
    unit, credits the contributor, creates memory, and fills one slot.
 5. The buyer's chat polls the owner-scoped answer endpoint and deduplicates by
    answer ID.
-6. Cancellation refunds the remaining reservation; paid answers stay paid.
+6. “Posted by me” can load those server-owned answers directly, so a buyer can
+   sign in from another browser even when the original browser-local chat is
+   unavailable.
+7. Cancellation refunds the remaining reservation; paid answers stay paid.
    Cancelled calls remain visible only to their owner as refunded history.
-7. Insufficient balance, overflow, wrong owner, filled calls, and repeated
+8. Insufficient balance, overflow, wrong owner, filled calls, and repeated
    cancellation fail without partial writes.
 
 ### Browser-wallet payment
@@ -52,10 +55,26 @@ Updated: 2026-08-02
    browser flow asks once per document. All returned transaction signatures are
    kept in the chat receipt rather than hiding all but the first.
 4. Seeded document opens are true micropayments: ₩5–₩25 each. The five-document
-   Seongsu example is ₩50, about 0.037040 USDC at ₩1,350/USDC.
+   Seongsu example currently resolves to ₩40, about 0.029632 USDC at
+   ₩1,350/USDC.
 5. A failure finishes the hit/miss trace instead of leaving Step 4 spinning.
-   Automatic retry is deliberately absent until settlement reconciliation can
-   prove which documents were already paid; a blind retry could double-charge.
+6. The browser stores the query recovery token with the local chat, asks Rust
+   which handles already settled for the connected payer, recovers those paid
+   passages, and retries only the unpaid remainder. A connected-wallet mismatch
+   is stopped before a payment request is created.
+7. Helpful/not-helpful/report feedback is accepted only for a document the same
+   payer actually settled in that query. Reports enter the admin review queue.
+
+### Wallet and account identity
+
+- The signed-in OPENSHELF email, anonymous profile handle, browser-wallet public
+  key, saved payout address, verification state, and Devnet network are labelled
+  separately.
+- Connecting Phantom never changes the service payout profile by itself.
+  Onboarding requires an explicit “Use this as payout address” action.
+- Payout ownership uses the exact server challenge through `signMessage`;
+  replacing an existing payout address requires confirmation and revokes the
+  old verification until the new signature succeeds.
 
 ### Contributor and targeting
 
@@ -92,11 +111,13 @@ target mismatch, owner-only chat return, accepted payment, cancellation refund,
 quality voiding, duplicate/own-answer rejection, two- and three-strike rules,
 pending/approved/rejected disputes, idempotent document opens, migration, and
 account deletion. Frontend verification consists of TypeScript production build,
-Oxlint, and an end-to-end Chrome walkthrough of registration, onboarding,
-four-band targeting, a rejected mismatch, an accepted ₩500 answer returning to
-the buyer chat, partial escrow refund, cancelled-call history, account
-deletion/session revocation, and an admin rejecting a pending dispute with a
-required rationale. The live Devnet pass also covered Phantom wallet reconnect,
+Oxlint, and end-to-end Chrome walkthroughs of registration, onboarding, explicit
+payout-address opt-in, profile eligibility refresh, MISS-to-open-call creation,
+the four-step private interview, an accepted ₩300 answer and earnings ledger,
+and buyer retrieval of that returned answer after a full account switch erased
+the original local chat. The latest pass also inspected the ₩40/5-approval HIT
+preview without invoking Phantom and confirmed that projected subscriptions and
+agent payments are disabled. Earlier live Devnet passes covered Phantom reconnect,
 five real x402/SVM settlements, the success receipt, signed-out route guards,
 desktop and 390px mobile payment previews, and mobile navigation overlap.
 
@@ -112,30 +133,21 @@ desktop and 390px mobile payment previews, and mobile navigation overlap.
 
 ## Remaining product and production work, in priority order
 
-1. **Settlement reconciliation before retry — backend complete.** The Rust API
-   now exposes token-protected settled/quoted/unpaid state and paid-document
-   recovery keyed by query, handle, and payer. The frontend still needs to
-   persist the token, recover settled handles, and retry only unpaid ones.
-2. **Autonomous agent wallet.** Agent mode is presently a display toggle. Add a
+1. **Autonomous agent wallet.** Agent mode is disabled. Add a
    policy-limited wallet/session key with per-open, per-query, and daily caps;
    expiry; allowlisted asset/network; and revocation. Until then, claims of
-   “no human approval” must stay out of current-product copy.
-3. **Approval batching.** The human demo currently asks once per author. A
+   “no human approval” must stay out of current-product copy. The mandatory
+   controls and tests are in `docs/agent-payment-threat-model.md`.
+2. **Approval batching.** The human demo currently asks once per author. A
    batch-capable signer can reduce wallet interruptions, but receipts and payout
    accounting must remain per author.
-4. **Real author payout coverage — backend complete.** Wallet ownership now uses
-   a signed Ed25519 challenge. User-authored content is unpurchasable until its
-   author verifies a payout wallet; only seeded documents may use the fallback.
-5. **Mainnet operations.** Managed RPC/facilitator, KMS-backed secrets, durable
+3. **Mainnet operations.** Managed RPC/facilitator, KMS-backed secrets, durable
    reconciliation queue, monitoring, alerts, rate limits, backups, abuse
    controls, and incident runbooks are required before real value.
-6. **Commercial model.** Monthly top-ups on the pricing page are explicitly
+4. **Commercial model.** Monthly top-ups on the pricing page are explicitly
    projected. Implement custody/compliance and an actual ledger-to-USDC funding
    path, or remove those plans before launch.
-7. **Identity clarity.** Wallet connection and OPENSHELF account authentication
-   are separate today. Link and label them explicitly so two browser profiles or
-   Phantom accounts cannot be mistaken for two application accounts.
-8. **Quality and moderation — core backend complete.** Paid-buyer feedback,
+5. **Quality and moderation operations.** Paid-buyer feedback,
    report intake, admin adjudication, Bayesian reliability updates, and automatic
-   locking after repeated upheld reports are implemented. Review SLAs,
+   locking after repeated upheld reports are implemented end to end. Review SLAs,
    provenance checks, and privacy/redaction operations remain production work.

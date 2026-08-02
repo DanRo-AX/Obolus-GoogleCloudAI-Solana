@@ -12,6 +12,7 @@ import {
   BACKEND_ENABLED,
   cancelOpenCall,
   createOpenCall,
+  createWalletChallenge,
   deleteAccount,
   disputeMemory,
   getBalance,
@@ -26,6 +27,7 @@ import {
   submitAnswer,
   updatePreferences,
   upsertProfile,
+  verifyWalletChallenge,
   type EarningsSummary,
   type Account,
   type BalanceSummary,
@@ -42,6 +44,20 @@ export type Citation = {
   excerpt: string
   price: number
   demographics?: DemographicBands
+}
+
+export type PaymentContext = {
+  queryId: string
+  accessToken: string
+  payer: string
+}
+
+export type PaymentSession = {
+  queryId: string
+  accessToken: string
+  payer?: string
+  docs: Citation[]
+  shelfName: string
 }
 
 export type ChatMessage = {
@@ -63,6 +79,8 @@ export type ChatMessage = {
     network?: string
     partial?: boolean
   }
+  /** Kept privately in local chat state so a paid buyer can recover and rate. */
+  paymentContext?: PaymentContext
 }
 
 export type Chat = {
@@ -72,6 +90,7 @@ export type Chat = {
   messages: ChatMessage[]
   filters?: TargetFilters
   ownerId?: string
+  paymentSession?: PaymentSession
 }
 
 /** An open call. Posted on the spot when the shelves come up empty. */
@@ -118,6 +137,8 @@ export type Profile = {
   disputeUsed: boolean
   /** Solana pubkey payouts land at. Optional — you can connect later. */
   wallet?: string
+  walletVerified?: boolean
+  walletVerifiedAt?: number
   agreedAt: number
 }
 
@@ -168,6 +189,10 @@ type UiValue = {
   saveProfile: (
     p: Omit<Profile, 'strikes' | 'disputeUsed' | 'agreedAt'>,
   ) => Promise<void>
+  verifyPayoutWallet: (
+    wallet: string,
+    signMessage: (message: string) => Promise<string>,
+  ) => Promise<void>
   authenticate: (
     email: string,
     password: string,
@@ -181,6 +206,7 @@ type UiValue = {
   disputeStrike: (memoryId: string, reason: string) => Promise<void>
   refreshLedger: () => Promise<void>
   createChat: (prompt: string, filters?: TargetFilters) => string
+  patchChat: (chatId: string, patch: Partial<Chat>) => void
   appendAssistant: (chatId: string, message: ChatMessage) => void
   patchMessage: (
     chatId: string,
@@ -328,6 +354,8 @@ function profileFromServer(profile: ServerProfile): Profile {
     strikes: profile.strikes,
     disputeUsed: profile.disputeUsed,
     wallet: profile.wallet,
+    walletVerified: profile.walletVerified,
+    walletVerifiedAt: profile.walletVerifiedAt,
     agreedAt: profile.agreedAt,
   }
 }
@@ -439,14 +467,16 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
 
   const refreshLedger = useCallback(async () => {
     if (!BACKEND_ENABLED) return
-    const [remoteMemory, remoteEarnings, remoteBalance] = await Promise.all([
+    const [remoteMemory, remoteEarnings, remoteBalance, remoteOrders] = await Promise.all([
       listMemory(),
       getEarnings(),
       getBalance(),
+      listOpenCalls(),
     ])
     setMemory(remoteMemory)
     setEarnings(remoteEarnings)
     setBalance(remoteBalance)
+    setOrders(remoteOrders)
   }, [])
 
   const createChat = useCallback((prompt: string, filters?: TargetFilters) => {
@@ -473,6 +503,12 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       prev.map((c) =>
         c.id === chatId ? { ...c, messages: [...c.messages, message] } : c,
       ),
+    )
+  }, [])
+
+  const patchChat = useCallback((chatId: string, patch: Partial<Chat>) => {
+    setChats((prev) =>
+      prev.map((chat) => (chat.id === chatId ? { ...chat, ...patch } : chat)),
     )
   }, [])
 
@@ -695,11 +731,41 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
         setProfile(profileFromServer(saved))
         setAutoMatchState(saved.autoMatch)
         setAgentsState(saved.agents)
+        const refreshedOrders = await listOpenCalls().catch(() => null)
+        if (refreshedOrders) setOrders(refreshedOrders)
         return
       }
       setProfile({ ...p, strikes: 0, disputeUsed: false, agreedAt: Date.now() })
     },
     [agents, autoMatch],
+  )
+
+  const verifyPayoutWallet = useCallback(
+    async (
+      wallet: string,
+      signMessage: (message: string) => Promise<string>,
+    ) => {
+      if (!profile) throw new Error('Complete onboarding before verifying a wallet.')
+      let serverProfile = await upsertProfile(
+        {
+          handle: profile.handle,
+          ageBand: profile.ageBand,
+          region: profile.region,
+          household: profile.household,
+          field: profile.field,
+          years: profile.years,
+          speaksTo: profile.speaksTo,
+          wallet,
+        },
+        { autoMatch, agents },
+      )
+      setProfile(profileFromServer(serverProfile))
+      const challenge = await createWalletChallenge(wallet)
+      const signature = await signMessage(challenge.message)
+      serverProfile = await verifyWalletChallenge(challenge.id, signature)
+      setProfile(profileFromServer(serverProfile))
+    },
+    [agents, autoMatch, profile],
   )
 
   const authenticate = useCallback(
@@ -799,6 +865,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       authReady,
       profile,
       saveProfile,
+      verifyPayoutWallet,
       authenticate,
       signOut,
       deleteCurrentAccount,
@@ -806,6 +873,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       disputeStrike,
       refreshLedger,
       createChat,
+      patchChat,
       appendAssistant,
       patchMessage,
       placeOrder,
@@ -829,6 +897,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       authReady,
       profile,
       saveProfile,
+      verifyPayoutWallet,
       authenticate,
       signOut,
       deleteCurrentAccount,
@@ -836,6 +905,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       disputeStrike,
       refreshLedger,
       createChat,
+      patchChat,
       appendAssistant,
       patchMessage,
       placeOrder,
