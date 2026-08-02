@@ -1039,7 +1039,7 @@ impl Store {
                 "feedback reason must be 1000 characters or fewer".to_owned(),
             ));
         }
-        if outcome == "report" && !reason.is_some_and(|value| value.chars().count() >= 20) {
+        if outcome == "report" && reason.is_none_or(|value| value.chars().count() < 20) {
             return Err(StoreError::Validation(
                 "a report reason must be between 20 and 1000 characters".to_owned(),
             ));
