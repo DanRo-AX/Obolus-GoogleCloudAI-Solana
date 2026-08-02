@@ -41,7 +41,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of daily routes from people who have lived in Seongsu for two years or more, or who commute in every day.',
     mdCount: 840,
-    avgPrice: 420,
+    avgPrice: 10,
     openRate: '62%',
     excerpts: [
       'I eat lunch inside Seongsu almost every day, but once the wait goes past 30 minutes I just grab a convenience store lunchbox.',
@@ -60,7 +60,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of timetables and travel habits from people who commute into Pangyo Techno Valley every day.',
     mdCount: 610,
-    avgPrice: 480,
+    avgPrice: 10,
     openRate: '58%',
     excerpts: [
       "Miss the 8:10 on the Shinbundang line and I'm late for the morning meeting, so I leave the house at 6:40.",
@@ -78,7 +78,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of living costs and friction from people who moved from the capital area to Jeju two to five years ago.',
     mdCount: 210,
-    avgPrice: 760,
+    avgPrice: 15,
     openRate: '71%',
     excerpts: [
       "Parcels land two days late. If a shop tacks on the ₩3,000 Jeju surcharge I don't order from them at all.",
@@ -96,7 +96,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of costs and floor routines from owners who have run a 15-seat-or-smaller cafe themselves for over a year.',
     mdCount: 180,
-    avgPrice: 1250,
+    avgPrice: 25,
     openRate: '77%',
     excerpts: [
       "I go through 12kg of beans a month. I've changed suppliers twice, and the one I use now is ₩22,000 per kg.",
@@ -114,7 +114,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of price limits and queueing habits from people who buy lunch five days a week in office districts.',
     mdCount: 1120,
-    avgPrice: 260,
+    avgPrice: 5,
     openRate: '54%',
     excerpts: [
       "₩10,000 is my line for lunch. If a place goes over it, I'll do a convenience store run once that week.",
@@ -132,7 +132,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of weekly patterns from one- and two-person households that eat and drink at home far more than out.',
     mdCount: 470,
-    avgPrice: 300,
+    avgPrice: 6,
     openRate: '49%',
     excerpts: [
       'Twice a week, Thursday and Saturday night, I drink two 500ml cans of beer.',
@@ -150,7 +150,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of repeat items and order times from households using overnight delivery twice a week or more.',
     mdCount: 930,
-    avgPrice: 340,
+    avgPrice: 7,
     openRate: '66%',
     excerpts: [
       'I put the order in around 10:30pm. Past 11 it slips to the next day, so I set an alarm.',
@@ -168,7 +168,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of haggling limits and meetup habits from people who have traded secondhand in person for three years or more.',
     mdCount: 720,
-    avgPrice: 280,
+    avgPrice: 6,
     openRate: '59%',
     excerpts: [
       "I've sold about 140 items in three years. Most are under ₩10,000, so meeting in person beats shipping.",
@@ -186,7 +186,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of real stacks, job-hunting hours, and negotiation lines from server developers with two to four years in.',
     mdCount: 540,
-    avgPrice: 900,
+    avgPrice: 18,
     openRate: '73%',
     excerpts: [
       "At work it's Java 17 on Spring Boot, but every side project I do is Python.",
@@ -204,7 +204,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of sleep, meal, and spending patterns from ward nurses who have worked rotating three-shift schedules for over a year.',
     mdCount: 300,
-    avgPrice: 1100,
+    avgPrice: 20,
     openRate: '81%',
     excerpts: [
       'Coming off a night shift at 8am, I pull the blackout curtains and sleep until 3pm.',
@@ -222,7 +222,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of volumes and physical wear from people working the floor, from pre-dawn sorting through same-day delivery.',
     mdCount: 260,
-    avgPrice: 980,
+    avgPrice: 20,
     openRate: '69%',
     excerpts: [
       'I reach the terminal at 6:30am and start sorting. Everything has to be loaded before 9.',
@@ -240,7 +240,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of everyday prices and local routes from people who have lived in Paris for three years or more.',
     mdCount: 95,
-    avgPrice: 1400,
+    avgPrice: 28,
     openRate: '84%',
     excerpts: [
       'I stay out of the tourist quarters entirely on weekends. Groceries are Thursday morning at the neighborhood marche.',
@@ -258,7 +258,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of booking scrambles and actual spending from people who camp ten or more times a year.',
     mdCount: 380,
-    avgPrice: 520,
+    avgPrice: 10,
     openRate: '57%',
     excerpts: [
       'We leave on Friday night. Setting off Saturday morning adds two hours heading toward Gangwon.',
@@ -276,7 +276,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of wallet-separation habits and felt fees from people who sign transactions themselves every week.',
     mdCount: 410,
-    avgPrice: 1150,
+    avgPrice: 20,
     openRate: '78%',
     excerpts: [
       "I split across three wallets. One for spending, one for storage, one for clicking into contracts I've never seen before.",
@@ -294,7 +294,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of rules from small investors who have put the same amount in on the same day for three years or more.',
     mdCount: 660,
-    avgPrice: 640,
+    avgPrice: 13,
     openRate: '63%',
     excerpts: [
       '₩300,000 goes in on the 25th of every month. Same day, same amount, three years running.',
@@ -312,7 +312,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of timetables and actual spending from parents raising a first child through kindergarten.',
     mdCount: 580,
-    avgPrice: 700,
+    avgPrice: 14,
     openRate: '72%',
     excerpts: [
       'The kindergarten bus is at 8:20am. Five minutes late and the whole day slides.',
@@ -330,7 +330,7 @@ export const SHELVES: Shelf[] = [
     summary:
       "A shelf of judgement calls from parents who choose and pay for their middle schooler's academies themselves.",
     mdCount: 490,
-    avgPrice: 820,
+    avgPrice: 16,
     openRate: '68%',
     excerpts: [
       "The math academy is ₩420,000 a month. With English it comes to ₩780,000, so I moved one of them to online lectures.",
@@ -348,7 +348,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of dosing habits and hospital routines from people who have taken the same medication every day for three years or more.',
     mdCount: 350,
-    avgPrice: 1000,
+    avgPrice: 20,
     openRate: '75%',
     excerpts: [
       "Five years of blood pressure pills after breakfast. I keep them next to the toothbrush so I don't forget.",
@@ -366,7 +366,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of routines and spending from people who have lifted three or more times a week for over three years.',
     mdCount: 640,
-    avgPrice: 460,
+    avgPrice: 9,
     openRate: '61%',
     excerpts: [
       "Four times a week, 8pm after work. It's the most crowded hour, but it's the only one I have.",
@@ -384,7 +384,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of routes, gear replacement cycles, and times from runners who have kept fixed days for over a year.',
     mdCount: 520,
-    avgPrice: 380,
+    avgPrice: 8,
     openRate: '60%',
     excerpts: [
       'Tuesday, Thursday, Sunday at 6am. The default is 8km along the Han toward Jamsu Bridge.',
@@ -402,7 +402,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of taste from readers who pay for episodes every day across two or more platforms.',
     mdCount: 870,
-    avgPrice: 220,
+    avgPrice: 5,
     openRate: '51%',
     excerpts: [
       'I read through the 40 minutes on the subway each way. Early access runs me about ₩15,000 a month.',
@@ -420,7 +420,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of buying order and travel habits from fans who spend ₩1,000,000 or more a year on albums, concerts, and merch.',
     mdCount: 430,
-    avgPrice: 560,
+    avgPrice: 11,
     openRate: '70%',
     excerpts: [
       'Four copies per album release. I open one and leave three sealed.',
@@ -438,7 +438,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of the tools teams of five or fewer are actually paying for, and what they switched away from.',
     mdCount: 240,
-    avgPrice: 1300,
+    avgPrice: 26,
     openRate: '79%',
     excerpts: [
       'Nine paid subscriptions, ₩410,000 a month. I go through the list once a quarter and cut.',
@@ -456,7 +456,7 @@ export const SHELVES: Shelf[] = [
     summary:
       'A shelf of the real tools and bottlenecks of office staff who handle slips, approvals, and reconciliation by hand.',
     mdCount: 780,
-    avgPrice: 590,
+    avgPrice: 12,
     openRate: '55%',
     excerpts: [
       'Slips still get sorted in Excel. The file is past 40 sheets and takes 20 seconds to open every time.',

@@ -1,6 +1,6 @@
 # OPENSHELF user scenarios
 
-Updated: 2026-08-01
+Updated: 2026-08-02
 
 ## User types
 
@@ -13,6 +13,8 @@ Updated: 2026-08-01
 | Disputant | Challenge one voided answer | One unused dispute | Submission remains pending and unpaid; submitter cannot approve it | My memory |
 | Reviewer | Approve or reject a pending dispute | Authenticated `admin` role | Approval restores document, slot, and escrow payment atomically; rejection changes none of them; decision cannot be replayed | `/admin/disputes` |
 | Departing user | Remove their account | Authenticated session | Open reservations refunded, sessions revoked, profile/memory/document text deleted, financial rows anonymized | My memory → Delete account |
+| Browser-wallet buyer | Inspect and pay for existing passages | Phantom on Solana Devnet with SOL and Devnet USDC | Exact per-document x402 quote; passage stays closed until settlement | Chat payment preview |
+| Autonomous buyer agent | Open documents within a policy without repeated human approval | Policy-limited wallet or spending delegation | **Not implemented yet**; the current Phantom path is intentionally interactive | Agent-readable mode (preview only) |
 
 ## Scenario checks
 
@@ -39,6 +41,21 @@ Updated: 2026-08-01
    Cancelled calls remain visible only to their owner as refunded history.
 7. Insufficient balance, overflow, wrong owner, filled calls, and repeated
    cancellation fail without partial writes.
+
+### Browser-wallet payment
+
+1. A hit always stops at a payment preview before Phantom is invoked.
+2. The preview shows the exact KRW total, approximate Devnet USDC amount,
+   number of approvals, network, and the shortened Devnet USDC mint. Phantom
+   may label that test token `Unknown`; the UI explains that before approval.
+3. Each document is a separate x402 resource and author payment, so the current
+   browser flow asks once per document. All returned transaction signatures are
+   kept in the chat receipt rather than hiding all but the first.
+4. Seeded document opens are true micropayments: ₩5–₩25 each. The five-document
+   Seongsu example is ₩50, about 0.037040 USDC at ₩1,350/USDC.
+5. A failure finishes the hit/miss trace instead of leaving Step 4 spinning.
+   Automatic retry is deliberately absent until settlement reconciliation can
+   prove which documents were already paid; a blind retry could double-charge.
 
 ### Contributor and targeting
 
@@ -75,10 +92,13 @@ target mismatch, owner-only chat return, accepted payment, cancellation refund,
 quality voiding, duplicate/own-answer rejection, two- and three-strike rules,
 pending/approved/rejected disputes, idempotent document opens, migration, and
 account deletion. Frontend verification consists of TypeScript production build,
-Oxlint, and an end-to-end browser walkthrough of registration, onboarding, four-band
-targeting, a rejected mismatch, an accepted ₩500 answer returning to the buyer chat,
-partial escrow refund, cancelled-call history, account deletion/session revocation,
-and an admin rejecting a pending dispute with a required rationale.
+Oxlint, and an end-to-end Chrome walkthrough of registration, onboarding,
+four-band targeting, a rejected mismatch, an accepted ₩500 answer returning to
+the buyer chat, partial escrow refund, cancelled-call history, account
+deletion/session revocation, and an admin rejecting a pending dispute with a
+required rationale. The live Devnet pass also covered Phantom wallet reconnect,
+five real x402/SVM settlements, the success receipt, signed-out route guards,
+desktop and 390px mobile payment previews, and mobile navigation overlap.
 
 ## Explicit production boundaries
 
@@ -89,3 +109,32 @@ and an admin rejecting a pending dispute with a required rationale.
   backups, and a separately staffed review operation remain deployment work.
 - Chat transcripts are browser-local; money, identity, authorization, calls,
   answers, and memory are server-owned.
+
+## Remaining product and production work, in priority order
+
+1. **Settlement reconciliation before retry.** Add a payment-intent/read model
+   keyed by query and document, expose settled/unpaid state to the client, and
+   resume only unpaid documents after a response loss. This is the prerequisite
+   for a safe Retry button.
+2. **Autonomous agent wallet.** Agent mode is presently a display toggle. Add a
+   policy-limited wallet/session key with per-open, per-query, and daily caps;
+   expiry; allowlisted asset/network; and revocation. Until then, claims of
+   “no human approval” must stay out of current-product copy.
+3. **Approval batching.** The human demo currently asks once per author. A
+   batch-capable signer can reduce wallet interruptions, but receipts and payout
+   accounting must remain per author.
+4. **Real author payout coverage.** Seeded documents intentionally use one
+   fallback receiver. Production import must reject any document without a
+   verified author payout wallet rather than silently pooling revenue.
+5. **Mainnet operations.** Managed RPC/facilitator, KMS-backed secrets, durable
+   reconciliation queue, monitoring, alerts, rate limits, backups, abuse
+   controls, and incident runbooks are required before real value.
+6. **Commercial model.** Monthly top-ups on the pricing page are explicitly
+   projected. Implement custody/compliance and an actual ledger-to-USDC funding
+   path, or remove those plans before launch.
+7. **Identity clarity.** Wallet connection and OPENSHELF account authentication
+   are separate today. Link and label them explicitly so two browser profiles or
+   Phantom accounts cannot be mistaken for two application accounts.
+8. **Quality and moderation.** Add report intake, ranking feedback, review SLAs,
+   provenance checks, and privacy/redaction operations beyond the current strike
+   and single-dispute mechanics.

@@ -36,7 +36,7 @@ const STEPS: Step[] = [
     eyebrow: 'You ask',
     title: 'A question sweeps the documents, not the web',
     body: 'SHELF-1 reads what people wrote about living it, opens the closest few, and quotes them.',
-    detail: 'Whoever gets referenced is paid for that open. ₩300, give or take, per document.',
+    detail: 'Whoever gets referenced is paid for that open. Most demo documents cost ₩5–₩25.',
     accent: '#866FF2',
   },
   {

@@ -614,6 +614,19 @@ impl Store {
                 &document,
                 now_ms().saturating_sub(document.age_days as u64 * 86_400_000),
             )?;
+            // Demo data is versioned with the application. INSERT OR IGNORE keeps
+            // user-authored rows safe, while this narrow update lets corrected
+            // seed pricing reach an existing development database on restart.
+            transaction.execute(
+                "UPDATE documents SET price_krw = ?1
+                 WHERE id = ?2 AND handle = ?3 AND author_id = ?4",
+                params![
+                    as_i64(document.price_krw)?,
+                    document.id,
+                    document.handle,
+                    document.author_id,
+                ],
+            )?;
         }
         seed_open_calls(&transaction)?;
         seed_memory(&transaction)?;

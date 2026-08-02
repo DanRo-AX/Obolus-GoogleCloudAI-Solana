@@ -49,11 +49,11 @@ export const PRICING_FAQ: Faq[] = [
   },
   {
     q: 'If the answer already exists, does it charge without an open call?',
-    a: 'Yes. In that case the order flips. When several MDs already fit the conditions, the librarian skips the open call and says it straight: “People matching your conditions are already here. This is the price. Do you want to pay?”\n\nThe price here is the open price, not the answer rate. Even if 40 candidates come back, the librarian opens only the top 5 by similarity. At ₩300 per open, that is ₩1,500.\n\nNot having to wait is the point of this path. The thicker the shelves get, the larger the share of questions that land on it.'
+    a: 'Yes. In that case the order flips. When several MDs already fit the conditions, the librarian skips the open call and says it straight: “People matching your conditions are already here. This is the price. Do you want to pay?”\n\nThe price here is the open price, not the answer rate. Even if 40 candidates come back, the librarian opens only the top 5 by similarity. At ₩10 per open, that is ₩50.\n\nNot having to wait is the point of this path. The thicker the shelves get, the larger the share of questions that land on it.'
   },
   {
     q: 'What is x402?',
-    a: 'A payment convention that actually uses HTTP 402 Payment Required. The status code sat reserved and empty for a long time; this puts money through it.\n\nThe part that matters is that nobody has to press an approve button. When the agent opens one MD, the payment rides along with the request itself and the machines settle it between themselves. There is no checkout screen, no card details.\n\nThe rail is USDC on Solana. Display is in KRW, and a ₩300 charge on a single open goes through the same way. Card payments do not work at that size, which is why we use this rail.'
+    a: 'A payment convention that actually uses HTTP 402 Payment Required. The status code sat reserved and empty for a long time; this puts money through it.\n\nIn the current browser demo, Phantom explicitly asks you to approve each document payment. A production agent can make the same x402 request autonomously only after you give it a policy-limited wallet or spending delegation. There is no card checkout.\n\nThe rail is USDC on Solana. Display is in KRW, and a ₩5–₩25 document open goes through the same way. Phantom may label Devnet USDC as Unknown, so the payment screen also shows the mint to verify.'
   },
   {
     q: 'When does settlement happen?',

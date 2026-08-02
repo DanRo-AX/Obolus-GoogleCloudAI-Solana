@@ -58,6 +58,8 @@ export type ChatMessage = {
     total: number
     /** Present once a real on-chain settlement happened. */
     txSig?: string
+    /** One x402/SVM settlement per opened document. */
+    txSigs?: string[]
     network?: string
     partial?: boolean
   }

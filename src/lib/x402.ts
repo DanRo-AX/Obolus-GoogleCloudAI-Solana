@@ -8,7 +8,6 @@
 
 import type { Citation } from '@/state/ui'
 import { getPhantom } from '@/state/wallet'
-import { phantomSvmSigner } from '@/lib/phantomSigner'
 
 export type OpenRequest = {
   queryId: string
@@ -23,6 +22,7 @@ export type OpenResult = {
     count: number
     total: number
     txSig?: string
+    txSigs?: string[]
     network?: string
     partial?: boolean
   }
@@ -85,11 +85,17 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
   const transactions: string[] = []
   let settledNetwork = DEVNET_NETWORK
   try {
-    const [{ x402Client }, { wrapFetchWithPayment, decodePaymentResponseHeader }, svm] =
+    const [
+      { x402Client },
+      { wrapFetchWithPayment, decodePaymentResponseHeader },
+      svm,
+      { phantomSvmSigner },
+    ] =
       await Promise.all([
         import('@x402/core/client'),
         import('@x402/fetch'),
         import('@x402/svm/exact/client'),
+        import('@/lib/phantomSigner'),
       ])
     const client = new x402Client()
     svm.registerExactSvmScheme(client, {
@@ -128,6 +134,7 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
         count: citations.length,
         total: citations.reduce((sum, citation) => sum + citation.price, 0),
         txSig: transactions[0],
+        txSigs: transactions,
         network: settledNetwork,
       },
     }
@@ -139,6 +146,7 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
           count: citations.length,
           total: citations.reduce((sum, citation) => sum + citation.price, 0),
           txSig: transactions[0],
+          txSigs: transactions,
           network: settledNetwork,
           partial: true,
         },

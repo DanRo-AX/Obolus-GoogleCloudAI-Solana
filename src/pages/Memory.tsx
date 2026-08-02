@@ -87,7 +87,14 @@ export default function Memory() {
     return Math.max(0.2, Math.min(1, 2 ** (-days / 90)))
   }
 
-  if (authReady && !account) return <Navigate to="/login" replace />
+  if (!authReady) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+  if (!account) return <Navigate to="/login" replace />
 
   return (
     <div className="page-enter flex-1 overflow-y-auto">

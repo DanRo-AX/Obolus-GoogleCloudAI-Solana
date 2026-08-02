@@ -71,9 +71,13 @@ ask → search the shelves → rank by similarity → HIT or MISS
        → call posted → dashboard
 ```
 
-Above ₩1,500 of spend the agent confirms before opening anything. A question
-that already has enough matching documents skips the call entirely and offers
-to settle on the spot — the inverted order the meeting called out.
+The browser-wallet path confirms every spend before opening anything because
+Phantom signs one author payment per document. The preview shows KRW, estimated
+Devnet USDC, approval count, network, and the token mint. A question that already
+has enough matching documents skips the call entirely and offers to settle on
+the spot — the inverted order the meeting called out. Seeded opens cost ₩5–₩25;
+the five-document Seongsu example is ₩50 (about 0.037040 Devnet USDC at the
+default conversion rate).
 
 Matching, ranking, budget filtering, author deduplication, and the hit/miss
 decision now run in the Rust service. It combines deterministic 768-dimensional
@@ -137,6 +141,9 @@ document opens now use actual x402 exact/SVM settlement on Solana Devnet.
 Production still requires a mainnet facilitator credential, managed RPC,
 durable outbox volume or queue, rate limiting, email verification/recovery, KMS
 secret management, and an external identity provider if social login is
-desired. See `backend/README.md` for the exact boundary.
+desired. A policy-limited agent wallet, safe settlement reconciliation before
+retry, and the projected monthly top-up product are also not implemented yet.
+See `SCENARIO-AUDIT.md` for the Chrome-verified scenarios and prioritized gaps,
+and `backend/README.md` for the exact backend boundary.
 
 `BRIEF.md` holds the source-of-truth product brief the copy was written against.

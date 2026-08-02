@@ -16,6 +16,7 @@ export function AppLayout() {
   const { collapsed, setCollapsed, setMobileSidebar } = useUi()
   const [composerOpen, setComposerOpen] = useState(false)
   const location = useLocation()
+  const chatOwnsMobileNavigation = location.pathname.startsWith('/chat/')
 
   useEffect(() => {
     setComposerOpen(false)
@@ -69,30 +70,32 @@ export function AppLayout() {
         </div>
 
         {/* Mobile pill nav ------------------------------------------------ */}
-        <nav
-          className={cn(
-            'fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center rounded-md border border-border/60 bg-card/70 shadow-xl backdrop-blur-sm transition-all duration-300 ease-out md:hidden',
-            'py-2.5 pr-2.5',
-          )}
-        >
-          <button
-            type="button"
-            aria-label="Open sidebar"
-            onClick={() => setMobileSidebar(true)}
-            className="flex size-9 shrink-0 cursor-pointer items-center justify-center text-foreground"
+        {!chatOwnsMobileNavigation ? (
+          <nav
+            className={cn(
+              'fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center rounded-md border border-border/60 bg-card/70 shadow-xl backdrop-blur-sm transition-all duration-300 ease-out md:hidden',
+              'py-2.5 pr-2.5',
+            )}
           >
-            <Menu className="size-4" />
-          </button>
-          <div className="ml-1.5 max-w-[200px] overflow-hidden opacity-100 transition-all duration-300 ease-out">
-            <Button
+            <button
               type="button"
-              onClick={() => setComposerOpen(true)}
-              className="font-mono tracking-[1px] uppercase rounded-[2px] transition-all duration-300 bg-foreground/85 text-background border border-foreground/80 hover:bg-foreground/75 h-9 px-4 text-xs"
+              aria-label="Open sidebar"
+              onClick={() => setMobileSidebar(true)}
+              className="flex size-9 shrink-0 cursor-pointer items-center justify-center text-foreground"
             >
-              New question
-            </Button>
-          </div>
-        </nav>
+              <Menu className="size-4" />
+            </button>
+            <div className="ml-1.5 max-w-[200px] overflow-hidden opacity-100 transition-all duration-300 ease-out">
+              <Button
+                type="button"
+                onClick={() => setComposerOpen(true)}
+                className="font-mono tracking-[1px] uppercase rounded-[2px] transition-all duration-300 bg-foreground/85 text-background border border-foreground/80 hover:bg-foreground/75 h-9 px-4 text-xs"
+              >
+                New question
+              </Button>
+            </div>
+          </nav>
+        ) : null}
 
         {/* Mobile composer sheet ------------------------------------------ */}
         <div

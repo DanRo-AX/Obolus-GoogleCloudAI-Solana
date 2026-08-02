@@ -29,6 +29,12 @@ export default function Pricing() {
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             Your balance is drawn down per document opened. Nothing else.
           </p>
+          <div className="mt-5 max-w-3xl rounded-[6px] border border-border bg-card px-4 py-3 text-sm leading-relaxed text-muted-foreground">
+            <span className="font-medium text-foreground">What works today:</span>{' '}
+            the Devnet demo pays each quoted document directly in USDC. Monthly
+            top-ups below are the projected mainnet packaging, not an active
+            subscription checkout.
+          </div>
         </div>
       </section>
 

@@ -5,6 +5,7 @@ import {
   Check,
   Coins,
   Loader2,
+  Menu,
   Search,
   SlidersHorizontal,
 } from 'lucide-react'
@@ -14,7 +15,7 @@ import { SHELVES, type Shelf } from '@/data/shelf'
 import { getChatAnswers, resolveQuestion, type Resolution } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { explorerUrl, openDocuments, PaymentError } from '@/lib/x402'
-import { useWallet } from '@/state/wallet'
+import { DEVNET_USDC, shortKey, useWallet } from '@/state/wallet'
 import { useUi, type Citation } from '@/state/ui'
 
 /**
@@ -23,7 +24,8 @@ import { useUi, type Citation } from '@/state/ui'
  *   1 ask  2 search  3 rank  4 hit/miss  5 open call  6 x402  7 accrue
  *
  * Step 4 is the whole service. A hit ends as search; a miss posts an open call
- * on the spot. Above a threshold the spend is confirmed before anything opens.
+ * on the spot. The browser-wallet demo confirms every spend because Phantom
+ * asks the person to sign each document payment.
  */
 
 type Phase =
@@ -39,8 +41,7 @@ type Phase =
   | 'answered' // 6·7
   | 'failed' // settlement did not go through
 
-/** Spend above which we confirm before opening anything. */
-const CONFIRM_OVER = 1500
+const KRW_PER_USDC = Number(import.meta.env.VITE_KRW_PER_USDC ?? 1350)
 
 const STEPS = [
   { n: 2, label: 'Search the shelves', blurb: 'People\u2019s documents, not the web' },
@@ -62,6 +63,7 @@ export default function Chat() {
     orders,
     refreshLedger,
     account,
+    setMobileSidebar,
   } = useUi()
   const wallet = useWallet()
   const chat = chats.find((c) => c.id === id)
@@ -92,6 +94,12 @@ export default function Chat() {
   )
 
   const total = pending.reduce((sum, c) => sum + c.price, 0)
+  const estimatedUsdc =
+    pending.reduce(
+      (sum, citation) =>
+        sum + Math.ceil((citation.price * 1_000_000) / KRW_PER_USDC),
+      0,
+    ) / 1_000_000
   const countChoices = useMemo(
     () =>
       [...new Set([openCallDraft?.answersNeeded, ...COUNT_CHOICES])].filter(
@@ -137,6 +145,7 @@ export default function Chat() {
             count: result.settlement.count,
             total: result.settlement.total,
             txSig: result.settlement.txSig,
+            txSigs: result.settlement.txSigs,
             network: result.settlement.network,
             partial: result.settlement.partial,
           },
@@ -204,10 +213,8 @@ export default function Chat() {
           excerpt: '',
           price: match.priceKrw,
         }))
-        const sum = cites.reduce((s, c) => s + c.price, 0)
         setPending(cites)
-        if (sum > CONFIRM_OVER) setPhase('confirm')
-        else void settle(cites, ranked[0]?.shelf.name ?? cites[0]?.shelf ?? 'Unsorted', resolution.queryId)
+        setPhase('confirm')
       } catch (error) {
         if (cancelled) return
         setPayError(error instanceof Error ? error.message : 'Search failed.')
@@ -276,9 +283,19 @@ export default function Chat() {
   return (
     <div className="page-enter flex h-full min-h-0 flex-1 flex-col">
       <div className="flex min-h-8 items-center justify-between gap-4 px-4 pt-4 sm:px-6 sm:pt-6">
-        <h1 className="truncate font-sans text-base font-medium">
-          {chat.title}
-        </h1>
+        <div className="flex min-w-0 items-center gap-2">
+          <button
+            type="button"
+            aria-label="Open sidebar"
+            onClick={() => setMobileSidebar(true)}
+            className="flex size-7 shrink-0 items-center justify-center text-muted-foreground md:hidden"
+          >
+            <Menu className="size-4" />
+          </button>
+          <h1 className="truncate font-sans text-base font-medium">
+            {chat.title}
+          </h1>
+        </div>
         <Link
           to="/dashboard"
           className="shrink-0 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground"
@@ -350,20 +367,26 @@ export default function Chat() {
                           ? 'offline preview · no payment sent'
                           : 'settled through x402 · unopened documents cost nothing'}
                     </span>
-                    {m.settlement.txSig ? (
+                    {(m.settlement.txSigs?.length
+                      ? m.settlement.txSigs
+                      : m.settlement.txSig
+                        ? [m.settlement.txSig]
+                        : []
+                    ).map((signature, index, signatures) => (
                       <a
+                        key={signature}
                         href={explorerUrl(
-                          m.settlement.txSig,
-                          m.settlement.network ?? 'devnet',
+                          signature,
+                          m.settlement?.network ?? 'devnet',
                         )}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground"
                       >
-                        {m.settlement.txSig.slice(0, 8)}…
+                        {signatures.length > 1 ? `tx ${index + 1}` : signature.slice(0, 8)}…
                         <ArrowUpRight className="size-3" />
                       </a>
-                    ) : null}
+                    ))}
                   </div>
                 ) : null}
               </div>
@@ -377,21 +400,38 @@ export default function Chat() {
               {phase === 'confirm' ? (
                 <Branch
                   title={`${pending.length} people already match.`}
-                  body={`No open call needed — this can be answered now. ${pending.length} opens, ₩${total.toLocaleString()}.`}
+                  body={`No open call needed. ${pending.length} documents cost ₩${total.toLocaleString()} total (about ${estimatedUsdc.toFixed(6)} USDC). This browser demo requests ${pending.length} Phantom approval${pending.length === 1 ? '' : 's'} because each author is paid separately.`}
                 >
-                  <Button
-                    variant="mono"
-                    size="mono"
-                    onClick={() =>
-                      void settle(
-                        pending,
-                        pending[0]?.shelf ?? 'Unsorted',
-                        queryId,
-                      )
-                    }
-                  >
-                    Pay and open
-                  </Button>
+                  <div className="w-full rounded-[4px] bg-foreground/[0.04] px-3 py-2 font-mono text-[10px] uppercase leading-relaxed tracking-[0.8px] text-muted-foreground">
+                    Devnet USDC may appear as “Unknown” in Phantom. Verify mint{' '}
+                    <span className="text-foreground" title={DEVNET_USDC}>
+                      {shortKey(DEVNET_USDC)}
+                    </span>{' '}
+                    and network Devnet before approving.
+                  </div>
+                  {wallet.pubkey ? (
+                    <Button
+                      variant="mono"
+                      size="mono"
+                      onClick={() =>
+                        void settle(
+                          pending,
+                          pending[0]?.shelf ?? 'Unsorted',
+                          queryId,
+                        )
+                      }
+                    >
+                      Pay and open · {pending.length} approval{pending.length === 1 ? '' : 's'}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="mono"
+                      size="mono"
+                      onClick={() => void wallet.connect()}
+                    >
+                      Connect Phantom to pay
+                    </Button>
+                  )}
                   <Button
                     variant="monoMuted"
                     size="mono"
@@ -595,8 +635,10 @@ function TraceSteps({
   phase: Phase
   hits: { shelf: Shelf; score: number }[]
 }) {
-  const reached =
-    phase === 'searching' ? 0 : phase === 'ranking' ? 1 : 2
+  // Search and ranking are the only long-running trace phases. Once ranking
+  // resolves, step 4 has made its hit/miss decision; payment, open-call, and
+  // failure states are downstream outcomes and must not leave step 4 spinning.
+  const reached = phase === 'searching' ? 0 : phase === 'ranking' ? 1 : STEPS.length
   const icons = [Search, SlidersHorizontal, Coins]
 
   return (

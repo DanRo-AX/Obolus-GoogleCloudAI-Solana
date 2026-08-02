@@ -6,8 +6,14 @@ import path from 'node:path'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
-    alias: { '@': path.resolve(import.meta.dirname, './src') },
+    alias: {
+      '@': path.resolve(import.meta.dirname, './src'),
+      // @solana/web3.js still imports Node's `buffer` name. Point it at the
+      // browser package so Vite does not externalize Buffer at runtime.
+      buffer: 'buffer/',
+    },
   },
+  optimizeDeps: { include: ['buffer'] },
   server: {
     port: 4319,
     strictPort: true,

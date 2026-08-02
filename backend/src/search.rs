@@ -598,7 +598,7 @@ mod tests {
             "Where do people living in Seongsu eat lunch when the queue is long?",
             3,
         );
-        input.budget_krw = Some(500);
+        input.budget_krw = Some(15);
         let result = resolver.resolve(input).unwrap();
 
         assert_eq!(result.decision, Decision::Miss);
@@ -606,7 +606,7 @@ mod tests {
             result
                 .quote
                 .as_ref()
-                .is_none_or(|quote| quote.total_price_krw <= 500)
+                .is_none_or(|quote| quote.total_price_krw <= 15)
         );
     }
 }
