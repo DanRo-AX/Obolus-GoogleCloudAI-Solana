@@ -1,8 +1,9 @@
 # OPENSHELF x402 gateway
 
 This service is the narrow public payment boundary in front of the Rust API. It
-generates one exact quote per matched document, delegates Solana verification
-and settlement to an x402 facilitator, releases the passage only after a valid
+generates either a direct quote for one matched document or one exact aggregate
+quote for a 2–100 document bundle, delegates Solana verification and settlement
+to an x402 facilitator, releases the committed snapshots only after a valid
 payment, and mirrors the receipt into Rust. Reconciliation entries are written
 to `X402_OUTBOX_PATH` before the mirror call and replayed idempotently.
 `/readyz` also verifies that the Rust ledger is reachable. Production startup
@@ -21,6 +22,13 @@ so a changing blockhash would make an otherwise valid V2 payload fail matching.
 
 The root `.env.example` documents every setting. For local development use
 `npm run dev:stack` from the repository root.
+
+`POST /api/v1/payment-bundles` requires the query capability and prepares a
+non-chargeable immutable quote. `GET /api/v1/paid-bundles/{quoteId}` is the x402
+resource and therefore produces one wallet approval for the aggregate amount.
+The receiver is an escrow wallet: Rust records each author's verified
+beneficiary and `claimable` share, but does not claim that escrow custody itself
+is a completed author payout.
 
 An agent can exercise a paid resource without the browser. Use a disposable
 Devnet wallet secret, never a production key:

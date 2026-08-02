@@ -213,7 +213,7 @@ export const SECTIONS: Section[] = [
     blocks: [
       {
         kind: 'p',
-        text: 'Per-open pricing only works at true micropayment scale. The Devnet browser demo shows explicit Phantom approvals; production agents need a policy-limited wallet so a person does not approve every document.',
+        text: 'Per-open pricing only works at true micropayment scale. The Devnet browser demo bundles the exact selected documents into one explicit Phantom approval; unattended agents still need a policy-limited wallet.',
       },
       {
         kind: 'p',

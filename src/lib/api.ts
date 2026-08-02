@@ -497,10 +497,10 @@ export type EarningEvent = {
   settlementId?: string
   memoryId?: string
   documentHandle?: string
-  source: 'seed' | 'open_call' | 'dispute_restored' | 'document_open'
+  source: 'seed' | 'open_call' | 'dispute_restored' | 'document_open' | 'document_open_bundle'
   amountKrw: number
   recipientWallet?: string
-  payoutStatus: 'accrued' | 'held' | 'onchain'
+  payoutStatus: 'accrued' | 'held' | 'onchain' | 'claimable'
   availableAt: number
   createdAt: number
 }
@@ -509,6 +509,7 @@ export type EarningsSummary = {
   accruedKrw: number
   heldKrw: number
   availableKrw: number
+  claimableKrw: number
   eventCount: number
   events: EarningEvent[]
 }

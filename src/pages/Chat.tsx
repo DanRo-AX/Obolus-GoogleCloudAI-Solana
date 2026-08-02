@@ -35,7 +35,7 @@ import { useUi, type Citation, type PaymentContext } from '@/state/ui'
  *
  * Step 4 is the whole service. A hit ends as search; a miss posts an open call
  * on the spot. The browser-wallet demo confirms every spend because Phantom
- * asks the person to sign each document payment.
+ * asks the person to sign one exact direct or aggregate payment.
  */
 
 type Phase =
@@ -217,6 +217,7 @@ export default function Chat() {
             txSigs: result.settlement.txSigs,
             network: result.settlement.network,
             partial: result.settlement.partial,
+            mode: result.settlement.mode,
           },
           paymentContext: {
             queryId: session.queryId,
@@ -465,6 +466,8 @@ export default function Chat() {
                           ? 'paid from reserved sandbox escrow'
                         : m.settlement.network === 'offline'
                           ? 'offline preview · no payment sent'
+                        : m.settlement.mode === 'bundle_escrow'
+                          ? 'one x402 bundle · contributor shares recorded as claimable'
                           : 'settled through x402 · unopened documents cost nothing'}
                     </span>
                     {(m.settlement.txSigs?.length
@@ -500,7 +503,7 @@ export default function Chat() {
               {phase === 'confirm' ? (
                 <Branch
                   title={`${pending.length} people already match.`}
-                  body={`No open call needed. ${pending.length} documents cost ₩${total.toLocaleString()} total (about ${estimatedUsdc.toFixed(6)} USDC). This browser demo requests ${pending.length} Phantom approval${pending.length === 1 ? '' : 's'} because each author is paid separately.`}
+                  body={`No open call needed. ${pending.length} documents cost ₩${total.toLocaleString()} total (about ${estimatedUsdc.toFixed(6)} USDC). ${pending.length === 1 ? 'This pays that author directly with one Phantom approval.' : 'One Phantom approval pays the exact bundle into the payout escrow; each contributor share is recorded against their verified wallet.'}`}
                 >
                   <div className="w-full rounded-[4px] bg-foreground/[0.04] px-3 py-2 font-mono text-[10px] uppercase leading-relaxed tracking-[0.8px] text-muted-foreground">
                     Devnet USDC may appear as “Unknown” in Phantom. Verify mint{' '}
@@ -521,7 +524,7 @@ export default function Chat() {
                         )
                       }
                     >
-                      Pay and open · {pending.length} approval{pending.length === 1 ? '' : 's'}
+                      Pay and open · 1 approval
                     </Button>
                   ) : (
                     <Button
@@ -675,7 +678,9 @@ export default function Chat() {
               {phase === 'settling' ? (
                 <Branch
                   title="Settling over x402…"
-                  body="Requesting the documents, paying each author, then returning the passages."
+                  body={pending.length > 1
+                    ? 'Paying the exact document bundle once, recording contributor claims, then returning every passage.'
+                    : 'Paying the document author, then returning the passage.'}
                 />
               ) : null}
 

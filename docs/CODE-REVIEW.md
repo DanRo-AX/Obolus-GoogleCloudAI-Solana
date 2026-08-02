@@ -53,6 +53,10 @@ port only useful PR #9-only contracts and documentation.
 - The restricted browser RPC proxy has a per-process rate-limit safety net and
   rejects non-configured browser origins in production.
 - A user's real demo receiver address was removed from the regression fixture.
+- Multi-document HITs now commit an exact bundle and require one x402 wallet
+  approval. Rust records one immutable chain receipt plus one claimable earning
+  per document/beneficiary; progress, response-loss recovery, synthesis, and
+  buyer feedback accept both direct and bundle entitlements.
 
 ## Hard-coded policy and deployment values
 
@@ -80,31 +84,35 @@ mistaken for production configuration.
    facilitator receipt. Production needs finalized-chain verification and a
    reconciliation worker for the crash window between chain settlement and
    durable outbox append.
-3. **Mainnet operations.** Managed RPC/facilitator, mainnet mint/network,
+3. **Bundle escrow payouts.** Aggregate purchases now solve the N-approval UX,
+   but funds are custodial until a separately secured payout executor sends the
+   claim ledger to contributor wallets. Production needs KMS-backed signing,
+   withdrawal/finality reconciliation, fee policy, and an operator runbook.
+4. **Mainnet operations.** Managed RPC/facilitator, mainnet mint/network,
    allowlists, KMS/secrets rotation, monitoring, alerts, and incident runbooks
    remain absent. The current verified path is Devnet.
-4. **Sensitive-data controls.** Persona passages and interview context are
+5. **Sensitive-data controls.** Persona passages and interview context are
    plaintext SQLite rows. Add encryption at rest/field level, retention jobs,
    staff authorization/audit logs, redaction workflows, and deletion evidence.
-5. **Legal truthfulness.** The checked-in privacy policy promises a 30-day
+6. **Legal truthfulness.** The checked-in privacy policy promises a 30-day
    deletion grace period, 90-day backup erasure, every-access logging, named
    processor controls, TLS, and an in-service contact channel that the product
    does not yet implement. It also needs to disclose that demographic bands are
    free matching metadata and that paid passages may be sent to Gemini/Vertex
    for synthesis.
-6. **Abuse controls.** Login has email-keyed throttling and the RPC proxy has a
+7. **Abuse controls.** Login has email-keyed throttling and the RPC proxy has a
    local safety limit, but registration, resolve, gateway quotes, model calls,
    open calls, and wallet identities still need distributed IP/account/wallet
    limits and Sybil controls at the edge.
-7. **Account operations.** Email verification, password reset/recovery, admin
+8. **Account operations.** Email verification, password reset/recovery, admin
    bootstrap/rotation, reviewer staffing, service contact, and audit tooling are
    missing.
-8. **Buyer capability lifecycle.** Query tokens are random and scoped, but have
+9. **Buyer capability lifecycle.** Query tokens are random and scoped, but have
    no explicit expiry or server-owned buyer chat history. Add expiry/revocation
    and authenticated or wallet-proven cross-device recovery.
-9. **Open-call money.** Open-call escrow and signup balances are `KRW_SANDBOX`,
+10. **Open-call money.** Open-call escrow and signup balances are `KRW_SANDBOX`,
    not fiat custody or on-chain escrow. Commercial copy must keep that boundary.
-10. **Frontend delivery security.** Add CSP, HSTS, frame policy, dependency/SBOM
+11. **Frontend delivery security.** Add CSP, HSTS, frame policy, dependency/SBOM
     scanning, x402 browser-bundle regression coverage, and an explicit failure
     state instead of treating a backend outage as a signed-out session.
 

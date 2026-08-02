@@ -10,8 +10,9 @@ open call -> reserve full sandbox budget -> accepted answer -> escrow release
                                             \-> voided -> pending dispute
 pending dispute -> admin approve -> document + slot + escrow release
                 \-> admin reject  -> remains voided and unpaid
-quoted handle -> dynamic x402 quote -> USDC settlement -> reveal one passage
-                 \-> progress/recovery token             \-> immutable chain receipt
+quoted handles -> direct quote (1) or exact bundle quote (2–100)
+               -> one USDC settlement -> reveal committed passage snapshots
+               \-> progress/recovery token -> immutable chain receipt + beneficiary claims
 author wallet -> signed Ed25519 challenge -> verified payout destination
 paid passage -> buyer feedback/report -> admin review -> ranking reliability
 opened passages -> server-canonical evidence -> Gemini/Vertex cited synthesis
@@ -49,6 +50,7 @@ directory. Configuration:
 | `RUST_LOG` | `openshelf_api=info,tower_http=info` | Log filter |
 | `OPENSHELF_INTERNAL_TOKEN` | local development token | Shared secret used only by the x402 gateway |
 | `OPENSHELF_DEFAULT_RECEIVER` | none | Devnet wallet for seeded documents with no author profile |
+| `OPENSHELF_BUNDLE_RECEIVER` | defaults to `OPENSHELF_DEFAULT_RECEIVER` | Escrow/custody wallet receiving one aggregate payment for a multi-document quote |
 | `OPENSHELF_X402_NETWORK` | Solana Devnet CAIP-2 | Network committed into quotes |
 | `OPENSHELF_X402_ASSET` | Circle Devnet USDC | Mint committed into quotes |
 | `OPENSHELF_KRW_PER_USDC` | `1350` | Deterministic quote conversion rate |

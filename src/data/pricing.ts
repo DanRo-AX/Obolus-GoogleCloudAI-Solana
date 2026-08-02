@@ -106,7 +106,7 @@ export const FEATURE_TOOLTIPS: Record<string, string> = {
   'Source verification':
     'Each sentence in an answer keeps a record of which MD it came from and which passage. You can check it against your open history.',
   'x402 settlement':
-    'The browser demo asks Phantom to approve each author payment. An autonomous agent can remove those popups only after it is given a policy-limited wallet or spending delegation.',
+    'The browser demo asks Phantom once for the exact selected set. A multi-document payment lands in payout escrow and creates one claim per contributor. Unattended agent spending still needs a policy-limited wallet or delegation.',
 }
 
 /** Input for the "Find the right plan" estimator. Average opens per question. */

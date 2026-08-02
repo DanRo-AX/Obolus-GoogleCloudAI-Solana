@@ -13,7 +13,7 @@ x402/Solana payment gateway.
 ```bash
 npm ci
 npm --prefix payment-gateway ci
-cp .env.example .env  # set OPENSHELF_DEFAULT_RECEIVER to your Devnet wallet
+cp .env.example .env  # set the direct and bundle receiver Devnet wallets
 npm run dev:stack     # frontend :4319, Rust :8787, x402 gateway :1402
 npm run x402:devnet:smoke # optional funded-wallet settlement verification
 ```
@@ -32,25 +32,32 @@ explicitly want the old sandbox-ledger path, or
 ## Actual payment path
 
 1. Rust searches private documents and returns only safe handles and KRW prices.
-2. The gateway asks Rust for a short-lived per-document quote: recipient,
-   Devnet USDC mint, exact atomic amount, network, and expiry.
+2. For one document, the gateway asks Rust for a short-lived direct-author
+   quote. For two or more, Rust commits the exact handles, content hashes,
+   beneficiary wallets, total, mint, network, and expiry into one bundle quote.
 3. An unpaid resource request returns x402 v2 `402 Payment Required` with a
    `PAYMENT-REQUIRED` header.
-4. The browser x402 client has Phantom sign the exact USDC transfer and retries
-   with `PAYMENT-SIGNATURE`.
+4. The browser x402 client asks Phantom once. A single document pays its author
+   directly; a multi-document purchase sends one aggregate transfer to the
+   configured bundle escrow and retries with `PAYMENT-SIGNATURE`.
 5. The public Devnet facilitator verifies and settles it, the gateway releases
    the purchase-time content snapshot, and Rust records the signature
    idempotently.
 6. Rust reloads only server-proven opened passages, then Gemini/Vertex produces
    a cited synthesis. Without a provider, the UI shows an explicit evidence-only
    result instead of inventing an answer.
-7. Direct-to-author payments are marked `onchain`; they are not added again to
-   the sandbox KRW balance. Failed ledger mirrors remain in the gateway outbox
-   and retry safely.
+7. Direct-to-author payments are marked `onchain`. Bundle shares are marked
+   `claimable` against each author's verified wallet and are not presented as
+   paid until a separate escrow payout executes. Neither is added again to the
+   sandbox KRW balance. Failed ledger mirrors remain in the gateway outbox and
+   retry safely.
 
 The seeded corpus has no real author wallets, so
-`OPENSHELF_DEFAULT_RECEIVER` receives those demo payments. User-authored
-documents pay the wallet saved on that author's profile.
+`OPENSHELF_DEFAULT_RECEIVER` is its demo beneficiary. User-authored documents
+snapshot the verified wallet saved on that author's profile. Multi-document
+transfers land in `OPENSHELF_BUNDLE_RECEIVER`; the contributor Memory screen
+shows the corresponding escrow claim separately from sandbox and direct-chain
+balances.
 
 If a browser loses the response after settlement, the client reconciles the
 query with Rust, recovers passages that are already proven paid, and retries
@@ -76,15 +83,16 @@ the exact dialogue the meeting settled on:
 
 ```
 ask → search the shelves → rank by similarity → HIT or MISS
-  HIT  → open N docs → quote each → x402 settlement line → accrues to authors
+  HIT  → open N docs → one exact bundle quote → one x402 approval → author claims
   MISS → "Nobody has covered this yet. Want me to ask people?"
        → "How many people?"  → "What do you want to pay per answer?"
        → call posted → dashboard
 ```
 
-The browser-wallet path confirms every spend before opening anything because
-Phantom signs one author payment per document. The preview shows KRW, estimated
-Devnet USDC, approval count, network, and the token mint. A question that already
+The browser-wallet path confirms every spend before opening anything. Phantom
+signs once for the exact set: one document is direct-to-author, while two or
+more use the bundle escrow and beneficiary ledger. The preview shows KRW,
+estimated Devnet USDC, approval count, network, and the token mint. A question that already
 has enough matching documents skips the call entirely and offers to settle on
 the spot — the inverted order the meeting called out. Seeded opens cost ₩5–₩25;
 the five-document Seongsu example currently resolves to ₩50 (about 0.03704

@@ -210,6 +210,13 @@ export default function Memory() {
           </div>
         ) : null}
 
+        {earnings?.claimableKrw ? (
+          <div className="rounded-[6px] border border-[#0F766E]/30 bg-[#0F766E]/5 px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+            Bundle escrow claimable <strong className="text-foreground">₩{earnings.claimableKrw.toLocaleString()}</strong>
+            {' · '}beneficiary wallet is snapshotted per sale; payout execution is separate from sandbox balance
+          </div>
+        ) : null}
+
         {profile ? (
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-[6px] border border-border bg-card px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
             <span className="flex items-center gap-1.5">
@@ -325,6 +332,11 @@ export default function Memory() {
                   {event.payoutStatus === 'onchain' ? (
                     <span className="rounded-[2px] bg-emerald-500/10 px-1.5 font-mono text-[9px] uppercase tracking-[1px] text-emerald-700">
                       paid onchain
+                    </span>
+                  ) : null}
+                  {event.payoutStatus === 'claimable' ? (
+                    <span className="rounded-[2px] bg-sky-500/10 px-1.5 font-mono text-[9px] uppercase tracking-[1px] text-sky-700">
+                      escrow claimable
                     </span>
                   ) : null}
                   <span className="ml-auto font-mono text-xs tabular-nums text-[#0F766E]">

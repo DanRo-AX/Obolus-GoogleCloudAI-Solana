@@ -78,6 +78,7 @@ export type ChatMessage = {
     txSigs?: string[]
     network?: string
     partial?: boolean
+    mode?: 'direct' | 'bundle_escrow'
   }
   /** Kept privately in local chat state so a paid buyer can recover and rate. */
   paymentContext?: PaymentContext

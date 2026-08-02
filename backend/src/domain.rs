@@ -431,6 +431,7 @@ pub struct EarningsSummary {
     pub accrued_krw: u64,
     pub held_krw: u64,
     pub available_krw: u64,
+    pub claimable_krw: u64,
     pub event_count: usize,
     pub events: Vec<EarningEvent>,
 }
@@ -543,6 +544,42 @@ pub struct PaymentDocumentSnapshot {
     pub content_hash: String,
     pub document_version: u32,
     pub citation: Citation,
+}
+
+/// Creates one x402 payment resource for an exact set of already-matched
+/// documents. The query access token is carried in a header and is never
+/// persisted with the quote.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatePaymentBundleRequest {
+    pub query_id: String,
+    pub handles: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentBundleQuote {
+    pub id: String,
+    pub query_id: String,
+    pub document_handles: Vec<String>,
+    pub pay_to: String,
+    pub network: String,
+    pub asset: String,
+    pub amount_atomic: String,
+    pub total_price_krw: u64,
+    pub krw_per_usdc: u64,
+    pub expires_at: u64,
+    pub resource_path: String,
+    pub bundle_hash: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentBundleSnapshot {
+    pub quote_id: String,
+    pub bundle_hash: String,
+    pub citations: Vec<Citation>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

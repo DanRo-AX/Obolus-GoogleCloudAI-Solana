@@ -3,6 +3,11 @@ import { appendFile, readFile } from "node:fs/promises";
 import { HTTPFacilitatorClient, type HTTPRequestContext } from "@x402/core/server";
 import type { Network } from "@x402/core/types";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
+import {
+  assertPaymentQuoteUsable,
+  paymentIdentityFromPath,
+  type PaymentRouteIdentity,
+} from "./payment-routing.js";
 import { createStableExactSvmServerScheme } from "./x402-svm.js";
 
 const DEVNET_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as Network;
@@ -55,6 +60,24 @@ type PaymentQuote = {
   resourcePath: string;
 };
 
+type PaymentBundleQuote = {
+  id: string;
+  queryId: string;
+  documentHandles: string[];
+  payTo: string;
+  network: Network;
+  asset: string;
+  amountAtomic: string;
+  totalPriceKrw: number;
+  krwPerUsdc: number;
+  expiresAt: number;
+  resourcePath: string;
+  bundleHash: string;
+  status: string;
+};
+
+type PayableQuote = PaymentQuote | PaymentBundleQuote;
+
 type PaidDocument = {
   quoteId: string;
   citation: {
@@ -67,9 +90,16 @@ type PaidDocument = {
 
 type PaymentDocumentSnapshot = PaidDocument;
 
-type RouteIdentity = { queryId: string; handle: string; key: string };
-type QuoteCacheEntry = { quote: Promise<PaymentQuote>; expiresAt: number };
+type PaymentBundleSnapshot = {
+  quoteId: string;
+  bundleHash: string;
+  citations: PaidDocument["citation"][];
+};
+
+type RouteIdentity = PaymentRouteIdentity;
+type QuoteCacheEntry = { quote: Promise<PayableQuote>; expiresAt: number };
 type PendingSettlement = {
+  settlementKind?: "document" | "bundle";
   quoteId: string;
   transactionSignature: string;
   payer: string;
@@ -104,27 +134,25 @@ async function internalJson<T>(path: string, init: RequestInit = {}): Promise<T>
 }
 
 function identityFromPath(path: string): RouteIdentity {
-  const pathname = path.startsWith("http") ? new URL(path).pathname : path.split("?")[0];
-  const match = pathname.match(/^\/api\/v1\/paid-documents\/([^/]+)\/([^/]+)$/);
-  if (!match) throw new Error("invalid paid document path");
-  const queryId = decodeURIComponent(match[1]);
-  const handle = decodeURIComponent(match[2]);
-  if (!queryId || !handle) throw new Error("query id and document handle are required");
-  return { queryId, handle, key: `${queryId}\u0000${handle}` };
+  return paymentIdentityFromPath(path);
 }
 
 function identityFromContext(context: HTTPRequestContext): RouteIdentity {
   return identityFromPath(context.path);
 }
 
-async function getQuote(identity: RouteIdentity): Promise<PaymentQuote> {
+async function getQuote(identity: RouteIdentity): Promise<PayableQuote> {
   const now = Date.now();
   const cached = quotes.get(identity.key);
   if (cached && cached.expiresAt > now + 5_000) return cached.quote;
 
-  const quotePromise = internalJson<PaymentQuote>(
-    `/internal/v1/payment-quotes/${encodeURIComponent(identity.queryId)}/${encodeURIComponent(identity.handle)}`,
-  );
+  const quotePromise = identity.kind === "document"
+    ? internalJson<PaymentQuote>(
+        `/internal/v1/payment-quotes/${encodeURIComponent(identity.queryId)}/${encodeURIComponent(identity.handle)}`,
+      )
+    : internalJson<PaymentBundleQuote>(
+        `/internal/v1/payment-bundles/${encodeURIComponent(identity.quoteId)}`,
+      );
   const entry: QuoteCacheEntry = { quote: quotePromise, expiresAt: now + 30_000 };
   quotes.set(identity.key, entry);
   try {
@@ -132,6 +160,7 @@ async function getQuote(identity: RouteIdentity): Promise<PaymentQuote> {
     if (quote.network !== network) {
       throw new Error(`quote network ${quote.network} does not match gateway network ${network}`);
     }
+    assertPaymentQuoteUsable(quote.expiresAt);
     entry.expiresAt = quote.expiresAt;
     return quote;
   } catch (error) {
@@ -140,12 +169,15 @@ async function getQuote(identity: RouteIdentity): Promise<PaymentQuote> {
   }
 }
 
-async function quoteForContext(context: HTTPRequestContext): Promise<PaymentQuote> {
+async function quoteForContext(context: HTTPRequestContext): Promise<PayableQuote> {
   return getQuote(identityFromContext(context));
 }
 
 async function recordSettlement(settlement: PendingSettlement): Promise<void> {
-  await internalJson("/internal/v1/chain-settlements", {
+  const endpoint = settlement.settlementKind === "bundle"
+    ? "/internal/v1/bundle-chain-settlements"
+    : "/internal/v1/chain-settlements";
+  await internalJson(endpoint, {
     method: "POST",
     body: JSON.stringify(settlement),
   });
@@ -232,6 +264,7 @@ resourceServer.onAfterSettle(async (context) => {
   const identity = identityFromPath(requestPath ?? resourceUrl ?? "");
   const quote = await getQuote(identity);
   const settlement: PendingSettlement = {
+    settlementKind: identity.kind,
     quoteId: quote.id,
     transactionSignature: context.result.transaction,
     payer: context.result.payer,
@@ -265,7 +298,7 @@ app.use((request, response, next) => {
     // @x402/fetch adds Access-Control-Expose-Headers to its paid retry.
     // It is unusual as a request header, but must be allowed or the browser
     // blocks the signed retry during CORS preflight with `Failed to fetch`.
-    "Content-Type,Payment-Signature,X-Payment,Access-Control-Expose-Headers,Solana-Client",
+    "Content-Type,Payment-Signature,X-Payment,Access-Control-Expose-Headers,Solana-Client,X-Openshelf-Query-Token",
   );
   response.setHeader(
     "access-control-expose-headers",
@@ -343,6 +376,52 @@ app.get("/readyz", async (_request, response) => {
   }
 });
 
+// Preparing a bundle does not charge anything. It only commits an exact,
+// query-authorized document set and returns the x402 resource that will ask
+// the wallet for one aggregate transfer.
+app.post("/api/v1/payment-bundles", async (request, response, next) => {
+  try {
+    const accessToken = request.header("x-openshelf-query-token")?.trim();
+    if (!accessToken) {
+      response.status(401).json({
+        error: { code: "missing_query_token", message: "Query access token is required." },
+      });
+      return;
+    }
+    const body = request.body as { queryId?: unknown; handles?: unknown };
+    if (
+      typeof body?.queryId !== "string" ||
+      !Array.isArray(body.handles) ||
+      body.handles.length < 1 ||
+      body.handles.length > 100 ||
+      body.handles.some((handle) => typeof handle !== "string")
+    ) {
+      response.status(400).json({
+        error: {
+          code: "invalid_bundle",
+          message: "queryId and between 1 and 100 document handles are required.",
+        },
+      });
+      return;
+    }
+    const quote = await internalJson<PaymentBundleQuote>("/internal/v1/payment-bundles", {
+      method: "POST",
+      headers: { "x-openshelf-query-token": accessToken },
+      body: JSON.stringify({ queryId: body.queryId, handles: body.handles }),
+    });
+    quotes.set(`bundle\u0000${quote.id}`, {
+      quote: Promise.resolve(quote),
+      expiresAt: quote.expiresAt,
+    });
+    response.status(201).json({
+      quote,
+      resourceUrl: `${request.protocol}://${request.get("host")}${quote.resourcePath}`,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use(
   paymentMiddleware(
     {
@@ -380,6 +459,40 @@ app.use(
           },
         }),
       },
+      "GET /api/v1/paid-bundles/*": {
+        accepts: {
+          scheme: "exact",
+          network,
+          payTo: async (context) => (await quoteForContext(context)).payTo,
+          price: async (context) => {
+            const quote = await quoteForContext(context);
+            return { asset: quote.asset, amount: quote.amountAtomic };
+          },
+          maxTimeoutSeconds: 60,
+        },
+        description: "Open an exact bundle of matched OPENSHELF documents",
+        mimeType: "application/json",
+        serviceName: "OPENSHELF",
+        unpaidResponseBody: async (context) => {
+          const quote = await quoteForContext(context);
+          return {
+            contentType: "application/json",
+            body: {
+              error: { code: "payment_required", message: "One aggregate USDC payment is required" },
+              quote,
+            },
+          };
+        },
+        settlementFailedResponseBody: (_context, result) => ({
+          contentType: "application/json",
+          body: {
+            error: {
+              code: "settlement_failed",
+              message: result.errorMessage ?? result.errorReason,
+            },
+          },
+        }),
+      },
     },
     resourceServer,
     { appName: "OPENSHELF", testnet: network === DEVNET_NETWORK },
@@ -389,11 +502,13 @@ app.use(
 app.get("/api/v1/paid-documents/:queryId/:handle", async (request, response, next) => {
   try {
     const identity: RouteIdentity = {
+      kind: "document",
       queryId: request.params.queryId,
       handle: request.params.handle,
-      key: `${request.params.queryId}\u0000${request.params.handle}`,
+      key: `document\u0000${request.params.queryId}\u0000${request.params.handle}`,
     };
     const quote = await getQuote(identity);
+    if (!("priceKrw" in quote)) throw new Error("document route received a bundle quote");
     // Express x402 buffers this body, settles on-chain, runs onAfterSettle,
     // and releases it only after success. The snapshot endpoint is internal
     // and read-only; it does not claim that payment or delivery has happened.
@@ -407,6 +522,36 @@ app.get("/api/v1/paid-documents/:queryId/:handle", async (request, response, nex
         count: 1,
         total: quote.priceKrw,
         network: quote.network,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/v1/paid-bundles/:quoteId", async (request, response, next) => {
+  try {
+    const identity: RouteIdentity = {
+      kind: "bundle",
+      quoteId: request.params.quoteId,
+      key: `bundle\u0000${request.params.quoteId}`,
+    };
+    const quote = await getQuote(identity);
+    if (!("totalPriceKrw" in quote)) throw new Error("bundle route received a document quote");
+    const snapshot = await internalJson<PaymentBundleSnapshot>(
+      `/internal/v1/payment-bundles/${encodeURIComponent(quote.id)}/snapshot`,
+    );
+    if (snapshot.bundleHash !== quote.bundleHash) {
+      throw new Error("bundle snapshot does not match its quote commitment");
+    }
+    response.json({
+      citations: snapshot.citations,
+      settlement: {
+        id: quote.id,
+        count: snapshot.citations.length,
+        total: quote.totalPriceKrw,
+        network: quote.network,
+        mode: "bundle_escrow",
       },
     });
   } catch (error) {

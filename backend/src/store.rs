@@ -17,15 +17,15 @@ use crate::{
     domain::{
         AccountControls, AnswerIssue, BalanceSummary, ChainSettlementReceipt, ChatAnswer, Citation,
         ContributorManifest, ContributorMemoryLink, CorrectMemoryRequest,
-        CreateEvidenceEdgeRequest, CreateOpenCallRequest, DemographicBands, DisputeCase, Document,
-        DocumentFeedback, EarningEvent, EarningsSummary, EvidenceContribution, EvidenceEdge,
-        InterviewResponse, MemoryAccessEvent, MemoryEntry, MemoryExport, OpenCall,
-        OpenDocumentsResponse, PaidDocument, PaymentDocumentProgress, PaymentDocumentSnapshot,
-        PaymentProgress, PaymentQuote, PublicDocument, RecordChainSettlementRequest,
-        RecoveredPaidDocument, ResolveQuestionResponse, ReviewDisputeRequest,
-        ReviewDocumentFeedbackRequest, SearchFilters, Settlement, SubmitAnswerResponse,
-        SubmitDocumentFeedbackRequest, UpdatePreferencesRequest, UpsertProfileRequest, UserAccount,
-        UserProfile, WalletChallenge,
+        CreateEvidenceEdgeRequest, CreateOpenCallRequest, CreatePaymentBundleRequest,
+        DemographicBands, DisputeCase, Document, DocumentFeedback, EarningEvent, EarningsSummary,
+        EvidenceContribution, EvidenceEdge, InterviewResponse, MemoryAccessEvent, MemoryEntry,
+        MemoryExport, OpenCall, OpenDocumentsResponse, PaidDocument, PaymentBundleQuote,
+        PaymentBundleSnapshot, PaymentDocumentProgress, PaymentDocumentSnapshot, PaymentProgress,
+        PaymentQuote, PublicDocument, RecordChainSettlementRequest, RecoveredPaidDocument,
+        ResolveQuestionResponse, ReviewDisputeRequest, ReviewDocumentFeedbackRequest,
+        SearchFilters, Settlement, SubmitAnswerResponse, SubmitDocumentFeedbackRequest,
+        UpdatePreferencesRequest, UpsertProfileRequest, UserAccount, UserProfile, WalletChallenge,
     },
     quality, seed,
 };
@@ -61,6 +61,7 @@ const CURRENT_CONSENT_VERSION: &str = "openshelf.consent.v1";
 #[derive(Debug, Clone)]
 pub struct PaymentQuotePolicy {
     pub fallback_recipient: Option<String>,
+    pub bundle_recipient: Option<String>,
     pub network: String,
     pub asset: String,
     pub krw_per_usdc: u64,
@@ -625,6 +626,53 @@ impl Store {
                 confirmed_at INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS payment_bundle_quotes (
+                id TEXT PRIMARY KEY,
+                query_id TEXT NOT NULL REFERENCES queries(id) ON DELETE CASCADE,
+                pay_to TEXT NOT NULL,
+                network TEXT NOT NULL,
+                asset TEXT NOT NULL,
+                amount_atomic INTEGER NOT NULL CHECK (amount_atomic > 0),
+                total_price_krw INTEGER NOT NULL CHECK (total_price_krw >= 0),
+                krw_per_usdc INTEGER NOT NULL CHECK (krw_per_usdc > 0),
+                expires_at INTEGER NOT NULL,
+                settled_at INTEGER,
+                delivered_at INTEGER,
+                created_at INTEGER NOT NULL,
+                bundle_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'quoted'
+            );
+
+            CREATE TABLE IF NOT EXISTS payment_bundle_documents (
+                quote_id TEXT NOT NULL REFERENCES payment_bundle_quotes(id) ON DELETE CASCADE,
+                rank INTEGER NOT NULL,
+                document_id TEXT NOT NULL REFERENCES documents(id),
+                document_handle TEXT NOT NULL,
+                author_id TEXT NOT NULL,
+                recipient_wallet TEXT NOT NULL,
+                price_krw INTEGER NOT NULL CHECK (price_krw >= 0),
+                shelf_snapshot TEXT NOT NULL,
+                content_snapshot TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                document_version INTEGER NOT NULL,
+                consent_version TEXT NOT NULL,
+                PRIMARY KEY (quote_id, document_id),
+                UNIQUE (quote_id, document_handle)
+            );
+
+            CREATE TABLE IF NOT EXISTS bundle_chain_settlements (
+                id TEXT PRIMARY KEY,
+                quote_id TEXT NOT NULL UNIQUE REFERENCES payment_bundle_quotes(id),
+                settlement_id TEXT NOT NULL UNIQUE REFERENCES settlements(id),
+                transaction_signature TEXT NOT NULL UNIQUE,
+                payer TEXT NOT NULL,
+                pay_to TEXT NOT NULL,
+                amount_atomic INTEGER NOT NULL CHECK (amount_atomic > 0),
+                network TEXT NOT NULL,
+                raw_response_json TEXT NOT NULL,
+                confirmed_at INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS dispute_events (
                 user_id TEXT PRIMARY KEY,
                 memory_id TEXT NOT NULL REFERENCES memory_entries(id),
@@ -762,6 +810,12 @@ impl Store {
                 ON payment_quotes(query_id, document_handle, expires_at DESC);
             CREATE INDEX IF NOT EXISTS idx_chain_settlements_signature
                 ON chain_settlements(transaction_signature);
+            CREATE INDEX IF NOT EXISTS idx_payment_bundle_quotes_lookup
+                ON payment_bundle_quotes(query_id, expires_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_payment_bundle_documents_handle
+                ON payment_bundle_documents(document_handle, quote_id);
+            CREATE INDEX IF NOT EXISTS idx_bundle_chain_settlements_signature
+                ON bundle_chain_settlements(transaction_signature);
             CREATE INDEX IF NOT EXISTS idx_wallet_challenges_user
                 ON wallet_challenges(user_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_document_feedback_status
@@ -1197,6 +1251,30 @@ impl Store {
                     },
                 )
                 .optional()?;
+            let settlement = if settlement.is_some() {
+                settlement
+            } else {
+                connection
+                    .query_row(
+                        "SELECT pbq.id, bcs.transaction_signature, bcs.network, bcs.confirmed_at
+                         FROM payment_bundle_quotes pbq
+                         JOIN payment_bundle_documents pbd ON pbd.quote_id = pbq.id
+                         JOIN bundle_chain_settlements bcs ON bcs.quote_id = pbq.id
+                         WHERE pbq.query_id = ?1 AND pbd.document_handle = ?2
+                           AND bcs.payer = ?3
+                         ORDER BY bcs.confirmed_at DESC LIMIT 1",
+                        params![query_id, handle, payer],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                                as_u64(row.get(3)?)?,
+                            ))
+                        },
+                    )
+                    .optional()?
+            };
             if let Some((quote_id, signature, network, settled_at)) = settlement {
                 settled_count += 1;
                 settled_price_krw = settled_price_krw.saturating_add(price_krw);
@@ -1229,6 +1307,28 @@ impl Store {
                     },
                 )
                 .optional()?;
+            let active_quote = if active_quote.is_some() {
+                active_quote
+            } else {
+                connection
+                    .query_row(
+                        "SELECT pbq.id, pbq.expires_at, pbq.network
+                         FROM payment_bundle_quotes pbq
+                         JOIN payment_bundle_documents pbd ON pbd.quote_id = pbq.id
+                         WHERE pbq.query_id = ?1 AND pbd.document_handle = ?2
+                           AND pbq.settled_at IS NULL AND pbq.expires_at > ?3
+                         ORDER BY pbq.created_at DESC LIMIT 1",
+                        params![query_id, handle, as_i64(now)?],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                as_u64(row.get(1)?)?,
+                                row.get::<_, String>(2)?,
+                            ))
+                        },
+                    )
+                    .optional()?
+            };
             let (status, quote_id, quote_expires_at, network) =
                 if let Some((quote_id, expires_at, network)) = active_quote {
                     (
@@ -1281,7 +1381,7 @@ impl Store {
         }
         let connection = self.connection()?;
         require_query_access(&connection, query_id, payment_token_hash)?;
-        connection
+        let direct = connection
             .query_row(
                 "SELECT pq.document_handle, pq.shelf_snapshot, pq.content_snapshot, pq.price_krw,
                         cs.id, cs.quote_id, cs.transaction_signature, cs.payer,
@@ -1291,6 +1391,42 @@ impl Store {
                  WHERE pq.query_id = ?1 AND pq.document_handle = ?2
                    AND cs.payer = ?3
                  ORDER BY cs.confirmed_at DESC LIMIT 1",
+                params![query_id, handle, payer],
+                |row| {
+                    Ok(RecoveredPaidDocument {
+                        citation: Citation {
+                            handle: row.get(0)?,
+                            shelf: row.get(1)?,
+                            excerpt: row.get(2)?,
+                            price: as_u64(row.get(3)?)?,
+                        },
+                        settlement: ChainSettlementReceipt {
+                            id: row.get(4)?,
+                            quote_id: row.get(5)?,
+                            transaction_signature: row.get(6)?,
+                            payer: row.get(7)?,
+                            pay_to: row.get(8)?,
+                            amount_atomic: as_u64(row.get(9)?)?.to_string(),
+                            network: row.get(10)?,
+                            confirmed_at: as_u64(row.get(11)?)?,
+                        },
+                    })
+                },
+            )
+            .optional()?;
+        if let Some(direct) = direct {
+            return Ok(direct);
+        }
+        connection
+            .query_row(
+                "SELECT pbd.document_handle, pbd.shelf_snapshot, pbd.content_snapshot,
+                        pbd.price_krw, bcs.id, bcs.quote_id, bcs.transaction_signature,
+                        bcs.payer, bcs.pay_to, bcs.amount_atomic, bcs.network, bcs.confirmed_at
+                 FROM payment_bundle_documents pbd
+                 JOIN payment_bundle_quotes pbq ON pbq.id = pbd.quote_id
+                 JOIN bundle_chain_settlements bcs ON bcs.quote_id = pbq.id
+                 WHERE pbq.query_id = ?1 AND pbd.document_handle = ?2 AND bcs.payer = ?3
+                 ORDER BY bcs.confirmed_at DESC LIMIT 1",
                 params![query_id, handle, payer],
                 |row| {
                     Ok(RecoveredPaidDocument {
@@ -1360,11 +1496,18 @@ impl Store {
         let transaction = connection.transaction()?;
         let (document_id, settlement_id) = transaction
             .query_row(
-                "SELECT pq.document_id, cs.id
+                "SELECT pq.document_id, cs.id, cs.confirmed_at AS confirmed_at
                  FROM payment_quotes pq
                  JOIN chain_settlements cs ON cs.quote_id = pq.id
                  WHERE pq.query_id = ?1 AND pq.document_handle = ?2 AND cs.payer = ?3
-                 ORDER BY cs.confirmed_at DESC LIMIT 1",
+                 UNION ALL
+                 SELECT pbd.document_id, bcs.settlement_id || ':' || pbd.document_id,
+                        bcs.confirmed_at AS confirmed_at
+                 FROM payment_bundle_documents pbd
+                 JOIN payment_bundle_quotes pbq ON pbq.id = pbd.quote_id
+                 JOIN bundle_chain_settlements bcs ON bcs.quote_id = pbq.id
+                 WHERE pbq.query_id = ?1 AND pbd.document_handle = ?2 AND bcs.payer = ?3
+                 ORDER BY confirmed_at DESC LIMIT 1",
                 params![query_id, handle, payer],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
@@ -2448,10 +2591,15 @@ impl Store {
             .iter()
             .filter(|event| event.payout_status == "accrued")
             .fold(0_u64, |sum, event| sum.saturating_add(event.amount_krw));
+        let claimable_krw = events
+            .iter()
+            .filter(|event| event.payout_status == "claimable")
+            .fold(0_u64, |sum, event| sum.saturating_add(event.amount_krw));
         Ok(EarningsSummary {
             accrued_krw,
             held_krw,
             available_krw,
+            claimable_krw,
             event_count: events.len(),
             events,
         })
@@ -3237,6 +3385,505 @@ impl Store {
         })
     }
 
+    pub fn create_payment_bundle(
+        &self,
+        request: &CreatePaymentBundleRequest,
+        payment_token_hash: &str,
+        policy: &PaymentQuotePolicy,
+    ) -> Result<PaymentBundleQuote, StoreError> {
+        let query_id = request.query_id.trim();
+        if request.handles.is_empty() || request.handles.len() > 100 {
+            return Err(StoreError::Validation(
+                "between 1 and 100 document handles are required".to_owned(),
+            ));
+        }
+        let handles = request
+            .handles
+            .iter()
+            .map(|handle| handle.trim().to_owned())
+            .collect::<Vec<_>>();
+        if handles.iter().any(String::is_empty)
+            || handles.iter().collect::<HashSet<_>>().len() != handles.len()
+        {
+            return Err(StoreError::Validation(
+                "document handles must be non-empty and unique".to_owned(),
+            ));
+        }
+        validate_payment_policy(policy)?;
+        let pay_to = policy.bundle_recipient.as_deref().ok_or_else(|| {
+            StoreError::Conflict(
+                "multi-document payment requires OPENSHELF_BUNDLE_RECEIVER".to_owned(),
+            )
+        })?;
+        if !valid_solana_address(pay_to) {
+            return Err(StoreError::Validation(
+                "bundle recipient must be a base58 Solana public key".to_owned(),
+            ));
+        }
+
+        #[allow(clippy::type_complexity)]
+        let mut documents: Vec<(
+            String,
+            String,
+            String,
+            String,
+            u64,
+            String,
+            String,
+            String,
+            u32,
+            String,
+        )> = Vec::with_capacity(handles.len());
+        let now = now_ms();
+        let mut connection = self.connection()?;
+        require_query_access(&connection, query_id, payment_token_hash)?;
+        let transaction = connection.transaction()?;
+        for handle in &handles {
+            let row = transaction
+                .query_row(
+                    "SELECT d.id, d.handle, d.author_id, p.wallet, qm.quoted_price_krw,
+                            d.shelf, d.content, d.content_hash, d.version,
+                            COALESCE(p.consent_version, 'seed.v1'), p.wallet_verified_at
+                     FROM query_matches qm
+                     JOIN documents d ON d.handle = qm.document_handle
+                     LEFT JOIN profiles p ON p.user_id = d.author_id
+                     WHERE qm.query_id = ?1 AND qm.document_handle = ?2 AND d.locked = 0
+                       AND COALESCE(p.auto_match, 1) = 1
+                       AND (SELECT COUNT(*) FROM memory_entries strikes
+                            WHERE strikes.user_id = d.author_id
+                              AND strikes.status = 'voided') < ?3",
+                    params![query_id, handle, AUTO_MATCH_STRIKE_LIMIT as i64],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                            as_u64(row.get(4)?)?,
+                            row.get::<_, String>(5)?,
+                            row.get::<_, String>(6)?,
+                            row.get::<_, String>(7)?,
+                            as_u64(row.get(8)?)?.min(u32::MAX as u64) as u32,
+                            row.get::<_, String>(9)?,
+                            row.get::<_, Option<i64>>(10)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(StoreError::DocumentNotQuoted)?;
+            let recipient_wallet = if row.10.is_some() {
+                row.3.filter(|wallet| !wallet.trim().is_empty())
+            } else if row.2.starts_with("author_") {
+                policy.fallback_recipient.clone()
+            } else {
+                return Err(StoreError::Conflict(format!(
+                    "author of {} must verify a payout wallet before purchase",
+                    row.1
+                )));
+            }
+            .ok_or_else(|| StoreError::Conflict(format!("{} has no payout recipient", row.1)))?;
+            if !valid_solana_address(&recipient_wallet) {
+                return Err(StoreError::Validation(format!(
+                    "payout recipient for {} is not a Solana public key",
+                    row.1
+                )));
+            }
+            documents.push((
+                row.0,
+                row.1,
+                row.2,
+                recipient_wallet,
+                row.4,
+                row.5,
+                row.6,
+                row.7,
+                row.8,
+                row.9,
+            ));
+        }
+
+        let total_price_krw = documents.iter().try_fold(0_u64, |total, doc| {
+            total.checked_add(doc.4).ok_or_else(|| {
+                StoreError::Validation("bundle price exceeds the supported range".to_owned())
+            })
+        })?;
+        let atomic = (u128::from(total_price_krw)
+            .saturating_mul(USDC_ATOMIC_UNITS)
+            .saturating_add(u128::from(policy.krw_per_usdc) - 1))
+            / u128::from(policy.krw_per_usdc);
+        let amount_atomic = u64::try_from(atomic.max(1)).map_err(|_| {
+            StoreError::Validation("payment amount exceeds the supported range".to_owned())
+        })?;
+        let bundle_commitment = documents
+            .iter()
+            .map(|doc| {
+                serde_json::json!({
+                    "handle": doc.1,
+                    "recipientWallet": doc.3,
+                    "priceKrw": doc.4,
+                    "contentHash": doc.7,
+                    "documentVersion": doc.8,
+                    "consentVersion": doc.9,
+                })
+            })
+            .collect::<Vec<_>>();
+        let bundle_hash = hex_digest(
+            serde_json::to_string(&bundle_commitment)
+                .map_err(|error| StoreError::Validation(error.to_string()))?
+                .as_bytes(),
+        );
+        let existing = transaction
+            .query_row(
+                "SELECT id, expires_at FROM payment_bundle_quotes
+                 WHERE query_id = ?1 AND pay_to = ?2 AND network = ?3 AND asset = ?4
+                   AND amount_atomic = ?5 AND total_price_krw = ?6 AND krw_per_usdc = ?7
+                   AND expires_at > ?8 AND settled_at IS NULL AND bundle_hash = ?9
+                 ORDER BY created_at DESC LIMIT 1",
+                params![
+                    query_id,
+                    pay_to,
+                    policy.network.trim(),
+                    policy.asset.trim(),
+                    as_i64(amount_atomic)?,
+                    as_i64(total_price_krw)?,
+                    as_i64(policy.krw_per_usdc)?,
+                    as_i64(now)?,
+                    bundle_hash,
+                ],
+                |row| Ok((row.get::<_, String>(0)?, as_u64(row.get(1)?)?)),
+            )
+            .optional()?;
+        let (id, expires_at) = if let Some(existing) = existing {
+            existing
+        } else {
+            let id = new_id("bundle");
+            let expires_at = now.saturating_add(policy.ttl_ms);
+            transaction.execute(
+                "INSERT INTO payment_bundle_quotes
+                 (id, query_id, pay_to, network, asset, amount_atomic, total_price_krw,
+                  krw_per_usdc, expires_at, created_at, bundle_hash, status)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'quoted')",
+                params![
+                    id,
+                    query_id,
+                    pay_to,
+                    policy.network.trim(),
+                    policy.asset.trim(),
+                    as_i64(amount_atomic)?,
+                    as_i64(total_price_krw)?,
+                    as_i64(policy.krw_per_usdc)?,
+                    as_i64(expires_at)?,
+                    as_i64(now)?,
+                    bundle_hash,
+                ],
+            )?;
+            for (rank, doc) in documents.iter().enumerate() {
+                transaction.execute(
+                    "INSERT INTO payment_bundle_documents
+                     (quote_id, rank, document_id, document_handle, author_id,
+                      recipient_wallet, price_krw, shelf_snapshot, content_snapshot,
+                      content_hash, document_version, consent_version)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    params![
+                        id,
+                        rank as i64,
+                        doc.0,
+                        doc.1,
+                        doc.2,
+                        doc.3,
+                        as_i64(doc.4)?,
+                        doc.5,
+                        doc.6,
+                        doc.7,
+                        doc.8 as i64,
+                        doc.9,
+                    ],
+                )?;
+            }
+            (id, expires_at)
+        };
+        transaction.commit()?;
+        Ok(PaymentBundleQuote {
+            resource_path: format!("/api/v1/paid-bundles/{id}"),
+            id,
+            query_id: query_id.to_owned(),
+            document_handles: handles,
+            pay_to: pay_to.to_owned(),
+            network: policy.network.trim().to_owned(),
+            asset: policy.asset.trim().to_owned(),
+            amount_atomic: amount_atomic.to_string(),
+            total_price_krw,
+            krw_per_usdc: policy.krw_per_usdc,
+            expires_at,
+            bundle_hash,
+            status: "quoted".to_owned(),
+        })
+    }
+
+    pub fn payment_bundle_quote(&self, quote_id: &str) -> Result<PaymentBundleQuote, StoreError> {
+        let connection = self.connection()?;
+        let mut quote = connection
+            .query_row(
+                "SELECT id, query_id, pay_to, network, asset, amount_atomic,
+                        total_price_krw, krw_per_usdc, expires_at, bundle_hash, status
+                 FROM payment_bundle_quotes WHERE id = ?1",
+                [quote_id.trim()],
+                |row| {
+                    let id: String = row.get(0)?;
+                    Ok(PaymentBundleQuote {
+                        resource_path: format!("/api/v1/paid-bundles/{id}"),
+                        id,
+                        query_id: row.get(1)?,
+                        document_handles: Vec::new(),
+                        pay_to: row.get(2)?,
+                        network: row.get(3)?,
+                        asset: row.get(4)?,
+                        amount_atomic: as_u64(row.get(5)?)?.to_string(),
+                        total_price_krw: as_u64(row.get(6)?)?,
+                        krw_per_usdc: as_u64(row.get(7)?)?,
+                        expires_at: as_u64(row.get(8)?)?,
+                        bundle_hash: row.get(9)?,
+                        status: row.get(10)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("payment bundle quote"))?;
+        let mut statement = connection.prepare(
+            "SELECT document_handle FROM payment_bundle_documents
+             WHERE quote_id = ?1 ORDER BY rank ASC",
+        )?;
+        quote.document_handles = statement
+            .query_map([quote_id.trim()], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(quote)
+    }
+
+    pub fn payment_bundle_snapshot(
+        &self,
+        quote_id: &str,
+    ) -> Result<PaymentBundleSnapshot, StoreError> {
+        let connection = self.connection()?;
+        let bundle_hash = connection
+            .query_row(
+                "SELECT bundle_hash FROM payment_bundle_quotes WHERE id = ?1",
+                [quote_id.trim()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("payment bundle quote"))?;
+        let mut statement = connection.prepare(
+            "SELECT document_handle, shelf_snapshot, content_snapshot, price_krw
+             FROM payment_bundle_documents WHERE quote_id = ?1 ORDER BY rank ASC",
+        )?;
+        let citations = statement
+            .query_map([quote_id.trim()], |row| {
+                Ok(Citation {
+                    handle: row.get(0)?,
+                    shelf: row.get(1)?,
+                    excerpt: row.get(2)?,
+                    price: as_u64(row.get(3)?)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(PaymentBundleSnapshot {
+            quote_id: quote_id.trim().to_owned(),
+            bundle_hash,
+            citations,
+        })
+    }
+
+    pub fn record_bundle_chain_settlement(
+        &self,
+        request: &RecordChainSettlementRequest,
+    ) -> Result<ChainSettlementReceipt, StoreError> {
+        validate_chain_settlement_request(request)?;
+        let amount_atomic = request.amount_atomic.parse::<u64>().map_err(|_| {
+            StoreError::Validation("amountAtomic must be an unsigned integer".to_owned())
+        })?;
+        let raw_response_json = settlement_raw_json(request)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let existing = transaction
+            .query_row(
+                "SELECT id, quote_id, transaction_signature, payer, pay_to,
+                        amount_atomic, network, confirmed_at
+                 FROM bundle_chain_settlements WHERE quote_id = ?1",
+                [request.quote_id.trim()],
+                chain_settlement_from_row,
+            )
+            .optional()?;
+        if let Some(existing) = existing {
+            if existing.transaction_signature == request.transaction_signature.trim()
+                && existing.payer == request.payer.trim()
+                && existing.pay_to == request.pay_to.trim()
+                && existing.amount_atomic == request.amount_atomic
+                && existing.network == request.network.trim()
+            {
+                return Ok(existing);
+            }
+            return Err(StoreError::Conflict(
+                "this payment bundle has already been settled".to_owned(),
+            ));
+        }
+        let signature = request.transaction_signature.trim();
+        let signature_used = transaction
+            .query_row(
+                "SELECT 1 FROM chain_settlements WHERE transaction_signature = ?1
+                 UNION ALL
+                 SELECT 1 FROM bundle_chain_settlements WHERE transaction_signature = ?1
+                 LIMIT 1",
+                [signature],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if signature_used {
+            return Err(StoreError::Conflict(
+                "this transaction signature has already been recorded".to_owned(),
+            ));
+        }
+        let (query_id, pay_to, network, quoted_atomic, total_price_krw) = transaction
+            .query_row(
+                "SELECT query_id, pay_to, network, amount_atomic, total_price_krw
+                     FROM payment_bundle_quotes WHERE id = ?1",
+                [request.quote_id.trim()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        as_u64(row.get(3)?)?,
+                        as_u64(row.get(4)?)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("payment bundle quote"))?;
+        if pay_to != request.pay_to.trim()
+            || network != request.network.trim()
+            || quoted_atomic != amount_atomic
+        {
+            return Err(StoreError::Conflict(
+                "settlement does not match the payment bundle quote".to_owned(),
+            ));
+        }
+        #[allow(clippy::type_complexity)]
+        let documents = {
+            let mut statement = transaction.prepare(
+                "SELECT document_id, document_handle, author_id, recipient_wallet, price_krw,
+                        (SELECT m.id FROM memory_entries m
+                         WHERE m.document_id = pbd.document_id AND m.status = 'settled' LIMIT 1)
+                 FROM payment_bundle_documents pbd WHERE quote_id = ?1 ORDER BY rank ASC",
+            )?;
+            statement
+                .query_map([request.quote_id.trim()], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        as_u64(row.get(4)?)?,
+                        row.get::<_, Option<String>>(5)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        if documents.is_empty() {
+            return Err(StoreError::Conflict("payment bundle is empty".to_owned()));
+        }
+        let confirmed_at = now_ms();
+        let settlement_id = new_id("settlement");
+        let chain_id = new_id("bundle-chain");
+        let handles_json = serde_json::to_string(
+            &documents
+                .iter()
+                .map(|document| &document.1)
+                .collect::<Vec<_>>(),
+        )
+        .expect("handles are serialisable");
+        transaction.execute(
+            "INSERT INTO settlements
+             (id, query_id, payer, document_handles_json, total_krw, mode,
+              transaction_signature, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'x402_solana_bundle_escrow', ?6, ?7)",
+            params![
+                settlement_id,
+                query_id,
+                request.payer.trim(),
+                handles_json,
+                as_i64(total_price_krw)?,
+                signature,
+                as_i64(confirmed_at)?,
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO bundle_chain_settlements
+             (id, quote_id, settlement_id, transaction_signature, payer, pay_to,
+              amount_atomic, network, raw_response_json, confirmed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                chain_id,
+                request.quote_id.trim(),
+                settlement_id,
+                signature,
+                request.payer.trim(),
+                request.pay_to.trim(),
+                as_i64(amount_atomic)?,
+                request.network.trim(),
+                raw_response_json,
+                as_i64(confirmed_at)?,
+            ],
+        )?;
+        transaction.execute(
+            "UPDATE payment_bundle_quotes
+             SET settled_at = ?1, delivered_at = ?1, status = 'delivered' WHERE id = ?2",
+            params![as_i64(confirmed_at)?, request.quote_id.trim()],
+        )?;
+        for (document_id, _handle, author_id, recipient_wallet, price_krw, memory_id) in &documents
+        {
+            transaction.execute(
+                "UPDATE memory_entries SET earned_krw = earned_krw + ?1,
+                    access_count = access_count + 1, last_accessed_at = ?2
+                 WHERE document_id = ?3 AND status = 'settled'",
+                params![as_i64(*price_krw)?, as_i64(confirmed_at)?, document_id],
+            )?;
+            transaction.execute(
+                "INSERT INTO memory_access_events
+                 (id, memory_id, document_id, quote_id, actor, purpose, created_at)
+                 VALUES (?1, ?2, ?3, NULL, ?4, 'bundle_paid_evidence', ?5)",
+                params![
+                    new_id("access"),
+                    memory_id,
+                    document_id,
+                    request.payer.trim(),
+                    as_i64(confirmed_at)?,
+                ],
+            )?;
+            insert_bundle_earning_event(
+                &transaction,
+                &settlement_id,
+                memory_id.as_deref(),
+                document_id,
+                author_id,
+                *price_krw,
+                recipient_wallet,
+                confirmed_at,
+            )?;
+        }
+        transaction.commit()?;
+        Ok(ChainSettlementReceipt {
+            id: chain_id,
+            quote_id: request.quote_id.trim().to_owned(),
+            transaction_signature: signature.to_owned(),
+            payer: request.payer.trim().to_owned(),
+            pay_to,
+            amount_atomic: amount_atomic.to_string(),
+            network,
+            confirmed_at,
+        })
+    }
+
     pub fn paid_document(&self, quote_id: &str) -> Result<PaidDocument, StoreError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
@@ -3395,6 +4042,19 @@ impl Store {
                 "this payment quote has already been settled".to_owned(),
             ));
         }
+        if transaction
+            .query_row(
+                "SELECT 1 FROM bundle_chain_settlements WHERE transaction_signature = ?1",
+                [signature],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some()
+        {
+            return Err(StoreError::Conflict(
+                "this transaction signature has already been recorded".to_owned(),
+            ));
+        }
 
         let (
             query_id,
@@ -3404,13 +4064,12 @@ impl Store {
             network,
             quoted_atomic,
             price_krw,
-            expires_at,
             author_id,
             memory_id,
         ) = transaction
             .query_row(
                 "SELECT pq.query_id, pq.document_id, pq.document_handle, pq.pay_to,
-                        pq.network, pq.amount_atomic, pq.price_krw, pq.expires_at,
+                        pq.network, pq.amount_atomic, pq.price_krw,
                         d.author_id,
                         (SELECT m.id FROM memory_entries m
                          WHERE m.document_id = d.id AND m.status = 'settled' LIMIT 1)
@@ -3427,18 +4086,14 @@ impl Store {
                         row.get::<_, String>(4)?,
                         as_u64(row.get(5)?)?,
                         as_u64(row.get(6)?)?,
-                        as_u64(row.get(7)?)?,
-                        row.get::<_, String>(8)?,
-                        row.get::<_, Option<String>>(9)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, Option<String>>(8)?,
                     ))
                 },
             )
             .optional()?
             .ok_or(StoreError::NotFound("payment quote"))?;
 
-        if now_ms() > expires_at.saturating_add(120_000) {
-            return Err(StoreError::Conflict("payment quote has expired".to_owned()));
-        }
         if pay_to != request.pay_to.trim()
             || network != request.network.trim()
             || quoted_atomic != amount_atomic
@@ -3486,13 +4141,28 @@ impl Store {
             ],
         )?;
         transaction.execute(
-            "UPDATE payment_quotes SET settled_at = ?1, status = 'settled' WHERE id = ?2",
+            "UPDATE payment_quotes
+             SET settled_at = ?1, delivered_at = ?1, status = 'delivered' WHERE id = ?2",
             params![as_i64(confirmed_at)?, request.quote_id.trim()],
         )?;
         transaction.execute(
-            "UPDATE memory_entries SET earned_krw = earned_krw + ?1
-             WHERE document_id = ?2 AND status = 'settled'",
-            params![as_i64(price_krw)?, document_id],
+            "UPDATE memory_entries SET earned_krw = earned_krw + ?1,
+                access_count = access_count + 1, last_accessed_at = ?2
+             WHERE document_id = ?3 AND status = 'settled'",
+            params![as_i64(price_krw)?, as_i64(confirmed_at)?, document_id],
+        )?;
+        transaction.execute(
+            "INSERT INTO memory_access_events
+             (id, memory_id, document_id, quote_id, actor, purpose, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'paid_evidence', ?6)",
+            params![
+                new_id("access"),
+                memory_id,
+                document_id,
+                request.quote_id.trim(),
+                request.payer.trim(),
+                as_i64(confirmed_at)?,
+            ],
         )?;
         insert_onchain_earning_event(
             &transaction,
@@ -4081,6 +4751,37 @@ fn insert_onchain_earning_event(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn insert_bundle_earning_event(
+    transaction: &Transaction<'_>,
+    settlement_id: &str,
+    memory_id: Option<&str>,
+    document_id: &str,
+    author_id: &str,
+    amount_krw: u64,
+    recipient_wallet: &str,
+    created_at: u64,
+) -> Result<(), StoreError> {
+    transaction.execute(
+        "INSERT INTO earning_events
+         (id, settlement_id, memory_id, document_id, author_id, source, amount_krw,
+          recipient_wallet, payout_status, available_at, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'document_open_bundle', ?6, ?7,
+                 'claimable', ?8, ?8)",
+        params![
+            new_id("earning"),
+            settlement_id,
+            memory_id,
+            document_id,
+            author_id,
+            as_i64(amount_krw)?,
+            recipient_wallet,
+            as_i64(created_at)?,
+        ],
+    )?;
+    Ok(())
+}
+
 fn validate_open_call(request: &CreateOpenCallRequest) -> Result<(), StoreError> {
     let question_length = request.question.trim().chars().count();
     if !(8..=1000).contains(&question_length) {
@@ -4447,6 +5148,58 @@ fn sha256_hex(value: &str) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+fn hex_digest(value: &[u8]) -> String {
+    let digest = Sha256::digest(value);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn validate_payment_policy(policy: &PaymentQuotePolicy) -> Result<(), StoreError> {
+    if policy.krw_per_usdc == 0 {
+        return Err(StoreError::Validation(
+            "krwPerUsdc must be greater than zero".to_owned(),
+        ));
+    }
+    if !(30_000..=86_400_000).contains(&policy.ttl_ms) {
+        return Err(StoreError::Validation(
+            "payment quote ttl must be between 30 seconds and 24 hours".to_owned(),
+        ));
+    }
+    if policy.network.trim().is_empty() || policy.asset.trim().is_empty() {
+        return Err(StoreError::Validation(
+            "payment network and asset are required".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_chain_settlement_request(
+    request: &RecordChainSettlementRequest,
+) -> Result<(), StoreError> {
+    let signature = request.transaction_signature.trim();
+    if !(64..=128).contains(&signature.len()) || !is_base58(signature) {
+        return Err(StoreError::Validation(
+            "transactionSignature must be a base58 Solana signature".to_owned(),
+        ));
+    }
+    if !valid_solana_address(request.payer.trim()) || !valid_solana_address(request.pay_to.trim()) {
+        return Err(StoreError::Validation(
+            "payer and payTo must be base58 Solana public keys".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn settlement_raw_json(request: &RecordChainSettlementRequest) -> Result<String, StoreError> {
+    let raw_response_json = serde_json::to_string(&request.raw_response)
+        .map_err(|error| StoreError::Validation(error.to_string()))?;
+    if raw_response_json.len() > 32_768 {
+        return Err(StoreError::Validation(
+            "rawResponse must be at most 32768 bytes".to_owned(),
+        ));
+    }
+    Ok(raw_response_json)
+}
+
 fn seed_evidence_edges(transaction: &Transaction<'_>) -> Result<(), StoreError> {
     let edges = [
         (
@@ -4741,11 +5494,11 @@ mod tests {
 
     use crate::{
         domain::{
-            CorrectMemoryRequest, CreateEvidenceEdgeRequest, CreateOpenCallRequest, Decision,
-            EvidenceContribution, InterviewResponse, RecordChainSettlementRequest,
-            ResolveQuestionRequest, ReviewDisputeRequest, ReviewDocumentFeedbackRequest,
-            SearchFilters, SubmitAnswerResponse, SubmitDocumentFeedbackRequest,
-            UpdatePreferencesRequest, UpsertProfileRequest,
+            CorrectMemoryRequest, CreateEvidenceEdgeRequest, CreateOpenCallRequest,
+            CreatePaymentBundleRequest, Decision, EvidenceContribution, InterviewResponse,
+            RecordChainSettlementRequest, ResolveQuestionRequest, ReviewDisputeRequest,
+            ReviewDocumentFeedbackRequest, SearchFilters, SubmitAnswerResponse,
+            SubmitDocumentFeedbackRequest, UpdatePreferencesRequest, UpsertProfileRequest,
         },
         search::Resolver,
     };
@@ -4848,6 +5601,136 @@ mod tests {
     ) -> Result<SubmitAnswerResponse, StoreError> {
         onboard(store, user_id);
         store.submit_answer(call_id, user_id, answer)
+    }
+
+    #[test]
+    fn bundle_payment_opens_many_documents_with_one_settlement_and_claim_ledger() {
+        let store = Store::in_memory().unwrap();
+        let question = "Where do people who live in Seongsu eat lunch on weekdays?";
+        let resolver = Resolver::new(store.documents().unwrap());
+        let resolved = resolver
+            .resolve(ResolveQuestionRequest {
+                question: question.to_owned(),
+                requested_documents: 3,
+                budget_krw: None,
+                filters: SearchFilters::default(),
+            })
+            .unwrap();
+        assert!(resolved.matches.len() >= 2);
+        let handles = resolved
+            .matches
+            .iter()
+            .take(2)
+            .map(|matched| matched.handle.clone())
+            .collect::<Vec<_>>();
+        let payment_token_hash = "c".repeat(64);
+        store
+            .record_resolution(question, &resolved, Some(&payment_token_hash))
+            .unwrap();
+        let receiver =
+            bs58::encode(SigningKey::from_bytes(&[7; 32]).verifying_key().as_bytes()).into_string();
+        let payer =
+            bs58::encode(SigningKey::from_bytes(&[8; 32]).verifying_key().as_bytes()).into_string();
+        let policy = PaymentQuotePolicy {
+            fallback_recipient: Some(receiver.clone()),
+            bundle_recipient: Some(receiver.clone()),
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
+            krw_per_usdc: 1_350,
+            ttl_ms: 300_000,
+        };
+        let create = CreatePaymentBundleRequest {
+            query_id: resolved.query_id.clone(),
+            handles: handles.clone(),
+        };
+        assert!(matches!(
+            store.create_payment_bundle(&create, &"d".repeat(64), &policy),
+            Err(StoreError::Unauthorized(_))
+        ));
+        let quote = store
+            .create_payment_bundle(&create, &payment_token_hash, &policy)
+            .unwrap();
+        let repeated_quote = store
+            .create_payment_bundle(&create, &payment_token_hash, &policy)
+            .unwrap();
+        assert_eq!(quote.id, repeated_quote.id);
+        assert_eq!(quote.document_handles, handles);
+        assert_eq!(
+            store
+                .payment_bundle_snapshot(&quote.id)
+                .unwrap()
+                .citations
+                .len(),
+            2
+        );
+
+        let request = RecordChainSettlementRequest {
+            quote_id: quote.id.clone(),
+            transaction_signature: "3".repeat(88),
+            payer: payer.clone(),
+            pay_to: quote.pay_to.clone(),
+            amount_atomic: quote.amount_atomic.clone(),
+            network: quote.network.clone(),
+            raw_response: serde_json::json!({ "success": true, "transaction": "3".repeat(88) }),
+        };
+        // The public gateway rejects an expired quote before payment. Once the
+        // facilitator has settled, however, a delayed durable-outbox replay
+        // must still be accepted instead of orphaning an on-chain transfer.
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE payment_bundle_quotes SET expires_at = 0 WHERE id = ?1",
+                [&quote.id],
+            )
+            .unwrap();
+        let receipt = store.record_bundle_chain_settlement(&request).unwrap();
+        assert_eq!(
+            store.record_bundle_chain_settlement(&request).unwrap(),
+            receipt
+        );
+        let progress = store
+            .payment_progress(&resolved.query_id, &payer, &payment_token_hash)
+            .unwrap();
+        assert_eq!(progress.settled_count, 2);
+        assert_eq!(
+            progress
+                .documents
+                .iter()
+                .filter(|doc| doc.status == "settled")
+                .count(),
+            2
+        );
+        for handle in &handles {
+            let recovered = store
+                .recover_paid_document(&resolved.query_id, handle, &payer, &payment_token_hash)
+                .unwrap();
+            assert_eq!(recovered.settlement.id, receipt.id);
+            assert_eq!(recovered.settlement.transaction_signature, "3".repeat(88));
+            store
+                .submit_document_feedback(
+                    &resolved.query_id,
+                    handle,
+                    &payer,
+                    &payment_token_hash,
+                    &SubmitDocumentFeedbackRequest {
+                        outcome: "helpful".to_owned(),
+                        reason: None,
+                    },
+                )
+                .unwrap();
+        }
+        let connection = store.connection().unwrap();
+        let (claims, distinct_settlements): (u64, u64) = connection
+            .query_row(
+                "SELECT COUNT(*), COUNT(DISTINCT settlement_id) FROM earning_events
+                 WHERE payout_status = 'claimable'",
+                [],
+                |row| Ok((super::as_u64(row.get(0)?)?, super::as_u64(row.get(1)?)?)),
+            )
+            .unwrap();
+        assert_eq!(claims, 2);
+        assert_eq!(distinct_settlements, 1);
     }
 
     #[test]
@@ -5284,6 +6167,7 @@ mod tests {
 
         let policy = PaymentQuotePolicy {
             fallback_recipient: None,
+            bundle_recipient: None,
             network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
             asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
             krw_per_usdc: 1_350,

@@ -19,16 +19,17 @@ use crate::{
     domain::{
         AccountControls, AuthResponse, BalanceSummary, ChainSettlementReceipt, ChatAnswer,
         ContributorManifest, ContributorMemoryLink, CorrectMemoryRequest,
-        CreateEvidenceEdgeRequest, CreateOpenCallRequest, DisputeCase, DocumentFeedback,
-        EarningsSummary, EvidenceEdge, LoginRequest, MemoryEntry, MemoryExport, OpenCall,
-        OpenDocumentsResponse, PaidDocument, PaymentDocumentSnapshot, PaymentProgress,
-        PaymentQuote, PublicDocument, RecordChainSettlementRequest, RecoveredPaidDocument,
-        RegisterRequest, ResolveError, ResolveQuestionRequest, ResolveQuestionResponse,
-        ReviewDisputeRequest, ReviewDocumentFeedbackRequest, SubmitAnswerRequest,
-        SubmitAnswerResponse, SubmitDisputeRequest, SubmitDocumentFeedbackRequest,
-        SynthesizeAnswerRequest, SynthesizeAnswerResponse, SynthesizePaidAnswerRequest,
-        UpdateMemoryRequest, UpdatePreferencesRequest, UpsertProfileRequest, UserAccount,
-        UserProfile, VerifyWalletRequest, WalletChallenge, WalletChallengeRequest,
+        CreateEvidenceEdgeRequest, CreateOpenCallRequest, CreatePaymentBundleRequest, DisputeCase,
+        DocumentFeedback, EarningsSummary, EvidenceEdge, LoginRequest, MemoryEntry, MemoryExport,
+        OpenCall, OpenDocumentsResponse, PaidDocument, PaymentBundleQuote, PaymentBundleSnapshot,
+        PaymentDocumentSnapshot, PaymentProgress, PaymentQuote, PublicDocument,
+        RecordChainSettlementRequest, RecoveredPaidDocument, RegisterRequest, ResolveError,
+        ResolveQuestionRequest, ResolveQuestionResponse, ReviewDisputeRequest,
+        ReviewDocumentFeedbackRequest, SubmitAnswerRequest, SubmitAnswerResponse,
+        SubmitDisputeRequest, SubmitDocumentFeedbackRequest, SynthesizeAnswerRequest,
+        SynthesizeAnswerResponse, SynthesizePaidAnswerRequest, UpdateMemoryRequest,
+        UpdatePreferencesRequest, UpsertProfileRequest, UserAccount, UserProfile,
+        VerifyWalletRequest, WalletChallenge, WalletChallengeRequest,
     },
     orchestrator,
     search::Resolver,
@@ -107,6 +108,14 @@ impl AppState {
                 fallback_recipient: std::env::var("OPENSHELF_DEFAULT_RECEIVER")
                     .ok()
                     .filter(|value| !value.trim().is_empty()),
+                bundle_recipient: std::env::var("OPENSHELF_BUNDLE_RECEIVER")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .or_else(|| {
+                        std::env::var("OPENSHELF_DEFAULT_RECEIVER")
+                            .ok()
+                            .filter(|value| !value.trim().is_empty())
+                    }),
                 network,
                 asset,
                 krw_per_usdc: env_u64("OPENSHELF_KRW_PER_USDC", 1_350),
@@ -211,6 +220,19 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/internal/v1/chain-settlements",
             post(record_chain_settlement),
+        )
+        .route("/internal/v1/payment-bundles", post(create_payment_bundle))
+        .route(
+            "/internal/v1/payment-bundles/{id}",
+            get(payment_bundle_quote),
+        )
+        .route(
+            "/internal/v1/payment-bundles/{id}/snapshot",
+            get(payment_bundle_snapshot),
+        )
+        .route(
+            "/internal/v1/bundle-chain-settlements",
+            post(record_bundle_chain_settlement),
         )
         .with_state(state)
 }
@@ -763,6 +785,50 @@ async fn record_chain_settlement(
 ) -> Result<Json<ChainSettlementReceipt>, ApiError> {
     require_internal(&state, &headers)?;
     Ok(Json(state.store.record_chain_settlement(&request)?))
+}
+
+async fn create_payment_bundle(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<CreatePaymentBundleRequest>,
+) -> Result<Json<PaymentBundleQuote>, ApiError> {
+    require_internal(&state, &headers)?;
+    let access_token = query_access_token(&headers)?;
+    Ok(Json(state.store.create_payment_bundle(
+        &request,
+        &token_hash(access_token),
+        &state.payment_policy,
+    )?))
+}
+
+async fn payment_bundle_quote(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<PaymentBundleQuote>, ApiError> {
+    require_internal(&state, &headers)?;
+    Ok(Json(state.store.payment_bundle_quote(&id)?))
+}
+
+async fn payment_bundle_snapshot(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<(HeaderMap, Json<PaymentBundleSnapshot>), ApiError> {
+    require_internal(&state, &headers)?;
+    Ok((
+        private_no_store_headers(),
+        Json(state.store.payment_bundle_snapshot(&id)?),
+    ))
+}
+
+async fn record_bundle_chain_settlement(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<RecordChainSettlementRequest>,
+) -> Result<Json<ChainSettlementReceipt>, ApiError> {
+    require_internal(&state, &headers)?;
+    Ok(Json(state.store.record_bundle_chain_settlement(&request)?))
 }
 
 fn private_no_store_headers() -> HeaderMap {
@@ -1343,6 +1409,8 @@ mod tests {
         for path in [
             "/internal/v1/payment-quotes/query/document",
             "/internal/v1/payment-quotes/query/snapshot",
+            "/internal/v1/payment-bundles/bundle",
+            "/internal/v1/payment-bundles/bundle/snapshot",
         ] {
             let response = demo_app()
                 .oneshot(Request::get(path).body(Body::empty()).unwrap())

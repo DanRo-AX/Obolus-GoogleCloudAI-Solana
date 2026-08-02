@@ -1,6 +1,6 @@
 # OPENSHELF user scenarios
 
-Updated: 2026-08-02
+Updated: 2026-08-03
 
 ## User types
 
@@ -13,7 +13,7 @@ Updated: 2026-08-02
 | Disputant | Challenge one voided answer | One unused dispute | Submission remains pending and unpaid; submitter cannot approve it | My memory |
 | Reviewer | Approve or reject a pending dispute | Authenticated `admin` role | Approval restores document, slot, and escrow payment atomically; rejection changes none of them; decision cannot be replayed | `/admin/disputes` |
 | Departing user | Remove their account | Authenticated session | Open reservations refunded, sessions revoked, profile/memory/document text deleted, financial rows anonymized | My memory → Delete account |
-| Browser-wallet buyer | Inspect and pay for existing passages | Phantom on Solana Devnet with SOL and Devnet USDC | Exact per-document x402 quote; passage stays closed until settlement | Chat payment preview |
+| Browser-wallet buyer | Inspect and pay for existing passages | Phantom on Solana Devnet with SOL and Devnet USDC | Exact direct quote for one document or one committed bundle for many; passages stay closed until settlement | Chat payment preview |
 | Autonomous buyer agent | Open documents within a policy without repeated human approval | Policy-limited wallet or spending delegation | **Not implemented yet**; the current Phantom path is intentionally interactive | Agent-readable mode (preview only) |
 
 ## Scenario checks
@@ -49,11 +49,12 @@ Updated: 2026-08-02
 
 1. A hit always stops at a payment preview before Phantom is invoked.
 2. The preview shows the exact KRW total, approximate Devnet USDC amount,
-   number of approvals, network, and the shortened Devnet USDC mint. Phantom
+   one approval, network, and the shortened Devnet USDC mint. Phantom
    may label that test token `Unknown`; the UI explains that before approval.
-3. Each document is a separate x402 resource and author payment, so the current
-   browser flow asks once per document. All returned transaction signatures are
-   kept in the chat receipt rather than hiding all but the first.
+3. One document stays a direct-to-author x402 resource. Two or more are bound
+   into one quote by handle, content hash/version, consent version, price, and
+   beneficiary wallet, so the browser signs one aggregate transfer. Rust keeps
+   one chain receipt and a separate `claimable` earning row per author/document.
 4. Seeded document opens are true micropayments: ₩5–₩25 each. The five-document
    Seongsu example currently resolves to ₩50, about 0.03704 USDC at
    ₩1,350/USDC.
@@ -110,14 +111,19 @@ Backend tests cover session creation, spoof rejection, escrow reservation,
 target mismatch, owner-only chat return, accepted payment, cancellation refund,
 quality voiding, duplicate/own-answer rejection, two- and three-strike rules,
 pending/approved/rejected disputes, idempotent document opens, migration, and
-account deletion. Frontend verification consists of TypeScript production build,
+account deletion, plus exact bundle creation, query-token rejection, quote
+idempotency, one-signature settlement, multi-document recovery, per-document
+feedback, and per-beneficiary claim accounting. Frontend verification consists of TypeScript production build,
 Oxlint, and end-to-end Chrome walkthroughs of registration, onboarding, explicit
 payout-address opt-in, profile eligibility refresh, MISS-to-open-call creation,
 the four-step private interview, an accepted ₩300 answer and earnings ledger,
 and buyer retrieval of that returned answer after a full account switch erased
-the original local chat. The latest live Devnet pass completed the ₩50/5-approval
+the original local chat. The latest legacy live Devnet pass completed the ₩50/5-approval
 HIT across a response-loss recovery boundary, proved that failed attempts did not
-create chain settlements, and finalized all five x402/SVM transfers. It also
+create chain settlements, and finalized all five legacy direct x402/SVM
+transfers. The new bundle gateway integration additionally verified that three
+₩10 documents produce one 22,223 atomic-unit 402 requirement and one immutable
+bundle hash; the final Phantom signature remains a user-run Devnet check. It also
 confirmed projected subscriptions and agent payments remain disabled. Earlier
 passes covered Phantom reconnect, signed-out route guards, desktop and 390px
 mobile payment previews, and mobile navigation overlap.
@@ -125,8 +131,8 @@ mobile payment previews, and mobile navigation overlap.
 ## Explicit production boundaries
 
 - `KRW_SANDBOX` is an application ledger, not custody of fiat or tokens.
-- Mainnet x402 settlement still needs production recipient funding, a KMS-backed
-  signer, confirmation/reconciliation workers, and gateway hardening.
+- Mainnet x402 settlement still needs production recipient funding, KMS-backed
+  bundle payout signing, confirmation/reconciliation workers, and gateway hardening.
 - Social login, email verification/recovery, abuse rate limits, observability,
   backups, and a separately staffed review operation remain deployment work.
 - Chat transcripts are tab-session local; money, identity, authorization, calls,
@@ -139,9 +145,9 @@ mobile payment previews, and mobile navigation overlap.
    expiry; allowlisted asset/network; and revocation. Until then, claims of
    “no human approval” must stay out of current-product copy. The mandatory
    controls and tests are in `docs/agent-payment-threat-model.md`.
-2. **Approval batching.** The human demo currently asks once per author. A
-   batch-capable signer can reduce wallet interruptions, but receipts and payout
-   accounting must remain per author.
+2. **Bundle payout execution.** Approval batching and per-author claim
+   accounting are implemented. Funds remain in the configured escrow until a
+   separately secured payout worker executes and reconciles those claims.
 3. **Mainnet operations.** Managed RPC/facilitator, KMS-backed secrets, durable
    reconciliation queue, monitoring, alerts, rate limits, backups, abuse
    controls, and incident runbooks are required before real value.

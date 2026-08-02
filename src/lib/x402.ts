@@ -27,6 +27,7 @@ export type OpenResult = {
     txSigs?: string[]
     network?: string
     partial?: boolean
+    mode?: 'direct' | 'bundle_escrow'
   }
 }
 
@@ -174,12 +175,47 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
       new svm.ExactSvmScheme(signer, { rpcUrl: `${X402_GATEWAY_BASE}/rpc` }),
     )
     const paidFetch = wrapFetchWithPayment(window.fetch.bind(window), client)
-    // Each document is its own author payment and therefore its own x402 resource.
-    for (const document of req.docs) {
-      if (openedHandles.has(document.handle)) continue
-      const resource = `${X402_GATEWAY_BASE}/api/v1/paid-documents/${encodeURIComponent(
-        req.queryId,
-      )}/${encodeURIComponent(document.handle)}`
+    const unpaidDocuments = req.docs.filter(
+      (document) => !openedHandles.has(document.handle),
+    )
+    if (unpaidDocuments.length > 0) {
+      // Preserve direct-to-author settlement for a single document. Two or
+      // more documents use one exact bundle quote, one Phantom approval, and
+      // contributor claim records against the configured escrow receiver.
+      let resource: string
+      let mode: OpenResult['settlement']['mode'] = 'direct'
+      if (unpaidDocuments.length === 1) {
+        const document = unpaidDocuments[0]
+        resource = `${X402_GATEWAY_BASE}/api/v1/paid-documents/${encodeURIComponent(
+          req.queryId,
+        )}/${encodeURIComponent(document.handle)}`
+      } else {
+        const prepared = await fetch(`${X402_GATEWAY_BASE}/api/v1/payment-bundles`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-openshelf-query-token': req.accessToken,
+          },
+          body: JSON.stringify({
+            queryId: req.queryId,
+            handles: unpaidDocuments.map((document) => document.handle),
+          }),
+        })
+        if (!prepared.ok) {
+          const payload = (await prepared.json().catch(() => null)) as
+            | { error?: { message?: string } }
+            | null
+          throw new Error(
+            payload?.error?.message ?? `Could not prepare aggregate payment (${prepared.status}).`,
+          )
+        }
+        const bundle = (await prepared.json()) as {
+          quote: { resourcePath: string }
+        }
+        resource = `${X402_GATEWAY_BASE}${bundle.quote.resourcePath}`
+        mode = 'bundle_escrow'
+      }
+
       const response = await paidFetchWithRpcBackoff(paidFetch, resource)
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as
@@ -205,14 +241,21 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
       const paymentResponse = response.headers.get('PAYMENT-RESPONSE')
       if (paymentResponse) {
         const settlement = decodePaymentResponseHeader(paymentResponse)
-        transactions.push(settlement.transaction)
+        if (!transactions.includes(settlement.transaction)) {
+          transactions.push(settlement.transaction)
+        }
         settledNetwork = settlement.network
       }
-      // Public Devnet RPCs are shared and commonly throttle bursts. Each
-      // document is a distinct author transfer, so pace the next blockhash
-      // request instead of firing wallet approvals back-to-back.
-      if (openedHandles.size < requestedHandles.size) {
-        await delay(650)
+      return {
+        citations,
+        settlement: {
+          count: citations.length,
+          total: citations.reduce((sum, citation) => sum + citation.price, 0),
+          txSig: transactions[0],
+          txSigs: transactions,
+          network: settledNetwork,
+          mode,
+        },
       }
     }
 
@@ -224,6 +267,7 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
         txSig: transactions[0],
         txSigs: transactions,
         network: settledNetwork,
+        mode: citations.length > 1 && transactions.length === 1 ? 'bundle_escrow' : 'direct',
       },
     }
   } catch (error) {
@@ -257,6 +301,7 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
           txSigs: transactions,
           network: settledNetwork,
           partial: true,
+          mode: citations.length > 1 && transactions.length === 1 ? 'bundle_escrow' : 'direct',
         },
       }
     }
@@ -339,6 +384,7 @@ function paymentResult(
       txSigs: transactions,
       network,
       partial,
+      mode: citations.length > 1 && transactions.length === 1 ? 'bundle_escrow' : 'direct',
     },
   }
 }

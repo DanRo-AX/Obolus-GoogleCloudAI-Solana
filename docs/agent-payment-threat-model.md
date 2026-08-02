@@ -1,8 +1,10 @@
 # Agent payment session threat model
 
-Status: design gate. Manual browser-wallet approval remains the only enabled
-payment path. The UI must not enable Agent payments until every control below is
-implemented and an end-to-end Devnet run passes.
+Status: design gate for autonomous agent spending. Manual browser-wallet
+approval remains the only enabled authority, but an exact multi-document bundle
+now requires one approval rather than one approval per author. The UI must not
+enable unattended Agent payments until every control below is implemented and
+an end-to-end Devnet run passes.
 
 ## Assets and trust boundaries
 
