@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Navigate, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -8,6 +8,7 @@ import {
   CornerDownLeft,
   Dice5,
   ExternalLink,
+  Loader2,
   ShieldAlert,
   Wallet,
 } from 'lucide-react'
@@ -45,7 +46,7 @@ import {
  */
 export default function Onboarding() {
   const navigate = useNavigate()
-  const { saveProfile, profile } = useUi()
+  const { saveProfile, profile, account, authReady } = useUi()
   const wallet = useWallet()
 
   const [step, setStep] = useState(0)
@@ -58,6 +59,8 @@ export default function Onboarding() {
   const [speaksTo, setSpeaksTo] = useState<CategoryId[]>(profile?.speaksTo ?? [])
   const [agreed, setAgreed] = useState(false)
   const [done, setDone] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const TOTAL = 6
 
@@ -83,25 +86,35 @@ export default function Onboarding() {
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     )
 
-  const finish = () => {
-    if (!field) return
-    saveProfile({
-      handle: handle.trim().toUpperCase(),
-      ageBand,
-      region,
-      household,
-      field,
-      years,
-      speaksTo,
-      wallet: wallet.pubkey ?? undefined,
-    })
-    setDone(true)
-    window.setTimeout(() => navigate('/dashboard'), 1400)
+  const finish = async () => {
+    if (!field || saving) return
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await saveProfile({
+        handle: handle.trim().toUpperCase(),
+        ageBand,
+        region,
+        household,
+        field,
+        years,
+        speaksTo,
+        wallet: wallet.pubkey ?? undefined,
+      })
+      setDone(true)
+      window.setTimeout(() => navigate('/dashboard'), 1400)
+    } catch (error) {
+      setSaveError(
+        error instanceof Error ? error.message : 'The profile could not be saved.',
+      )
+    } finally {
+      setSaving(false)
+    }
   }
 
   const next = () => {
     if (!canAdvance) return
-    if (step === TOTAL - 1) finish()
+    if (step === TOTAL - 1) void finish()
     else setStep((s) => s + 1)
   }
 
@@ -116,6 +129,11 @@ export default function Onboarding() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   })
+
+  if (!authReady) {
+    return <div className="flex flex-1 items-center justify-center"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
+  }
+  if (!account) return <Navigate to="/login?mode=signup" replace />
 
   if (done) {
     return (
@@ -471,18 +489,29 @@ export default function Onboarding() {
             variant="mono"
             size="mono"
             className="ml-auto"
-            disabled={!canAdvance}
+            disabled={!canAdvance || saving}
             onClick={next}
             type="button"
           >
-            {step === TOTAL - 1 ? 'Agree and finish' : 'Continue'}
-            <ArrowRight className="size-3.5" />
+            {saving ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <ArrowRight className="size-3.5" />
+            )}
+            {saving
+              ? 'Saving…'
+              : step === TOTAL - 1
+                ? 'Agree and finish'
+                : 'Continue'}
           </Button>
           <span className="hidden items-center gap-1 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground sm:flex">
             <CornerDownLeft className="size-3" />
             Enter
           </span>
         </div>
+        {saveError ? (
+          <p className="mt-3 text-right text-sm text-destructive">{saveError}</p>
+        ) : null}
       </div>
     </div>
   )

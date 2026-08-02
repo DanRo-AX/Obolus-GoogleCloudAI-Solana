@@ -10,13 +10,13 @@ import { useCallback, useEffect, useState } from 'react'
  * from also being the authority, source, or delegate of the transfer.
  */
 
-type PhantomProvider = {
+export type PhantomProvider = {
   isPhantom?: boolean
   publicKey?: { toString(): string } | null
   isConnected?: boolean
   connect(opts?: { onlyIfTrusted?: boolean }): Promise<{ publicKey: { toString(): string } }>
   disconnect(): Promise<void>
-  signTransaction(tx: unknown): Promise<unknown>
+  signTransaction<T>(tx: T): Promise<T>
   on(event: string, handler: (...args: unknown[]) => void): void
   removeListener?(event: string, handler: (...args: unknown[]) => void): void
 }

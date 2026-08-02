@@ -1,0 +1,28 @@
+{
+  "name": "openshelf-x402-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pay": "tsx src/client.ts"
+  },
+  "dependencies": {
+    "@scure/base": "^1.2.6",
+    "@solana/kit": "^5.5.1",
+    "@x402/core": "^2.20.0",
+    "@x402/express": "^2.20.0",
+    "@x402/fetch": "^2.20.0",
+    "@x402/svm": "^2.20.0",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "~5.9.3"
+  }
+}

@@ -1,7 +1,8 @@
-import { useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { UserRound } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useUi } from '@/state/ui'
 
 /**
  * Split sign-in screen: form on the left, point-cloud art on the right.
@@ -9,13 +10,19 @@ import { cn } from '@/lib/utils'
  */
 export default function Login() {
   const [params] = useSearchParams()
+  const navigate = useNavigate()
+  const { authenticate, account, profile, authReady } = useUi()
   const signup = params.get('mode') === 'signup'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [submitted, setSubmitted] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const submit = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (authReady && account) navigate(profile ? '/dashboard' : '/onboarding', { replace: true })
+  }, [account, authReady, navigate, profile])
+
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
       setError('Enter a valid email address.')
@@ -26,7 +33,15 @@ export default function Login() {
       return
     }
     setError(null)
-    setSubmitted(true)
+    setSubmitting(true)
+    try {
+      await authenticate(email, password, signup)
+      navigate(signup ? '/onboarding' : '/dashboard', { replace: true })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Authentication failed.')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -45,51 +60,7 @@ export default function Login() {
               </p>
             </div>
 
-            <div className="mt-6 grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setSubmitted(true)}
-                className="inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border bg-background text-sm font-medium transition-colors hover:bg-accent"
-              >
-                <svg className="size-4" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3" />
-                </svg>
-                GitHub
-              </button>
-              <button
-                type="button"
-                onClick={() => setSubmitted(true)}
-                className="inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border bg-background text-sm font-medium transition-colors hover:bg-accent"
-              >
-                <svg className="size-4" viewBox="0 0 24 24">
-                  <path
-                    fill="#4285F4"
-                    d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5a5.6 5.6 0 0 1-2.4 3.6v3h3.9c2.3-2.1 3.5-5.2 3.5-8.8"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M12 24c3.2 0 5.9-1.1 7.9-2.9l-3.9-3c-1 .7-2.4 1.1-4 1.1-3.1 0-5.7-2.1-6.6-4.9H1.4v3.1A12 12 0 0 0 12 24"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M5.4 14.3a7.2 7.2 0 0 1 0-4.6V6.6H1.4a12 12 0 0 0 0 10.8z"
-                  />
-                  <path
-                    fill="#EA4335"
-                    d="M12 4.8c1.8 0 3.4.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.4 6.6l4 3.1C6.3 6.9 8.9 4.8 12 4.8"
-                  />
-                </svg>
-                Google
-              </button>
-            </div>
-
-            <div className="my-6 flex items-center gap-3 text-sm text-muted-foreground">
-              <span className="h-px flex-1 bg-border" />
-              or
-              <span className="h-px flex-1 bg-border" />
-            </div>
-
-            <div className="grid gap-3">
+            <div className="mt-6 grid gap-3">
               <label htmlFor="email" className="text-sm font-medium">
                 Email
               </label>
@@ -109,12 +80,7 @@ export default function Login() {
                 <label htmlFor="password" className="text-sm font-medium">
                   Password
                 </label>
-                <button
-                  type="button"
-                  className="cursor-pointer text-sm underline-offset-4 hover:underline"
-                >
-                  Forgot password?
-                </button>
+                <span className="text-xs text-muted-foreground">8–128 characters</span>
               </div>
               <input
                 id="password"
@@ -129,30 +95,15 @@ export default function Login() {
             {error ? (
               <p className="mt-3 text-sm text-destructive">{error}</p>
             ) : null}
-            {submitted ? (
-              <p className="mt-3 rounded-md bg-foreground/5 px-3 py-2 text-sm text-muted-foreground">
-                This is a demo build with no auth backend, so the request stops here.
-              </p>
-            ) : null}
-
             <button
               type="submit"
+              disabled={submitting}
               className={cn(
                 'mt-5 h-9 w-full cursor-pointer rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90',
               )}
             >
-              {signup ? 'Sign up' : 'Sign in'}
+              {submitting ? <Loader2 className="mx-auto size-4 animate-spin" /> : signup ? 'Sign up' : 'Sign in'}
             </button>
-
-            {/* No auth backend in this build, so this is the door that
-                actually opens: straight into onboarding. */}
-            <Link
-              to="/onboarding"
-              className="mt-3 flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-foreground/25 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              <UserRound className="size-3.5" />
-              Temp sign-in (dev)
-            </Link>
 
             <p className="mt-5 text-center text-sm">
               {signup ? 'Already have an account? ' : "Don't have an account? "}

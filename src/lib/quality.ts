@@ -24,6 +24,8 @@ const STOPWORDS = new Set([
 
 const MIN_CHARS = 90
 const MIN_WORDS = 14
+const MIN_HANGUL_CHARS = 60
+const MIN_HANGUL_WORDS = 10
 /** Above this share of the question's own words, it is a restatement. */
 const ECHO_MAX = 0.55
 
@@ -31,14 +33,20 @@ function contentWords(text: string): string[] {
   return text
     .toLowerCase()
     .split(/[^a-z0-9가-힣]+/)
-    .filter((w) => w.length >= 4 && !STOPWORDS.has(w))
+    .filter((w) => w.length >= (/[가-힣]/.test(w) ? 2 : 4) && !STOPWORDS.has(w))
 }
 
 /** A place, a time, a number, a price — the part that cannot be generated. */
 function hasSpecifics(text: string): boolean {
   if (/\d/.test(text)) return true
   // A capitalised word that is not just the opening of a sentence.
-  return /[^.!?]\s[A-Z][a-z]{2,}/.test(text)
+  if (/[^.!?]\s[A-Z][a-z]{2,}/.test(text)) return true
+  return text.split(/\s+/).some((raw) => {
+    const word = raw.replace(/[^a-zA-Z0-9가-힣]/g, '')
+    if (word.length < 3 || !/[가-힣]/.test(word)) return false
+    const stem = word.replace(/(에서는|에서|에는|으로|까지|부터)$/, '')
+    return /(동|구|시|역|로|길|시장|학교|병원|공원)$/.test(stem)
+  })
 }
 
 export function assess(question: string, answer: string): Issue[] {
@@ -48,8 +56,11 @@ export function assess(question: string, answer: string): Issue[] {
 
   const words = contentWords(text)
   const unique = new Set(words)
+  const containsHangul = /[가-힣]/.test(text)
+  const minChars = containsHangul ? MIN_HANGUL_CHARS : MIN_CHARS
+  const minWords = containsHangul ? MIN_HANGUL_WORDS : MIN_WORDS
 
-  if (text.length < MIN_CHARS || unique.size < MIN_WORDS) {
+  if ([...text].length < minChars || unique.size < minWords) {
     issues.push({
       rule: 'Low-effort answers',
       detail:

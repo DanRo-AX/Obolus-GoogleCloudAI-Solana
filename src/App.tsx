@@ -21,6 +21,7 @@ import Pricing from '@/pages/Pricing'
 import Coverage from '@/pages/Coverage'
 import Shelf1 from '@/pages/Shelf1'
 import Survey from '@/pages/Survey'
+import AdminDisputes from '@/pages/AdminDisputes'
 
 const TITLES: Record<string, string> = {
   '/': 'OPENSHELF — The internet, as a database',
@@ -59,6 +60,7 @@ export default function App() {
               <Route path="/memory" element={<Memory />} />
               <Route path="/onboarding" element={<Onboarding />} />
               <Route path="/answer/:orderId" element={<Survey />} />
+              <Route path="/admin/disputes" element={<AdminDisputes />} />
               <Route path="/coverage" element={<Coverage />} />
               <Route
                 path="/shelf"

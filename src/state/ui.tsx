@@ -8,6 +8,31 @@ import {
 } from 'react'
 import { categoryFor, type CategoryId } from '@/data/categories'
 import { STRIKE_LIMIT } from '@/data/onboarding'
+import {
+  BACKEND_ENABLED,
+  cancelOpenCall,
+  createOpenCall,
+  deleteAccount,
+  disputeMemory,
+  getBalance,
+  getEarnings,
+  getProfile,
+  getSession,
+  login as loginAccount,
+  listMemory,
+  listOpenCalls,
+  logout,
+  register as registerAccount,
+  submitAnswer,
+  updatePreferences,
+  upsertProfile,
+  type EarningsSummary,
+  type Account,
+  type BalanceSummary,
+  type DemographicBands,
+  type ServerProfile,
+  type TargetFilters,
+} from '@/lib/api'
 import type { Issue } from '@/lib/quality'
 
 /** One quoted MD. Once the open is confirmed it becomes the settlement unit. */
@@ -16,6 +41,7 @@ export type Citation = {
   shelf: string
   excerpt: string
   price: number
+  demographics?: DemographicBands
 }
 
 export type ChatMessage = {
@@ -33,6 +59,7 @@ export type ChatMessage = {
     /** Present once a real on-chain settlement happened. */
     txSig?: string
     network?: string
+    partial?: boolean
   }
 }
 
@@ -41,6 +68,8 @@ export type Chat = {
   title: string
   createdAt: number
   messages: ChatMessage[]
+  filters?: TargetFilters
+  ownerId?: string
 }
 
 /** An open call. Posted on the spot when the shelves come up empty. */
@@ -58,6 +87,10 @@ export type Order = {
   shelf: string
   /** Broad field, for the dashboard tabs. Derived when a caller omits it. */
   category: CategoryId
+  filters?: TargetFilters
+  eligible?: boolean
+  escrowRemainingKrw?: number
+  status?: 'open' | 'filled' | 'cancelled'
 }
 
 /**
@@ -95,8 +128,9 @@ export type MemoryEntry = {
   earned: number
   createdAt: number
   via: 'Open call' | 'Auto-match'
-  /** Voided entries keep the amount but stop counting toward the balance. */
+  /** Voided entries keep the attempted answer but earn zero until disputed. */
   status: 'settled' | 'voided'
+  disputeStatus?: 'pending' | 'approved' | 'rejected'
   /** Which rules the answer tripped, if any. */
   flags?: Issue[]
   /** Buyer rating out of 5, once someone has opened it. */
@@ -115,15 +149,28 @@ type UiValue = {
   chats: Chat[]
   orders: Order[]
   memory: MemoryEntry[]
-  /** null until onboarding completes. Temp sign-in is what creates it. */
+  earnings: EarningsSummary | null
+  balance: BalanceSummary | null
+  account: Account | null
+  authReady: boolean
+  /** null until an authenticated account completes onboarding. */
   profile: Profile | null
-  saveProfile: (p: Omit<Profile, 'strikes' | 'disputeUsed' | 'agreedAt'>) => void
-  signOut: () => void
+  saveProfile: (
+    p: Omit<Profile, 'strikes' | 'disputeUsed' | 'agreedAt'>,
+  ) => Promise<void>
+  authenticate: (
+    email: string,
+    password: string,
+    signup: boolean,
+  ) => Promise<void>
+  signOut: () => Promise<void>
+  deleteCurrentAccount: () => Promise<void>
   /** Three strikes. Set once the ladder runs out. */
   suspended: boolean
   /** Spend the one dispute on a voided answer: strike lifted, payment restored. */
-  disputeStrike: (memoryId: string) => void
-  createChat: (prompt: string) => string
+  disputeStrike: (memoryId: string, reason: string) => Promise<void>
+  refreshLedger: () => Promise<void>
+  createChat: (prompt: string, filters?: TargetFilters) => string
   appendAssistant: (chatId: string, message: ChatMessage) => void
   patchMessage: (
     chatId: string,
@@ -134,8 +181,13 @@ type UiValue = {
     order: Omit<Order, 'id' | 'createdAt' | 'answered' | 'category'> & {
       category?: CategoryId
     },
-  ) => string
-  answerOrder: (orderId: string, answer: string, flags?: Issue[]) => void
+  ) => Promise<string>
+  answerOrder: (
+    orderId: string,
+    answer: string,
+    flags?: Issue[],
+  ) => Promise<{ voided: boolean; issues: Issue[] }>
+  cancelOrder: (orderId: string) => Promise<void>
   clearAll: () => void
 }
 
@@ -253,6 +305,22 @@ function normalise(orders: Order[]): Order[] {
   )
 }
 
+function profileFromServer(profile: ServerProfile): Profile {
+  return {
+    handle: profile.handle,
+    ageBand: profile.ageBand,
+    region: profile.region,
+    household: profile.household,
+    field: profile.field,
+    years: profile.years,
+    speaksTo: profile.speaksTo,
+    strikes: profile.strikes,
+    disputeUsed: profile.disputeUsed,
+    wallet: profile.wallet,
+    agreedAt: profile.agreedAt,
+  }
+}
+
 function load(): Persisted {
   const fallback: Persisted = {
     chats: [],
@@ -284,12 +352,18 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
   const initial = useMemo(load, [])
   const [collapsed, setCollapsed] = useState(false)
   const [mobileSidebar, setMobileSidebar] = useState(false)
-  const [agents, setAgents] = useState(initial.agents)
-  const [autoMatch, setAutoMatch] = useState(initial.autoMatch)
+  const [agents, setAgentsState] = useState(initial.agents)
+  const [autoMatch, setAutoMatchState] = useState(initial.autoMatch)
   const [chats, setChats] = useState<Chat[]>(initial.chats)
   const [orders, setOrders] = useState<Order[]>(initial.orders)
   const [memory, setMemory] = useState<MemoryEntry[]>(initial.memory)
-  const [profile, setProfile] = useState<Profile | null>(initial.profile)
+  const [earnings, setEarnings] = useState<EarningsSummary | null>(null)
+  const [profile, setProfile] = useState<Profile | null>(
+    BACKEND_ENABLED ? null : initial.profile,
+  )
+  const [account, setAccount] = useState<Account | null>(null)
+  const [balance, setBalance] = useState<BalanceSummary | null>(null)
+  const [authReady, setAuthReady] = useState(!BACKEND_ENABLED)
 
   useEffect(() => {
     try {
@@ -302,7 +376,69 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     }
   }, [chats, orders, memory, profile, agents, autoMatch])
 
-  const createChat = useCallback((prompt: string) => {
+  useEffect(() => {
+    if (!BACKEND_ENABLED) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const remoteOrders = await listOpenCalls()
+        if (cancelled) return
+        setOrders(remoteOrders)
+        const session = await getSession().catch(() => null)
+        if (cancelled) return
+        if (!session) {
+          setChats((current) => current.filter((chat) => !chat.ownerId))
+          setMemory([])
+          setProfile(null)
+          setEarnings(null)
+          setBalance(null)
+          return
+        }
+        const [remoteMemory, remoteProfile, remoteEarnings] = await Promise.all([
+          listMemory(),
+          getProfile(),
+          getEarnings(),
+        ])
+        if (cancelled) return
+        setAccount(session.user)
+        setChats((current) =>
+          current.filter(
+            (chat) => !chat.ownerId || chat.ownerId === session.user.id,
+          ),
+        )
+        setBalance(session.balance)
+        setMemory(remoteMemory)
+        setEarnings(remoteEarnings)
+        if (remoteProfile) {
+          setProfile(profileFromServer(remoteProfile))
+          setAutoMatchState(remoteProfile.autoMatch)
+          setAgentsState(remoteProfile.agents)
+        }
+      } catch {
+        // Chat surfaces backend connectivity errors when a request is made.
+        // Keeping the seed state here lets the rest of the site still render.
+      } finally {
+        if (!cancelled) setAuthReady(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const refreshLedger = useCallback(async () => {
+    if (!BACKEND_ENABLED) return
+    const [remoteMemory, remoteEarnings, remoteBalance] = await Promise.all([
+      listMemory(),
+      getEarnings(),
+      getBalance(),
+    ])
+    setMemory(remoteMemory)
+    setEarnings(remoteEarnings)
+    setBalance(remoteBalance)
+  }, [])
+
+  const createChat = useCallback((prompt: string, filters?: TargetFilters) => {
     const id = `c_${Date.now().toString(36)}${Math.random()
       .toString(36)
       .slice(2, 6)}`
@@ -312,12 +448,14 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
         id,
         title,
         createdAt: Date.now(),
+        filters,
+        ownerId: account?.id,
         messages: [{ id: `${id}_u`, role: 'user', content: prompt.trim() }],
       },
       ...prev,
     ])
     return id
-  }, [])
+  }, [account?.id])
 
   const appendAssistant = useCallback((chatId: string, message: ChatMessage) => {
     setChats((prev) =>
@@ -346,18 +484,40 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
   )
 
   const placeOrder = useCallback(
-    (
+    async (
       order: Omit<Order, 'id' | 'createdAt' | 'answered' | 'category'> & {
         category?: CategoryId
       },
     ) => {
+      // An explicit respondent field is a stronger signal than the lightweight
+      // keyword classifier. Keeping both aligned avoids impossible-looking
+      // combinations such as `category life · field travel` on the board.
+      const category =
+        order.category ??
+        order.filters?.field ??
+        categoryFor(order.shelf, order.question)
+      if (BACKEND_ENABLED) {
+        const created = await createOpenCall({
+          question: order.question,
+          unitPrice: order.unitPrice,
+          target: order.target,
+          chatId: order.chatId,
+          shelf: order.shelf,
+          category,
+          filters: order.filters,
+        })
+        setOrders((prev) => [created, ...prev.filter((item) => item.id !== created.id)])
+        setBalance(await getBalance())
+        return created.id
+      }
+
       const id = `o_${Date.now().toString(36)}${Math.random()
         .toString(36)
         .slice(2, 5)}`
       setOrders((prev) => [
         {
           ...order,
-          category: order.category ?? categoryFor(order.shelf, order.question),
+          category,
           id,
           createdAt: Date.now(),
           answered: 0,
@@ -377,9 +537,38 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
    * both updaters stay pure.
    */
   const answerOrder = useCallback(
-    (orderId: string, answer: string, flags?: Issue[]) => {
+    async (orderId: string, answer: string, flags?: Issue[]) => {
       const order = orders.find((o) => o.id === orderId)
-      if (!order || order.answered >= order.target) return
+      if (!order || order.answered >= order.target) {
+        return { voided: false, issues: [] }
+      }
+
+      if (BACKEND_ENABLED) {
+        const result = await submitAnswer(orderId, answer)
+        setOrders((prev) =>
+          prev.map((item) => (item.id === orderId ? result.order : item)),
+        )
+        setMemory((prev) => [
+          result.memory,
+          ...prev.filter((item) => item.id !== result.memory.id),
+        ])
+        if (result.issues.length) {
+          setProfile((p) =>
+            p ? { ...p, strikes: Math.min(STRIKE_LIMIT, p.strikes + 1) } : p,
+          )
+        }
+        void Promise.all([getEarnings(), getProfile(), getBalance()])
+          .then(([remoteEarnings, remoteProfile, remoteBalance]) => {
+            setEarnings(remoteEarnings)
+            setBalance(remoteBalance)
+            if (!remoteProfile) return
+            setProfile(profileFromServer(remoteProfile))
+            setAutoMatchState(remoteProfile.autoMatch)
+          })
+          .catch(() => undefined)
+        return { voided: result.issues.length > 0, issues: result.issues }
+      }
+
       const voided = Boolean(flags?.length)
 
       // A voided answer does not fill a slot. The buyer never got one.
@@ -398,7 +587,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           question: order.question,
           answer,
           shelf: order.shelf,
-          earned: order.unitPrice,
+          earned: voided ? 0 : order.unitPrice,
           createdAt: Date.now(),
           via: 'Open call' as const,
           status: voided ? ('voided' as const) : ('settled' as const),
@@ -411,16 +600,32 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           p ? { ...p, strikes: Math.min(STRIKE_LIMIT, p.strikes + 1) } : p,
         )
       }
+      return { voided, issues: flags ?? [] }
     },
     [orders],
   )
 
   /**
-   * The one dispute. Onboarding promises it, so it has to exist: the strike is
-   * lifted and the payment goes back on. It can only be spent once, which is
-   * what stops it being a way around the ladder.
+   * The one dispute creates a review case. A reviewer—not the submitter—decides
+   * whether the strike, document, and escrow payment are restored.
    */
-  const disputeStrike = useCallback((memoryId: string) => {
+  const disputeStrike = useCallback(async (memoryId: string, reason: string) => {
+    if (BACKEND_ENABLED) {
+      const dispute = await disputeMemory(memoryId, reason)
+      setMemory((prev) =>
+        prev.map((entry) =>
+          entry.id === memoryId
+            ? { ...entry, disputeStatus: dispute.status }
+            : entry,
+        ),
+      )
+      setProfile((p) =>
+        p && !p.disputeUsed
+          ? { ...p, disputeUsed: true }
+          : p,
+      )
+      return
+    }
     setMemory((prev) =>
       prev.map((m) =>
         m.id === memoryId ? { ...m, status: 'settled' as const } : m,
@@ -434,23 +639,126 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   /**
-   * Completing onboarding is what creates the account in this build. Strikes
-   * start at zero and the conduct agreement is stamped, because the ladder is
-   * only fair if the person saw it before they answered anything.
+   * Completing onboarding persists the profile and conduct agreement.
    */
+  const setAgents = useCallback(
+    (value: boolean) => {
+      const previous = agents
+      setAgentsState(value)
+      if (!BACKEND_ENABLED || !profile) return
+      void updatePreferences({ agents: value })
+        .then((updated) => {
+          setProfile(profileFromServer(updated))
+          setAgentsState(updated.agents)
+        })
+        .catch(() => setAgentsState(previous))
+    },
+    [agents, profile],
+  )
+
+  const setAutoMatch = useCallback(
+    (value: boolean) => {
+      const previous = autoMatch
+      setAutoMatchState(value)
+      if (!BACKEND_ENABLED || !profile) return
+      void updatePreferences({ autoMatch: value })
+        .then((updated) => {
+          setProfile(profileFromServer(updated))
+          setAutoMatchState(updated.autoMatch)
+        })
+        .catch(() => setAutoMatchState(previous))
+    },
+    [autoMatch, profile],
+  )
+
   const saveProfile = useCallback(
-    (p: Omit<Profile, 'strikes' | 'disputeUsed' | 'agreedAt'>) => {
+    async (p: Omit<Profile, 'strikes' | 'disputeUsed' | 'agreedAt'>) => {
+      if (BACKEND_ENABLED) {
+        const saved = await upsertProfile(p, { autoMatch, agents })
+        setProfile(profileFromServer(saved))
+        setAutoMatchState(saved.autoMatch)
+        setAgentsState(saved.agents)
+        return
+      }
       setProfile({ ...p, strikes: 0, disputeUsed: false, agreedAt: Date.now() })
+    },
+    [agents, autoMatch],
+  )
+
+  const authenticate = useCallback(
+    async (email: string, password: string, signup: boolean) => {
+      const session = signup
+        ? await registerAccount(email, password)
+        : await loginAccount(email, password)
+      const [remoteOrders, remoteMemory, remoteProfile, remoteEarnings] =
+        await Promise.all([listOpenCalls(), listMemory(), getProfile(), getEarnings()])
+      setAccount(session.user)
+      setBalance(session.balance)
+      setOrders(remoteOrders)
+      setMemory(remoteMemory)
+      setEarnings(remoteEarnings)
+      setChats([])
+      if (remoteProfile) {
+        setProfile(profileFromServer(remoteProfile))
+        setAutoMatchState(remoteProfile.autoMatch)
+        setAgentsState(remoteProfile.agents)
+      } else {
+        setProfile(null)
+      }
     },
     [],
   )
 
-  const signOut = useCallback(() => setProfile(null), [])
+  const signOut = useCallback(async () => {
+    if (BACKEND_ENABLED) await logout()
+    setAccount(null)
+    setBalance(null)
+    setProfile(null)
+    setMemory([])
+    setEarnings(null)
+    setChats([])
+    if (BACKEND_ENABLED) {
+      setOrders(await listOpenCalls().catch(() => SEED_ORDERS))
+    }
+  }, [])
+
+  const deleteCurrentAccount = useCallback(async () => {
+    if (BACKEND_ENABLED) await deleteAccount()
+    setAccount(null)
+    setBalance(null)
+    setProfile(null)
+    setMemory([])
+    setEarnings(null)
+    setChats([])
+    setOrders(BACKEND_ENABLED ? await listOpenCalls().catch(() => SEED_ORDERS) : SEED_ORDERS)
+    try {
+      window.localStorage.removeItem(STORAGE_KEY)
+    } catch {
+      // Storage is optional.
+    }
+  }, [])
+
+  const cancelOrder = useCallback(async (orderId: string) => {
+    if (!BACKEND_ENABLED) {
+      setOrders((prev) =>
+        prev.map((order) =>
+          order.id === orderId ? { ...order, status: 'cancelled' } : order,
+        ),
+      )
+      return
+    }
+    const cancelled = await cancelOpenCall(orderId)
+    setOrders((prev) =>
+      prev.map((order) => (order.id === orderId ? cancelled : order)),
+    )
+    setBalance(await getBalance())
+  }, [])
 
   const clearAll = useCallback(() => {
     setChats([])
     setOrders(SEED_ORDERS)
     setMemory(SEED_MEMORY)
+    setEarnings(null)
   }, [])
 
   const suspended = (profile?.strikes ?? 0) >= STRIKE_LIMIT
@@ -468,36 +776,54 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       chats,
       orders,
       memory,
+      earnings,
+      balance,
+      account,
+      authReady,
       profile,
       saveProfile,
+      authenticate,
       signOut,
+      deleteCurrentAccount,
       suspended,
       disputeStrike,
+      refreshLedger,
       createChat,
       appendAssistant,
       patchMessage,
       placeOrder,
       answerOrder,
+      cancelOrder,
       clearAll,
     }),
     [
       collapsed,
       agents,
+      setAgents,
       autoMatch,
+      setAutoMatch,
       mobileSidebar,
       chats,
       orders,
       memory,
+      earnings,
+      balance,
+      account,
+      authReady,
       profile,
       saveProfile,
+      authenticate,
       signOut,
+      deleteCurrentAccount,
       suspended,
       disputeStrike,
+      refreshLedger,
       createChat,
       appendAssistant,
       patchMessage,
       placeOrder,
       answerOrder,
+      cancelOrder,
       clearAll,
     ],
   )
@@ -505,6 +831,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
   return <UiContext.Provider value={value}>{children}</UiContext.Provider>
 }
 
+// oxlint-disable-next-line react/only-export-components -- colocated context hook.
 export function useUi() {
   const ctx = useContext(UiContext)
   if (!ctx) throw new Error('useUi must be used inside <UiProvider>')

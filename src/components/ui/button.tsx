@@ -62,4 +62,5 @@ function Button({
   )
 }
 
+// oxlint-disable-next-line react/only-export-components -- variants are shared by links.
 export { Button, buttonVariants }

@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowUp } from 'lucide-react'
+import { CATEGORIES, type CategoryId } from '@/data/categories'
+import { AGE_BANDS, HOUSEHOLDS, REGIONS } from '@/data/onboarding'
 import { cn } from '@/lib/utils'
+import type { TargetFilters } from '@/lib/api'
 import { useUi } from '@/state/ui'
 
 /**
@@ -28,6 +31,10 @@ export function Composer({
   onSubmitted?: () => void
 }) {
   const [value, setValue] = useState(initialValue)
+  const [ageBand, setAgeBand] = useState('')
+  const [region, setRegion] = useState('')
+  const [household, setHousehold] = useState('')
+  const [field, setField] = useState<CategoryId | ''>('')
   const ref = useRef<HTMLTextAreaElement>(null)
   const navigate = useNavigate()
   const { createChat } = useUi()
@@ -43,7 +50,13 @@ export function Composer({
   const submit = () => {
     const text = value.trim()
     if (!text) return
-    const id = createChat(text)
+    const filters: TargetFilters = {
+      ...(ageBand ? { ageBand } : {}),
+      ...(region ? { region } : {}),
+      ...(household ? { household } : {}),
+      ...(field ? { field } : {}),
+    }
+    const id = createChat(text, filters)
     setValue('')
     onSubmitted?.()
     navigate(`/chat/${id}`)
@@ -86,24 +99,52 @@ export function Composer({
         )}
       />
       <div className="flex items-center justify-between px-2.5 pb-2.5 pt-1">
-        <Link
-          to="/whitepaper"
-          aria-label="SHELF-1 model"
-          className={cn(
-            'group flex h-8 items-center rounded-[2px] px-2 transition-colors',
-            dark ? 'hover:bg-white/10' : 'hover:bg-muted-foreground/10',
-          )}
-        >
-          <span
-            aria-hidden="true"
+        <div className="flex items-center gap-1">
+          <Link
+            to="/whitepaper"
+            aria-label="SHELF-1 model"
             className={cn(
-              'font-mono text-[11px] font-semibold uppercase tracking-[1.5px]',
-              dark ? 'text-white/80' : 'text-foreground/80',
+              'group flex h-8 items-center rounded-[2px] px-2 transition-colors',
+              dark ? 'hover:bg-white/10' : 'hover:bg-muted-foreground/10',
             )}
           >
-            SHELF-1
-          </span>
-        </Link>
+            <span
+              aria-hidden="true"
+              className={cn(
+                'font-mono text-[11px] font-semibold uppercase tracking-[1.5px]',
+                dark ? 'text-white/80' : 'text-foreground/80',
+              )}
+            >
+              SHELF-1
+            </span>
+          </Link>
+          <details className="group/target relative">
+            <summary
+              className={cn(
+                'flex h-8 cursor-pointer list-none items-center rounded-[2px] px-2 font-mono text-[10px] uppercase tracking-[1px] transition-colors',
+                dark
+                  ? 'text-white/60 hover:bg-white/10 hover:text-white'
+                  : 'text-muted-foreground hover:bg-muted',
+              )}
+            >
+              Target{[ageBand, region, household, field].filter(Boolean).length ? ` · ${[ageBand, region, household, field].filter(Boolean).length}` : ''}
+            </summary>
+            <div className="absolute bottom-10 left-0 z-30 grid w-[280px] gap-3 rounded-[6px] border border-border bg-card p-3 text-foreground shadow-xl">
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Optional bands. A response must match every selected band.
+              </p>
+              <TargetSelect label="Age" value={ageBand} onChange={setAgeBand} options={AGE_BANDS} />
+              <TargetSelect label="Region" value={region} onChange={setRegion} options={REGIONS} />
+              <TargetSelect label="Household" value={household} onChange={setHousehold} options={HOUSEHOLDS} />
+              <TargetSelect
+                label="Field"
+                value={field}
+                onChange={(value) => setField(value as CategoryId | '')}
+                options={CATEGORIES.map(({ id, label }) => ({ value: id, label }))}
+              />
+            </div>
+          </details>
+        </div>
         <button
           data-slot="button"
           type="submit"
@@ -120,5 +161,35 @@ export function Composer({
         </button>
       </div>
     </form>
+  )
+}
+
+function TargetSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  options: Array<{ value: string; label: string }>
+}) {
+  return (
+    <label className="grid gap-1 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+      {label}
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-9 rounded-[3px] border border-border bg-background px-2 text-xs normal-case tracking-normal text-foreground"
+      >
+        <option value="">Any</option>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
   )
 }

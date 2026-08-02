@@ -1,0 +1,36 @@
+# Legacy static sandbox example only. The actual dynamic x402/SVM gateway is
+# payment-gateway/src/main.ts; do not use this file for production settlement.
+name: openshelf
+subdomain: openshelf
+title: "OPENSHELF"
+description: "Search paid, first-person MDs and open only the passages an agent purchases."
+category: data
+version: v1
+routing:
+  type: proxy
+  url: http://127.0.0.1:8787/
+operator:
+  currencies:
+    usd: ["USDC", "USDT", "CASH"]
+  network: localnet
+  fee_payer: true
+
+endpoints:
+  - method: GET
+    path: "healthz"
+    description: "Backend health check"
+
+  - method: POST
+    path: "api/v1/questions/resolve"
+    description: "Search private MD metadata and return a payment-safe quote or open-call draft"
+
+  - method: GET
+    path: "api/flash-research"
+    description: "Open the MD passages previously quoted for a query"
+    metering:
+      dimensions:
+        - direction: usage
+          unit: requests
+          scale: 1
+          tiers:
+            - price_usd: 0.001

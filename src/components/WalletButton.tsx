@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Wallet } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -8,6 +8,20 @@ import {
   useWallet,
 } from '@/state/wallet'
 import { cn } from '@/lib/utils'
+import { useUi, type Profile } from '@/state/ui'
+
+function withWallet(profile: Profile, wallet: string) {
+  return {
+    handle: profile.handle,
+    ageBand: profile.ageBand,
+    region: profile.region,
+    household: profile.household,
+    field: profile.field,
+    years: profile.years,
+    speaksTo: profile.speaksTo,
+    wallet,
+  }
+}
 
 /**
  * Step 2 of the flow: connect Phantom on devnet. Only the pubkey is shared —
@@ -16,7 +30,18 @@ import { cn } from '@/lib/utils'
  */
 export function WalletButton({ className }: { className?: string }) {
   const { available, connecting, pubkey, error, connect, disconnect } = useWallet()
+  const { profile, saveProfile } = useUi()
   const [showHint, setShowHint] = useState(false)
+  const [walletSaveError, setWalletSaveError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!pubkey || !profile || profile.wallet === pubkey) return
+    void saveProfile(withWallet(profile, pubkey)).catch((saveError) => {
+      setWalletSaveError(
+        saveError instanceof Error ? saveError.message : 'Wallet could not be saved.',
+      )
+    })
+  }, [profile, pubkey, saveProfile])
 
   if (pubkey) {
     return (
@@ -82,9 +107,9 @@ export function WalletButton({ className }: { className?: string }) {
             ? 'Connect wallet'
             : 'Install Phantom'}
       </Button>
-      {error ? (
+      {error || walletSaveError ? (
         <span className="px-1 text-[11px] leading-snug text-destructive">
-          {error}
+          {error ?? walletSaveError}
         </span>
       ) : null}
       {!available ? (

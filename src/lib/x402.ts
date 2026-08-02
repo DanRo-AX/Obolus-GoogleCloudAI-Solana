@@ -1,27 +1,19 @@
 /**
- * The x402 leg, client-pays.
+ * Paid-content boundary.
  *
- * The visitor's Phantom wallet is the transfer authority: the gateway answers
- * 402 with an unsigned transaction, Phantom signs it, and the signed payload
- * goes back up as PAYMENT-SIGNATURE. The gateway's sponsor keypair adds the
- * feePayer signature and submits — the spec forbids the fee payer from also
- * being the authority, so those are two different keys by construction.
- *
- * Header names are x402 **v2**: PAYMENT-REQUIRED / PAYMENT-SIGNATURE /
- * PAYMENT-RESPONSE. v1's X-PAYMENT names are not interchangeable — mixing them
- * produces a silent 402 loop that reads like a signature bug.
- *
- * Without VITE_API_BASE this resolves locally so the UI still demonstrates the
- * shape with no gateway, no wallet, and no transaction.
+ * The default browser flow uses the local x402 gateway. It receives the 402,
+ * asks Phantom to sign the exact Solana USDC transfer, retries the URL with a
+ * PAYMENT-SIGNATURE header, and reads the facilitator's settlement receipt.
  */
 
-import { getPhantom } from '@/state/wallet'
 import type { Citation } from '@/state/ui'
+import { getPhantom } from '@/state/wallet'
+import { phantomSvmSigner } from '@/lib/phantomSigner'
 
 export type OpenRequest = {
+  queryId: string
   docs: { handle: string; shelf: string; price: number }[]
   question: string
-  /** Transfer authority. Required in server mode. */
   payer?: string | null
 }
 
@@ -32,179 +24,153 @@ export type OpenResult = {
     total: number
     txSig?: string
     network?: string
+    partial?: boolean
   }
-}
-
-/** Base64 in the PAYMENT-REQUIRED header of the 402. */
-export type PaymentRequired = {
-  scheme: 'exact'
-  /** CAIP-2, e.g. solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1 */
-  network: string
-  /** Author wallet owner, not the ATA. */
-  payTo: string
-  /** micro-USDC, 6 decimals. */
-  maxAmountRequired: string
-  asset: string
-  resource: string
-  /** Base64 v0 transaction the gateway pre-built for the wallet to sign. */
-  transaction: string
-  extra?: { memo?: string }
-}
-
-/** Base64 in the PAYMENT-RESPONSE header of the 200. */
-export type SettlementResponse = {
-  success: boolean
-  /** base58 Solana transaction signature. */
-  transaction?: string
-  network?: string
-  errorReason?: string
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? ''
-export const HAS_GATEWAY = Boolean(API_BASE)
-
-/** The gateway route the demo hits. */
+const BACKEND_ENABLED = import.meta.env.VITE_BACKEND_ENABLED !== 'false'
+const X402_ENABLED = import.meta.env.VITE_X402_ENABLED !== 'false'
+const X402_GATEWAY_BASE = (
+  import.meta.env.VITE_X402_GATEWAY_BASE ?? 'http://127.0.0.1:1402'
+).replace(/\/$/, '')
 const RESOURCE = '/api/flash-research'
+const DEVNET_NETWORK = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
 
-export type PaymentFailure =
-  | 'no-wallet'
-  | 'not-connected'
-  | 'rejected'
-  | 'insufficient-funds'
-  | 'gateway'
-  | 'malformed'
-
-export class PaymentError extends Error {
-  reason: PaymentFailure
-  constructor(message: string, reason: PaymentFailure) {
-    super(message)
-    this.reason = reason
-  }
-}
+export class PaymentError extends Error {}
 
 export function explorerUrl(sig: string, network = 'devnet') {
   const cluster = network.includes('mainnet') ? '' : '?cluster=devnet'
   return `https://explorer.solana.com/tx/${sig}${cluster}`
 }
 
-function decodeHeader<T>(raw: string | null, what: string): T {
-  if (!raw) throw new PaymentError(`missing ${what} header`, 'malformed')
-  try {
-    return JSON.parse(atob(raw)) as T
-  } catch {
-    throw new PaymentError(`unreadable ${what} header`, 'malformed')
-  }
-}
-
-/**
- * Open documents and settle for them.
- *
- *   GET  {resource}                          → 402 + PAYMENT-REQUIRED
- *   (Phantom signs the transaction it carries)
- *   GET  {resource} + PAYMENT-SIGNATURE      → 200 + PAYMENT-RESPONSE + body
- */
 export async function openDocuments(req: OpenRequest): Promise<OpenResult> {
-  if (!HAS_GATEWAY) return openLocally(req)
+  if (!BACKEND_ENABLED) return openLocally(req)
+  if (X402_ENABLED) return openOverX402(req)
 
   const url = new URL(`${API_BASE}${RESOURCE}`, window.location.origin)
-  url.searchParams.set('docs', req.docs.map((d) => d.handle).join(','))
+  url.searchParams.set('queryId', req.queryId)
+  url.searchParams.set('docs', req.docs.map((document) => document.handle).join(','))
   if (req.payer) url.searchParams.set('payer', req.payer)
 
-  const challenge = await fetch(url, { method: 'GET' })
-
-  // Free, or already paid inside the reuse window.
-  if (challenge.ok) return (await challenge.json()) as OpenResult
-  if (challenge.status !== 402) {
-    throw new PaymentError(`gateway returned ${challenge.status}`, 'gateway')
-  }
-
-  const required = decodeHeader<PaymentRequired>(
-    challenge.headers.get('PAYMENT-REQUIRED'),
-    'PAYMENT-REQUIRED',
-  )
-
-  const phantom = getPhantom()
-  if (!phantom) throw new PaymentError('Phantom not installed', 'no-wallet')
-  if (!phantom.publicKey) throw new PaymentError('Wallet not connected', 'not-connected')
-
-  // Phantom signs the gateway's transaction as the transfer authority. The
-  // gateway still owes the feePayer signature before it can submit.
-  let signedB64: string
+  let response: Response
   try {
-    const { VersionedTransaction } = await import('@solana/web3.js')
-    const tx = VersionedTransaction.deserialize(base64ToBytes(required.transaction))
-    const signed = (await phantom.signTransaction(tx)) as InstanceType<
-      typeof VersionedTransaction
-    >
-    signedB64 = bytesToBase64(signed.serialize())
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : ''
+    response = await fetch(url)
+  } catch {
+    throw new PaymentError('OPENSHELF settlement service is not reachable.')
+  }
+  if (response.status === 402) {
     throw new PaymentError(
-      msg || 'Signature rejected',
-      /reject|denied|cancel/i.test(msg) ? 'rejected' : 'malformed',
+      'This URL is protected by the Pay gateway. Use a Pay-enabled agent client to satisfy its 402 challenge.',
     )
   }
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as
+      | { error?: { message?: string } }
+      | null
+    throw new PaymentError(
+      payload?.error?.message ?? `Settlement service returned ${response.status}.`,
+    )
+  }
+  return (await response.json()) as OpenResult
+}
 
-  const settled = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'PAYMENT-SIGNATURE': btoa(JSON.stringify({ transaction: signedB64 })),
-    },
-  })
-
-  if (!settled.ok) {
-    throw new PaymentError(`settle failed (${settled.status})`, 'gateway')
+async function openOverX402(req: OpenRequest): Promise<OpenResult> {
+  const provider = getPhantom()
+  if (!provider?.publicKey) {
+    throw new PaymentError('Connect Phantom before opening paid documents.')
   }
 
-  const receipt = decodeHeader<SettlementResponse>(
-    settled.headers.get('PAYMENT-RESPONSE'),
-    'PAYMENT-RESPONSE',
-  )
-  if (!receipt.success) {
-    throw new PaymentError(receipt.errorReason ?? 'settlement failed', 'gateway')
-  }
+  const citations: Citation[] = []
+  const transactions: string[] = []
+  let settledNetwork = DEVNET_NETWORK
+  try {
+    const [{ x402Client }, { wrapFetchWithPayment, decodePaymentResponseHeader }, svm] =
+      await Promise.all([
+        import('@x402/core/client'),
+        import('@x402/fetch'),
+        import('@x402/svm/exact/client'),
+      ])
+    const client = new x402Client()
+    svm.registerExactSvmScheme(client, {
+      signer: phantomSvmSigner(provider),
+      networks: [DEVNET_NETWORK],
+    })
+    const paidFetch = wrapFetchWithPayment(window.fetch.bind(window), client)
+    // Each document is its own author payment and therefore its own x402 resource.
+    for (const document of req.docs) {
+      const resource = `${X402_GATEWAY_BASE}/api/v1/paid-documents/${encodeURIComponent(
+        req.queryId,
+      )}/${encodeURIComponent(document.handle)}`
+      const response = await paidFetch(resource, {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+      })
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as
+          | { error?: { message?: string } }
+          | null
+        throw new Error(payload?.error?.message ?? `x402 gateway returned ${response.status}.`)
+      }
+      const payload = (await response.json()) as OpenResult
+      citations.push(...payload.citations)
+      const paymentResponse = response.headers.get('PAYMENT-RESPONSE')
+      if (paymentResponse) {
+        const settlement = decodePaymentResponseHeader(paymentResponse)
+        transactions.push(settlement.transaction)
+        settledNetwork = settlement.network
+      }
+    }
 
-  const payload = (await settled.json()) as OpenResult
-  return {
-    citations: payload.citations,
-    settlement: {
-      ...payload.settlement,
-      txSig: receipt.transaction,
-      network: receipt.network ?? required.network,
-    },
+    return {
+      citations,
+      settlement: {
+        count: citations.length,
+        total: citations.reduce((sum, citation) => sum + citation.price, 0),
+        txSig: transactions[0],
+        network: settledNetwork,
+      },
+    }
+  } catch (error) {
+    if (citations.length > 0) {
+      return {
+        citations,
+        settlement: {
+          count: citations.length,
+          total: citations.reduce((sum, citation) => sum + citation.price, 0),
+          txSig: transactions[0],
+          network: settledNetwork,
+          partial: true,
+        },
+      }
+    }
+    if (error instanceof PaymentError) throw error
+    const message = error instanceof Error ? error.message : String(error)
+    if (/reject|declin|cancel/i.test(message)) {
+      throw new PaymentError('Payment approval was cancelled in Phantom.')
+    }
+    throw new PaymentError(`x402 payment failed: ${message}`)
   }
 }
 
-function base64ToBytes(b64: string) {
-  const bin = atob(b64)
-  const out = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-  return out
-}
-
-function bytesToBase64(bytes: Uint8Array) {
-  let bin = ''
-  for (const b of bytes) bin += String.fromCharCode(b)
-  return btoa(bin)
-}
-
-/** No gateway: resolve from local data so the flow is demonstrable offline. */
+/** Offline-only fallback used when VITE_BACKEND_ENABLED=false. */
 async function openLocally(req: OpenRequest): Promise<OpenResult> {
   const { SHELVES } = await import('@/data/shelf')
-  const citations: Citation[] = req.docs.map((d, i) => {
-    const shelf = SHELVES.find((s) => s.name === d.shelf)
+  const citations: Citation[] = req.docs.map((document, index) => {
+    const shelf = SHELVES.find((candidate) => candidate.name === document.shelf)
     return {
-      handle: d.handle,
-      shelf: d.shelf,
-      excerpt: shelf?.excerpts[i] ?? '',
-      price: d.price,
+      handle: document.handle,
+      shelf: document.shelf,
+      excerpt: shelf?.excerpts[index] ?? '',
+      price: document.price,
     }
   })
   return {
     citations,
     settlement: {
       count: citations.length,
-      total: citations.reduce((s, c) => s + c.price, 0),
+      total: citations.reduce((sum, citation) => sum + citation.price, 0),
+      network: 'offline',
     },
   }
 }

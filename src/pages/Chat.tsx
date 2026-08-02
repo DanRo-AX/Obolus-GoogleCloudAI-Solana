@@ -11,9 +11,10 @@ import {
 import { Composer } from '@/components/Composer'
 import { Button } from '@/components/ui/button'
 import { SHELVES, type Shelf } from '@/data/shelf'
+import { getChatAnswers, resolveQuestion, type Resolution } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import { explorerUrl, HAS_GATEWAY, openDocuments, PaymentError } from '@/lib/x402'
-import { shortKey, useWallet } from '@/state/wallet'
+import { explorerUrl, openDocuments, PaymentError } from '@/lib/x402'
+import { useWallet } from '@/state/wallet'
 import { useUi, type Citation } from '@/state/ui'
 
 /**
@@ -50,66 +51,18 @@ const STEPS = [
 const COUNT_CHOICES = [3, 7, 12]
 const PRICE_CHOICES = [0, 300, 500, 800]
 
-const STOPWORDS = new Set([
-  'about','actually','after','also','and','any','are','around','because','been',
-  'before','being','best','but','can','did','does','doing','done','dont','each',
-  'even','ever','every','find','for','from','get','give','going','good','got',
-  'has','have','how','into','its','just','know','like','look','make','many',
-  'more','most','much','need','not','now','one','only','other','out','over',
-  'people','place','places','really','right','same','see','should','some',
-  'something','still','take','tell','than','that','the','their','them','then',
-  'there','these','they','thing','things','this','those','time','use','used',
-  'very','want','was','way','well','were','what','when','where','which','while',
-  'who','why','will','with','without','would','you','your',
-])
-
-/**
- * Match a question to a shelf on content words. Short and stopword tokens are
- * dropped, so "the best places to eat" cannot match everything by itself —
- * a hit has to come from words that actually carry the topic.
- */
-function contentWords(text: string): string[] {
-  return [
-    ...new Set(
-      text
-        .toLowerCase()
-        .split(/[^a-z0-9가-힣]+/)
-        .filter((w) => w.length >= 4 && !STOPWORDS.has(w)),
-    ),
-  ]
-}
-
-/** A hit needs this many topic words, and this share of the question. */
-const MATCH_MIN = 2
-const MATCH_RATIO = 0.3
-
-function rankShelves(prompt: string): { shelf: Shelf; score: number }[] {
-  const q = contentWords(prompt)
-  if (q.length < 2) return []
-  return SHELVES.map((shelf) => {
-    const hay = `${shelf.name} ${shelf.category} ${shelf.summary} ${shelf.excerpts.join(' ')}`.toLowerCase()
-    const hit = q.filter((w) => hay.includes(w)).length
-    return { shelf, score: hit, ratio: hit / q.length }
-  })
-    .filter((r) => r.score >= MATCH_MIN && r.ratio >= MATCH_RATIO)
-    .sort((a, b) => b.ratio - a.ratio || b.score - a.score)
-    .map(({ shelf, score }) => ({ shelf, score }))
-}
-
-function buildCitations(shelf: Shelf, count: number): Citation[] {
-  const slug = shelf.id.replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 6)
-  return shelf.excerpts.slice(0, count).map((excerpt, i) => ({
-    handle: `${slug || 'SHELF'}_${String(i + 11).padStart(2, '0')}`,
-    shelf: shelf.name,
-    excerpt,
-    price: shelf.avgPrice,
-  }))
-}
-
 export default function Chat() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { chats, appendAssistant, placeOrder, orders } = useUi()
+  const {
+    chats,
+    appendAssistant,
+    placeOrder,
+    cancelOrder,
+    orders,
+    refreshLedger,
+    account,
+  } = useUi()
   const wallet = useWallet()
   const chat = chats.find((c) => c.id === id)
 
@@ -119,6 +72,11 @@ export default function Chat() {
   const [count, setCount] = useState<number | null>(null)
   const [placedOrderId, setPlacedOrderId] = useState<string | null>(null)
   const [payError, setPayError] = useState<string | null>(null)
+  const [queryId, setQueryId] = useState<string | null>(null)
+  const [resolutionReason, setResolutionReason] = useState<Resolution['reason'] | null>(null)
+  const [openCallDraft, setOpenCallDraft] = useState<Resolution['openCall'] | null>(
+    null,
+  )
   const startedRef = useRef<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -129,20 +87,39 @@ export default function Chat() {
   const hasAnswer = chat?.messages.some((m) => m.role === 'assistant') ?? false
   const chatId = chat?.id
   const prompt = lastUser?.content
+  const existingOrder = orders.find(
+    (order) => order.mine && order.chatId === chatId && order.status !== 'cancelled',
+  )
 
   const total = pending.reduce((sum, c) => sum + c.price, 0)
+  const countChoices = useMemo(
+    () =>
+      [...new Set([openCallDraft?.answersNeeded, ...COUNT_CHOICES])].filter(
+        (value): value is number => typeof value === 'number' && value > 0,
+      ),
+    [openCallDraft?.answersNeeded],
+  )
+  const priceChoices = useMemo(
+    () =>
+      [...new Set([openCallDraft?.suggestedUnitPriceKrw, ...PRICE_CHOICES])].filter(
+        (value): value is number => typeof value === 'number' && value >= 0,
+      ),
+    [openCallDraft?.suggestedUnitPriceKrw],
+  )
 
-  /**
-   * Steps 6–7. The spend goes through the x402 boundary, which handles the
-   * 402 → settle handshake server-side; the client only ever sees the result.
-   */
+  /** Steps 6–7. Phantom signs one exact x402/SVM payment per opened document. */
   const settle = useCallback(
-    async (citations: Citation[], shelfName: string) => {
-      if (!chatId) return
+    async (
+      citations: Citation[],
+      shelfName: string,
+      resolvedQueryId: string | null,
+    ) => {
+      if (!chatId || !resolvedQueryId) return
       setPhase('settling')
       setPayError(null)
       try {
         const result = await openDocuments({
+          queryId: resolvedQueryId,
           question: prompt ?? '',
           payer: wallet.pubkey,
           docs: citations.map((c) => ({
@@ -154,15 +131,17 @@ export default function Chat() {
         appendAssistant(chatId, {
           id: `${chatId}_a`,
           role: 'assistant',
-          content: `Opened ${result.citations.length} matching documents from the ${shelfName} shelf. Each passage below is quoted as written.`,
+          content: `Opened ${result.citations.length} matching documents from the ${shelfName} shelf. Each passage below is quoted as written.${result.settlement.partial ? ' Payment stopped before the remaining documents, so they stayed closed.' : ''}`,
           citations: result.citations,
           settlement: {
             count: result.settlement.count,
             total: result.settlement.total,
             txSig: result.settlement.txSig,
             network: result.settlement.network,
+            partial: result.settlement.partial,
           },
         })
+        void refreshLedger().catch(() => undefined)
         setPhase('answered')
       } catch (e) {
         setPayError(
@@ -171,46 +150,117 @@ export default function Chat() {
         setPhase('failed')
       }
     },
-    [appendAssistant, chatId, prompt, wallet.pubkey],
+    [appendAssistant, chatId, prompt, refreshLedger, wallet.pubkey],
   )
 
   // search → rank → branch. The guard is released in cleanup so StrictMode's
   // remount reschedules instead of leaving the run half-finished.
   useEffect(() => {
-    if (!chatId || !prompt || hasAnswer) return
+    if (!chatId || !prompt || hasAnswer || existingOrder) return
     if (startedRef.current === chatId) return
     startedRef.current = chatId
 
-    const ranked = rankShelves(prompt)
-    const timers: number[] = []
-
+    let cancelled = false
     setPhase('searching')
     setHits([])
-    timers.push(
-      window.setTimeout(() => {
+    setPayError(null)
+    setQueryId(null)
+    setResolutionReason(null)
+    setOpenCallDraft(null)
+
+    const run = async () => {
+      try {
+        const [resolution] = await Promise.all([
+          resolveQuestion(prompt, 5, chat?.filters),
+          new Promise((resolve) => window.setTimeout(resolve, 700)),
+        ])
+        if (cancelled) return
+
+        setQueryId(resolution.queryId)
+        setResolutionReason(resolution.reason)
+        setOpenCallDraft(resolution.openCall ?? null)
+        const seen = new Set<string>()
+        const ranked = resolution.matches.flatMap((match) => {
+          if (seen.has(match.shelfId)) return []
+          const shelf = SHELVES.find((item) => item.id === match.shelfId)
+          if (!shelf) return []
+          seen.add(match.shelfId)
+          return [{ shelf, score: match.score }]
+        })
         setPhase('ranking')
         setHits(ranked.slice(0, 3))
-      }, 900),
-      window.setTimeout(() => {
-        // Step 4 — this is where it splits.
-        if (!ranked.length) {
+        await new Promise((resolve) => window.setTimeout(resolve, 650))
+        if (cancelled) return
+
+        // Step 4 — this is where it splits. Partial coverage is still a miss:
+        // the open call asks only for the missing number of answers.
+        if (resolution.decision === 'miss') {
           setPhase('ask-order')
           return
         }
-        const top = ranked[0].shelf
-        const cites = buildCitations(top, Math.min(top.excerpts.length, 5))
+        const cites: Citation[] = resolution.matches.map((match) => ({
+          handle: match.handle,
+          shelf: match.shelf,
+          excerpt: '',
+          price: match.priceKrw,
+        }))
         const sum = cites.reduce((s, c) => s + c.price, 0)
         setPending(cites)
         if (sum > CONFIRM_OVER) setPhase('confirm')
-        else void settle(cites, top.name)
-      }, 2000),
-    )
+        else void settle(cites, ranked[0]?.shelf.name ?? cites[0]?.shelf ?? 'Unsorted', resolution.queryId)
+      } catch (error) {
+        if (cancelled) return
+        setPayError(error instanceof Error ? error.message : 'Search failed.')
+        setPhase('failed')
+      }
+    }
+    void run()
 
     return () => {
-      timers.forEach(clearTimeout)
+      cancelled = true
       startedRef.current = null
     }
-  }, [chatId, prompt, hasAnswer, settle])
+  }, [chat?.filters, chatId, existingOrder, prompt, hasAnswer, settle])
+
+  useEffect(() => {
+    if (!chatId || !existingOrder || !account) return
+    setPlacedOrderId(existingOrder.id)
+    setPhase('ordered')
+    let stopped = false
+    const collect = async () => {
+      const answers = await getChatAnswers(chatId)
+      if (stopped) return
+      for (const answer of answers) {
+        const messageId = `open_call_answer_${answer.id}`
+        if (chat?.messages.some((message) => message.id === messageId)) continue
+        appendAssistant(chatId, {
+          id: messageId,
+          role: 'assistant',
+          content: 'A targeted open-call answer arrived. The passage was paid from the reserved sandbox escrow.',
+          citations: [
+            {
+              handle: answer.handle,
+              shelf: answer.shelf,
+              excerpt: answer.excerpt,
+              price: answer.price,
+              demographics: answer.demographics,
+            },
+          ],
+          settlement: {
+            count: 1,
+            total: answer.price,
+            network: 'sandbox-escrow',
+          },
+        })
+      }
+    }
+    void collect().catch(() => undefined)
+    const interval = window.setInterval(() => void collect().catch(() => undefined), 3_000)
+    return () => {
+      stopped = true
+      window.clearInterval(interval)
+    }
+  }, [account, appendAssistant, chat?.messages, chatId, existingOrder])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -271,6 +321,12 @@ export default function Chat() {
                         <p className="mt-2 text-[15px] leading-relaxed text-foreground/90">
                           “{c.excerpt}”
                         </p>
+                        {c.demographics ? (
+                          <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                            {c.demographics.ageBand} · {c.demographics.region} ·{' '}
+                            {c.demographics.household} · {c.demographics.field}
+                          </p>
+                        ) : null}
                       </li>
                     ))}
                   </ul>
@@ -286,7 +342,13 @@ export default function Chat() {
                       </span>
                     </span>
                     <span className="text-muted-foreground/60">
-                      settled over x402 · unopened documents cost nothing
+                      {m.settlement.network === 'demo'
+                        ? 'demo ledger · x402 gateway disabled'
+                        : m.settlement.network === 'sandbox-escrow'
+                          ? 'paid from reserved sandbox escrow'
+                        : m.settlement.network === 'offline'
+                          ? 'offline preview · no payment sent'
+                          : 'settled through x402 · unopened documents cost nothing'}
                     </span>
                     {m.settlement.txSig ? (
                       <a
@@ -320,7 +382,13 @@ export default function Chat() {
                   <Button
                     variant="mono"
                     size="mono"
-                    onClick={() => void settle(pending, pending[0]?.shelf ?? 'Unsorted')}
+                    onClick={() =>
+                      void settle(
+                        pending,
+                        pending[0]?.shelf ?? 'Unsorted',
+                        queryId,
+                      )
+                    }
                   >
                     Pay and open
                   </Button>
@@ -337,7 +405,13 @@ export default function Chat() {
               {phase === 'ask-order' ? (
                 <Branch
                   title="Nobody has covered this yet."
-                  body="Nothing on the shelves matches. Want me to ask people?"
+                  body={
+                    resolutionReason === 'insufficient_coverage'
+                      ? 'Some relevant documents exist, but not enough for the requested coverage. Want me to fill the gap?'
+                      : resolutionReason === 'budget_too_low'
+                        ? 'Relevant documents exist, but they do not fit the current budget. Want me to ask at a new price?'
+                        : 'Nothing on the shelves matches. Want me to ask people?'
+                  }
                 >
                   <Button
                     variant="mono"
@@ -357,8 +431,19 @@ export default function Chat() {
               ) : null}
 
               {phase === 'ask-count' ? (
-                <Branch title="How many people?" body="More answers means you see where they start to disagree.">
-                  {COUNT_CHOICES.map((n) => (
+                <Branch
+                  title={
+                    openCallDraft?.existingMatches
+                      ? 'How many more people?'
+                      : 'How many people?'
+                  }
+                  body={
+                    openCallDraft?.existingMatches
+                      ? `${openCallDraft.existingMatches} relevant documents already exist. ${openCallDraft.answersNeeded} more fills the original ${openCallDraft.targetAnswers}-person request.`
+                      : 'More answers means you see where they start to disagree.'
+                  }
+                >
+                  {countChoices.map((n) => (
                     <Button
                       key={n}
                       variant="monoMuted"
@@ -379,22 +464,42 @@ export default function Chat() {
                   title="What do you want to pay per answer?"
                   body="₩0 still gets answers. People read the demand and write it up in advance because they expect it to sell later."
                 >
-                  {PRICE_CHOICES.map((p) => (
+                  {priceChoices.map((p) => (
                     <Button
                       key={p}
-                      variant={p === 300 ? 'mono' : 'monoMuted'}
+                      variant={
+                        p === (openCallDraft?.suggestedUnitPriceKrw ?? 300)
+                          ? 'mono'
+                          : 'monoMuted'
+                      }
                       size="mono"
                       onClick={() => {
-                        const orderId = placeOrder({
+                        if (!account) {
+                          navigate('/login?mode=signup')
+                          return
+                        }
+                        void placeOrder({
                           question: prompt ?? '',
                           unitPrice: p,
                           target: count ?? 7,
                           mine: true,
                           chatId,
                           shelf: hits[0]?.shelf.name ?? 'Unsorted',
-                        })
-                        setPlacedOrderId(orderId)
-                        setPhase('ordered')
+                          filters: chat.filters,
+                        }).then(
+                          (orderId) => {
+                            setPlacedOrderId(orderId)
+                            setPhase('ordered')
+                          },
+                          (error) => {
+                            setPayError(
+                              error instanceof Error
+                                ? error.message
+                                : 'The call could not be posted.',
+                            )
+                            setPhase('failed')
+                          },
+                        )
                       }}
                     >
                       {p === 0 ? '₩0' : `₩${p.toLocaleString()}`}
@@ -406,7 +511,7 @@ export default function Chat() {
               {phase === 'ordered' && placedOrder ? (
                 <Branch
                   title="Call posted."
-                  body={`${placedOrder.target} people · ₩${placedOrder.unitPrice.toLocaleString()} each. Answers come back to this chat, and you are charged only for the ones that arrive.`}
+                    body={`${placedOrder.target} people · ₩${placedOrder.unitPrice.toLocaleString()} each. ₩${placedOrder.escrowRemainingKrw?.toLocaleString() ?? (placedOrder.target * placedOrder.unitPrice).toLocaleString()} is reserved; accepted answers are paid from it and the unused amount is refundable.`}
                 >
                   <Button
                     variant="mono"
@@ -414,6 +519,15 @@ export default function Chat() {
                     onClick={() => navigate('/dashboard')}
                   >
                     View on dashboard
+                  </Button>
+                  <Button
+                    variant="monoMuted"
+                    size="mono"
+                    onClick={() =>
+                      void cancelOrder(placedOrder.id).then(() => setPhase('declined'))
+                    }
+                  >
+                    Cancel and refund
                   </Button>
                 </Branch>
               ) : null}
@@ -427,8 +541,11 @@ export default function Chat() {
 
               {phase === 'failed' ? (
                 <Branch
-                  title="Settlement did not go through."
-                  body={payError ?? 'Nothing was charged. The documents stayed closed.'}
+                  title={queryId ? 'Settlement did not go through.' : 'SHELF-1 could not reach the backend.'}
+                  body={
+                    payError ??
+                    'The documents stayed closed. If Phantom already showed a confirmed transfer, check the explorer before retrying.'
+                  }
                 />
               ) : null}
 
@@ -443,7 +560,7 @@ export default function Chat() {
 
           {hasAnswer ? (
             <p className="text-center font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
-              These opens accrued to each author\u2019s memory · next time it auto-matches
+              Each author was paid onchain · these documents can auto-match again
             </p>
           ) : null}
         </div>

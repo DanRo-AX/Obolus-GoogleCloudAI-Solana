@@ -59,7 +59,7 @@ const MIN_PAY: Array<{ value: number; label: string }> = [
 ]
 
 export default function Dashboard() {
-  const { orders, memory, profile, suspended } = useUi()
+  const { orders, memory, earnings, profile, suspended, cancelOrder, balance } = useUi()
   const navigate = useNavigate()
   const [params] = useSearchParams()
 
@@ -76,7 +76,13 @@ export default function Dashboard() {
   const [opening, setOpening] = useState<string | null>(null)
 
   const base = useMemo(
-    () => orders.filter((o) => (tab === 'mine' ? o.mine : !o.mine)),
+    () =>
+      orders.filter(
+        (o) =>
+          tab === 'mine'
+            ? o.mine
+            : !o.mine && o.status !== 'cancelled',
+      ),
     [orders, tab],
   )
 
@@ -86,7 +92,7 @@ export default function Dashboard() {
       base.filter((o) => {
         if (o.unitPrice < minPay) return false
         if (hideFilled && o.answered >= o.target) return false
-        if (fitsMe && profile && !profile.speaksTo.includes(o.category))
+        if (fitsMe && profile && !(o.eligible ?? profile.speaksTo.includes(o.category)))
           return false
         return true
       }),
@@ -120,14 +126,22 @@ export default function Dashboard() {
   }, [preCategory, category, sort])
 
   const openCount = useMemo(
-    () => orders.filter((o) => !o.mine && o.answered < o.target).length,
+    () =>
+      orders.filter(
+        (o) =>
+          !o.mine && o.status !== 'cancelled' && o.answered < o.target,
+      ).length,
     [orders],
   )
   const mineCount = useMemo(() => orders.filter((o) => o.mine).length, [orders])
 
-  const earnedToday = memory
-    .filter((m) => Date.now() - m.createdAt < 1000 * 60 * 60 * 24)
-    .reduce((s, m) => s + m.earned, 0)
+  const earnedToday = earnings
+    ? earnings.events
+        .filter((event) => Date.now() - event.createdAt < 1000 * 60 * 60 * 24)
+        .reduce((sum, event) => sum + event.amountKrw, 0)
+    : memory
+        .filter((m) => Date.now() - m.createdAt < 1000 * 60 * 60 * 24)
+        .reduce((sum, m) => sum + m.earned, 0)
 
   const activeSort = SORTS.find((s) => s.id === sort) ?? SORTS[0]
 
@@ -138,10 +152,13 @@ export default function Dashboard() {
           <h1 className="font-sans text-base font-medium">Dashboard</h1>
           <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
             <Coins className="size-3.5" />
-            Settled today{' '}
+            Accrued today{' '}
             <span className="tabular-nums text-foreground">
               ₩{earnedToday.toLocaleString()}
             </span>
+            {balance ? (
+              <span className="text-muted-foreground">· ₩{balance.availableKrw.toLocaleString()} available</span>
+            ) : null}
           </div>
         </div>
 
@@ -274,7 +291,7 @@ export default function Dashboard() {
               size="monoSm"
               className="ml-auto"
             >
-              <Link to="/onboarding">Temp sign-in</Link>
+              <Link to="/login?mode=signup">Create account</Link>
             </Button>
           </div>
         ) : null}
@@ -301,8 +318,9 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {list.map((order) => {
               const done = order.answered >= order.target
+              const cancelled = order.status === 'cancelled'
               const cat = CATEGORY_BY_ID[order.category]
-              const fits = profile?.speaksTo.includes(order.category)
+              const fits = order.eligible ?? profile?.speaksTo.includes(order.category)
               return (
                 <div
                   key={order.id}
@@ -310,7 +328,7 @@ export default function Dashboard() {
                     'flex flex-col rounded-[6px] border border-border bg-card p-5 transition-all duration-500',
                     opening && opening !== order.id && 'scale-[0.99] opacity-30',
                     opening === order.id && 'border-foreground/40 shadow-lg',
-                    done && 'opacity-70',
+                    (done || cancelled) && 'opacity-70',
                   )}
                 >
                   <div className="flex items-center justify-between gap-3">
@@ -339,6 +357,14 @@ export default function Dashboard() {
                   <p className="mt-3 text-[15px] leading-relaxed text-foreground">
                     {order.question}
                   </p>
+                  {order.filters && Object.values(order.filters).some(Boolean) ? (
+                    <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                      Target · {Object.entries(order.filters)
+                        .filter(([, value]) => Boolean(value))
+                        .map(([key, value]) => `${key.replace(/([A-Z])/g, ' $1')} ${value}`)
+                        .join(' · ')}
+                    </p>
+                  ) : null}
 
                   <div className="mt-4 flex items-center gap-3">
                     <div className="h-1 flex-1 overflow-hidden rounded-full bg-foreground/10">
@@ -357,7 +383,11 @@ export default function Dashboard() {
                   <div className="mt-3 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
                     <Clock className="size-3" />
                     {relative(order.createdAt)}
-                    {done ? (
+                    {cancelled ? (
+                      <span className="ml-auto text-muted-foreground">
+                        Cancelled · unused escrow refunded
+                      </span>
+                    ) : done ? (
                       <span className="ml-auto inline-flex items-center gap-1 text-[#0F766E]">
                         <Check className="size-3" /> Filled
                       </span>
@@ -379,27 +409,45 @@ export default function Dashboard() {
                       size="mono"
                       className="mt-4 self-start"
                       onClick={() => {
+                        if (!profile) {
+                          navigate('/onboarding')
+                          return
+                        }
                         setOpening(order.id)
                         window.setTimeout(
                           () => navigate(`/answer/${order.id}`),
                           620,
                         )
                       }}
-                      disabled={opening === order.id || suspended}
+                      disabled={opening === order.id || suspended || Boolean(profile && !fits)}
                     >
-                      {opening === order.id ? 'Opening…' : 'Answer'}
+                      {opening === order.id
+                        ? 'Opening…'
+                        : profile
+                          ? fits
+                            ? 'Answer'
+                            : 'Profile does not match'
+                          : 'Set up profile'}
                     </Button>
                   ) : null}
 
-                  {tab === 'mine' && order.chatId ? (
-                    <Button
-                      asChild
-                      variant="monoGhost"
-                      size="monoSm"
-                      className="mt-4 -ml-2.5 self-start"
-                    >
-                      <Link to={`/chat/${order.chatId}`}>Back to the chat</Link>
-                    </Button>
+                  {tab === 'mine' ? (
+                    <div className="mt-4 flex items-center gap-2">
+                      {order.chatId ? (
+                        <Button asChild variant="monoGhost" size="monoSm">
+                          <Link to={`/chat/${order.chatId}`}>Back to the chat</Link>
+                        </Button>
+                      ) : null}
+                      {order.status !== 'filled' && order.status !== 'cancelled' ? (
+                        <Button
+                          variant="monoMuted"
+                          size="monoSm"
+                          onClick={() => void cancelOrder(order.id)}
+                        >
+                          Cancel · refund ₩{(order.escrowRemainingKrw ?? 0).toLocaleString()}
+                        </Button>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               )
