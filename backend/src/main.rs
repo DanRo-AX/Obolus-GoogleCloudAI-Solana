@@ -32,14 +32,22 @@ async fn main() {
 
     let database_path =
         std::env::var("OPENSHELF_DATABASE").unwrap_or_else(|_| "openshelf.db".to_owned());
+    let database_engine = if database_path.starts_with("postgres://")
+        || database_path.starts_with("postgresql://")
+        || database_path.starts_with("host=")
+    {
+        "postgresql"
+    } else {
+        "sqlite"
+    };
     let store = Store::open(&database_path)
-        .unwrap_or_else(|error| panic!("failed to open database {database_path:?}: {error}"));
+        .unwrap_or_else(|error| panic!("failed to open configured database: {error}"));
     let app = build_app(store);
     let listener = TcpListener::bind(address)
         .await
         .unwrap_or_else(|error| panic!("failed to bind {address}: {error}"));
 
-    info!(%address, %database_path, "OPENSHELF API listening");
+    info!(%address, database_engine, "OPENSHELF API listening");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
