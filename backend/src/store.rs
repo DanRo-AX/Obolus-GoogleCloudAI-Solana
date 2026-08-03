@@ -27,8 +27,9 @@ use crate::{
         PaymentQuote, PayoutClaim, PublicDocument, RecordChainSettlementRequest,
         RecoveredPaidDocument, ResolveQuestionResponse, ReviewDisputeRequest,
         ReviewDocumentFeedbackRequest, SearchFilters, Settlement, ShelfStarter, ShelfStarterDraft,
-        SubmitAnswerResponse, SubmitDocumentFeedbackRequest, SubmitShelfStarterAnswerResponse,
-        UpdatePreferencesRequest, UpsertProfileRequest, UserAccount, UserProfile, WalletChallenge,
+        SiwxPayload, SubmitAnswerResponse, SubmitDocumentFeedbackRequest,
+        SubmitShelfStarterAnswerResponse, UpdatePreferencesRequest, UpsertProfileRequest,
+        UserAccount, UserProfile, WalletChallenge,
     },
     quality, seed,
 };
@@ -80,6 +81,21 @@ pub struct PendingEmail {
     pub recipient: String,
     pub subject: String,
     pub body: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalletSiwxChallengeRecord {
+    pub id: String,
+    pub user_id: String,
+    pub domain: String,
+    pub uri: String,
+    pub statement: String,
+    pub nonce: String,
+    pub issued_at: String,
+    pub expiration_time: String,
+    pub network: String,
+    pub expires_at: u64,
+    pub consumed_at: Option<u64>,
 }
 
 pub struct AiArtifactMetadata<'a> {
@@ -1066,6 +1082,21 @@ impl Store {
                 created_at INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS wallet_siwx_challenges (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                domain TEXT NOT NULL,
+                uri TEXT NOT NULL,
+                statement TEXT NOT NULL,
+                nonce TEXT NOT NULL,
+                issued_at TEXT NOT NULL,
+                expiration_time TEXT NOT NULL,
+                network TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                consumed_at INTEGER,
+                created_at INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS document_feedback (
                 id TEXT PRIMARY KEY,
                 query_id TEXT NOT NULL,
@@ -1122,6 +1153,8 @@ impl Store {
                 ON bundle_chain_settlements(transaction_signature);
             CREATE INDEX IF NOT EXISTS idx_wallet_challenges_user
                 ON wallet_challenges(user_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_wallet_siwx_challenges_user
+                ON wallet_siwx_challenges(user_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_document_feedback_status
                 ON document_feedback(status, created_at ASC);
             CREATE INDEX IF NOT EXISTS idx_memory_access_memory
@@ -3986,6 +4019,252 @@ impl Store {
         transaction.commit()?;
         drop(connection);
         self.get_profile(user_id)?
+            .ok_or(StoreError::NotFound("profile"))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_wallet_siwx_challenge(
+        &self,
+        user_id: &str,
+        challenge_id: &str,
+        domain: &str,
+        uri: &str,
+        statement: &str,
+        nonce: &str,
+        issued_at: &str,
+        expiration_time: &str,
+        network: &str,
+        ttl_ms: u64,
+    ) -> Result<WalletSiwxChallengeRecord, StoreError> {
+        let user_id = user_id.trim();
+        let challenge_id = challenge_id.trim();
+        let domain = domain.trim();
+        let uri = uri.trim();
+        let statement = statement.trim();
+        let nonce = nonce.trim();
+        let issued_at = issued_at.trim();
+        let expiration_time = expiration_time.trim();
+        let network = network.trim();
+        if user_id.is_empty()
+            || domain.is_empty()
+            || uri.is_empty()
+            || statement.is_empty()
+            || issued_at.is_empty()
+            || expiration_time.is_empty()
+            || network.is_empty()
+        {
+            return Err(StoreError::Validation(
+                "complete SIWX challenge metadata is required".to_owned(),
+            ));
+        }
+        if challenge_id.len() != 64
+            || nonce.len() != 64
+            || !challenge_id
+                .chars()
+                .chain(nonce.chars())
+                .all(|character| character.is_ascii_hexdigit())
+        {
+            return Err(StoreError::Validation(
+                "SIWX challenge id and nonce must each be 32 bytes of hex".to_owned(),
+            ));
+        }
+        if domain.len() > 253
+            || domain
+                .chars()
+                .any(|character| character.is_whitespace() || matches!(character, '/' | '\\'))
+            || !(uri.starts_with("https://")
+                || uri.starts_with("http://127.0.0.1:")
+                || uri.starts_with("http://localhost:"))
+        {
+            return Err(StoreError::Validation(
+                "SIWX domain or resource URI is invalid".to_owned(),
+            ));
+        }
+        if !(60_000..=10 * 60_000).contains(&ttl_ms) {
+            return Err(StoreError::Validation(
+                "SIWX challenge ttl must be between one and ten minutes".to_owned(),
+            ));
+        }
+
+        let now = now_ms();
+        let expires_at = now.saturating_add(ttl_ms);
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let has_profile = transaction
+            .query_row(
+                "SELECT 1 FROM profiles WHERE user_id = ?1",
+                [user_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !has_profile {
+            return Err(StoreError::Conflict(
+                "complete onboarding before verifying a wallet".to_owned(),
+            ));
+        }
+        transaction.execute(
+            "UPDATE wallet_siwx_challenges SET consumed_at = ?1
+             WHERE user_id = ?2 AND consumed_at IS NULL",
+            params![as_i64(now)?, user_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM wallet_siwx_challenges WHERE expires_at < ?1",
+            [as_i64(now.saturating_sub(24 * 60 * 60 * 1_000))?],
+        )?;
+        transaction.execute(
+            "INSERT INTO wallet_siwx_challenges
+             (id, user_id, domain, uri, statement, nonce, issued_at,
+              expiration_time, network, expires_at, consumed_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11)",
+            params![
+                challenge_id,
+                user_id,
+                domain,
+                uri,
+                statement,
+                nonce,
+                issued_at,
+                expiration_time,
+                network,
+                as_i64(expires_at)?,
+                as_i64(now)?,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(WalletSiwxChallengeRecord {
+            id: challenge_id.to_owned(),
+            user_id: user_id.to_owned(),
+            domain: domain.to_owned(),
+            uri: uri.to_owned(),
+            statement: statement.to_owned(),
+            nonce: nonce.to_owned(),
+            issued_at: issued_at.to_owned(),
+            expiration_time: expiration_time.to_owned(),
+            network: network.to_owned(),
+            expires_at,
+            consumed_at: None,
+        })
+    }
+
+    pub fn wallet_siwx_challenge(
+        &self,
+        challenge_id: &str,
+    ) -> Result<WalletSiwxChallengeRecord, StoreError> {
+        self.connection()?
+            .query_row(
+                "SELECT id, user_id, domain, uri, statement, nonce, issued_at,
+                        expiration_time, network, expires_at, consumed_at
+                 FROM wallet_siwx_challenges WHERE id = ?1",
+                [challenge_id.trim()],
+                wallet_siwx_challenge_from_row,
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("wallet SIWX challenge"))
+    }
+
+    pub fn verify_wallet_siwx_challenge(
+        &self,
+        challenge_id: &str,
+        payload: &SiwxPayload,
+    ) -> Result<UserProfile, StoreError> {
+        let now = now_ms();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let challenge = transaction
+            .query_row(
+                "SELECT id, user_id, domain, uri, statement, nonce, issued_at,
+                        expiration_time, network, expires_at, consumed_at
+                 FROM wallet_siwx_challenges WHERE id = ?1",
+                [challenge_id.trim()],
+                wallet_siwx_challenge_from_row,
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("wallet SIWX challenge"))?;
+        if challenge.consumed_at.is_some() {
+            return Err(StoreError::Conflict(
+                "this wallet SIWX challenge has already been used".to_owned(),
+            ));
+        }
+        if challenge.expires_at <= now {
+            return Err(StoreError::Conflict(
+                "this wallet SIWX challenge has expired".to_owned(),
+            ));
+        }
+        let resources_match = payload
+            .resources
+            .as_deref()
+            .is_some_and(|resources| resources.len() == 1 && resources[0] == challenge.uri);
+        if payload.domain != challenge.domain
+            || payload.uri != challenge.uri
+            || payload.statement.as_deref() != Some(challenge.statement.as_str())
+            || payload.version != "1"
+            || payload.chain_id != challenge.network
+            || payload.nonce != challenge.nonce
+            || payload.issued_at != challenge.issued_at
+            || payload.expiration_time.as_deref() != Some(challenge.expiration_time.as_str())
+            || payload.not_before.is_some()
+            || payload.request_id.as_deref() != Some(challenge.id.as_str())
+            || !resources_match
+            || payload.signature_type != "ed25519"
+            || payload.signature_scheme.as_deref().unwrap_or("siws") != "siws"
+        {
+            return Err(StoreError::Unauthorized(
+                "wallet SIWX payload does not match its challenge".to_owned(),
+            ));
+        }
+        let public_key = bs58::decode(payload.address.trim())
+            .into_vec()
+            .map_err(|_| StoreError::Unauthorized("wallet SIWX address is invalid".to_owned()))?;
+        let public_key: [u8; 32] = public_key
+            .try_into()
+            .map_err(|_| StoreError::Unauthorized("wallet SIWX address is invalid".to_owned()))?;
+        let verifying_key = VerifyingKey::from_bytes(&public_key).map_err(|_| {
+            StoreError::Unauthorized("wallet SIWX address is not an Ed25519 key".to_owned())
+        })?;
+        let signature = bs58::decode(payload.signature.trim())
+            .into_vec()
+            .map_err(|_| StoreError::Unauthorized("wallet SIWX signature is invalid".to_owned()))?;
+        let signature = Signature::from_slice(&signature)
+            .map_err(|_| StoreError::Unauthorized("wallet SIWX signature is invalid".to_owned()))?;
+        verifying_key
+            .verify_strict(siwx_message(payload)?.as_bytes(), &signature)
+            .map_err(|_| StoreError::Unauthorized("wallet SIWX signature is invalid".to_owned()))?;
+
+        let owner = transaction
+            .query_row(
+                "SELECT user_id FROM profiles
+                 WHERE wallet = ?1 AND wallet_verified_at IS NOT NULL AND user_id <> ?2",
+                params![payload.address.trim(), challenge.user_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if owner.is_some() {
+            return Err(StoreError::Conflict(
+                "this wallet is already verified by another account".to_owned(),
+            ));
+        }
+        let changed = transaction.execute(
+            "UPDATE profiles SET wallet = ?1, wallet_verified_at = ?2, updated_at = ?2
+             WHERE user_id = ?3",
+            params![payload.address.trim(), as_i64(now)?, challenge.user_id],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound("profile"));
+        }
+        let consumed = transaction.execute(
+            "UPDATE wallet_siwx_challenges SET consumed_at = ?1
+             WHERE id = ?2 AND consumed_at IS NULL",
+            params![as_i64(now)?, challenge.id],
+        )?;
+        if consumed != 1 {
+            return Err(StoreError::Conflict(
+                "this wallet SIWX challenge has already been used".to_owned(),
+            ));
+        }
+        transaction.commit()?;
+        drop(connection);
+        self.get_profile(&challenge.user_id)?
             .ok_or(StoreError::NotFound("profile"))
     }
 
@@ -7019,6 +7298,64 @@ fn notification_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Contributo
     })
 }
 
+fn wallet_siwx_challenge_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<WalletSiwxChallengeRecord> {
+    Ok(WalletSiwxChallengeRecord {
+        id: row.get(0)?,
+        user_id: row.get(1)?,
+        domain: row.get(2)?,
+        uri: row.get(3)?,
+        statement: row.get(4)?,
+        nonce: row.get(5)?,
+        issued_at: row.get(6)?,
+        expiration_time: row.get(7)?,
+        network: row.get(8)?,
+        expires_at: as_u64(row.get(9)?)?,
+        consumed_at: row.get::<_, Option<i64>>(10)?.map(as_u64).transpose()?,
+    })
+}
+
+fn siwx_message(payload: &SiwxPayload) -> Result<String, StoreError> {
+    let chain_reference = payload
+        .chain_id
+        .strip_prefix("solana:")
+        .ok_or_else(|| StoreError::Unauthorized("wallet SIWX chain is not Solana".to_owned()))?;
+    let mut lines = vec![
+        format!(
+            "{} wants you to sign in with your Solana account:",
+            payload.domain
+        ),
+        payload.address.clone(),
+        String::new(),
+    ];
+    if let Some(statement) = &payload.statement {
+        lines.push(statement.clone());
+        lines.push(String::new());
+    }
+    lines.push(format!("URI: {}", payload.uri));
+    lines.push(format!("Version: {}", payload.version));
+    lines.push(format!("Chain ID: {chain_reference}"));
+    lines.push(format!("Nonce: {}", payload.nonce));
+    lines.push(format!("Issued At: {}", payload.issued_at));
+    if let Some(expiration_time) = &payload.expiration_time {
+        lines.push(format!("Expiration Time: {expiration_time}"));
+    }
+    if let Some(not_before) = &payload.not_before {
+        lines.push(format!("Not Before: {not_before}"));
+    }
+    if let Some(request_id) = &payload.request_id {
+        lines.push(format!("Request ID: {request_id}"));
+    }
+    if let Some(resources) = &payload.resources
+        && !resources.is_empty()
+    {
+        lines.push("Resources:".to_owned());
+        lines.extend(resources.iter().map(|resource| format!("- {resource}")));
+    }
+    Ok(lines.join("\n"))
+}
+
 fn shelf_starter_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ShelfStarter> {
     Ok(ShelfStarter {
         id: row.get(0)?,
@@ -8374,14 +8711,15 @@ mod tests {
             CreateOpenCallRequest, CreatePaymentBundleRequest, Decision, EvidenceContribution,
             InterviewResponse, LiquidityState, RecordChainSettlementRequest,
             ResolveQuestionRequest, ReviewDisputeRequest, ReviewDocumentFeedbackRequest,
-            SearchFilters, ShelfStarterDraft, SubmitAnswerResponse, SubmitDocumentFeedbackRequest,
-            UpdatePreferencesRequest, UpsertProfileRequest,
+            SearchFilters, ShelfStarterDraft, SiwxPayload, SubmitAnswerResponse,
+            SubmitDocumentFeedbackRequest, UpdatePreferencesRequest, UpsertProfileRequest,
         },
         search::Resolver,
     };
 
     use super::{
         AiArtifactMetadata, LOGIN_FAILURE_LIMIT, PaymentQuotePolicy, Store, StoreError, now_ms,
+        siwx_message,
     };
 
     fn create_svalbard_call(store: &Store, owner: &str, target: usize) -> crate::domain::OpenCall {
@@ -8908,6 +9246,90 @@ mod tests {
         let changed = store.upsert_profile("wallet-owner", &changed).unwrap();
         assert!(!changed.wallet_verified);
         assert!(changed.wallet_verified_at.is_none());
+    }
+
+    #[test]
+    fn pay_siwx_verifies_a_payout_wallet_without_exporting_its_key() {
+        let store = Store::in_memory().unwrap();
+        onboard(&store, "siwx-owner");
+        let id = "ab".repeat(32);
+        let uri = format!("http://127.0.0.1:8787/api/v1/profile/wallet/siwx/{id}");
+        let issued_at = "2026-08-03T03:00:00Z";
+        let expiration_time = "2026-08-03T03:05:00Z";
+        let network = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+        store
+            .create_wallet_siwx_challenge(
+                "siwx-owner",
+                &id,
+                "127.0.0.1",
+                &uri,
+                "Verify this Pay.sh wallet as your OPENSHELF payout wallet.",
+                &"cd".repeat(32),
+                issued_at,
+                expiration_time,
+                network,
+                300_000,
+            )
+            .unwrap();
+
+        let signing_key = SigningKey::from_bytes(&[11; 32]);
+        let address = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
+        let mut payload = SiwxPayload {
+            domain: "127.0.0.1".to_owned(),
+            address,
+            uri: uri.clone(),
+            statement: Some(
+                "Verify this Pay.sh wallet as your OPENSHELF payout wallet.".to_owned(),
+            ),
+            version: "1".to_owned(),
+            chain_id: network.to_owned(),
+            nonce: "cd".repeat(32),
+            issued_at: issued_at.to_owned(),
+            expiration_time: Some(expiration_time.to_owned()),
+            not_before: None,
+            request_id: Some(id.clone()),
+            resources: Some(vec![uri]),
+            signature_type: "ed25519".to_owned(),
+            signature_scheme: Some("siws".to_owned()),
+            signature: String::new(),
+        };
+        payload.signature = bs58::encode(
+            signing_key
+                .sign(siwx_message(&payload).unwrap().as_bytes())
+                .to_bytes(),
+        )
+        .into_string();
+
+        let profile = store.verify_wallet_siwx_challenge(&id, &payload).unwrap();
+        assert_eq!(profile.wallet.as_deref(), Some(payload.address.as_str()));
+        assert!(profile.wallet_verified);
+        assert!(matches!(
+            store.verify_wallet_siwx_challenge(&id, &payload),
+            Err(StoreError::Conflict(_))
+        ));
+
+        let mut tampered = payload;
+        tampered.nonce = "ef".repeat(32);
+        let second_id = "12".repeat(32);
+        tampered.request_id = Some(second_id.clone());
+        store
+            .create_wallet_siwx_challenge(
+                "siwx-owner",
+                &second_id,
+                "127.0.0.1",
+                &tampered.uri,
+                tampered.statement.as_deref().unwrap(),
+                &"cd".repeat(32),
+                issued_at,
+                expiration_time,
+                network,
+                300_000,
+            )
+            .unwrap();
+        assert!(matches!(
+            store.verify_wallet_siwx_challenge(&second_id, &tampered),
+            Err(StoreError::Unauthorized(_))
+        ));
     }
 
     #[test]

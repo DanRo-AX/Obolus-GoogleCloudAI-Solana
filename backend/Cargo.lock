@@ -1253,6 +1253,7 @@ version = "0.1.0"
 dependencies = [
  "argon2",
  "axum",
+ "base64",
  "bs58",
  "ed25519-dalek",
  "google-cloud-auth",
@@ -1265,6 +1266,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror",
+ "time",
  "tokio",
  "tower",
  "tower-http 0.7.0",

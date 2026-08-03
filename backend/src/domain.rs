@@ -577,6 +577,40 @@ pub struct WalletChallenge {
     pub expires_at: u64,
 }
 
+/// A one-time x402 sign-in resource used to prove ownership of the local
+/// Pay.sh wallet without exporting its private key.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WalletSiwxLink {
+    pub id: String,
+    pub resource_url: String,
+    pub network: String,
+    pub expires_at: u64,
+}
+
+/// Signed `SIGN-IN-WITH-X` payload produced by Pay.sh. The server reconstructs
+/// the canonical Sign-In With Solana message and verifies its Ed25519 signature.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SiwxPayload {
+    pub domain: String,
+    pub address: String,
+    pub uri: String,
+    pub statement: Option<String>,
+    pub version: String,
+    pub chain_id: String,
+    pub nonce: String,
+    pub issued_at: String,
+    pub expiration_time: Option<String>,
+    pub not_before: Option<String>,
+    pub request_id: Option<String>,
+    pub resources: Option<Vec<String>>,
+    #[serde(rename = "type")]
+    pub signature_type: String,
+    pub signature_scheme: Option<String>,
+    pub signature: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VerifyWalletRequest {

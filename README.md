@@ -27,6 +27,29 @@ npm run check:all
 npm run build
 ```
 
+## Antigravity CLI
+
+The repository includes an Antigravity plugin that exposes the complete asker
+and contributor lifecycles as 23 `openshelf` MCP tools, plus the official
+Pay.sh MCP wallet behind a narrow Antigravity 1.1.10 handshake adapter.
+
+```bash
+agy plugin install ./integrations/antigravity/openshelf
+npm run agent:doctor
+node integrations/antigravity/openshelf/runtime/server.mjs auth login \
+  --email YOU@example.com
+agy
+```
+
+Use `/mcp` to confirm both `openshelf` and `pay` are connected. Free search and
+AI baselines do not require a Pay account. Before the first paid action, create
+or select a locally protected named Pay account; set
+`OPENSHELF_PAY_ACCOUNT=NAME` when it should differ from the Pay default. The
+plugin requires explicit approval for the exact aggregate Devnet amount before
+it invokes Pay. See
+[`integrations/antigravity/openshelf/README.md`](./integrations/antigravity/openshelf/README.md)
+and [`docs/ACCOUNT-LINKING.md`](./docs/ACCOUNT-LINKING.md).
+
 The paid path is live by default. Set `VITE_X402_ENABLED=false` only when you
 explicitly want the old sandbox-ledger path, or
 `VITE_BACKEND_ENABLED=false` for the fully static fallback.
@@ -39,9 +62,10 @@ explicitly want the old sandbox-ledger path, or
    beneficiary wallets, total, mint, network, and expiry into one bundle quote.
 3. An unpaid resource request returns x402 v2 `402 Payment Required` with a
    `PAYMENT-REQUIRED` header.
-4. The browser x402 client asks Phantom once. A single document pays its author
-   directly; a multi-document purchase sends one aggregate transfer to the
-   configured bundle escrow and retries with `PAYMENT-SIGNATURE`.
+4. The browser x402 client asks Phantom once, or Antigravity asks Pay.sh for one
+   local approval. A single document pays its author directly; a multi-document
+   purchase sends one aggregate transfer to the configured bundle escrow and
+   retries with `PAYMENT-SIGNATURE`.
 5. The public Devnet facilitator verifies and settles it, the gateway releases
    the purchase-time content snapshot, and Rust records the signature
    idempotently.
@@ -102,9 +126,9 @@ ask → search the shelves → rank by similarity → HIT or MISS
        → call posted → dashboard
 ```
 
-The browser-wallet path confirms every spend before opening anything. Phantom
-signs once for the exact set: one document is direct-to-author, while two or
-more use the bundle escrow and beneficiary ledger. The preview shows KRW,
+Both end-user wallet paths confirm every spend before opening anything. Phantom
+or Pay.sh signs once for the exact set: one document is direct-to-author, while
+two or more use the bundle escrow and beneficiary ledger. The preview shows KRW,
 estimated Devnet USDC, approval count, network, and the token mint. A question that already
 has enough matching documents skips the call entirely and offers to settle on
 the spot — the inverted order the meeting called out. Seeded opens cost ₩5–₩25;
@@ -204,12 +228,16 @@ account, money, memory, and authorization state are server-owned.
 The KRW signup balance and zero-price calls remain a clearly labelled sandbox
 ledger; they are not fiat. Paid document opens and paid open-call budgets use
 actual x402 exact/SVM settlement on Solana Devnet.
-The official Pay.sh YAML is a separate static localnet compatibility path; it
-is not proof of Devnet settlement. See [`docs/PAY-SH.md`](./docs/PAY-SH.md).
+The official Pay.sh YAML remains a separate static localnet compatibility path.
+The Antigravity integration instead sends dynamic application quotes through
+Pay's MCP `curl` tool to the real Devnet gateway. See
+[`docs/PAY-SH.md`](./docs/PAY-SH.md).
 Mainnet operation is intentionally out of scope. A public Devnet service still
 needs a managed RPC, durable multi-instance queue/database, distributed rate
 limits, email verification, KMS secret management, and an external identity
-provider if social login is desired. Password reset/recovery is implemented via
+provider if social login is desired. The intended Google/OpenShelf/Pay linking
+model is documented, but Google social login itself is not implemented.
+Password reset/recovery is implemented via
 the email outbox and revokes all sessions. The agent-payment policy evaluator is
 implemented and tested, but unattended signing remains disabled until a
 reviewed non-custodial Solana delegation standard is selected; no proprietary

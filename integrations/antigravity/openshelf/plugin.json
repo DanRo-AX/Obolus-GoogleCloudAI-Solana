@@ -1,0 +1,5 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "openshelf",
+  "description": "Ask and answer human knowledge-market questions with user-approved Pay.sh settlement on Solana Devnet."
+}

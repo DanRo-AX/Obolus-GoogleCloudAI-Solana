@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "openshelf": {
+      "command": "node",
+      "args": ["integrations/antigravity/openshelf/runtime/server.mjs", "mcp"],
+      "cwd": "."
+    },
+    "pay": {
+      "command": "node",
+      "args": ["integrations/antigravity/openshelf/runtime/pay-compat.mjs"],
+      "cwd": "."
+    }
+  }
+}

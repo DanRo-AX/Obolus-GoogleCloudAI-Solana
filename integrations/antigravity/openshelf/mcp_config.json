@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "openshelf": {
+      "command": "node",
+      "args": ["runtime/server.mjs", "mcp"],
+      "cwd": "."
+    },
+    "pay": {
+      "command": "node",
+      "args": ["runtime/pay-compat.mjs"]
+    }
+  }
+}

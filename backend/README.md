@@ -17,7 +17,7 @@ pending dispute -> admin approve -> document + slot + escrow release
 quoted handles -> direct quote (1) or exact bundle quote (2–100)
                -> one USDC settlement -> reveal committed passage snapshots
                \-> progress/recovery token -> immutable chain receipt + beneficiary claims
-author wallet -> signed Ed25519 challenge -> verified payout destination
+author wallet -> browser Ed25519 challenge or Pay SIWX -> verified payout destination
 paid passage -> buyer feedback/report -> admin review -> ranking reliability
 opened passages -> server-canonical evidence -> Gemini on Vertex AI cited synthesis
 memory -> hash/version/lock/correction -> public manifest + private export log
@@ -49,6 +49,7 @@ directory. Configuration:
 | `OPENSHELF_ENV` | `development` | Enables production secret and secure-cookie guards |
 | `OPENSHELF_SEED_DEMO` | non-production-dependent | Seed demo personas/calls; forbidden in production |
 | `OPENSHELF_FRONTEND_ORIGIN` | `http://localhost:4319` | Exact credentialed CORS origin |
+| `OPENSHELF_AGENT_API_ORIGIN` | `http://127.0.0.1:8787` | Exact public API origin embedded in one-time Pay SIWX wallet-link resources; remote production values require HTTPS |
 | `OPENSHELF_SECURE_COOKIES` | production-dependent | Force the `Secure` session-cookie flag |
 | `OPENSHELF_REQUIRE_MAINNET` | `false` | Reject default Devnet network/mint configuration |
 | `RUST_LOG` | `openshelf_api=info,tower_http=info` | Log filter |
@@ -128,6 +129,7 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data \
 | `GET/POST` | `/api/v1/profile` | Read or persist the anonymous profile and payout wallet |
 | `POST` | `/api/v1/profile/preferences` | Persist search auto-match, exact-memory agent, browser, and email-alert preferences |
 | `POST` | `/api/v1/profile/wallet/challenge` `/verify` | Prove payout-wallet ownership with a signed message |
+| `POST/GET` | `/api/v1/profile/wallet/siwx[/{id}]` | Create an authenticated one-time payout link, then verify a Pay `SIGN-IN-WITH-X` ownership signature without exporting its key |
 | `GET` | `/api/v1/earnings` | Audit append-only earnings and wallet snapshots |
 | `GET` | `/api/v1/payout-claims` | Inspect contributor/refund claim status and confirmed payout signatures |
 | `POST` | `/api/v1/auth/password/forgot` `/reset` | Queue an enumeration-safe one-hour reset link and rotate the password/session set |
@@ -148,6 +150,11 @@ strike or payment. An admin approval performs the restoration atomically.
 An unverified profile wallet is never used as an on-chain recipient. Updating the
 address revokes verification, one verified wallet cannot belong to two accounts,
 and user-authored documents cannot fall back to the seeded-content receiver.
+The SIWX path uses Pay's canonical Solana sign-in message, checks domain, URI,
+chain, nonce, issued/expiry time, request ID, Ed25519 signature, and one-time
+consumption before applying the same wallet-uniqueness rule. It links a wallet
+to an already authenticated OpenShelf user; it does not infer identity from a
+Google account or email address.
 
 Answer submissions may include `interviewResponses` from the optional warm-up
 conversation. Those turns are returned only in the respondent's authenticated
@@ -257,7 +264,8 @@ normal wallet setup. One document produces one transfer and one receipt.
 
 `backend/paywall.yml` is a static Pay.sh localnet compatibility example. The
 Devnet application path remains `payment-gateway/src/main.ts`, because recipients
-and prices must be generated per document rather than fixed in YAML. See
+and prices must be generated per document rather than fixed in YAML. Antigravity
+can authorize those dynamic URLs through Pay's MCP server. See
 [`../docs/PAY-SH.md`](../docs/PAY-SH.md).
 
 ## Verify

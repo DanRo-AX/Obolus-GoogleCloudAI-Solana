@@ -10,13 +10,15 @@ use argon2::{
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post},
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
     domain::{
@@ -32,12 +34,12 @@ use crate::{
         PaymentProgress, PaymentQuote, PayoutClaim, PreparePayoutClaimRequest, PublicDocument,
         RecordChainSettlementRequest, RecoveredPaidDocument, RegisterRequest, ResetPasswordRequest,
         ResolveError, ResolveQuestionRequest, ResolveQuestionResponse, ReviewDisputeRequest,
-        ReviewDocumentFeedbackRequest, ShelfStarter, SubmitAnswerRequest, SubmitAnswerResponse,
-        SubmitDisputeRequest, SubmitDocumentFeedbackRequest, SubmitShelfStarterAnswerRequest,
-        SubmitShelfStarterAnswerResponse, SynthesizeAnswerRequest, SynthesizeAnswerResponse,
-        SynthesizePaidAnswerRequest, UpdateMemoryRequest, UpdatePreferencesRequest,
-        UpsertProfileRequest, UserAccount, UserProfile, VerifyWalletRequest, WalletChallenge,
-        WalletChallengeRequest,
+        ReviewDocumentFeedbackRequest, ShelfStarter, SiwxPayload, SubmitAnswerRequest,
+        SubmitAnswerResponse, SubmitDisputeRequest, SubmitDocumentFeedbackRequest,
+        SubmitShelfStarterAnswerRequest, SubmitShelfStarterAnswerResponse, SynthesizeAnswerRequest,
+        SynthesizeAnswerResponse, SynthesizePaidAnswerRequest, UpdateMemoryRequest,
+        UpdatePreferencesRequest, UpsertProfileRequest, UserAccount, UserProfile,
+        VerifyWalletRequest, WalletChallenge, WalletChallengeRequest, WalletSiwxLink,
     },
     orchestrator,
     search::Resolver,
@@ -59,6 +61,7 @@ pub struct AppState {
     secure_cookies: bool,
     environment: String,
     allow_demo_open: bool,
+    agent_api_origin: String,
     email_endpoint: Option<String>,
     email_api_key: Option<String>,
     email_from: Option<String>,
@@ -113,6 +116,29 @@ impl AppState {
         if production && allow_demo_open {
             panic!("OPENSHELF_ALLOW_DEMO_OPEN cannot be enabled in production");
         }
+        let agent_api_origin = std::env::var("OPENSHELF_AGENT_API_ORIGIN")
+            .unwrap_or_else(|_| "http://127.0.0.1:8787".to_owned())
+            .trim_end_matches('/')
+            .to_owned();
+        let agent_api_url = reqwest::Url::parse(&agent_api_origin)
+            .unwrap_or_else(|error| panic!("invalid OPENSHELF_AGENT_API_ORIGIN: {error}"));
+        if agent_api_url.path() != "/"
+            || agent_api_url.query().is_some()
+            || agent_api_url.fragment().is_some()
+        {
+            panic!(
+                "OPENSHELF_AGENT_API_ORIGIN must be an origin without a path, query, or fragment"
+            );
+        }
+        if agent_api_url.scheme() != "https"
+            && !(agent_api_url.scheme() == "http"
+                && matches!(agent_api_url.host_str(), Some("127.0.0.1" | "localhost")))
+        {
+            panic!("OPENSHELF_AGENT_API_ORIGIN must use HTTPS unless it is a loopback URL");
+        }
+        if production && agent_api_url.scheme() != "https" {
+            panic!("OPENSHELF_AGENT_API_ORIGIN must use HTTPS in production");
+        }
         Self {
             store,
             internal_token_hash: token_hash(&internal_token),
@@ -135,6 +161,7 @@ impl AppState {
             },
             secure_cookies,
             allow_demo_open,
+            agent_api_origin,
             environment,
             email_endpoint: std::env::var("OPENSHELF_EMAIL_ENDPOINT")
                 .ok()
@@ -332,6 +359,11 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(create_wallet_challenge),
         )
         .route("/api/v1/profile/wallet/verify", post(verify_wallet))
+        .route("/api/v1/profile/wallet/siwx", post(create_wallet_siwx_link))
+        .route(
+            "/api/v1/profile/wallet/siwx/{id}",
+            get(verify_wallet_siwx_link),
+        )
         .route("/api/v1/earnings", get(get_earnings))
         .route("/api/v1/payout-claims", get(list_payout_claims))
         .route("/api/flash-research", get(open_documents))
@@ -1095,6 +1127,129 @@ async fn verify_wallet(
     )?))
 }
 
+async fn create_wallet_siwx_link(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<(StatusCode, Json<WalletSiwxLink>), ApiError> {
+    let user = authenticated(&state, &headers)?;
+    let id = random_token();
+    let nonce = random_token();
+    let resource_url = format!("{}/api/v1/profile/wallet/siwx/{id}", state.agent_api_origin);
+    let parsed = reqwest::Url::parse(&resource_url).map_err(ApiError::internal)?;
+    let domain = parsed
+        .host_str()
+        .ok_or_else(|| ApiError::internal("SIWX resource URL has no host"))?;
+    let issued = OffsetDateTime::now_utc();
+    let expiration = issued + TimeDuration::minutes(5);
+    let issued_at = issued.format(&Rfc3339).map_err(ApiError::internal)?;
+    let expiration_time = expiration.format(&Rfc3339).map_err(ApiError::internal)?;
+    let challenge = state.store.create_wallet_siwx_challenge(
+        &user.id,
+        &id,
+        domain,
+        &resource_url,
+        "Verify this Pay.sh wallet as your OPENSHELF payout wallet.",
+        &nonce,
+        &issued_at,
+        &expiration_time,
+        &state.payment_policy.network,
+        5 * 60 * 1_000,
+    )?;
+    Ok((
+        StatusCode::CREATED,
+        Json(WalletSiwxLink {
+            id,
+            resource_url,
+            network: challenge.network,
+            expires_at: challenge.expires_at,
+        }),
+    ))
+}
+
+async fn verify_wallet_siwx_link(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    let challenge = state.store.wallet_siwx_challenge(&id)?;
+    if challenge.expires_at <= now_ms() {
+        return Err(
+            StoreError::Conflict("this wallet SIWX challenge has expired".to_owned()).into(),
+        );
+    }
+    if challenge.consumed_at.is_some() {
+        return Err(StoreError::Conflict(
+            "this wallet SIWX challenge has already been used".to_owned(),
+        )
+        .into());
+    }
+    let Some(header_value) = headers
+        .get(HeaderName::from_static("sign-in-with-x"))
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        let envelope = serde_json::json!({
+            "x402Version": 2,
+            "resource": {
+                "url": challenge.uri.clone(),
+                "description": "Verify a Pay.sh wallet for OPENSHELF contributor payouts",
+                "mimeType": "application/json"
+            },
+            "accepts": [],
+            "error": "sign_in_required",
+            "extensions": {
+                "sign-in-with-x": {
+                    "info": {
+                        "domain": challenge.domain,
+                        "uri": challenge.uri.clone(),
+                        "statement": challenge.statement,
+                        "version": "1",
+                        "nonce": challenge.nonce,
+                        "issuedAt": challenge.issued_at,
+                        "expirationTime": challenge.expiration_time,
+                        "requestId": challenge.id,
+                        "resources": [challenge.uri]
+                    },
+                    "supportedChains": [{
+                        "chainId": challenge.network,
+                        "type": "ed25519",
+                        "signatureScheme": "siws"
+                    }]
+                }
+            }
+        });
+        let encoded =
+            BASE64_STANDARD.encode(serde_json::to_vec(&envelope).map_err(ApiError::internal)?);
+        let mut response_headers = HeaderMap::new();
+        response_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        response_headers.insert(header::VARY, HeaderValue::from_static("SIGN-IN-WITH-X"));
+        response_headers.insert(
+            HeaderName::from_static("payment-required"),
+            HeaderValue::from_str(&encoded).map_err(ApiError::internal)?,
+        );
+        return Ok((
+            StatusCode::PAYMENT_REQUIRED,
+            response_headers,
+            Json(envelope),
+        )
+            .into_response());
+    };
+    if header_value.len() > 16 * 1_024 {
+        return Err(ApiError::unauthorized("wallet SIWX payload is too large"));
+    }
+    let payload_bytes = BASE64_STANDARD
+        .decode(header_value)
+        .map_err(|_| ApiError::unauthorized("wallet SIWX payload is invalid"))?;
+    let payload: SiwxPayload = serde_json::from_slice(&payload_bytes)
+        .map_err(|_| ApiError::unauthorized("wallet SIWX payload is invalid"))?;
+    let profile = state.store.verify_wallet_siwx_challenge(&id, &payload)?;
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response_headers.insert(header::VARY, HeaderValue::from_static("SIGN-IN-WITH-X"));
+    Ok((response_headers, Json(profile)).into_response())
+}
+
 async fn get_earnings(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1618,6 +1773,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode, header},
     };
+    use base64::Engine as _;
     use ed25519_dalek::{Signer, SigningKey};
     use http_body_util::BodyExt;
     use serde_json::{Value, json};
@@ -1625,7 +1781,7 @@ mod tests {
 
     use crate::{demo_app, store::Store};
 
-    use super::{AppState, QUERY_TOKEN_HEADER, router};
+    use super::{AppState, BASE64_STANDARD, QUERY_TOKEN_HEADER, router};
 
     async fn register(app: &axum::Router, email: &str) -> String {
         let response = app
@@ -1874,6 +2030,166 @@ mod tests {
         .unwrap();
         assert_eq!(verified["walletVerified"], true);
         assert_eq!(verified["wallet"], wallet);
+    }
+
+    #[tokio::test]
+    async fn pay_siwx_api_advertises_and_consumes_one_signed_wallet_link() {
+        let app = demo_app();
+        let cookie = register(&app, "pay-siwx-api@example.com").await;
+        let profile = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/profile")
+                    .header(header::COOKIE, &cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "handle": "pay_siwx_api",
+                            "ageBand": "35-44",
+                            "region": "seoul",
+                            "household": "alone",
+                            "field": "engineering",
+                            "years": "7-plus",
+                            "speaksTo": ["engineering"],
+                            "autoMatch": true,
+                            "agents": false
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(profile.status(), StatusCode::OK);
+
+        let link_response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/profile/wallet/siwx")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(link_response.status(), StatusCode::CREATED);
+        let link: Value = serde_json::from_slice(
+            &link_response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .unwrap();
+        let resource = reqwest::Url::parse(link["resourceUrl"].as_str().unwrap()).unwrap();
+        let resource_path = resource.path().to_owned();
+
+        let challenge_response = app
+            .clone()
+            .oneshot(Request::get(&resource_path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(challenge_response.status(), StatusCode::PAYMENT_REQUIRED);
+        assert_eq!(
+            challenge_response
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .unwrap(),
+            "no-store"
+        );
+        assert!(
+            challenge_response
+                .headers()
+                .contains_key("payment-required")
+        );
+        let envelope: Value = serde_json::from_slice(
+            &challenge_response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .unwrap();
+        let extension = &envelope["extensions"]["sign-in-with-x"];
+        let info = &extension["info"];
+        let chain = &extension["supportedChains"][0];
+        let signing_key = SigningKey::from_bytes(&[17; 32]);
+        let address = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
+        let chain_id = chain["chainId"].as_str().unwrap();
+        let chain_reference = chain_id.strip_prefix("solana:").unwrap();
+        let message = format!(
+            "{} wants you to sign in with your Solana account:\n{}\n\n{}\n\nURI: {}\nVersion: {}\nChain ID: {}\nNonce: {}\nIssued At: {}\nExpiration Time: {}\nRequest ID: {}\nResources:\n- {}",
+            info["domain"].as_str().unwrap(),
+            address,
+            info["statement"].as_str().unwrap(),
+            info["uri"].as_str().unwrap(),
+            info["version"].as_str().unwrap(),
+            chain_reference,
+            info["nonce"].as_str().unwrap(),
+            info["issuedAt"].as_str().unwrap(),
+            info["expirationTime"].as_str().unwrap(),
+            info["requestId"].as_str().unwrap(),
+            info["resources"][0].as_str().unwrap(),
+        );
+        let payload = json!({
+            "domain": info["domain"],
+            "address": address,
+            "uri": info["uri"],
+            "statement": info["statement"],
+            "version": info["version"],
+            "chainId": chain_id,
+            "nonce": info["nonce"],
+            "issuedAt": info["issuedAt"],
+            "expirationTime": info["expirationTime"],
+            "requestId": info["requestId"],
+            "resources": info["resources"],
+            "type": chain["type"],
+            "signatureScheme": chain["signatureScheme"],
+            "signature": bs58::encode(signing_key.sign(message.as_bytes()).to_bytes()).into_string()
+        });
+        let signed_header = BASE64_STANDARD.encode(serde_json::to_vec(&payload).unwrap());
+        let verified_response = app
+            .clone()
+            .oneshot(
+                Request::get(&resource_path)
+                    .header("SIGN-IN-WITH-X", &signed_header)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(verified_response.status(), StatusCode::OK);
+        assert_eq!(
+            verified_response
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .unwrap(),
+            "no-store"
+        );
+        let verified: Value = serde_json::from_slice(
+            &verified_response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .unwrap();
+        assert_eq!(verified["walletVerified"], true);
+        assert_eq!(verified["wallet"], payload["address"]);
+
+        let replay = app
+            .oneshot(
+                Request::get(resource_path)
+                    .header("SIGN-IN-WITH-X", signed_header)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]

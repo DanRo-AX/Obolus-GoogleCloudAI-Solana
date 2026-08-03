@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "OPENSHELF API",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "description": "Browser integration contracts for private-document search, safe x402 recovery, verified payout wallets, and paid-buyer feedback."
   },
   "servers": [{ "url": "http://127.0.0.1:8787" }],
@@ -253,6 +253,59 @@
         "responses": {
           "200": { "description": "Profile with walletVerified=true" },
           "401": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/profile/wallet/siwx": {
+      "post": {
+        "summary": "Create a one-time Pay SIWX payout-wallet link",
+        "security": [{ "sessionCookie": [] }],
+        "responses": {
+          "201": {
+            "description": "Devnet SIWX resource for the authenticated profile",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WalletSiwxLink" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/profile/wallet/siwx/{id}": {
+      "get": {
+        "summary": "Advertise or verify a Pay SIGN-IN-WITH-X ownership proof",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "SIGN-IN-WITH-X",
+            "in": "header",
+            "required": false,
+            "description": "Base64-encoded signed SIWX JSON payload from Pay",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Profile with walletVerified=true" },
+          "402": {
+            "description": "x402 v2 sign-in-with-x challenge",
+            "headers": {
+              "PAYMENT-REQUIRED": {
+                "description": "Base64-encoded x402 v2 challenge envelope",
+                "schema": { "type": "string" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
           "409": { "$ref": "#/components/responses/Error" }
         }
       }
@@ -658,6 +711,16 @@
           "id": { "type": "string" },
           "wallet": { "type": "string" },
           "message": { "type": "string" },
+          "expiresAt": { "type": "integer" }
+        }
+      },
+      "WalletSiwxLink": {
+        "type": "object",
+        "required": ["id", "resourceUrl", "network", "expiresAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "resourceUrl": { "type": "string", "format": "uri" },
+          "network": { "type": "string", "description": "Solana Devnet CAIP-2 identifier" },
           "expiresAt": { "type": "integer" }
         }
       },
