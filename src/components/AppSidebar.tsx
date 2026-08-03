@@ -178,7 +178,7 @@ export function AppSidebar() {
                     <div className="flex aspect-square size-6 items-center justify-center">
                       <WorkspaceMark />
                     </div>
-                    <span className="truncate text-[13px] font-semibold tracking-[-0.01em]">
+                    <span className="truncate text-[13px] font-semibold tracking-[-0.015em]">
                       Obolus
                     </span>
                   </Link>
@@ -221,14 +221,14 @@ export function AppSidebar() {
                       className={({ isActive }) =>
                         cn(
                           MENU_BUTTON,
-                          'rounded-md p-2 [&>svg]:size-4 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground h-8 text-sm',
-                          isActive &&
-                            to !== '/' &&
-                            'bg-foreground/4 text-sidebar-accent-foreground',
+                          'group/nav flex h-8 items-center gap-2.5 rounded-[4px] px-2 text-[13px] tracking-[-0.006em] transition-colors [&>svg]:size-[15px] [&>svg]:shrink-0',
+                          isActive && to !== '/'
+                            ? 'bg-background font-medium text-foreground shadow-[0_1px_2px_rgba(20,20,25,0.05)]'
+                            : 'text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground',
                         )
                       }
                     >
-                      <Icon className="text-muted-foreground/60" />
+                      <Icon className="opacity-70" />
                       <span>{label}</span>
                     </NavLink>
                   </li>
@@ -240,12 +240,14 @@ export function AppSidebar() {
                     className={({ isActive }) =>
                       cn(
                         MENU_BUTTON,
-                        'h-8 rounded-md p-2 text-sm hover:bg-sidebar-accent [&>svg]:size-4',
-                        isActive && 'bg-foreground/4',
+                        'group/nav flex h-8 items-center gap-2.5 rounded-[4px] px-2 text-[13px] tracking-[-0.006em] transition-colors [&>svg]:size-[15px] [&>svg]:shrink-0',
+                        isActive
+                          ? 'bg-background font-medium text-foreground shadow-[0_1px_2px_rgba(20,20,25,0.05)]'
+                          : 'text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground',
                       )
                     }
                   >
-                    <ShieldCheck className="text-muted-foreground/60" />
+                    <ShieldCheck className="opacity-70" />
                     <span>Disputes</span>
                   </NavLink>
                 </li>

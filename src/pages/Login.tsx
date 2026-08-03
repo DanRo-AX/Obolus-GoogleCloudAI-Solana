@@ -148,7 +148,7 @@ export default function Login() {
                   href={PHANTOM_INSTALL_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-[2px] bg-foreground px-4 font-mono text-xs uppercase tracking-[1px] text-background transition-colors hover:bg-foreground/85"
+                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-[2px] bg-foreground px-4 text-sm font-medium text-background transition-colors hover:bg-foreground/85"
                 >
                   <Wallet className="size-4" />
                   Install Phantom

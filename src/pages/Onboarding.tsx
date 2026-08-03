@@ -376,7 +376,7 @@ export default function Onboarding() {
                       href={PHANTOM_INSTALL_URL}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex h-9 items-center gap-2 rounded-[2px] bg-foreground px-3 font-mono text-xs uppercase tracking-[1px] text-background transition-colors hover:bg-foreground/85"
+                      className="inline-flex h-9 items-center gap-2 rounded-[2px] bg-foreground px-3.5 text-sm font-medium text-background transition-colors hover:bg-foreground/85"
                     >
                       <Wallet className="size-3.5" />
                       Install Phantom
