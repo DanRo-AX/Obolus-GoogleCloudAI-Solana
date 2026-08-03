@@ -579,7 +579,13 @@ export default function Chat() {
 
               {phase === 'ask-order' ? (
                 <Branch
-                  title="Nobody has covered this yet."
+                  title={
+                    resolutionReason === 'insufficient_coverage'
+                      ? 'Human coverage is still thin.'
+                      : resolutionReason === 'budget_too_low'
+                        ? 'Human knowledge exists outside this budget.'
+                        : 'Nobody has covered this yet.'
+                  }
                   body={
                     resolutionReason === 'insufficient_coverage'
                       ? 'Some relevant documents exist, but not enough for the requested coverage. Want me to fill the gap?'
