@@ -231,20 +231,14 @@ export default function Login() {
         <div className="absolute inset-0">
           <Vortex background="#08070F" />
         </div>
-        {/* The vortex flares widest at the bottom, which is exactly where the
-            copy sits. A scrim buys the text its contrast back without dimming
-            the whole panel. */}
+        {/* The vortex flares widest at the bottom, right where the line sits.
+            A shallow scrim buys it contrast without dimming the form. */}
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-[#08070F] via-[#08070F]/85 to-transparent"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-1/4 bg-gradient-to-t from-[#08070F] via-[#08070F]/70 to-transparent"
         />
-        <div className="absolute inset-x-0 bottom-0 flex flex-col gap-6 p-10">
-          <p className="max-w-md font-display text-[24px] leading-[1.3] text-white">
-            {t(
-              'Money here moves between two people. We are the thing that introduced them, not the thing holding it.',
-            )}
-          </p>
-          <div className="flex flex-wrap gap-x-8 gap-y-2 border-t border-white/20 pt-5 font-mono text-[10px] uppercase tracking-[1.4px] text-white/60">
+        <div className="absolute inset-x-0 bottom-0 p-10">
+          <div className="flex flex-wrap gap-x-8 gap-y-2 font-mono text-[10px] uppercase tracking-[1.4px] text-white/60">
             <span>
               {t('Settles on')} <span className="text-white/80">Solana</span>
             </span>
