@@ -212,8 +212,8 @@ export default function Memory() {
 
         {earnings?.claimableKrw ? (
           <div className="rounded-[6px] border border-[#0F766E]/30 bg-[#0F766E]/5 px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            Bundle escrow claimable <strong className="text-foreground">₩{earnings.claimableKrw.toLocaleString()}</strong>
-            {' · '}beneficiary wallet is snapshotted per sale; payout execution is separate from sandbox balance
+            Devnet escrow awaiting payout <strong className="text-foreground">₩{earnings.claimableKrw.toLocaleString()}</strong>
+            {' · '}the payout worker replays one durable signed transaction per beneficiary without double-paying
           </div>
         ) : null}
 
@@ -336,8 +336,24 @@ export default function Memory() {
                   ) : null}
                   {event.payoutStatus === 'claimable' ? (
                     <span className="rounded-[2px] bg-sky-500/10 px-1.5 font-mono text-[9px] uppercase tracking-[1px] text-sky-700">
-                      escrow claimable
+                      {event.payoutClaimStatus ?? 'payout pending'}
                     </span>
+                  ) : null}
+                  {event.payoutStatus === 'paid' ? (
+                    event.payoutTransactionSignature ? (
+                      <a
+                        href={`https://explorer.solana.com/tx/${event.payoutTransactionSignature}?cluster=devnet`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-[2px] bg-emerald-500/10 px-1.5 font-mono text-[9px] uppercase tracking-[1px] text-emerald-700 underline decoration-dotted underline-offset-2"
+                      >
+                        payout confirmed
+                      </a>
+                    ) : (
+                      <span className="rounded-[2px] bg-emerald-500/10 px-1.5 font-mono text-[9px] uppercase tracking-[1px] text-emerald-700">
+                        payout confirmed
+                      </span>
+                    )
                   ) : null}
                   <span className="ml-auto font-mono text-xs tabular-nums text-[#0F766E]">
                     +₩{event.amountKrw.toLocaleString()}

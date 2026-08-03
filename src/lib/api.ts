@@ -219,6 +219,22 @@ export function logout(): Promise<void> {
   return apiFetch('/api/v1/auth/logout', { method: 'POST' })
 }
 
+export function forgotPassword(email: string): Promise<void> {
+  return apiFetch('/api/v1/auth/password/forgot', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email }),
+  })
+}
+
+export function resetPassword(token: string, password: string): Promise<void> {
+  return apiFetch('/api/v1/auth/password/reset', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token, password }),
+  })
+}
+
 export function deleteAccount(): Promise<void> {
   return apiFetch('/api/v1/account', { method: 'DELETE' })
 }
@@ -280,7 +296,7 @@ export async function listOpenCalls(): Promise<Order[]> {
   return calls.map(orderFromApi)
 }
 
-export async function createOpenCall(input: {
+export type CreateOpenCallInput = {
   question: string
   unitPrice: number
   target: number
@@ -288,13 +304,44 @@ export async function createOpenCall(input: {
   shelf: string
   category: CategoryId
   filters?: TargetFilters
-}): Promise<Order> {
+}
+
+export type OpenCallFundingQuote = {
+  id: string
+  payTo: string
+  network: string
+  asset: string
+  amountAtomic: string
+  totalPriceKrw: number
+  krwPerUsdc: number
+  expiresAt: number
+  resourcePath: string
+  payloadHash: string
+  status: 'quoted' | 'funded' | 'expired'
+  openCallId?: string | null
+}
+
+export async function createOpenCall(input: CreateOpenCallInput): Promise<Order> {
   const call = await apiFetch<ApiOrder>('/api/v1/open-calls', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   })
   return orderFromApi(call)
+}
+
+export function prepareOpenCallFundingQuote(
+  input: CreateOpenCallInput,
+): Promise<OpenCallFundingQuote> {
+  return apiFetch('/api/v1/open-call-funding-quotes', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function getOpenCallFundingQuote(quoteId: string): Promise<OpenCallFundingQuote> {
+  return apiFetch(`/api/v1/open-call-funding-quotes/${encodeURIComponent(quoteId)}`)
 }
 
 export async function cancelOpenCall(orderId: string): Promise<Order> {
@@ -581,7 +628,11 @@ export type EarningEvent = {
   source: 'seed' | 'open_call' | 'dispute_restored' | 'document_open' | 'document_open_bundle'
   amountKrw: number
   recipientWallet?: string
-  payoutStatus: 'accrued' | 'held' | 'onchain' | 'claimable'
+  payoutStatus: 'accrued' | 'held' | 'onchain' | 'claimable' | 'paid'
+  payoutClaimId?: string
+  payoutClaimStatus?: 'pending' | 'leased' | 'prepared' | 'failed' | 'confirmed' | string
+  payoutTransactionSignature?: string
+  payoutAmountAtomic?: string
   availableAt: number
   createdAt: number
 }

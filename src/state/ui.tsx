@@ -41,6 +41,7 @@ import {
   type TargetFilters,
 } from '@/lib/api'
 import type { Issue } from '@/lib/quality'
+import { fundOpenCall, X402_ENABLED } from '@/lib/x402'
 
 /** One quoted MD. Once the open is confirmed it becomes the settlement unit. */
 export type Citation = {
@@ -83,7 +84,7 @@ export type ChatMessage = {
     txSigs?: string[]
     network?: string
     partial?: boolean
-    mode?: 'direct' | 'bundle_escrow'
+    mode?: 'direct' | 'bundle_escrow' | 'open_call_escrow'
   }
   /** Kept privately in local chat state so a paid buyer can recover and rate. */
   paymentContext?: PaymentContext
@@ -119,6 +120,13 @@ export type Order = {
   filters?: TargetFilters
   eligible?: boolean
   escrowRemainingKrw?: number
+  escrowMode?: 'sandbox' | 'x402_solana_escrow'
+  escrowWallet?: string
+  escrowAsset?: string
+  escrowNetwork?: string
+  escrowTotalAtomic?: string
+  escrowRemainingAtomic?: string
+  fundingTransactionSignature?: string
   status?: 'open' | 'filled' | 'cancelled'
   reservedSlots?: number
   reservationExpiresAt?: number
@@ -639,7 +647,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
         order.filters?.field ??
         categoryFor(order.shelf, order.question)
       if (BACKEND_ENABLED) {
-        const created = await createOpenCall({
+        const input = {
           question: order.question,
           unitPrice: order.unitPrice,
           target: order.target,
@@ -647,7 +655,13 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           shelf: order.shelf,
           category,
           filters: order.filters,
-        })
+        }
+        // Zero-price calls have no token transfer to settle. Paid calls use one
+        // exact Devnet escrow approval for the whole target, then fan out via
+        // durable payout claims as answers arrive.
+        const created = X402_ENABLED && order.unitPrice > 0
+          ? await fundOpenCall(input)
+          : await createOpenCall(input)
         setOrders((prev) => [created, ...prev.filter((item) => item.id !== created.id)])
         setBalance(await getBalance())
         return created.id

@@ -32,3 +32,4 @@ openshelf.db-wal
 *.sln
 *.sw?
 .gstack/
+.secrets/

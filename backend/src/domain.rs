@@ -186,6 +186,24 @@ pub struct GenerateShelfStartersResponse {
     pub starters: Vec<ShelfStarter>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiLiquidityMetrics {
+    pub total_queries: u64,
+    pub ai_liquidity_only_queries: u64,
+    pub hybrid_coverage_queries: u64,
+    pub human_covered_queries: u64,
+    pub baselines_generated: u64,
+    pub active_baselines: u64,
+    pub shelf_starters_generated: u64,
+    pub shelf_starters_answered: u64,
+    pub human_documents: u64,
+    pub open_human_calls: u64,
+    pub priced_ai_documents: u64,
+    pub ai_authority_edges: u64,
+    pub starter_to_human_document_rate: f64,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubmitShelfStarterAnswerRequest {
@@ -277,6 +295,13 @@ pub struct OpenCall {
     pub filters: SearchFilters,
     pub eligible: bool,
     pub escrow_remaining_krw: u64,
+    pub escrow_mode: String,
+    pub escrow_wallet: Option<String>,
+    pub escrow_asset: Option<String>,
+    pub escrow_network: Option<String>,
+    pub escrow_total_atomic: Option<String>,
+    pub escrow_remaining_atomic: Option<String>,
+    pub funding_transaction_signature: Option<String>,
     pub status: String,
     /// Active answer slots temporarily held by contributors who opened the interview.
     pub reserved_slots: usize,
@@ -313,7 +338,7 @@ pub struct MarkNotificationsReadRequest {
     pub ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateOpenCallRequest {
     pub question: String,
@@ -324,6 +349,34 @@ pub struct CreateOpenCallRequest {
     pub category: String,
     #[serde(default)]
     pub filters: SearchFilters,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCallFundingQuote {
+    pub id: String,
+    pub pay_to: String,
+    pub network: String,
+    pub asset: String,
+    pub amount_atomic: String,
+    pub total_price_krw: u64,
+    pub krw_per_usdc: u64,
+    pub expires_at: u64,
+    pub resource_path: String,
+    pub payload_hash: String,
+    pub status: String,
+    pub open_call_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCallFundingSnapshot {
+    pub quote_id: String,
+    pub question: String,
+    pub target: usize,
+    pub unit_price_krw: u64,
+    pub total_price_krw: u64,
+    pub payload_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -556,6 +609,10 @@ pub struct EarningEvent {
     pub amount_krw: u64,
     pub recipient_wallet: Option<String>,
     pub payout_status: String,
+    pub payout_claim_id: Option<String>,
+    pub payout_claim_status: Option<String>,
+    pub payout_transaction_signature: Option<String>,
+    pub payout_amount_atomic: Option<String>,
     pub available_at: u64,
     pub created_at: u64,
 }
@@ -569,6 +626,86 @@ pub struct EarningsSummary {
     pub claimable_krw: u64,
     pub event_count: usize,
     pub events: Vec<EarningEvent>,
+}
+
+/// One exact transfer owed by the server-managed Devnet escrow.
+///
+/// A claim is prepared before broadcast. Persisting the signed transaction
+/// makes a worker crash replay the same Solana signature instead of paying a
+/// contributor twice.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PayoutClaim {
+    pub id: String,
+    pub earning_event_id: Option<String>,
+    pub open_call_id: Option<String>,
+    pub beneficiary_user_id: String,
+    pub kind: String,
+    pub escrow_wallet: String,
+    pub recipient_wallet: String,
+    pub asset: String,
+    pub network: String,
+    pub amount_atomic: String,
+    pub amount_krw: u64,
+    pub status: String,
+    pub transaction_signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signed_transaction_base64: Option<String>,
+    pub recent_blockhash: Option<String>,
+    pub last_valid_block_height: Option<u64>,
+    pub attempt_count: u32,
+    pub last_error: Option<String>,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub confirmed_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LeasePayoutClaimsRequest {
+    pub worker_id: String,
+    pub escrow_wallet: String,
+    pub network: String,
+    #[serde(default = "default_payout_lease_limit")]
+    pub limit: usize,
+    #[serde(default = "default_payout_lease_ms")]
+    pub lease_ms: u64,
+}
+
+fn default_payout_lease_limit() -> usize {
+    20
+}
+
+fn default_payout_lease_ms() -> u64 {
+    60_000
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreparePayoutClaimRequest {
+    pub worker_id: String,
+    pub transaction_signature: String,
+    pub signed_transaction_base64: String,
+    pub recent_blockhash: String,
+    pub last_valid_block_height: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletePayoutClaimRequest {
+    pub worker_id: String,
+    pub transaction_signature: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FailPayoutClaimRequest {
+    pub worker_id: String,
+    pub error: String,
+    /// Set only after the worker proves the prepared signature is absent and
+    /// its blockhash has expired. This permits a safely re-signed retry.
+    #[serde(default)]
+    pub abandon_prepared_transaction: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -829,6 +966,19 @@ pub struct RegisterRequest {
 #[serde(rename_all = "camelCase")]
 pub struct LoginRequest {
     pub email: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgotPasswordRequest {
+    pub email: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetPasswordRequest {
+    pub token: String,
     pub password: String,
 }
 

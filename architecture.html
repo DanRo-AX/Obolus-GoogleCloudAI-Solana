@@ -681,20 +681,22 @@ flowchart LR
   end
 
   subgraph DATA["SQLite · source of truth"]
-    IDENTITY[("Identity\nusers · sessions · profiles\nwallet challenges · auth limits")]
+    IDENTITY[("Identity\nusers · sessions · profiles\nwallet challenges · reset tokens")]
     MARKET[("Marketplace\nopen_calls · memory · documents")]
     SEARCHDB[("Retrieval\nqueries · query_matches")]
     LIQUIDITY[("AI liquidity\nai_baselines · shelf_starters")]
-    LEDGER[("Ledger\nbalances · funding · settlements · earnings")]
+    LEDGER[("Ledger\nbalances · settlements · earnings\npayout claims · open-call funding")]
     REVIEW[("Enforcement\ndisputes · paid feedback")]
   end
 
   subgraph EXTERNAL["External payment boundary"]
-    GATE["x402 gateway · TypeScript\ndirect / bundle quote · durable outbox"]
+    GATE["x402 gateway · TypeScript\ndirect / bundle / open-call · durable outbox"]
+    PAYOUT["Devnet payout worker\nlease · sign · persist · confirm"]
     FAC["x402 facilitator\nverify · settle · fee payer"]
     RPC["Solana Devnet RPC"]
     GEMINI["Gemini on Vertex AI\nADC-authenticated · no API keys"]
     GATE --> FAC --> RPC
+    PAYOUT --> RPC
   end
 
   V --> UI
@@ -711,6 +713,7 @@ flowchart LR
   STORE --> LEDGER
   STORE --> REVIEW
   GATE -->|"internal token · quote / passage / receipt"| API
+  PAYOUT -->|"internal token · payout claim lease/state"| API
   ORCH -->|"no private shelf text on baseline/starter paths"| GEMINI
 
   classDef actor fill:#e8e2f4,stroke:#5b4b8a,color:#191918
@@ -845,6 +848,11 @@ erDiagram
   MEMORY_ENTRIES o|--o{ EARNING_EVENTS : "source answer FK"
   DOCUMENTS o|--o{ EARNING_EVENTS : "source document FK"
   OPEN_CALLS ||..o{ FUNDING_EVENTS : "reserve or refund"
+  USERS ||--o{ PASSWORD_RESET_TOKENS : "recovers account"
+  OPEN_CALL_FUNDING_QUOTES ||--o| OPEN_CALL_CHAIN_SETTLEMENTS : "funds exactly once"
+  OPEN_CALLS ||--o| OPEN_CALL_CHAIN_SETTLEMENTS : "activated by receipt"
+  EARNING_EVENTS o|--o| PAYOUT_CLAIMS : "becomes payable"
+  OPEN_CALLS o|--o{ PAYOUT_CLAIMS : "answer or refund"
 
   USERS {
     TEXT id PK
@@ -868,6 +876,15 @@ erDiagram
     INTEGER window_started_at
     INTEGER blocked_until
     INTEGER updated_at
+  }
+
+  PASSWORD_RESET_TOKENS {
+    TEXT id PK
+    TEXT user_id FK
+    TEXT token_hash UK
+    INTEGER expires_at
+    INTEGER used_at
+    INTEGER created_at
   }
 
   BALANCES {
@@ -920,6 +937,40 @@ erDiagram
     TEXT target_region
     TEXT target_household
     TEXT target_field
+    TEXT escrow_mode
+    TEXT escrow_wallet
+    TEXT escrow_asset
+    TEXT escrow_network
+    INTEGER escrow_total_atomic
+    INTEGER escrow_remaining_atomic
+    TEXT funding_transaction_signature
+  }
+
+  OPEN_CALL_FUNDING_QUOTES {
+    TEXT id PK
+    TEXT owner_id FK
+    TEXT request_json
+    TEXT payload_hash
+    TEXT pay_to
+    TEXT network
+    TEXT asset
+    INTEGER amount_atomic
+    INTEGER total_price_krw
+    INTEGER expires_at
+    TEXT status
+    TEXT open_call_id FK
+  }
+
+  OPEN_CALL_CHAIN_SETTLEMENTS {
+    TEXT id PK
+    TEXT quote_id UK
+    TEXT open_call_id UK
+    TEXT transaction_signature UK
+    TEXT payer
+    TEXT pay_to
+    INTEGER amount_atomic
+    TEXT network
+    INTEGER confirmed_at
   }
 
   MEMORY_ENTRIES {
@@ -959,6 +1010,7 @@ erDiagram
     TEXT decision
     TEXT liquidity_state
     TEXT payment_token_hash
+    INTEGER payment_token_expires_at
     INTEGER created_at
   }
 
@@ -1088,6 +1140,25 @@ erDiagram
     INTEGER created_at
   }
 
+  PAYOUT_CLAIMS {
+    TEXT id PK
+    TEXT earning_event_id UK
+    TEXT open_call_id FK
+    TEXT beneficiary_user_id
+    TEXT kind
+    TEXT escrow_wallet
+    TEXT recipient_wallet
+    TEXT asset
+    TEXT network
+    INTEGER amount_atomic
+    TEXT status
+    TEXT transaction_signature UK
+    TEXT signed_transaction_base64
+    INTEGER last_valid_block_height
+    INTEGER attempt_count
+    INTEGER confirmed_at
+  }
+
   FUNDING_EVENTS {
     TEXT id PK
     TEXT user_id
@@ -1170,6 +1241,14 @@ erDiagram
             <strong>검증된 저자에게만 지급</strong>
             <span>Ed25519 서명 완료 지갑만 payout에 사용하고 주소 변경 시 검증을 폐기.</span>
           </article>
+          <article class="invariant">
+            <strong>서명 후 장애도 중복 송금 없음</strong>
+            <span>payout worker는 signed bytes·signature를 방송 전에 저장하고 동일 transaction만 재전송.</span>
+          </article>
+          <article class="invariant">
+            <strong>복구 권한 만료</strong>
+            <span>query payment token은 24시간, password reset token은 1시간·1회로 제한.</span>
+          </article>
         </div>
       </section>
 
@@ -1225,7 +1304,7 @@ erDiagram
             <ol class="steps">
               <li class="step">
                 <span class="step-number">01</span>
-                <div><strong>전체 예산 예약</strong><p>available에서 unit price × target을 빼고 reserved에 더한다.</p></div>
+                <div><strong>전체 예산 한 번 결제</strong><p>유료 콜은 unit price × target의 정확한 Devnet USDC를 Phantom 한 번으로 에스크로에 보내고, 영수증이 mirror된 뒤에만 게시한다. ₩0 콜만 sandbox를 쓴다.</p></div>
               </li>
               <li class="step">
                 <span class="step-number">02</span>
@@ -1237,7 +1316,7 @@ erDiagram
               </li>
               <li class="step">
                 <span class="step-number">04</span>
-                <div><strong>단위 지급 또는 환불</strong><p>답변당 reserved 한 단위를 지급하고, 취소 시 남은 escrow만 구매자에게 환불.</p></div>
+                <div><strong>원자 단위 지급·환불</strong><p>답변마다 전체 atomic amount의 결정론적 몫을 payout claim으로 만들고, 취소·계정 삭제 시 남은 모든 atomic unit을 원 payer에게 환불 claim으로 만든다.</p></div>
               </li>
             </ol>
           </article>

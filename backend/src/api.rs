@@ -20,21 +20,24 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     domain::{
-        AccountControls, AuthResponse, BalanceSummary, ChainSettlementReceipt, ChatAnswer,
-        ContributorManifest, ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
-        CreateEvidenceEdgeRequest, CreateOpenCallRequest, CreatePaymentBundleRequest, DisputeCase,
-        DocumentFeedback, EarningsSummary, EvidenceEdge, GenerateAiBaselineResponse,
-        GenerateShelfStartersResponse, LoginRequest, MarkNotificationsReadRequest, MemoryEntry,
-        MemoryExport, OpenCall, OpenCallReservation, OpenDocumentsResponse, PaidDocument,
-        PaymentBundleQuote, PaymentBundleSnapshot, PaymentDocumentSnapshot, PaymentProgress,
-        PaymentQuote, PublicDocument, RecordChainSettlementRequest, RecoveredPaidDocument,
-        RegisterRequest, ResolveError, ResolveQuestionRequest, ResolveQuestionResponse,
-        ReviewDisputeRequest, ReviewDocumentFeedbackRequest, ShelfStarter, SubmitAnswerRequest,
-        SubmitAnswerResponse, SubmitDisputeRequest, SubmitDocumentFeedbackRequest,
-        SubmitShelfStarterAnswerRequest, SubmitShelfStarterAnswerResponse, SynthesizeAnswerRequest,
-        SynthesizeAnswerResponse, SynthesizePaidAnswerRequest, UpdateMemoryRequest,
-        UpdatePreferencesRequest, UpsertProfileRequest, UserAccount, UserProfile,
-        VerifyWalletRequest, WalletChallenge, WalletChallengeRequest,
+        AccountControls, AiLiquidityMetrics, AuthResponse, BalanceSummary, ChainSettlementReceipt,
+        ChatAnswer, CompletePayoutClaimRequest, ContributorManifest, ContributorMemoryLink,
+        ContributorNotification, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
+        CreateOpenCallRequest, CreatePaymentBundleRequest, DisputeCase, DocumentFeedback,
+        EarningsSummary, EvidenceEdge, FailPayoutClaimRequest, ForgotPasswordRequest,
+        GenerateAiBaselineResponse, GenerateShelfStartersResponse, LeasePayoutClaimsRequest,
+        LoginRequest, MarkNotificationsReadRequest, MemoryEntry, MemoryExport, OpenCall,
+        OpenCallFundingQuote, OpenCallFundingSnapshot, OpenCallReservation, OpenDocumentsResponse,
+        PaidDocument, PaymentBundleQuote, PaymentBundleSnapshot, PaymentDocumentSnapshot,
+        PaymentProgress, PaymentQuote, PayoutClaim, PreparePayoutClaimRequest, PublicDocument,
+        RecordChainSettlementRequest, RecoveredPaidDocument, RegisterRequest, ResetPasswordRequest,
+        ResolveError, ResolveQuestionRequest, ResolveQuestionResponse, ReviewDisputeRequest,
+        ReviewDocumentFeedbackRequest, ShelfStarter, SubmitAnswerRequest, SubmitAnswerResponse,
+        SubmitDisputeRequest, SubmitDocumentFeedbackRequest, SubmitShelfStarterAnswerRequest,
+        SubmitShelfStarterAnswerResponse, SynthesizeAnswerRequest, SynthesizeAnswerResponse,
+        SynthesizePaidAnswerRequest, UpdateMemoryRequest, UpdatePreferencesRequest,
+        UpsertProfileRequest, UserAccount, UserProfile, VerifyWalletRequest, WalletChallenge,
+        WalletChallengeRequest,
     },
     orchestrator,
     search::Resolver,
@@ -232,6 +235,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/auth/logout", post(logout))
         .route("/api/v1/auth/me", get(me))
+        .route("/api/v1/auth/password/forgot", post(forgot_password))
+        .route("/api/v1/auth/password/reset", post(reset_password))
         .route("/api/v1/questions/resolve", post(resolve_question))
         .route(
             "/api/v1/questions/{id}/ai-baseline",
@@ -262,6 +267,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/v1/open-calls",
             get(list_open_calls).post(create_open_call),
         )
+        .route(
+            "/api/v1/open-call-funding-quotes",
+            post(create_open_call_funding_quote),
+        )
+        .route(
+            "/api/v1/open-call-funding-quotes/{id}",
+            get(open_call_funding_quote_for_owner),
+        )
         .route("/api/v1/open-calls/{id}/answers", post(submit_answer))
         .route(
             "/api/v1/open-calls/{id}/reservation",
@@ -282,6 +295,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/disputes/me", get(my_dispute))
         .route("/api/v1/admin/disputes", get(list_disputes))
         .route("/api/v1/admin/evidence-edges", post(create_evidence_edge))
+        .route(
+            "/api/v1/admin/ai-liquidity-metrics",
+            get(ai_liquidity_metrics),
+        )
         .route("/api/v1/admin/disputes/{id}/review", post(review_dispute))
         .route(
             "/api/v1/admin/document-feedback",
@@ -316,6 +333,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/profile/wallet/verify", post(verify_wallet))
         .route("/api/v1/earnings", get(get_earnings))
+        .route("/api/v1/payout-claims", get(list_payout_claims))
         .route("/api/flash-research", get(open_documents))
         .route(
             "/internal/v1/payment-quotes/{query_id}/{handle}",
@@ -345,6 +363,34 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/internal/v1/bundle-chain-settlements",
             post(record_bundle_chain_settlement),
+        )
+        .route(
+            "/internal/v1/open-call-funding-quotes/{id}",
+            get(open_call_funding_quote),
+        )
+        .route(
+            "/internal/v1/open-call-funding-quotes/{id}/snapshot",
+            get(open_call_funding_snapshot),
+        )
+        .route(
+            "/internal/v1/open-call-chain-settlements",
+            post(record_open_call_chain_settlement),
+        )
+        .route(
+            "/internal/v1/payout-claims/lease",
+            post(lease_payout_claims),
+        )
+        .route(
+            "/internal/v1/payout-claims/{id}/prepare",
+            post(prepare_payout_claim),
+        )
+        .route(
+            "/internal/v1/payout-claims/{id}/complete",
+            post(complete_payout_claim),
+        )
+        .route(
+            "/internal/v1/payout-claims/{id}/fail",
+            post(fail_payout_claim),
         )
         .with_state(state)
 }
@@ -402,6 +448,40 @@ async fn login(
     }
     state.store.clear_login_failures(&request.email)?;
     session_response(&state, user, StatusCode::OK)
+}
+
+async fn forgot_password(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ForgotPasswordRequest>,
+) -> Result<StatusCode, ApiError> {
+    let token = random_token();
+    let frontend_origin = std::env::var("OPENSHELF_FRONTEND_ORIGIN")
+        .unwrap_or_else(|_| "http://localhost:4319".to_owned());
+    state.store.queue_password_reset(
+        &request.email,
+        &token_hash(&token),
+        &token,
+        &frontend_origin,
+    )?;
+    AppState::dispatch_pending_emails(Arc::clone(&state));
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn reset_password(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ResetPasswordRequest>,
+) -> Result<StatusCode, ApiError> {
+    validate_password(&request.password)?;
+    if request.token.len() < 32 || request.token.len() > 256 {
+        return Err(ApiError::unauthorized(
+            "password reset link is invalid or expired",
+        ));
+    }
+    let password_hash = hash_password(&request.password)?;
+    state
+        .store
+        .reset_password(&token_hash(&request.token), &password_hash)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn logout(
@@ -648,6 +728,35 @@ async fn create_open_call(
     Ok((StatusCode::CREATED, Json(call)))
 }
 
+async fn create_open_call_funding_quote(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<CreateOpenCallRequest>,
+) -> Result<(StatusCode, Json<OpenCallFundingQuote>), ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(state.store.create_open_call_funding_quote(
+            &user.id,
+            &request,
+            &state.payment_policy,
+        )?),
+    ))
+}
+
+async fn open_call_funding_quote_for_owner(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<OpenCallFundingQuote>, ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok(Json(
+        state
+            .store
+            .open_call_funding_quote_for_owner(&id, &user.id)?,
+    ))
+}
+
 async fn reserve_open_call(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -713,6 +822,14 @@ async fn cancel_open_call(
 ) -> Result<Json<OpenCall>, ApiError> {
     let user = authenticated(&state, &headers)?;
     Ok(Json(state.store.cancel_open_call(&user.id, &id)?))
+}
+
+async fn ai_liquidity_metrics(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<AiLiquidityMetrics>, ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok(Json(state.store.ai_liquidity_metrics(&user.id)?))
 }
 
 async fn chat_answers(
@@ -986,6 +1103,14 @@ async fn get_earnings(
     Ok(Json(state.store.earnings(&user.id)?))
 }
 
+async fn list_payout_claims(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<PayoutClaim>>, ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok(Json(state.store.payout_claims(&user.id)?))
+}
+
 async fn open_documents(
     State(state): State<Arc<AppState>>,
     Query(query): Query<OpenDocumentsQuery>,
@@ -1097,6 +1222,99 @@ async fn record_bundle_chain_settlement(
 ) -> Result<Json<ChainSettlementReceipt>, ApiError> {
     require_internal(&state, &headers)?;
     Ok(Json(state.store.record_bundle_chain_settlement(&request)?))
+}
+
+async fn open_call_funding_quote(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<OpenCallFundingQuote>, ApiError> {
+    require_internal(&state, &headers)?;
+    Ok(Json(state.store.open_call_funding_quote(&id)?))
+}
+
+async fn open_call_funding_snapshot(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<(HeaderMap, Json<OpenCallFundingSnapshot>), ApiError> {
+    require_internal(&state, &headers)?;
+    Ok((
+        private_no_store_headers(),
+        Json(state.store.open_call_funding_snapshot(&id)?),
+    ))
+}
+
+async fn record_open_call_chain_settlement(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<RecordChainSettlementRequest>,
+) -> Result<Json<ChainSettlementReceipt>, ApiError> {
+    require_internal(&state, &headers)?;
+    let receipt = state.store.record_open_call_chain_settlement(&request)?;
+    AppState::dispatch_pending_emails(Arc::clone(&state));
+    Ok(Json(receipt))
+}
+
+async fn lease_payout_claims(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<LeasePayoutClaimsRequest>,
+) -> Result<Json<Vec<PayoutClaim>>, ApiError> {
+    require_internal(&state, &headers)?;
+    Ok(Json(state.store.lease_payout_claims(
+        &request.worker_id,
+        &request.escrow_wallet,
+        &request.network,
+        request.limit,
+        request.lease_ms,
+    )?))
+}
+
+async fn prepare_payout_claim(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<PreparePayoutClaimRequest>,
+) -> Result<Json<PayoutClaim>, ApiError> {
+    require_internal(&state, &headers)?;
+    Ok(Json(state.store.prepare_payout_claim(
+        &id,
+        &request.worker_id,
+        &request.transaction_signature,
+        &request.signed_transaction_base64,
+        &request.recent_blockhash,
+        request.last_valid_block_height,
+    )?))
+}
+
+async fn complete_payout_claim(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<CompletePayoutClaimRequest>,
+) -> Result<Json<PayoutClaim>, ApiError> {
+    require_internal(&state, &headers)?;
+    Ok(Json(state.store.complete_payout_claim(
+        &id,
+        &request.worker_id,
+        &request.transaction_signature,
+    )?))
+}
+
+async fn fail_payout_claim(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<FailPayoutClaimRequest>,
+) -> Result<Json<PayoutClaim>, ApiError> {
+    require_internal(&state, &headers)?;
+    Ok(Json(state.store.fail_payout_claim(
+        &id,
+        &request.worker_id,
+        &request.error,
+        request.abandon_prepared_transaction,
+    )?))
 }
 
 fn private_no_store_headers() -> HeaderMap {
@@ -1360,7 +1578,7 @@ impl From<StoreError> for ApiError {
             StoreError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             StoreError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
             StoreError::DocumentNotQuoted => (StatusCode::FORBIDDEN, "document_not_quoted"),
-            StoreError::Database(_) | StoreError::LockPoisoned => {
+            StoreError::Database(_) | StoreError::Io(_) | StoreError::LockPoisoned => {
                 tracing::error!(error = %error, "backend store error");
                 return Self {
                     status: StatusCode::INTERNAL_SERVER_ERROR,

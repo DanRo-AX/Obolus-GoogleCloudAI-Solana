@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { assertPaymentQuoteUsable, paymentIdentityFromPath } from "./payment-routing.js";
 
-test("direct and bundle payment paths resolve to disjoint quote identities", () => {
+test("document, bundle, and open-call paths resolve to disjoint quote identities", () => {
   assert.deepEqual(paymentIdentityFromPath("/api/v1/paid-documents/query%201/MD_7"), {
     kind: "document",
     queryId: "query 1",
@@ -17,6 +17,11 @@ test("direct and bundle payment paths resolve to disjoint quote identities", () 
       key: "bundle\u0000bundle_42",
     },
   );
+  assert.deepEqual(paymentIdentityFromPath("/api/v1/funded-open-calls/call_quote_7"), {
+    kind: "open_call",
+    quoteId: "call_quote_7",
+    key: "open_call\u0000call_quote_7",
+  });
   assert.throws(
     () => paymentIdentityFromPath("/api/v1/paid-bundles/bundle_42/extra"),
     /invalid paid resource path/,

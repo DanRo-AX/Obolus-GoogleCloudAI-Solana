@@ -370,7 +370,10 @@ export default function Chat() {
         appendAssistant(chatId, {
           id: messageId,
           role: 'assistant',
-          content: 'A targeted open-call answer arrived. The passage was paid from the reserved sandbox escrow.',
+          content:
+            existingOrder.escrowMode === 'x402_solana_escrow'
+              ? 'A targeted open-call answer arrived. Its Devnet USDC share is now a durable payout claim for the contributor.'
+              : 'A targeted open-call answer arrived. The passage was paid from the reserved sandbox escrow.',
           citations: [
             {
               handle: answer.handle,
@@ -383,7 +386,14 @@ export default function Chat() {
           settlement: {
             count: 1,
             total: answer.price,
-            network: 'sandbox-escrow',
+            network:
+              existingOrder.escrowMode === 'x402_solana_escrow'
+                ? (existingOrder.escrowNetwork ?? 'devnet')
+                : 'sandbox-escrow',
+            mode:
+              existingOrder.escrowMode === 'x402_solana_escrow'
+                ? 'open_call_escrow'
+                : undefined,
           },
         })
       }
@@ -498,6 +508,8 @@ export default function Chat() {
                           ? 'paid from reserved sandbox escrow'
                         : m.settlement.network === 'offline'
                           ? 'offline preview · no payment sent'
+                        : m.settlement.mode === 'open_call_escrow'
+                          ? 'Devnet escrow · contributor payout claim created'
                         : m.settlement.mode === 'bundle_escrow'
                           ? 'one x402 bundle · contributor shares recorded as claimable'
                           : 'settled through x402 · unopened documents cost nothing'}
@@ -709,7 +721,7 @@ export default function Chat() {
               {phase === 'ordered' && placedOrder ? (
                 <Branch
                   title="Call posted."
-                    body={`${placedOrder.target} people · ₩${placedOrder.unitPrice.toLocaleString()} each. ₩${placedOrder.escrowRemainingKrw?.toLocaleString() ?? (placedOrder.target * placedOrder.unitPrice).toLocaleString()} is reserved; accepted answers are paid from it and the unused amount is refundable.`}
+                  body={`${placedOrder.target} people · ₩${placedOrder.unitPrice.toLocaleString()} each. ₩${placedOrder.escrowRemainingKrw?.toLocaleString() ?? (placedOrder.target * placedOrder.unitPrice).toLocaleString()} is ${placedOrder.escrowMode === 'x402_solana_escrow' ? 'funded in Devnet USDC escrow with one wallet approval' : 'reserved in the sandbox ledger'}; accepted answers are paid from it and the unused amount is refundable.`}
                 >
                   <Button
                     variant="mono"

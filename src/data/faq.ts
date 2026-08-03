@@ -45,7 +45,7 @@ export const PRICING_FAQ: Faq[] = [
   },
   {
     q: 'Does the amount change with the number of respondents?',
-    a: 'It does. Rate × headcount is the order total. Asking ten people a ₩300 question comes to ₩3,000.\n\nSet the headcount to whatever you need. Three people gives you a direction, thirty shows you a distribution. A call in progress shows its remaining slots live, like 4/7 left.\n\nIf the call never fills, the unfilled slots are not billed. Post for seven, get three answers, and you pay for three.'
+    a: 'It does. Rate × headcount is the maximum order total. Asking ten people a ₩300 question comes to ₩3,000.\n\nSet the headcount to whatever you need. Three people gives you a direction, thirty shows you a distribution. One Phantom approval funds all paid slots in Devnet USDC, and a call in progress shows its remaining slots live, like 4/7 left.\n\nIf the call stops early, accepted answers keep their exact shares and cancelling creates a refund claim for every unused atomic unit. Post for seven, get three answers, and the other four shares return to the original payer wallet.'
   },
   {
     q: 'If the answer already exists, does it charge without an open call?',
@@ -57,7 +57,7 @@ export const PRICING_FAQ: Faq[] = [
   },
   {
     q: 'When does settlement happen?',
-    a: 'The buyer settlement happens when the selected documents open. A one-document purchase pays that author directly onchain. For a multi-document purchase, one transfer lands in the configured payout escrow and each author’s claim is recorded against the verified wallet shown in My Memory. The current build does not pretend that claim is already a completed wallet payout.\n\nFor answers to an open call, the rate moves through the explicitly labelled KRW_SANDBOX ledger when the client receives an accepted answer. Even if a call closes short of its headcount, everyone who already answered keeps that sandbox credit and unused slots are refunded.\n\nDevnet tokens and sandbox KRW are test value. Production withdrawals require a secured payout executor, custody/compliance policy, and mainnet reconciliation that are not enabled in this build.'
+    a: 'The buyer settlement happens when the selected documents open. A one-document purchase pays that author directly onchain. For a multi-document purchase, one transfer lands in the configured payout escrow and each author’s exact claim is recorded against the verified wallet shown in My Memory.\n\nA paid open call is funded once for its whole target before it is posted. Each accepted human answer or opted-in exact-memory match creates a deterministic Devnet USDC payout claim; cancellation returns the exact unused remainder to the payer. The crash-safe worker marks a claim paid only after confirmation. Zero-price calls alone use the labelled KRW_SANDBOX path.\n\nDevnet tokens and sandbox KRW are test value. Mainnet operation, real-value custody, and commercial withdrawals are intentionally not enabled in this build.'
   },
   {
     q: 'Am I charged for MDs that were never opened?',

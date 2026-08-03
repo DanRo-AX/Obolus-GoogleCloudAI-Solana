@@ -1,10 +1,12 @@
 # Agent payment session threat model
 
-Status: design gate for autonomous agent spending. Manual browser-wallet
-approval remains the only enabled authority, but an exact multi-document bundle
-now requires one approval rather than one approval per author. The UI must not
-enable unattended Agent payments until every control below is implemented and
-an end-to-end Devnet run passes.
+Status: policy gate implemented; unattended signing deliberately disabled.
+Manual browser-wallet approval remains the only enabled end-user authority, but
+an exact multi-document bundle or paid open-call target now requires one
+approval rather than one approval per author/answer. The pure evaluator in
+`payment-gateway/src/agent-payment-policy.ts` fails closed over every envelope
+field below, and its tests cover substitution, overflow, replay, expiry,
+revocation, and response loss. It does not create or retain a signing key.
 
 ## Assets and trust boundaries
 
@@ -49,10 +51,10 @@ over budget. It must never fall back to an unrestricted wallet approval.
 | User revocation | Server and wallet revocation checks | Revoked session is immediately rejected |
 | Response loss | Rust-ledger reconciliation before retry | Settled document is recovered, not repaid |
 
-## Implementation decision still required
+## Signing decision still required
 
 Choose a Solana wallet/session-key mechanism that supports non-custodial scoped
 delegation and revocation. Do not create a proprietary custody scheme or send a
-secret key to the Rust API. Once selected, the implementation needs independent
-security review and a Devnet test covering every row above before the disabled UI
-gate can be removed.
+secret key to the Rust API. Once selected, bind its verified proof and atomic
+nonce/daily counters to the existing evaluator, then run an independent security
+review and an end-to-end Devnet test before the disabled UI gate can be removed.

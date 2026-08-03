@@ -1,6 +1,7 @@
 export type PaymentRouteIdentity =
   | { kind: "document"; queryId: string; handle: string; key: string }
-  | { kind: "bundle"; quoteId: string; key: string };
+  | { kind: "bundle"; quoteId: string; key: string }
+  | { kind: "open_call"; quoteId: string; key: string };
 
 /** Canonicalize the only public paths allowed to select a payment quote. */
 export function paymentIdentityFromPath(path: string): PaymentRouteIdentity {
@@ -22,6 +23,12 @@ export function paymentIdentityFromPath(path: string): PaymentRouteIdentity {
     const quoteId = decodeURIComponent(bundleMatch[1]);
     if (!quoteId) throw new Error("payment bundle quote id is required");
     return { kind: "bundle", quoteId, key: `bundle\u0000${quoteId}` };
+  }
+  const openCallMatch = pathname.match(/^\/api\/v1\/funded-open-calls\/([^/]+)$/);
+  if (openCallMatch) {
+    const quoteId = decodeURIComponent(openCallMatch[1]);
+    if (!quoteId) throw new Error("open-call funding quote id is required");
+    return { kind: "open_call", quoteId, key: `open_call\u0000${quoteId}` };
   }
   throw new Error("invalid paid resource path");
 }

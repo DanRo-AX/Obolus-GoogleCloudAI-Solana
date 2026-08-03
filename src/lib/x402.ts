@@ -6,8 +6,16 @@
  * PAYMENT-SIGNATURE header, and reads the facilitator's settlement receipt.
  */
 
-import type { Citation } from '@/state/ui'
-import { getPaymentProgress, recoverPaidDocument } from '@/lib/api'
+import type { Citation, Order } from '@/state/ui'
+import {
+  getOpenCallFundingQuote,
+  getPaymentProgress,
+  listOpenCalls,
+  prepareOpenCallFundingQuote,
+  recoverPaidDocument,
+  type CreateOpenCallInput,
+  type OpenCallFundingQuote,
+} from '@/lib/api'
 import { getPhantom } from '@/state/wallet'
 
 export type OpenRequest = {
@@ -33,13 +41,14 @@ export type OpenResult = {
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 const BACKEND_ENABLED = import.meta.env.VITE_BACKEND_ENABLED !== 'false'
-const X402_ENABLED = import.meta.env.VITE_X402_ENABLED !== 'false'
+export const X402_ENABLED = import.meta.env.VITE_X402_ENABLED !== 'false'
 const X402_GATEWAY_BASE = (
   import.meta.env.VITE_X402_GATEWAY_BASE ?? 'http://127.0.0.1:1402'
 ).replace(/\/$/, '')
 const RESOURCE = '/api/flash-research'
 const DEVNET_NETWORK = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
 const DEVNET_RPC_BACKOFF_MS = [1_500, 3_000, 6_000]
+const PENDING_OPEN_CALL_KEY = 'openshelf:pending-funded-open-call:v1'
 
 export class PaymentError extends Error {
   code: 'cancelled' | 'identity_mismatch' | 'failed'
@@ -87,6 +96,113 @@ export async function openDocuments(req: OpenRequest): Promise<OpenResult> {
     )
   }
   return (await response.json()) as OpenResult
+}
+
+/**
+ * Funds one open call with one exact Devnet USDC approval. The quote id is
+ * persisted before Phantom opens so a settled transfer can be reconciled after
+ * a refresh without asking the buyer to pay twice.
+ */
+export async function fundOpenCall(input: CreateOpenCallInput): Promise<Order> {
+  if (!BACKEND_ENABLED || !X402_ENABLED) {
+    throw new PaymentError('Devnet-funded calls require the backend and x402 gateway.')
+  }
+  const provider = getPhantom()
+  if (!provider?.publicKey) {
+    throw new PaymentError('Connect a Solana browser wallet before funding an open call.')
+  }
+
+  let quote: OpenCallFundingQuote | undefined
+  const pending = readPendingOpenCall()
+  if (pending && JSON.stringify(pending.input) === JSON.stringify(input)) {
+    try {
+      quote = await getOpenCallFundingQuote(pending.quoteId)
+      if (quote.status === 'funded' && quote.openCallId) {
+        const recovered = await findOpenCall(quote.openCallId)
+        if (recovered) {
+          window.localStorage.removeItem(PENDING_OPEN_CALL_KEY)
+          return recovered
+        }
+      }
+      if (quote.expiresAt <= Date.now()) quote = undefined
+    } catch {
+      // A stale local recovery pointer is harmless; prepare is idempotent for
+      // an identical, still-live quote.
+    }
+  }
+  quote ??= await prepareOpenCallFundingQuote(input)
+  window.localStorage.setItem(
+    PENDING_OPEN_CALL_KEY,
+    JSON.stringify({ quoteId: quote.id, input }),
+  )
+
+  try {
+    const [{ x402Client }, { wrapFetchWithPayment }, svm, { phantomSvmSigner }] =
+      await Promise.all([
+        import('@x402/core/client'),
+        import('@x402/fetch'),
+        import('@x402/svm/exact/client'),
+        import('@/lib/phantomSigner'),
+      ])
+    const client = new x402Client()
+    const signer = phantomSvmSigner(provider)
+    svm.registerExactSvmScheme(client, { signer, networks: [DEVNET_NETWORK] })
+    client.register(
+      DEVNET_NETWORK,
+      new svm.ExactSvmScheme(signer, { rpcUrl: `${X402_GATEWAY_BASE}/rpc` }),
+    )
+    const paidFetch = wrapFetchWithPayment(window.fetch.bind(window), client)
+    const response = await paidFetchWithRpcBackoff(
+      paidFetch,
+      `${X402_GATEWAY_BASE}${quote.resourcePath}`,
+    )
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: { message?: string } }
+        | null
+      throw new Error(payload?.error?.message ?? `x402 gateway returned ${response.status}.`)
+    }
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const reconciled = await getOpenCallFundingQuote(quote.id)
+      if (reconciled.status === 'funded' && reconciled.openCallId) {
+        const call = await findOpenCall(reconciled.openCallId)
+        if (call) {
+          window.localStorage.removeItem(PENDING_OPEN_CALL_KEY)
+          return call
+        }
+      }
+      await delay(750)
+    }
+    throw new Error(
+      'Payment settled, but the call ledger is still reconciling. Retry posting the same call to recover it without another payment.',
+    )
+  } catch (error) {
+    if (error instanceof PaymentError) throw error
+    const message = error instanceof Error ? error.message : String(error)
+    if (/reject|declin|cancel/i.test(message)) {
+      throw new PaymentError('Payment approval was cancelled in the wallet.', 'cancelled')
+    }
+    throw new PaymentError(`x402 open-call funding failed: ${message}`)
+  }
+}
+
+async function findOpenCall(openCallId: string): Promise<Order | undefined> {
+  return (await listOpenCalls()).find((call) => call.id === openCallId)
+}
+
+function readPendingOpenCall(): { quoteId: string; input: CreateOpenCallInput } | null {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(PENDING_OPEN_CALL_KEY) ?? 'null') as {
+      quoteId?: unknown
+      input?: unknown
+    } | null
+    return value && typeof value.quoteId === 'string' && value.input
+      ? { quoteId: value.quoteId, input: value.input as CreateOpenCallInput }
+      : null
+  } catch {
+    return null
+  }
 }
 
 async function openOverX402(req: OpenRequest): Promise<OpenResult> {

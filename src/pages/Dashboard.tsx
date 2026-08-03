@@ -687,6 +687,9 @@ export default function Dashboard() {
                   <div className="mt-3 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
                     <Clock className="size-3" />
                     {relative(order.createdAt)}
+                    {order.escrowMode === 'x402_solana_escrow' && !cancelled ? (
+                      <span className="text-[#0F766E]">Devnet USDC escrow</span>
+                    ) : null}
                     {cancelled ? (
                       <span className="ml-auto text-muted-foreground">
                         Cancelled · unused escrow refunded

@@ -49,10 +49,20 @@ explicitly want the old sandbox-ledger path, or
    a cited synthesis. Without a provider, the UI shows an explicit evidence-only
    result instead of inventing an answer.
 7. Direct-to-author payments are marked `onchain`. Bundle shares are marked
-   `claimable` against each author's verified wallet and are not presented as
-   paid until a separate escrow payout executes. Neither is added again to the
-   sandbox KRW balance. Failed ledger mirrors remain in the gateway outbox and
-   retry safely.
+   `claimable` against each author's verified wallet. The Devnet payout worker
+   leases each claim, persists the exact signed transaction before broadcast,
+   resumes safely after a crash, and marks it paid only after confirmation.
+   Neither path is added again to the sandbox KRW balance. Failed ledger mirrors
+   remain in the gateway outbox and retry safely.
+
+Paid MISS/open-call commissions use the same one-approval model. Rust commits
+the question, target, display budget, exact Devnet USDC amount, mint, escrow
+receiver, and expiry. Phantom approves one transfer for the whole target; only
+the confirmed settlement creates the call. Every accepted answer receives a
+deterministic atomic share, and cancellation or account deletion returns the
+exact unused remainder to the original payer through a payout claim. A
+zero-price call keeps the explicitly labelled sandbox path because there is no
+token transfer to settle.
 
 The seeded corpus has no real author wallets, so
 `OPENSHELF_DEFAULT_RECEIVER` is its demo beneficiary. User-authored documents
@@ -63,7 +73,8 @@ balances.
 
 If a browser loses the response after settlement, the client reconciles the
 query with Rust, recovers passages that are already proven paid, and retries
-only unpaid handles. The query recovery token is scoped to the original query
+only unpaid handles. The query recovery token is scoped to the original query,
+expires after 24 hours,
 and payer-sensitive recovery APIs; it is also required for paid-evidence
 synthesis and is never a general document-access credential.
 
@@ -190,19 +201,21 @@ three-strike suspension. Chat transcripts remain tab-session local in backend
 mode (durable local storage is reserved for the offline demo); authenticated
 account, money, memory, and authorization state are server-owned.
 
-The KRW signup/open-call balance is still a clearly labelled sandbox ledger; it
-models reservations and refunds but is not fiat or on-chain escrow. Paid
-document opens now use actual x402 exact/SVM settlement on Solana Devnet.
+The KRW signup balance and zero-price calls remain a clearly labelled sandbox
+ledger; they are not fiat. Paid document opens and paid open-call budgets use
+actual x402 exact/SVM settlement on Solana Devnet.
 The official Pay.sh YAML is a separate static localnet compatibility path; it
 is not proof of Devnet settlement. See [`docs/PAY-SH.md`](./docs/PAY-SH.md).
-Production still requires a mainnet facilitator credential, managed RPC,
-durable outbox volume or queue, rate limiting, email verification/recovery, KMS
-secret management, and an external identity provider if social login is
-desired. A policy-limited agent wallet and the projected monthly top-up product
-are not implemented yet. Agent payments
-remain visibly disabled until the controls in
-[`docs/agent-payment-threat-model.md`](./docs/agent-payment-threat-model.md) are
-implemented and reviewed. Browser settlement reconciliation is implemented;
+Mainnet operation is intentionally out of scope. A public Devnet service still
+needs a managed RPC, durable multi-instance queue/database, distributed rate
+limits, email verification, KMS secret management, and an external identity
+provider if social login is desired. Password reset/recovery is implemented via
+the email outbox and revokes all sessions. The agent-payment policy evaluator is
+implemented and tested, but unattended signing remains disabled until a
+reviewed non-custodial Solana delegation standard is selected; no proprietary
+custody key is created. See
+[`docs/agent-payment-threat-model.md`](./docs/agent-payment-threat-model.md).
+Browser settlement reconciliation is implemented;
 paid handles are recovered before any retry.
 
 Contributor question delivery now includes server-ranked recommendations, a

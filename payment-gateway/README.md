@@ -28,7 +28,28 @@ non-chargeable immutable quote. `GET /api/v1/paid-bundles/{quoteId}` is the x402
 resource and therefore produces one wallet approval for the aggregate amount.
 The receiver is an escrow wallet: Rust records each author's verified
 beneficiary and `claimable` share, but does not claim that escrow custody itself
-is a completed author payout.
+is a completed author payout. `GET /api/v1/funded-open-calls/{quoteId}` applies
+the same exact-payment boundary to an entire open-call target, so one approval
+funds all answer slots.
+
+Create a dedicated Devnet escrow key and run the payout worker with:
+
+```bash
+npm --prefix payment-gateway run escrow:create
+# fund the printed address with 0.05–0.1 Devnet SOL for transaction fees
+npm --prefix payment-gateway run payout:once
+# or keep reconciling pending claims
+npm --prefix payment-gateway run payout:watch
+```
+
+The key path comes from `OPENSHELF_ESCROW_KEYPAIR_PATH`, must be mode 0600, and
+must match `OPENSHELF_BUNDLE_RECEIVER`. The worker refuses non-Devnet claims,
+stores signed bytes and the deterministic signature before broadcast, retries
+the same transaction after a crash, and never marks a claim paid until RPC
+confirmation. New paid bundles and open calls deposit their Devnet USDC into
+this escrow before claims are created, so a fresh escrow only needs Devnet SOL
+up front. Add faucet Devnet USDC separately only when replaying a claim whose
+original deposit did not land in this escrow.
 
 An agent can exercise a paid resource without the browser. Use a disposable
 Devnet wallet secret, never a production key:
@@ -41,4 +62,7 @@ npm --prefix payment-gateway run pay
 ```
 
 `MAX_PAYMENT_ATOMIC` is a client-side cap (default 1 USDC) so an agent does not
-blindly accept an unexpectedly large challenge.
+blindly accept an unexpectedly large challenge. This CLI still uses a supplied
+disposable signer. The fail-closed policy evaluator and its threat tests live in
+`src/agent-payment-policy.ts`; unattended end-user signing stays disabled until
+a reviewed, non-custodial Solana delegation mechanism is selected.

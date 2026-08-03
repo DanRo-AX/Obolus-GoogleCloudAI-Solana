@@ -6,8 +6,10 @@ The Rust service owns the complete question lifecycle:
 question -> search/rank private MDs -> HIT -> quote safe metadata
                                   \-> MISS -> create an open call
 account -> HttpOnly session -> profile / private memory / balance
-open call -> reserve full sandbox budget -> recommend + notify matching contributors
-          -> hold a 10-minute answer slot -> accepted answer -> escrow release
+open call -> zero-price sandbox or one exact Devnet escrow funding transaction
+          -> recommend + notify matching contributors -> hold a 10-minute answer slot
+          -> accepted answer -> deterministic contributor payout claim
+          -> cancellation/account deletion -> exact unused payer refund claim
           -> 82%+ near-identical paid memory + opted-in agent -> exact answer reuse
                                             \-> voided -> pending dispute
 pending dispute -> admin approve -> document + slot + escrow release
@@ -102,6 +104,7 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data \
 | `GET` | `/api/v1/questions/{id}/paid-documents/{handle}` | Recover a previously settled passage without paying again |
 | `POST` | `/api/v1/questions/{id}/paid-documents/{handle}/feedback` | Record paid-buyer feedback or a report |
 | `GET/POST` | `/api/v1/open-calls` | List or commission missing coverage |
+| `POST/GET` | `/api/v1/open-call-funding-quotes[/{id}]` | Prepare or reconcile one exact Devnet funding quote for a paid call |
 | `DELETE` | `/api/v1/open-calls/{id}` | Cancel an owned call and refund unused escrow |
 | `POST` | `/api/v1/open-calls/{id}/answers` | Validate an answer, retain private interview context, and add accepted memory |
 | `POST/DELETE` | `/api/v1/open-calls/{id}/reservation` | Hold, renew, or release one answer slot for ten minutes |
@@ -126,11 +129,16 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data \
 | `POST` | `/api/v1/profile/preferences` | Persist search auto-match, exact-memory agent, browser, and email-alert preferences |
 | `POST` | `/api/v1/profile/wallet/challenge` `/verify` | Prove payout-wallet ownership with a signed message |
 | `GET` | `/api/v1/earnings` | Audit append-only earnings and wallet snapshots |
+| `GET` | `/api/v1/payout-claims` | Inspect contributor/refund claim status and confirmed payout signatures |
+| `POST` | `/api/v1/auth/password/forgot` `/reset` | Queue an enumeration-safe one-hour reset link and rotate the password/session set |
+| `GET` | `/api/v1/admin/ai-liquidity-metrics` | Audit AI-only/hybrid coverage, starter conversion, and zero priced-AI/authority invariants |
 | `GET` | `/api/flash-research` | Reveal only handles quoted for a query and accrue them once |
 | `GET` | `/internal/v1/payment-quotes/{queryId}/{handle}` | Create/reuse an exact short-lived x402 quote (internal token required) |
 | `GET` | `/internal/v1/payment-quotes/{id}/document` | Retrieve one quoted passage for the verified gateway |
 | `GET` | `/internal/v1/payment-quotes/{id}/snapshot` | Buffer the immutable quote snapshot without marking delivery |
 | `POST` | `/internal/v1/chain-settlements` | Idempotently mirror a confirmed facilitator receipt |
+| `POST` | `/internal/v1/open-call-chain-settlements` | Activate a paid call only after its exact Devnet receipt is mirrored |
+| `POST` | `/internal/v1/payout-claims/*` | Lease, prepare, complete, or fail crash-safe Devnet payout work |
 
 The conduct ladder is enforced in the service, not just the UI. At two strikes,
 the author's documents leave auto-match and new payouts are held for 14 days;

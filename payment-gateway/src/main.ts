@@ -76,7 +76,22 @@ type PaymentBundleQuote = {
   status: string;
 };
 
-type PayableQuote = PaymentQuote | PaymentBundleQuote;
+type OpenCallFundingQuote = {
+  id: string;
+  payTo: string;
+  network: Network;
+  asset: string;
+  amountAtomic: string;
+  totalPriceKrw: number;
+  krwPerUsdc: number;
+  expiresAt: number;
+  resourcePath: string;
+  payloadHash: string;
+  status: string;
+  openCallId?: string | null;
+};
+
+type PayableQuote = PaymentQuote | PaymentBundleQuote | OpenCallFundingQuote;
 
 type PaidDocument = {
   quoteId: string;
@@ -96,10 +111,19 @@ type PaymentBundleSnapshot = {
   citations: PaidDocument["citation"][];
 };
 
+type OpenCallFundingSnapshot = {
+  quoteId: string;
+  question: string;
+  target: number;
+  unitPriceKrw: number;
+  totalPriceKrw: number;
+  payloadHash: string;
+};
+
 type RouteIdentity = PaymentRouteIdentity;
 type QuoteCacheEntry = { quote: Promise<PayableQuote>; expiresAt: number };
 type PendingSettlement = {
-  settlementKind?: "document" | "bundle";
+  settlementKind?: "document" | "bundle" | "open_call";
   quoteId: string;
   transactionSignature: string;
   payer: string;
@@ -150,9 +174,13 @@ async function getQuote(identity: RouteIdentity): Promise<PayableQuote> {
     ? internalJson<PaymentQuote>(
         `/internal/v1/payment-quotes/${encodeURIComponent(identity.queryId)}/${encodeURIComponent(identity.handle)}`,
       )
-    : internalJson<PaymentBundleQuote>(
-        `/internal/v1/payment-bundles/${encodeURIComponent(identity.quoteId)}`,
-      );
+    : identity.kind === "bundle"
+      ? internalJson<PaymentBundleQuote>(
+          `/internal/v1/payment-bundles/${encodeURIComponent(identity.quoteId)}`,
+        )
+      : internalJson<OpenCallFundingQuote>(
+          `/internal/v1/open-call-funding-quotes/${encodeURIComponent(identity.quoteId)}`,
+        );
   const entry: QuoteCacheEntry = { quote: quotePromise, expiresAt: now + 30_000 };
   quotes.set(identity.key, entry);
   try {
@@ -176,7 +204,9 @@ async function quoteForContext(context: HTTPRequestContext): Promise<PayableQuot
 async function recordSettlement(settlement: PendingSettlement): Promise<void> {
   const endpoint = settlement.settlementKind === "bundle"
     ? "/internal/v1/bundle-chain-settlements"
-    : "/internal/v1/chain-settlements";
+    : settlement.settlementKind === "open_call"
+      ? "/internal/v1/open-call-chain-settlements"
+      : "/internal/v1/chain-settlements";
   await internalJson(endpoint, {
     method: "POST",
     body: JSON.stringify(settlement),
@@ -493,6 +523,43 @@ app.use(
           },
         }),
       },
+      "GET /api/v1/funded-open-calls/*": {
+        accepts: {
+          scheme: "exact",
+          network,
+          payTo: async (context) => (await quoteForContext(context)).payTo,
+          price: async (context) => {
+            const quote = await quoteForContext(context);
+            return { asset: quote.asset, amount: quote.amountAtomic };
+          },
+          maxTimeoutSeconds: 60,
+        },
+        description: "Fund one OPENSHELF open call on Solana Devnet",
+        mimeType: "application/json",
+        serviceName: "OPENSHELF",
+        unpaidResponseBody: async (context) => {
+          const quote = await quoteForContext(context);
+          return {
+            contentType: "application/json",
+            body: {
+              error: {
+                code: "payment_required",
+                message: "One exact Devnet USDC escrow payment is required",
+              },
+              quote,
+            },
+          };
+        },
+        settlementFailedResponseBody: (_context, result) => ({
+          contentType: "application/json",
+          body: {
+            error: {
+              code: "settlement_failed",
+              message: result.errorMessage ?? result.errorReason,
+            },
+          },
+        }),
+      },
     },
     resourceServer,
     { appName: "OPENSHELF", testnet: network === DEVNET_NETWORK },
@@ -537,7 +604,7 @@ app.get("/api/v1/paid-bundles/:quoteId", async (request, response, next) => {
       key: `bundle\u0000${request.params.quoteId}`,
     };
     const quote = await getQuote(identity);
-    if (!("totalPriceKrw" in quote)) throw new Error("bundle route received a document quote");
+    if (!("bundleHash" in quote)) throw new Error("bundle route received another quote type");
     const snapshot = await internalJson<PaymentBundleSnapshot>(
       `/internal/v1/payment-bundles/${encodeURIComponent(quote.id)}/snapshot`,
     );
@@ -553,6 +620,36 @@ app.get("/api/v1/paid-bundles/:quoteId", async (request, response, next) => {
         network: quote.network,
         mode: "bundle_escrow",
       },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/v1/funded-open-calls/:quoteId", async (request, response, next) => {
+  try {
+    const identity: RouteIdentity = {
+      kind: "open_call",
+      quoteId: request.params.quoteId,
+      key: `open_call\u0000${request.params.quoteId}`,
+    };
+    const quote = await getQuote(identity);
+    if (!("payloadHash" in quote)) throw new Error("open-call route received another quote type");
+    const snapshot = await internalJson<OpenCallFundingSnapshot>(
+      `/internal/v1/open-call-funding-quotes/${encodeURIComponent(quote.id)}/snapshot`,
+    );
+    if (snapshot.payloadHash !== quote.payloadHash) {
+      throw new Error("open-call snapshot does not match its quote commitment");
+    }
+    response.json({
+      quoteId: quote.id,
+      status: "settling",
+      question: snapshot.question,
+      target: snapshot.target,
+      unitPriceKrw: snapshot.unitPriceKrw,
+      totalPriceKrw: snapshot.totalPriceKrw,
+      network: quote.network,
+      mode: "open_call_escrow",
     });
   } catch (error) {
     next(error);
