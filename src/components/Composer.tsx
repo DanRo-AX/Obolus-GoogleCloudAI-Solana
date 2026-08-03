@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { ArrowUp } from 'lucide-react'
 import { CATEGORIES, type CategoryId } from '@/data/categories'
 import { AGE_BANDS, HOUSEHOLDS, REGIONS } from '@/data/onboarding'
@@ -80,6 +80,23 @@ export function Composer({
         submit()
       }}
     >
+      {/* who is answering, stated once at the top ---------------------- */}
+      <div className="flex items-center gap-2 px-4 pt-3">
+        <span
+          aria-hidden="true"
+          className="size-1.5 shrink-0 rounded-[1px]"
+          style={{ backgroundColor: '#866FF2' }}
+        />
+        <span
+          className={cn(
+            'font-mono text-[10px] font-semibold uppercase tracking-[1.5px]',
+            dark ? 'text-white/55' : 'text-muted-foreground',
+          )}
+        >
+          SHELF
+        </span>
+      </div>
+
       <textarea
         ref={ref}
         rows={3}
@@ -94,84 +111,78 @@ export function Composer({
         }}
         placeholder={t('What do you want to know?')}
         className={cn(
-          'flex w-full py-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 max-h-80 min-h-[88px] resize-none overflow-y-hidden rounded-none border-0 bg-transparent px-4 pb-0 pt-3 text-base shadow-none focus-visible:ring-0 md:text-base',
+          'flex w-full focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 max-h-80 min-h-[72px] resize-none overflow-y-hidden rounded-none border-0 bg-transparent px-4 pb-2 pt-2 text-base shadow-none focus-visible:ring-0 md:text-base',
           dark
             ? 'text-white placeholder:text-white/45'
             : 'border-input placeholder:text-muted-foreground',
         )}
       />
-      <div className="flex items-center justify-between px-2.5 pb-2.5 pt-1">
-        <div className="flex items-center gap-1">
-          <Link
-            to="/whitepaper"
-            aria-label={t('How SHELF works')}
-            className={cn(
-              'group flex h-8 items-center rounded-[2px] px-2 transition-colors',
-              dark ? 'hover:bg-white/10' : 'hover:bg-muted-foreground/10',
-            )}
-          >
-            <span
-              aria-hidden="true"
-              className={cn(
-                'font-mono text-[11px] font-semibold uppercase tracking-[1.5px]',
-                dark ? 'text-white/80' : 'text-foreground/80',
-              )}
-            >
-              SHELF
-            </span>
-          </Link>
-          <details className="group/target relative">
-            <summary
-              className={cn(
-                'flex h-11 cursor-pointer list-none items-center rounded-[2px] px-2 font-mono text-[11px] uppercase tracking-[1px] transition-colors sm:h-8',
-                dark
-                  ? 'text-white/60 hover:bg-white/10 hover:text-white'
-                  : 'text-muted-foreground hover:bg-muted',
-              )}
-            >
-              {t('Who answers')}{[ageBand, region, household, field].filter(Boolean).length ? ` · ${[ageBand, region, household, field].filter(Boolean).length}` : ''}
-            </summary>
-            <div className="absolute bottom-10 left-0 z-30 grid w-[280px] gap-3 rounded-[6px] border border-border bg-card p-3 text-foreground shadow-xl">
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                {t('Optional. A document must match every band you pick.')}
-              </p>
-              <TargetSelect label="Age" value={ageBand} onChange={setAgeBand} options={AGE_BANDS} />
-              <TargetSelect label="Region" value={region} onChange={setRegion} options={REGIONS} />
-              <TargetSelect label="Household" value={household} onChange={setHousehold} options={HOUSEHOLDS} />
-              <TargetSelect
-                label="Field"
-                value={field}
-                onChange={(value) => setField(value as CategoryId | '')}
-                options={CATEGORIES.map(({ id, label }) => ({ value: id, label }))}
-              />
-            </div>
-          </details>
-        </div>
-        <button
-          data-slot="button"
-          type="submit"
-          disabled={!value.trim()}
-          aria-label={t('Send')}
-          className={cn(
-            'inline-flex size-11 shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 sm:size-8',
-            dark
-              ? 'bg-[#e5e5e5] text-[#171717] hover:bg-white'
-              : 'bg-primary text-primary-foreground hover:bg-primary/90',
-          )}
-        >
-          <ArrowUp className="size-4" />
-        </button>
-      </div>
-      <p
+
+      {/* the tray: the one control, the send, and the fine print -------- */}
+      <div
         className={cn(
-          'px-4 pb-3 font-mono text-[11px] leading-5 tracking-[0.2px]',
-          dark ? 'text-white/40' : 'text-muted-foreground',
+          'flex flex-col border-t',
+          dark ? 'border-white/10 bg-black/20' : 'border-border/60 bg-muted/30',
         )}
       >
-        {t(
-          'If human coverage is thin, this question alone may be sent to Gemini on Vertex AI for a free general baseline. Private shelf passages are never sent.',
-        )}
-      </p>
+        <div className="flex items-center justify-between gap-3 px-2.5 py-2">
+          <div className="flex items-center gap-1">
+            <details className="group/target relative">
+              <summary
+                className={cn(
+                  'flex h-9 cursor-pointer list-none items-center rounded-[3px] border px-2.5 font-mono text-[11px] uppercase tracking-[1px] transition-colors sm:h-8',
+                  dark
+                    ? 'border-white/15 text-white/60 hover:border-white/35 hover:text-white'
+                    : 'border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground',
+                )}
+              >
+                {t('Who answers')}{[ageBand, region, household, field].filter(Boolean).length ? ` · ${[ageBand, region, household, field].filter(Boolean).length}` : ''}
+              </summary>
+              <div className="absolute bottom-11 left-0 z-30 grid w-[280px] gap-3 rounded-[6px] border border-border bg-card p-3 text-foreground shadow-xl">
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {t('Optional. A document must match every band you pick.')}
+                </p>
+                <TargetSelect label="Age" value={ageBand} onChange={setAgeBand} options={AGE_BANDS} />
+                <TargetSelect label="Region" value={region} onChange={setRegion} options={REGIONS} />
+                <TargetSelect label="Household" value={household} onChange={setHousehold} options={HOUSEHOLDS} />
+                <TargetSelect
+                  label="Field"
+                  value={field}
+                  onChange={(value) => setField(value as CategoryId | '')}
+                  options={CATEGORIES.map(({ id, label }) => ({ value: id, label }))}
+                />
+              </div>
+            </details>
+          </div>
+          <button
+            data-slot="button"
+            type="submit"
+            disabled={!value.trim()}
+            aria-label={t('Send')}
+            className={cn(
+              'inline-flex size-11 shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 sm:size-8',
+              dark
+                ? 'bg-[#e5e5e5] text-[#171717] hover:bg-white'
+                : 'bg-primary text-primary-foreground hover:bg-primary/90',
+            )}
+          >
+            <ArrowUp className="size-4" />
+          </button>
+        </div>
+
+        <p
+          className={cn(
+            'border-t px-4 py-2.5 font-mono text-[10px] leading-[1.55] tracking-[0.2px]',
+            dark
+              ? 'border-white/[0.06] text-white/30'
+              : 'border-border/40 text-muted-foreground/70',
+          )}
+        >
+          {t(
+            'If human coverage is thin, this question alone may be sent to Gemini on Vertex AI for a free general baseline. Private shelf passages are never sent.',
+          )}
+        </p>
+      </div>
     </form>
   )
 }
