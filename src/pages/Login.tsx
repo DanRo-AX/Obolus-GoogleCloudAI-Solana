@@ -50,7 +50,7 @@ export default function Login() {
     if (staleReset) return
     if (authReady && account)
       navigate(profile ? '/dashboard' : '/onboarding', { replace: true })
-  }, [account, authReady, navigate, profile])
+  }, [account, authReady, navigate, profile, staleReset])
 
   const signIn = async () => {
     if (!pubkey || signingIn) return
