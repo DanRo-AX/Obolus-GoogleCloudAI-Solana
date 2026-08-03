@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -47,7 +47,7 @@ import {
  */
 export default function Onboarding() {
   const navigate = useNavigate()
-  const { saveProfile, profile, account, authReady } = useUi()
+  const { saveProfile, profile, account, authWallet, authReady } = useUi()
   const wallet = useWallet()
   const t = useT()
 
@@ -60,10 +60,17 @@ export default function Onboarding() {
   const [years, setYears] = useState(profile?.years ?? '')
   const [speaksTo, setSpeaksTo] = useState<CategoryId[]>(profile?.speaksTo ?? [])
   const [payoutWallet, setPayoutWallet] = useState(profile?.wallet ?? '')
+  const payoutInitialised = useRef(false)
   const [agreed, setAgreed] = useState(false)
   const [done, setDone] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!authReady || payoutInitialised.current) return
+    payoutInitialised.current = true
+    setPayoutWallet(profile?.wallet ?? authWallet ?? '')
+  }, [authReady, authWallet, profile?.wallet])
 
   const TOTAL = 6
 
@@ -328,7 +335,7 @@ export default function Onboarding() {
             <Screen
               title={t('Where the money lands')}
               note={t(
-                'USDC lands in the wallet you name here, over x402 on Solana devnet. Save one now, verify ownership later, or skip this screen. This site connects Phantom; an outside agent can link its own locally held Pay account over SIWX.',
+                'USDC lands in the wallet you name here, over x402 on Solana devnet. The wallet that signed you in is verified automatically; another locally held Pay account can be linked later over SIWX.',
               )}
             >
               {wallet.pubkey ? (
@@ -344,7 +351,7 @@ export default function Onboarding() {
                   </div>
                   <p className="text-[13px] leading-relaxed text-muted-foreground">
                     {t(
-                      'Connecting the extension does not set a payout address. Tell us whether your earnings should land in this wallet.',
+                      'Your sign-in already proved this address. Keep it selected and it becomes your verified payout wallet when the profile saves.',
                     )}
                   </p>
                   <div className="flex flex-wrap items-center gap-2">
@@ -425,7 +432,7 @@ export default function Onboarding() {
                   ) : null}
                   <p className="mt-3 text-[13px] leading-relaxed text-muted-foreground">
                     {t(
-                      'Nothing is signed here — only the public key is read. You verify ownership later with one signMessage. A fresh devnet wallet has no SOL for fees and no USDC to settle with:',
+                      'Reconnect the wallet that signed you in to use it for payouts. A different payout wallet needs its own proof later. A fresh devnet wallet has no SOL for fees and no USDC to settle with:',
                     )}{' '}
                     <a
                       href={DEVNET_FAUCETS.sol}

@@ -10,7 +10,7 @@ import type { Citation, Order } from '@/state/ui'
 import { getBase58Decoder } from '@solana/kit'
 import {
   createPrepaidWalletSession,
-  createWalletChallenge,
+  createWalletAuthChallenge,
   getOpenCallFundingQuote,
   listOpenCalls,
   prepareOpenCallFundingQuote,
@@ -193,6 +193,11 @@ export async function fundOpenCall(input: CreateOpenCallInput): Promise<Order> {
     const message = error instanceof Error ? error.message : String(error)
     if (/reject|declin|cancel/i.test(message)) {
       throw new PaymentError('Payment approval was cancelled in the wallet.', 'cancelled')
+    }
+    if (isNetworkFailure(message)) {
+      throw new PaymentError(
+        'Payment service is temporarily unavailable. Retry this same call; a settled transfer will be recovered instead of paid twice.',
+      )
     }
     throw new PaymentError(`x402 open-call funding failed: ${message}`)
   }
@@ -384,6 +389,16 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
     if (cancelled) {
       throw new PaymentError('Payment approval was cancelled in the wallet.', 'cancelled')
     }
+    if (isNetworkFailure(message)) {
+      throw new PaymentError(
+        'Payment service is temporarily unavailable. Retry this same job; anything already settled will be recovered instead of paid twice.',
+      )
+    }
+    if (isPayloadRpcRateLimit(message)) {
+      throw new PaymentError(
+        'Solana Devnet is rate-limiting payment creation. Wait 15 seconds and retry this same job; nothing was signed or paid twice.',
+      )
+    }
     throw new PaymentError(`x402 payment failed: ${message}`)
   }
 }
@@ -454,7 +469,7 @@ async function ensurePrepaidWalletSession(
       'This wallet cannot sign the one-time prepaid spending authorization message.',
     )
   }
-  const challenge = await createWalletChallenge(wallet)
+  const challenge = await createWalletAuthChallenge(wallet)
   const signed = await provider.signMessage(
     new TextEncoder().encode(challenge.message),
     'utf8',
@@ -541,6 +556,12 @@ function isPayloadRpcRateLimit(message: string): boolean {
   return (
     message.includes('Failed to create payment payload') &&
     message.includes('HTTP error (429)')
+  )
+}
+
+function isNetworkFailure(message: string): boolean {
+  return /failed to fetch|fetch failed|networkerror|network request failed|load failed/i.test(
+    message,
   )
 }
 

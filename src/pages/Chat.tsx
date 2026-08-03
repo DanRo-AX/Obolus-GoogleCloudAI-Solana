@@ -178,6 +178,10 @@ export default function Chat() {
       resolvedQueryId: string | null,
     ) => {
       if (!chatId || !resolvedQueryId) return
+      if (!account) {
+        navigate(`/login?returnTo=${encodeURIComponent(`/chat/${chatId}`)}`)
+        return
+      }
       const session = chat?.paymentSession
       if (!session) {
         setPayError('The payment session is gone. Ask the question again.')
@@ -281,9 +285,11 @@ export default function Chat() {
       }
     },
     [
+      account,
       appendAssistant,
       chat?.paymentSession,
       chatId,
+      navigate,
       patchChat,
       prompt,
       refreshLedger,
@@ -598,7 +604,19 @@ export default function Chat() {
                       {shortKey(DEVNET_USDC)}
                     </span>.
                   </div>
-                  {!paymentUsesLegacyPaySh && wallet.pubkey && !paymentPayerMismatch ? (
+                  {!account ? (
+                    <Button
+                      variant="mono"
+                      size="mono"
+                      onClick={() =>
+                        navigate(
+                          `/login?returnTo=${encodeURIComponent(`/chat/${chatId}`)}`,
+                        )
+                      }
+                    >
+                      {t('Sign in to pay')}
+                    </Button>
+                  ) : !paymentUsesLegacyPaySh && wallet.pubkey && !paymentPayerMismatch ? (
                     <Button
                       variant="mono"
                       size="mono"
@@ -738,7 +756,9 @@ export default function Chat() {
                       size="mono"
                       onClick={() => {
                         if (!account) {
-                          navigate('/login')
+                          navigate(
+                            `/login?returnTo=${encodeURIComponent(`/chat/${chatId}`)}`,
+                          )
                           return
                         }
                         void placeOrder({

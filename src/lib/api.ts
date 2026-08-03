@@ -172,7 +172,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     })
   } catch {
     throw new ApiError(
-      'Obolus backend is not reachable. Start it on port 8787.',
+      'Obolus is temporarily unavailable. Check your connection and try again.',
       0,
       'offline',
     )

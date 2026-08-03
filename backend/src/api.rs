@@ -871,9 +871,9 @@ async fn create_open_call(
     headers: HeaderMap,
     Json(request): Json<CreateOpenCallRequest>,
 ) -> Result<(StatusCode, Json<OpenCall>), ApiError> {
-    if !state.allow_demo_open {
+    if !state.allow_demo_open && request.unit_price > 0 {
         return Err(ApiError::forbidden(
-            "demo open-call funding is disabled; fund the call through the x402 gateway",
+            "paid open-call funding is disabled on this endpoint; fund the call through the x402 gateway",
         ));
     }
     let user = authenticated(&state, &headers)?;
@@ -1378,9 +1378,11 @@ async fn create_prepaid_session(
     Json(request): Json<CreatePrepaidSessionRequest>,
 ) -> Result<(StatusCode, HeaderMap, Json<PrepaidWalletSession>), ApiError> {
     let user = authenticated(&state, &headers)?;
-    state
-        .store
-        .verify_wallet_challenge(&user.id, &request.challenge_id, &request.signature)?;
+    state.store.consume_wallet_auth_challenge(
+        &request.wallet,
+        &request.challenge_id,
+        &request.signature,
+    )?;
     let session = state.store.issue_prepaid_wallet_session(
         &user.id,
         &request.wallet,
@@ -2162,7 +2164,7 @@ mod tests {
         let response = app
             .oneshot(
                 Request::get("/api/v1/auth/me")
-                    .header(header::COOKIE, cookie)
+                    .header(header::COOKIE, &cookie)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2283,7 +2285,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::get("/api/v1/auth/me")
-                    .header(header::COOKIE, cookie)
+                    .header(header::COOKIE, &cookie)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2293,6 +2295,74 @@ mod tests {
         let me_body: Value =
             serde_json::from_slice(&me.into_body().collect().await.unwrap().to_bytes()).unwrap();
         assert_eq!(me_body["wallet"], wallet);
+
+        let profile = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/profile")
+                    .header(header::COOKIE, &cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "handle": "signed_wallet_owner",
+                            "ageBand": "35-44",
+                            "region": "seoul",
+                            "household": "alone",
+                            "field": "travel",
+                            "years": "7-plus",
+                            "speaksTo": ["travel"],
+                            "wallet": wallet
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(profile.status(), StatusCode::OK);
+        let profile_body: Value =
+            serde_json::from_slice(&profile.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(profile_body["wallet"], wallet);
+        assert_eq!(profile_body["walletVerified"], true);
+
+        let unrelated_key = SigningKey::from_bytes(&[92_u8; 32]);
+        let unrelated_wallet = bs58::encode(unrelated_key.verifying_key().as_bytes()).into_string();
+        let unrelated_profile = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/profile")
+                    .header(header::COOKIE, &cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "handle": "signed_wallet_owner",
+                            "ageBand": "35-44",
+                            "region": "seoul",
+                            "household": "alone",
+                            "field": "travel",
+                            "years": "7-plus",
+                            "speaksTo": ["travel"],
+                            "wallet": unrelated_wallet
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unrelated_profile.status(), StatusCode::OK);
+        let unrelated_body: Value = serde_json::from_slice(
+            &unrelated_profile
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .unwrap();
+        assert_eq!(unrelated_body["wallet"], unrelated_wallet);
+        assert_eq!(unrelated_body["walletVerified"], false);
 
         let replay = app
             .clone()
@@ -2758,9 +2828,10 @@ mod tests {
 
         let cookie = register(&app, "no-demo-open-call@example.com").await;
         let open_call = app
+            .clone()
             .oneshot(
                 Request::post("/api/v1/open-calls")
-                    .header(header::COOKIE, cookie)
+                    .header(header::COOKIE, &cookie)
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
                         json!({
@@ -2778,6 +2849,28 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(open_call.status(), StatusCode::FORBIDDEN);
+
+        let free_call = app
+            .oneshot(
+                Request::post("/api/v1/open-calls")
+                    .header(header::COOKIE, cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "question": "Which free community resources help new field researchers?",
+                            "unitPrice": 0,
+                            "target": 3,
+                            "chatId": "free-call",
+                            "shelf": "Field researchers",
+                            "category": "travel"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(free_call.status(), StatusCode::CREATED);
     }
 
     #[tokio::test]

@@ -57,6 +57,13 @@ export default function Login() {
   // instead of swallowing the token and bouncing to the dashboard.
   const staleReset =
     params.get('mode') === 'reset' || params.get('mode') === 'forgot'
+  const requestedReturn = params.get('returnTo')
+  const returnTo =
+    requestedReturn?.startsWith('/') &&
+    !requestedReturn.startsWith('//') &&
+    !requestedReturn.includes('\\')
+      ? requestedReturn
+      : null
   const { authenticateWallet, account, profile, authReady } = useUi()
   const { available, connecting, pubkey, error: walletError, connect } = useWallet()
 
@@ -67,8 +74,10 @@ export default function Login() {
   useEffect(() => {
     if (staleReset) return
     if (authReady && account)
-      navigate(profile ? '/dashboard' : '/onboarding', { replace: true })
-  }, [account, authReady, navigate, profile, staleReset])
+      navigate(returnTo ?? (profile ? '/dashboard' : '/onboarding'), {
+        replace: true,
+      })
+  }, [account, authReady, navigate, profile, returnTo, staleReset])
 
   const signIn = async () => {
     if (!pubkey || signingIn) return

@@ -3901,13 +3901,30 @@ impl Store {
                     "this anonymous handle is already in use".to_owned(),
                 ));
             }
+            // Wallet sign-in already proved control of this key. Choosing the
+            // same key for contributor payouts needs no second challenge. A
+            // different payout key still requires the dedicated challenge or
+            // SIWX flow before it can receive a funded-call claim.
+            let identity_owned = if let Some(wallet) = wallet {
+                transaction
+                    .query_row(
+                        "SELECT 1 FROM wallet_identities WHERE wallet = ?1 AND user_id = ?2",
+                        params![wallet, user_id],
+                        |_| Ok(()),
+                    )
+                    .optional()?
+                    .is_some()
+            } else {
+                false
+            };
+            let wallet_verified_at = identity_owned.then_some(as_i64(now)?);
             transaction.execute(
                 "INSERT INTO profiles
                  (user_id, handle, age_band, region, household, field, years,
                   speaks_to_json, wallet, wallet_verified_at, agreed_at, consent_version,
                   auto_match, agents, browser_alerts, email_alerts,
                   created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11, ?12, ?13, ?14, ?15, ?10, ?10)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?11, ?11)
                  ON CONFLICT(user_id) DO UPDATE SET
                    handle = excluded.handle,
                    age_band = excluded.age_band,
@@ -3918,8 +3935,9 @@ impl Store {
                    speaks_to_json = excluded.speaks_to_json,
                    wallet = excluded.wallet,
                    wallet_verified_at = CASE
-                     WHEN profiles.wallet = excluded.wallet THEN profiles.wallet_verified_at
-                     ELSE NULL
+                     WHEN profiles.wallet = excluded.wallet
+                       THEN COALESCE(profiles.wallet_verified_at, excluded.wallet_verified_at)
+                     ELSE excluded.wallet_verified_at
                    END,
                    consent_version = excluded.consent_version,
                    auto_match = excluded.auto_match,
@@ -3938,6 +3956,7 @@ impl Store {
                     serde_json::to_string(&request.speaks_to)
                         .expect("profile categories are serialisable"),
                     wallet,
+                    wallet_verified_at,
                     as_i64(now)?,
                     CURRENT_CONSENT_VERSION,
                     i64::from(request.auto_match),
@@ -5610,15 +5629,16 @@ impl Store {
         if !exists {
             return Err(StoreError::NotFound("user"));
         }
-        let verified_wallet = transaction
-            .query_row(
-                "SELECT wallet FROM profiles
-                 WHERE user_id = ?1 AND wallet_verified_at IS NOT NULL",
-                [user_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?;
-        if let Some(wallet) = verified_wallet.as_deref() {
+        let prepaid_wallet = transaction.query_row(
+            "SELECT COALESCE(
+               (SELECT wallet FROM wallet_identities WHERE user_id = ?1),
+               (SELECT wallet FROM profiles
+                WHERE user_id = ?1 AND wallet_verified_at IS NOT NULL)
+             )",
+            [user_id],
+            |row| row.get::<_, Option<String>>(0),
+        )?;
+        if let Some(wallet) = prepaid_wallet.as_deref() {
             let active_jobs = transaction.query_row(
                 "SELECT COUNT(*) FROM payment_bundle_quotes
                  WHERE payer_wallet = ?1 AND funding_source = 'prepaid'
@@ -5660,7 +5680,7 @@ impl Store {
                 .collect::<Result<Vec<_>, _>>()?
         };
         let now = now_ms();
-        if let Some(wallet) = verified_wallet.as_deref() {
+        if let Some(wallet) = prepaid_wallet.as_deref() {
             #[allow(clippy::type_complexity)]
             let prepaid = {
                 let mut statement = transaction.prepare(
@@ -6403,8 +6423,11 @@ impl Store {
         let transaction = connection.transaction()?;
         let verified = transaction
             .query_row(
-                "SELECT 1 FROM profiles
-                 WHERE user_id = ?1 AND wallet = ?2 AND wallet_verified_at IS NOT NULL",
+                "SELECT 1 FROM wallet_identities WHERE user_id = ?1 AND wallet = ?2
+                 UNION ALL
+                 SELECT 1 FROM profiles
+                 WHERE user_id = ?1 AND wallet = ?2 AND wallet_verified_at IS NOT NULL
+                 LIMIT 1",
                 params![user_id, wallet],
                 |_| Ok(()),
             )
@@ -6412,7 +6435,7 @@ impl Store {
             .is_some();
         if !verified {
             return Err(StoreError::Unauthorized(
-                "verify this Phantom wallet before enabling prepaid spending".to_owned(),
+                "sign in with this Phantom wallet before enabling prepaid spending".to_owned(),
             ));
         }
         transaction.execute(
@@ -6473,15 +6496,17 @@ impl Store {
         let connection = self.connection()?;
         let wallet = connection
             .query_row(
-                "SELECT wallet FROM profiles
-                 WHERE user_id = ?1 AND wallet_verified_at IS NOT NULL",
+                "SELECT COALESCE(
+                   (SELECT wallet FROM wallet_identities WHERE user_id = ?1),
+                   (SELECT wallet FROM profiles
+                    WHERE user_id = ?1 AND wallet_verified_at IS NOT NULL)
+                 )",
                 [user_id.trim()],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
+                |row| row.get::<_, Option<String>>(0),
+            )?
             .ok_or_else(|| {
                 StoreError::Conflict(
-                    "verify a Phantom wallet before reading prepaid balance".to_owned(),
+                    "sign in with a Phantom wallet before reading prepaid balance".to_owned(),
                 )
             })?;
         let available_atomic = prepaid_available(
@@ -6515,14 +6540,16 @@ impl Store {
         let transaction = connection.transaction()?;
         let wallet = transaction
             .query_row(
-                "SELECT wallet FROM profiles
-                 WHERE user_id = ?1 AND wallet_verified_at IS NOT NULL",
+                "SELECT COALESCE(
+                   (SELECT wallet FROM wallet_identities WHERE user_id = ?1),
+                   (SELECT wallet FROM profiles
+                    WHERE user_id = ?1 AND wallet_verified_at IS NOT NULL)
+                 )",
                 [user_id.trim()],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
+                |row| row.get::<_, Option<String>>(0),
+            )?
             .ok_or_else(|| {
-                StoreError::Conflict("verify a Phantom wallet before withdrawing".to_owned())
+                StoreError::Conflict("sign in with a Phantom wallet before withdrawing".to_owned())
             })?;
         let available = prepaid_available(
             &transaction,
@@ -8583,7 +8610,9 @@ fn insert_notification(
     let email = transaction
         .query_row(
             "SELECT u.email FROM users u JOIN profiles p ON p.user_id = u.id
-             WHERE u.id = ?1 AND u.deleted_at IS NULL AND p.email_alerts = 1",
+             WHERE u.id = ?1 AND u.deleted_at IS NULL AND p.email_alerts = 1
+               AND LOWER(u.email) NOT LIKE '%@wallet.obolus.local'
+               AND LOWER(u.email) NOT LIKE '%@wallet.openshelf.local'",
             [user_id],
             |row| row.get::<_, String>(0),
         )
@@ -10661,6 +10690,49 @@ mod tests {
             )
             .unwrap();
         assert_eq!(earnings_after_retry, 1);
+    }
+
+    #[test]
+    fn wallet_identity_can_authorize_prepaid_without_a_contributor_profile() {
+        let store = Store::in_memory().unwrap();
+        let user_id = "identity-only-buyer";
+        ensure_user(&store, user_id);
+        assert!(store.get_profile(user_id).unwrap().is_none());
+
+        let signing_key = SigningKey::from_bytes(&[81; 32]);
+        let wallet = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
+        store.bind_wallet_identity(user_id, &wallet).unwrap();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[82; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = PaymentQuotePolicy {
+            fallback_recipient: Some(receiver.clone()),
+            bundle_recipient: Some(receiver),
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
+            krw_per_usdc: 1_350,
+            ttl_ms: 300_000,
+        };
+        let session = store
+            .issue_prepaid_wallet_session(user_id, &wallet, &"f".repeat(64), 300_000, &policy)
+            .unwrap();
+        assert_eq!(session.wallet, wallet);
+        let balance = store.prepaid_balance(user_id, &policy).unwrap();
+        assert_eq!(balance.wallet, wallet);
+        assert_eq!(balance.available_atomic, "0");
+
+        let unrelated_wallet =
+            bs58::encode(SigningKey::from_bytes(&[83; 32]).verifying_key().as_bytes())
+                .into_string();
+        assert!(matches!(
+            store.issue_prepaid_wallet_session(
+                user_id,
+                &unrelated_wallet,
+                &"e".repeat(64),
+                300_000,
+                &policy,
+            ),
+            Err(StoreError::Unauthorized(_))
+        ));
     }
 
     #[test]

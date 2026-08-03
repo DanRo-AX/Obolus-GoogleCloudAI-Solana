@@ -409,9 +409,13 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
         setAccount(session.user)
         setAuthWallet(session.wallet ?? null)
         setChats((current) =>
-          current.filter(
-            (chat) => !chat.ownerId || chat.ownerId === session.user.id,
-          ),
+          current
+            .filter(
+              (chat) => !chat.ownerId || chat.ownerId === session.user.id,
+            )
+            .map((chat) =>
+              chat.ownerId ? chat : { ...chat, ownerId: session.user.id },
+            ),
         )
         setBalance(session.balance)
         setMemory(remoteMemory)
@@ -882,7 +886,15 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       setEarnings(remoteEarnings)
       setNotifications(remoteNotifications)
       remoteNotifications.forEach((notification) => notifiedIds.current.add(notification.id))
-      setChats([])
+      setChats((current) =>
+        current
+          .filter(
+            (chat) => !chat.ownerId || chat.ownerId === session.user.id,
+          )
+          .map((chat) =>
+            chat.ownerId ? chat : { ...chat, ownerId: session.user.id },
+          ),
+      )
       if (remoteProfile) {
         setProfile(profileFromServer(remoteProfile))
         setAutoMatchState(remoteProfile.autoMatch)
