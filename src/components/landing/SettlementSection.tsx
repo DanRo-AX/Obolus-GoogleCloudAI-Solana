@@ -51,10 +51,10 @@ export function SettlementSection() {
           <div className="overflow-hidden rounded-lg border border-border bg-card">
             <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
               <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-                {t('Settlement receipt')}
+                {t('Settlement receipt')} · {t('example')}
               </span>
               <span className="font-mono text-[10px] uppercase tracking-[1px] text-[#0F766E]">
-                {t('Confirmed')}
+                {t('Illustration')}
               </span>
             </div>
 
@@ -84,15 +84,6 @@ export function SettlementSection() {
               <span className="font-mono text-[15px] font-medium tabular-nums">
                 ₩38
               </span>
-            </div>
-
-            <div className="border-t border-border px-5 py-3.5">
-              <p className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-                {t('Transaction')}
-              </p>
-              <p className="mt-1 truncate font-mono text-[11px] text-foreground">
-                5xQ7…kL2f · solana devnet · usdc
-              </p>
             </div>
           </div>
 

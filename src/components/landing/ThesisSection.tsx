@@ -54,7 +54,7 @@ export function ThesisSection() {
           <div className="flex flex-col gap-5 bg-background p-7 sm:p-9">
             <div className="flex items-baseline justify-between gap-3">
               <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-foreground">
-                {t('Four people who live there')}
+                {t('Four people who live there')} · {t('example')}
               </span>
               <span className="font-mono text-[10px] uppercase tracking-[1px] tabular-nums text-foreground">
                 ₩38
