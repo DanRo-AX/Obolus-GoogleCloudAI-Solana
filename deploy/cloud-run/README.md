@@ -19,13 +19,21 @@ for deployment. Cloud Run must receive `OPENSHELF_DATABASE` from
 `sweetspot-ax:asia-northeast3:obolus-pg-kr2`. Do not restore `/data/*.db` in a
 Cloud Run revision.
 
-The payment gateway must set:
+Resolve service URLs from Cloud Run before configuring a dependent service:
+
+```bash
+OBOLUS_API_URL=$(gcloud run services describe obolus-api \
+  --project=sweetspot-ax --region=asia-northeast3 \
+  --format='value(status.url)')
+```
+
+The payment gateway must then set:
 
 ```text
 GOOGLE_CLOUD_PROJECT=sweetspot-ax
 OPENSHELF_SETTLEMENT_QUEUE_LOCATION=asia-northeast3
 OPENSHELF_SETTLEMENT_QUEUE=obolus-settlements
-OPENSHELF_SETTLEMENT_TARGET_URL=https://obolus-api-amjeodet3q-du.a.run.app
+OPENSHELF_SETTLEMENT_TARGET_URL=${OBOLUS_API_URL}
 ```
 
 `production` and `staging` gateway processes fail at startup when this queue
@@ -95,8 +103,12 @@ cargo test --manifest-path backend/Cargo.toml --lib
 npm --prefix payment-gateway run typecheck
 npm --prefix payment-gateway test
 
-curl -fsS https://obolus-api-amjeodet3q-du.a.run.app/readyz
-curl -fsS https://obolus-gateway-amjeodet3q-du.a.run.app/readyz
+OBOLUS_GATEWAY_URL=$(gcloud run services describe obolus-gateway \
+  --project=sweetspot-ax --region=asia-northeast3 \
+  --format='value(status.url)')
+
+curl -fsS "${OBOLUS_API_URL}/readyz"
+curl -fsS "${OBOLUS_GATEWAY_URL}/readyz"
 ```
 
 Expected gateway readiness includes `"durableSettlementQueue":true`. This
