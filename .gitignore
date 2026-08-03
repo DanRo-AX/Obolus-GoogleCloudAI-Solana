@@ -36,3 +36,6 @@ openshelf.db-wal
 *.sw?
 .gstack/
 .secrets/
+
+# Recorded demo output
+scripts/.e2e-video/
