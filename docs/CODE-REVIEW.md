@@ -63,9 +63,11 @@ port only useful PR #9-only contracts and documentation.
   bytes before broadcast, resume/replay, confirm, and expose the signature.
 - Query recovery capabilities expire after 24 hours; password resets are
   one-hour, single-use, enumeration-safe, and revoke every session.
-- SQLite files are forced to mode 0600, API responses carry restrictive security
-  headers, and administrators can audit AI liquidity without granting AI output
-  any priced-document or authority path.
+- Local SQLite files are forced to mode 0600; deployed state uses a
+  Seoul-region Cloud SQL PostgreSQL instance with backups and point-in-time
+  recovery. API responses carry restrictive security headers, and
+  administrators can audit AI liquidity without granting AI output any
+  priced-document or authority path.
 
 ## Hard-coded policy and deployment values
 
@@ -85,25 +87,22 @@ mistaken for production configuration.
 
 ## Blocking gaps before a real public-value launch
 
-1. **Durability and horizontal scale.** SQLite is behind one in-process mutex;
-   the settlement outbox is append-only NDJSON on local disk. Use a durable
-   database and transactional queue, define compaction, fsync, replay,
-   multi-instance ownership, and backup/restore drills.
-2. **Independent settlement assurance.** Rust trusts the internal gateway and
+1. **Independent settlement assurance.** Rust trusts the internal gateway and
    facilitator receipt. Production needs finalized-chain verification and a
    reconciliation worker for the crash window between chain settlement and
-   durable outbox append.
-3. **Escrow signer custody.** Aggregate purchases and open calls now have a
+   Cloud Tasks enqueue. Cloud SQL and the queue make accepted writes durable,
+   but do not independently discover a receipt lost before enqueue.
+2. **Escrow signer custody.** Aggregate purchases and open calls now have a
    working Devnet payout executor. A public service still needs KMS/HSM-backed
    signing, stronger finality reconciliation, fee policy, and an operator
    runbook; the checked-in worker intentionally refuses non-Devnet claims.
-4. **Mainnet operations.** Managed RPC/facilitator, mainnet mint/network,
+3. **Mainnet operations.** Managed RPC/facilitator, mainnet mint/network,
    allowlists, KMS/secrets rotation, monitoring, alerts, and incident runbooks
    remain absent. The current verified path is Devnet.
-5. **Sensitive-data controls.** Persona passages and interview context are
-   plaintext SQLite rows. Add encryption at rest/field level, retention jobs,
+4. **Sensitive-data controls.** Persona passages and interview context are
+   application-readable PostgreSQL rows. Add field-level encryption, retention jobs,
    staff authorization/audit logs, redaction workflows, and deletion evidence.
-6. **Legal truthfulness.** The checked-in privacy policy promises a 30-day
+5. **Legal truthfulness.** The checked-in privacy policy promises a 30-day
    deletion grace period, 90-day backup erasure, every-access logging, named
    processor controls, TLS, and an in-service contact channel that the product
    does not yet implement. It also needs to disclose that demographic bands are

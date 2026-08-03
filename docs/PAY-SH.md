@@ -11,7 +11,7 @@
    is not sufficient by itself.
 3. If the balance is low, Phantom signs an x402 USDC refill to the bounded GCP
    KMS service wallet. Rust credits the confirmed atomic amount and reserves
-   the exact question budget in one SQLite transaction. Later questions skip
+   the exact question budget in one database transaction. Later questions skip
    Phantom while the balance is sufficient.
 4. The Cloud Run orchestrator loads only funded jobs and uses
    `@solana/pay-kit/client` with a GCP KMS signer to satisfy each official
