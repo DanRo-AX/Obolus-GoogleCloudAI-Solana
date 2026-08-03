@@ -7,6 +7,7 @@ import { STRIKE_LIMIT } from '@/data/onboarding'
 import { cn } from '@/lib/utils'
 import { useLang, useT } from '@/i18n'
 import { useUi } from '@/state/ui'
+import { shortKey, useWallet } from '@/state/wallet'
 
 const MENU_BUTTON =
   'peer/menu-button flex w-full items-center gap-2 overflow-hidden text-left font-medium outline-hidden transition-[width,height,padding] focus-visible:ring-2 focus-visible:ring-sidebar-ring active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:shrink-0'
@@ -28,8 +29,8 @@ function WorkspaceMark({ size = 'size-8' }: { size?: string }) {
  * Signed-in state. The strike counter sits here on purpose — a three-strike
  * rule you only ever see once, on the way in, is not a rule anybody remembers.
  */
-function ProfileChip() {
-  const { profile, signOut, suspended } = useUi()
+function ProfileChip({ onSignOut }: { onSignOut: () => Promise<void> }) {
+  const { profile, suspended } = useUi()
   const t = useT()
   if (!profile) return null
   const cat = CATEGORY_BY_ID[profile.field]
@@ -52,7 +53,7 @@ function ProfileChip() {
         </span>
         <button
           type="button"
-          onClick={signOut}
+          onClick={() => void onSignOut()}
           aria-label={t('Disconnect Phantom')}
           className="ml-auto cursor-pointer text-muted-foreground/60 transition-colors hover:text-foreground"
         >
@@ -161,7 +162,12 @@ function LangSwitch() {
 
 export function AppSidebar() {
   const { collapsed, setCollapsed, profile, account, signOut, balance } = useUi()
+  const wallet = useWallet()
   const t = useT()
+  const disconnect = async () => {
+    await signOut()
+    await wallet.disconnect()
+  }
 
   return (
     <div
@@ -300,11 +306,13 @@ export function AppSidebar() {
                 <LiveStrip />
                 <LangSwitch />
                 {profile ? (
-                  <ProfileChip />
+                  <ProfileChip onSignOut={disconnect} />
                 ) : account ? (
                   <div className="space-y-2 rounded-[2px] border border-border bg-card p-2.5">
                     <p className="truncate font-mono text-[10px] text-muted-foreground">
-                      {account.email}
+                      {wallet.pubkey
+                        ? `${t('Wallet')} · ${shortKey(wallet.pubkey)}`
+                        : t('Wallet signed in')}
                     </p>
                     <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
                       ₩{(balance?.availableKrw ?? 0).toLocaleString()} {t('sandbox for opens')}
@@ -317,7 +325,7 @@ export function AppSidebar() {
                         variant="monoMuted"
                         size="monoSm"
                         aria-label={t('Disconnect Phantom')}
-                        onClick={() => void signOut()}
+                        onClick={() => void disconnect()}
                       >
                         <LogOut className="size-3.5" />
                       </Button>

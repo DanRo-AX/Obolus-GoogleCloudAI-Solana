@@ -41,8 +41,8 @@ use crate::{
         SubmitDocumentFeedbackRequest, SubmitShelfStarterAnswerRequest,
         SubmitShelfStarterAnswerResponse, SynthesizeAnswerRequest, SynthesizeAnswerResponse,
         SynthesizePaidAnswerRequest, UpdateMemoryRequest, UpdatePreferencesRequest,
-        UpsertProfileRequest, UserAccount, UserProfile, VerifyWalletRequest, WalletChallenge,
-        WalletChallengeRequest, WalletSiwxLink,
+        UpsertProfileRequest, UserAccount, UserProfile, VerifyWalletRequest,
+        WalletAuthVerifyRequest, WalletChallenge, WalletChallengeRequest, WalletSiwxLink,
     },
     orchestrator,
     search::Resolver,
@@ -263,6 +263,11 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/healthz", get(health))
         .route("/readyz", get(ready))
+        .route(
+            "/api/v1/auth/wallet/challenge",
+            post(create_wallet_auth_challenge),
+        )
+        .route("/api/v1/auth/wallet/verify", post(verify_wallet_auth))
         .route("/api/v1/auth/register", post(register))
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/auth/logout", post(logout))
@@ -486,6 +491,9 @@ async fn register(
     State(state): State<Arc<AppState>>,
     Json(request): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    if reserved_wallet_email(&request.email) {
+        return Err(ApiError::validation("use wallet sign in for this account"));
+    }
     if !request.age_confirmed_14 {
         return Err(ApiError::validation(
             "you must confirm that you are at least 14 years old",
@@ -501,6 +509,11 @@ async fn login(
     State(state): State<Arc<AppState>>,
     Json(request): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    if reserved_wallet_email(&request.email) {
+        return Err(ApiError::unauthorized(
+            "use wallet sign in for this account",
+        ));
+    }
     state.store.check_login_allowed(&request.email)?;
     let (user, password_hash) = match state.store.password_record(&request.email) {
         Ok(record) => record,
@@ -520,6 +533,61 @@ async fn login(
     }
     state.store.clear_login_failures(&request.email)?;
     session_response(&state, user, StatusCode::OK)
+}
+
+async fn create_wallet_auth_challenge(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<WalletChallengeRequest>,
+) -> Result<(StatusCode, HeaderMap, Json<WalletChallenge>), ApiError> {
+    let challenge = state.store.create_wallet_auth_challenge(
+        &request.wallet,
+        &random_token(),
+        5 * 60 * 1_000,
+    )?;
+    Ok((
+        StatusCode::CREATED,
+        private_no_store_headers(),
+        Json(challenge),
+    ))
+}
+
+async fn verify_wallet_auth(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<WalletAuthVerifyRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let wallet = request.wallet.trim();
+    state
+        .store
+        .consume_wallet_auth_challenge(wallet, &request.challenge_id, &request.signature)?;
+
+    let mut created = false;
+    let user = if let Some(user) = state.store.wallet_identity(wallet)? {
+        user
+    } else if let Some(user) = state.store.verified_profile_owner(wallet)? {
+        state.store.bind_wallet_identity(&user.id, wallet)?;
+        user
+    } else {
+        if !request.age_confirmed_14 {
+            return Err(ApiError::validation(
+                "confirm that you are at least 14 years old to create this wallet account",
+            ));
+        }
+        let email = format!("{}@wallet.obolus.local", token_hash(wallet));
+        let password_hash = hash_password(&random_token())?;
+        let user = state.store.register_user(&email, &password_hash)?;
+        state.store.bind_wallet_identity(&user.id, wallet)?;
+        created = true;
+        user
+    };
+    session_response(
+        &state,
+        user,
+        if created {
+            StatusCode::CREATED
+        } else {
+            StatusCode::OK
+        },
+    )
 }
 
 async fn forgot_password(
@@ -1731,6 +1799,13 @@ fn validate_password(password: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+fn reserved_wallet_email(email: &str) -> bool {
+    email
+        .trim()
+        .to_ascii_lowercase()
+        .ends_with("@wallet.openshelf.local")
+}
+
 fn hash_password(password: &str) -> Result<String, ApiError> {
     let salt = SaltString::generate(&mut OsRng);
     Ok(Argon2::default()
@@ -1768,6 +1843,7 @@ fn session_response(
         header::SET_COOKIE,
         HeaderValue::from_str(&cookie).map_err(ApiError::internal)?,
     );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     Ok((status, headers, Json(AuthResponse { user, balance })))
 }
 
@@ -2100,6 +2176,180 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn wallet_sign_in_proves_ownership_and_reuses_one_account() {
+        let app = demo_app();
+        let signing_key = SigningKey::from_bytes(&[91_u8; 32]);
+        let wallet = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
+
+        let challenge_response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/auth/wallet/challenge")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({ "wallet": wallet }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(challenge_response.status(), StatusCode::CREATED);
+        assert_eq!(
+            challenge_response
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .unwrap(),
+            "private, no-store"
+        );
+        let challenge: Value = serde_json::from_slice(
+            &challenge_response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .unwrap();
+        let signature = bs58::encode(
+            signing_key
+                .sign(challenge["message"].as_str().unwrap().as_bytes())
+                .to_bytes(),
+        )
+        .into_string();
+        let verify_body = json!({
+            "wallet": wallet,
+            "challengeId": challenge["id"],
+            "signature": signature,
+            "ageConfirmed14": true
+        });
+        let verified = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/auth/wallet/verify")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(verify_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(verified.status(), StatusCode::CREATED);
+        assert_eq!(
+            verified.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
+        let cookie = verified
+            .headers()
+            .get(header::SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_owned();
+        let created: Value =
+            serde_json::from_slice(&verified.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        let user_id = created["user"]["id"].as_str().unwrap().to_owned();
+        assert!(
+            created["user"]["email"]
+                .as_str()
+                .unwrap()
+                .ends_with("@wallet.obolus.local")
+        );
+
+        let me = app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/auth/me")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(me.status(), StatusCode::OK);
+
+        let replay = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/auth/wallet/verify")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(verify_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay.status(), StatusCode::CONFLICT);
+
+        let second_challenge = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/auth/wallet/challenge")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({ "wallet": wallet }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let second: Value = serde_json::from_slice(
+            &second_challenge
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .unwrap();
+        let second_signature = bs58::encode(
+            signing_key
+                .sign(second["message"].as_str().unwrap().as_bytes())
+                .to_bytes(),
+        )
+        .into_string();
+        let signed_in = app
+            .oneshot(
+                Request::post("/api/v1/auth/wallet/verify")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "wallet": wallet,
+                            "challengeId": second["id"],
+                            "signature": second_signature,
+                            "ageConfirmed14": false
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(signed_in.status(), StatusCode::OK);
+        let signed_in_body: Value =
+            serde_json::from_slice(&signed_in.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(signed_in_body["user"]["id"], user_id);
+    }
+
+    #[tokio::test]
+    async fn public_key_derived_legacy_passwords_cannot_sign_in() {
+        let response = demo_app()
+            .oneshot(
+                Request::post("/api/v1/auth/login")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "email": "publickey@wallet.openshelf.local",
+                            "password": "publicly-derived-value"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

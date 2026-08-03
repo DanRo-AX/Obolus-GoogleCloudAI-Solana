@@ -1038,6 +1038,21 @@ impl Store {
                 created_at INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS wallet_auth_challenges (
+                id TEXT PRIMARY KEY,
+                wallet TEXT NOT NULL,
+                message TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                consumed_at INTEGER,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS wallet_identities (
+                wallet TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+                created_at INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS balances (
                 user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
                 available_krw INTEGER NOT NULL CHECK (available_krw >= 0),
@@ -1231,6 +1246,8 @@ impl Store {
                 ON bundle_chain_settlements(transaction_signature);
             CREATE INDEX IF NOT EXISTS idx_wallet_challenges_user
                 ON wallet_challenges(user_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_wallet_auth_challenges_wallet
+                ON wallet_auth_challenges(wallet, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_wallet_siwx_challenges_user
                 ON wallet_siwx_challenges(user_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_document_feedback_status
@@ -3976,6 +3993,193 @@ impl Store {
         }
         self.get_profile(user_id)?
             .ok_or(StoreError::NotFound("profile"))
+    }
+
+    pub fn create_wallet_auth_challenge(
+        &self,
+        wallet: &str,
+        nonce: &str,
+        ttl_ms: u64,
+    ) -> Result<WalletChallenge, StoreError> {
+        let wallet = wallet.trim();
+        let nonce = nonce.trim();
+        if !valid_solana_address(wallet) {
+            return Err(StoreError::Validation(
+                "wallet must be a base58 Solana public key".to_owned(),
+            ));
+        }
+        if nonce.len() != 64 || !nonce.chars().all(|character| character.is_ascii_hexdigit()) {
+            return Err(StoreError::Validation(
+                "wallet challenge nonce must be 32 bytes of hex".to_owned(),
+            ));
+        }
+        if !(60_000..=10 * 60_000).contains(&ttl_ms) {
+            return Err(StoreError::Validation(
+                "wallet challenge ttl must be between one and ten minutes".to_owned(),
+            ));
+        }
+
+        let now = now_ms();
+        let expires_at = now.saturating_add(ttl_ms);
+        let id = new_id("wallet_auth_challenge");
+        let message = format!(
+            "OBOLUS wallet sign in\nWallet: {wallet}\nNonce: {nonce}\nExpires: {expires_at}"
+        );
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM wallet_auth_challenges WHERE expires_at < ?1",
+            [as_i64(now.saturating_sub(24 * 60 * 60 * 1_000))?],
+        )?;
+        transaction.execute(
+            "INSERT INTO wallet_auth_challenges
+             (id, wallet, message, expires_at, consumed_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, NULL, ?5)",
+            params![id, wallet, message, as_i64(expires_at)?, as_i64(now)?],
+        )?;
+        transaction.commit()?;
+        Ok(WalletChallenge {
+            id,
+            wallet: wallet.to_owned(),
+            message,
+            expires_at,
+        })
+    }
+
+    pub fn consume_wallet_auth_challenge(
+        &self,
+        wallet: &str,
+        challenge_id: &str,
+        signature: &str,
+    ) -> Result<(), StoreError> {
+        let wallet = wallet.trim();
+        let challenge_id = challenge_id.trim();
+        if !valid_solana_address(wallet) || challenge_id.is_empty() {
+            return Err(StoreError::Validation(
+                "wallet and challengeId are required".to_owned(),
+            ));
+        }
+
+        let now = now_ms();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let (message, expires_at, consumed_at) = transaction
+            .query_row(
+                "SELECT message, expires_at, consumed_at
+                 FROM wallet_auth_challenges WHERE id = ?1 AND wallet = ?2",
+                params![challenge_id, wallet],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        as_u64(row.get(1)?)?,
+                        row.get::<_, Option<i64>>(2)?.map(as_u64).transpose()?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("wallet sign-in challenge"))?;
+        if consumed_at.is_some() {
+            return Err(StoreError::Conflict(
+                "this wallet sign-in challenge has already been used".to_owned(),
+            ));
+        }
+        if expires_at < now {
+            return Err(StoreError::Conflict(
+                "this wallet sign-in challenge has expired".to_owned(),
+            ));
+        }
+        verify_solana_signature(wallet, message.as_bytes(), signature)?;
+        let changed = transaction.execute(
+            "UPDATE wallet_auth_challenges SET consumed_at = ?1
+             WHERE id = ?2 AND wallet = ?3 AND consumed_at IS NULL",
+            params![as_i64(now)?, challenge_id, wallet],
+        )?;
+        if changed != 1 {
+            return Err(StoreError::Conflict(
+                "this wallet sign-in challenge has already been used".to_owned(),
+            ));
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn wallet_identity(&self, wallet: &str) -> Result<Option<UserAccount>, StoreError> {
+        Ok(self
+            .connection()?
+            .query_row(
+                "SELECT u.id, u.email, u.role, u.created_at
+                 FROM wallet_identities w JOIN users u ON u.id = w.user_id
+                 WHERE w.wallet = ?1 AND u.deleted_at IS NULL",
+                [wallet.trim()],
+                |row| {
+                    Ok(UserAccount {
+                        id: row.get(0)?,
+                        email: row.get(1)?,
+                        role: row.get(2)?,
+                        created_at: as_u64(row.get(3)?)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    pub fn verified_profile_owner(&self, wallet: &str) -> Result<Option<UserAccount>, StoreError> {
+        Ok(self
+            .connection()?
+            .query_row(
+                "SELECT u.id, u.email, u.role, u.created_at
+                 FROM profiles p JOIN users u ON u.id = p.user_id
+                 WHERE p.wallet = ?1 AND p.wallet_verified_at IS NOT NULL
+                   AND u.deleted_at IS NULL",
+                [wallet.trim()],
+                |row| {
+                    Ok(UserAccount {
+                        id: row.get(0)?,
+                        email: row.get(1)?,
+                        role: row.get(2)?,
+                        created_at: as_u64(row.get(3)?)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    pub fn bind_wallet_identity(&self, user_id: &str, wallet: &str) -> Result<(), StoreError> {
+        let user_id = user_id.trim();
+        let wallet = wallet.trim();
+        if user_id.is_empty() || !valid_solana_address(wallet) {
+            return Err(StoreError::Validation(
+                "user id and a valid wallet are required".to_owned(),
+            ));
+        }
+        let connection = self.connection()?;
+        let inserted = connection.execute(
+            "INSERT OR IGNORE INTO wallet_identities (wallet, user_id, created_at)
+             VALUES (?1, ?2, ?3)",
+            params![wallet, user_id, as_i64(now_ms())?],
+        )?;
+        if inserted == 1 {
+            return Ok(());
+        }
+        let existing = connection
+            .query_row(
+                "SELECT wallet, user_id FROM wallet_identities WHERE wallet = ?1 OR user_id = ?2",
+                params![wallet, user_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        if existing
+            .as_ref()
+            .is_some_and(|(existing_wallet, existing_user)| {
+                existing_wallet == wallet && existing_user == user_id
+            })
+        {
+            Ok(())
+        } else {
+            Err(StoreError::Conflict(
+                "this wallet or account is already bound to another identity".to_owned(),
+            ))
+        }
     }
 
     pub fn create_wallet_challenge(
@@ -9133,6 +9337,30 @@ fn valid_solana_address(value: &str) -> bool {
         && bs58::decode(value)
             .into_vec()
             .is_ok_and(|decoded| decoded.len() == 32)
+}
+
+fn verify_solana_signature(
+    wallet: &str,
+    message: &[u8],
+    signature: &str,
+) -> Result<(), StoreError> {
+    let public_key = bs58::decode(wallet)
+        .into_vec()
+        .map_err(|_| StoreError::Validation("wallet is not valid base58".to_owned()))?;
+    let public_key: [u8; 32] = public_key
+        .try_into()
+        .map_err(|_| StoreError::Validation("wallet must decode to 32 bytes".to_owned()))?;
+    let verifying_key = VerifyingKey::from_bytes(&public_key).map_err(|_| {
+        StoreError::Validation("wallet is not a valid Ed25519 public key".to_owned())
+    })?;
+    let signature = bs58::decode(signature.trim())
+        .into_vec()
+        .map_err(|_| StoreError::Unauthorized("wallet signature is invalid".to_owned()))?;
+    let signature = Signature::from_slice(&signature)
+        .map_err(|_| StoreError::Unauthorized("wallet signature is invalid".to_owned()))?;
+    verifying_key
+        .verify_strict(message, &signature)
+        .map_err(|_| StoreError::Unauthorized("wallet signature is invalid".to_owned()))
 }
 
 #[allow(clippy::too_many_arguments)]

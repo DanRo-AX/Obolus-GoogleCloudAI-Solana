@@ -41,7 +41,7 @@ impl<T> OptionalExtension<T> for Result<T> {
 
 pub enum Connection {
     Sqlite(rusqlite::Connection),
-    Postgres(RefCell<BlockingClient>),
+    Postgres(Box<RefCell<BlockingClient>>),
 }
 
 pub struct BlockingClient {
@@ -81,7 +81,9 @@ impl Connection {
 
     pub fn connect_postgres(connection_string: &str) -> Result<Self> {
         let client = blocking_postgres(|| Client::connect(connection_string, NoTls))?;
-        Ok(Self::Postgres(RefCell::new(BlockingClient::new(client))))
+        Ok(Self::Postgres(Box::new(RefCell::new(BlockingClient::new(
+            client,
+        )))))
     }
 
     pub fn is_sqlite(&self) -> bool {

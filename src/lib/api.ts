@@ -211,6 +211,29 @@ export function login(email: string, password: string): Promise<AuthSession> {
   })
 }
 
+export function createWalletAuthChallenge(
+  wallet: string,
+): Promise<WalletChallenge> {
+  return apiFetch('/api/v1/auth/wallet/challenge', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet }),
+  })
+}
+
+export function verifyWalletAuth(
+  wallet: string,
+  challengeId: string,
+  signature: string,
+  ageConfirmed14: boolean,
+): Promise<AuthSession> {
+  return apiFetch('/api/v1/auth/wallet/verify', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet, challengeId, signature, ageConfirmed14 }),
+  })
+}
+
 export function getSession(): Promise<AuthSession> {
   return apiFetch('/api/v1/auth/me')
 }

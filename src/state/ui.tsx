@@ -20,16 +20,15 @@ import {
   getEarnings,
   getProfile,
   getSession,
-  login as loginAccount,
   listMemory,
   listNotifications,
   listOpenCalls,
   logout,
   markNotificationsRead as markNotificationsReadApi,
-  register as registerAccount,
   submitAnswer,
   updatePreferences,
   upsertProfile,
+  verifyWalletAuth,
   verifyWalletChallenge,
   type EarningsSummary,
   type AiBaseline,
@@ -228,11 +227,11 @@ type UiValue = {
     wallet: string,
     signMessage: (message: string) => Promise<string>,
   ) => Promise<void>
-  authenticate: (
-    email: string,
-    password: string,
-    signup: boolean,
-    ageConfirmed14?: boolean,
+  authenticateWallet: (
+    wallet: string,
+    challengeId: string,
+    signature: string,
+    ageConfirmed14: boolean,
   ) => Promise<void>
   signOut: () => Promise<void>
   deleteCurrentAccount: () => Promise<void>
@@ -849,16 +848,19 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     [agents, autoMatch, profile],
   )
 
-  const authenticate = useCallback(
+  const authenticateWallet = useCallback(
     async (
-      email: string,
-      password: string,
-      signup: boolean,
-      ageConfirmed14 = false,
+      wallet: string,
+      challengeId: string,
+      signature: string,
+      ageConfirmed14: boolean,
     ) => {
-      const session = signup
-        ? await registerAccount(email, password, ageConfirmed14)
-        : await loginAccount(email, password)
+      const session = await verifyWalletAuth(
+        wallet,
+        challengeId,
+        signature,
+        ageConfirmed14,
+      )
       const [remoteOrders, remoteMemory, remoteProfile, remoteEarnings, remoteNotifications] =
         await Promise.all([
           listOpenCalls(),
@@ -973,7 +975,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       profile,
       saveProfile,
       verifyPayoutWallet,
-      authenticate,
+      authenticateWallet,
       signOut,
       deleteCurrentAccount,
       suspended,
@@ -1009,7 +1011,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       profile,
       saveProfile,
       verifyPayoutWallet,
-      authenticate,
+      authenticateWallet,
       signOut,
       deleteCurrentAccount,
       suspended,

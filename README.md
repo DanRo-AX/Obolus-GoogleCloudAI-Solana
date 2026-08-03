@@ -76,7 +76,7 @@ Prices read in won because that is what the people on the shelves think in; USDC
 
 ### Your wallet is the account
 
-No email, no password, no name. Connecting reads your public address and nothing else; an asker only ever sees a handle.
+No email, no password, no name. Connecting reads the public address; entering signs one expiring message that cannot move funds or approve a transaction. An asker only ever sees a handle.
 
 Devnet SOL and USDC faucet links are on the sign-in page, before you connect.
 

@@ -568,6 +568,17 @@ pub struct WalletChallengeRequest {
     pub wallet: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WalletAuthVerifyRequest {
+    pub wallet: String,
+    pub challenge_id: String,
+    /// Base58-encoded Ed25519 signature returned by a Solana wallet's signMessage.
+    pub signature: String,
+    #[serde(default)]
+    pub age_confirmed_14: bool,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WalletChallenge {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { getBase58Decoder } from '@solana/kit'
 import {
   ArrowDown,
   ArrowRight,
@@ -15,10 +16,12 @@ import {
 import { Button } from '@/components/ui/button'
 import Vortex from '@/components/originkit/Vortex'
 import { useT } from '@/i18n'
+import { createWalletAuthChallenge } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
 import {
   DEVNET_FAUCETS,
+  getPhantom,
   PHANTOM_INSTALL_URL,
   shortKey,
   useWallet,
@@ -33,10 +36,10 @@ import {
  * promise not to hold. There is no ?mode=signup any more: an address the
  * backend has not seen registers itself on first entry.
  *
- * The backend auth contract is left exactly as the team built it. Rather than
- * changing it, the credentials are derived from the connected public key: the
- * address is the identity and a hash of it stands in for the password. Nothing
- * about the server needs to know this screen changed.
+ * Entry signs a short, expiring challenge. A public address is not a secret,
+ * so deriving a password from it would let anyone impersonate the wallet.
+ * The signature proves ownership without approving a transaction or exposing
+ * the private key.
  *
  * The 14-and-over confirmation stays visible, because that is a consent and not
  * a credential — a wallet cannot give it on someone's behalf.
@@ -54,7 +57,7 @@ export default function Login() {
   // instead of swallowing the token and bouncing to the dashboard.
   const staleReset =
     params.get('mode') === 'reset' || params.get('mode') === 'forgot'
-  const { authenticate, account, profile, authReady } = useUi()
+  const { authenticateWallet, account, profile, authReady } = useUi()
   const { available, connecting, pubkey, error: walletError, connect } = useWallet()
 
   const [ageConfirmed, setAgeConfirmed] = useState(false)
@@ -72,15 +75,22 @@ export default function Login() {
     setError(null)
     setSigningIn(true)
     try {
-      const email = `${pubkey.toLowerCase()}@wallet.openshelf.local`
-      const password = await derivePassword(pubkey)
-      // An address that has been here before signs in; a new one registers.
-      try {
-        await authenticate(email, password, false)
-      } catch {
-        if (!ageConfirmed) throw new Error(t('Confirm you are 14 or over.'))
-        await authenticate(email, password, true, ageConfirmed)
+      const provider = getPhantom()
+      if (!provider?.signMessage) {
+        throw new Error(t('This wallet cannot sign a sign-in message.'))
       }
+      const challenge = await createWalletAuthChallenge(pubkey)
+      const signed = await provider.signMessage(
+        new TextEncoder().encode(challenge.message),
+        'utf8',
+      )
+      const bytes = signed instanceof Uint8Array ? signed : signed.signature
+      await authenticateWallet(
+        pubkey,
+        challenge.id,
+        getBase58Decoder().decode(bytes),
+        ageConfirmed,
+      )
     } catch (e) {
       setError(
         e instanceof Error
@@ -361,18 +371,7 @@ function ProductStep({
 }
 
 const ASSURANCES = [
-  'Connecting only reads your public address. Nothing is signed here.',
+  'Entering signs one expiring message. It cannot move funds or approve a transaction.',
   'No email, no password, no name — an asker only ever sees your handle.',
   'Payments go wallet to wallet. We never take custody of your balance.',
 ]
-
-/**
- * A stable secret for an address, so the existing email/password backend keeps
- * working untouched. It never leaves the browser and is regenerated on every
- * sign-in from the public key alone.
- */
-async function derivePassword(pubkey: string): Promise<string> {
-  const data = new TextEncoder().encode(`openshelf:wallet:v1:${pubkey}`)
-  const digest = await crypto.subtle.digest('SHA-256', data)
-  return btoa(String.fromCharCode(...new Uint8Array(digest))).slice(0, 32)
-}
