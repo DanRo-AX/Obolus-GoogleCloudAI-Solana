@@ -46,6 +46,11 @@ OBOLUS_IMAGE_TAG=$(git rev-parse --short HEAD)
 (cd payment-gateway && gcloud builds submit . \
   --project=sweetspot-ax \
   --tag=asia-northeast3-docker.pkg.dev/sweetspot-ax/obolus/gateway:${OBOLUS_IMAGE_TAG})
+
+gcloud builds submit . \
+  --project=sweetspot-ax \
+  --config=deploy/cloud-run/cloudbuild-web.yaml \
+  --substitutions=_TAG=${OBOLUS_IMAGE_TAG}
 ```
 
 Deploy new images with `--no-traffic` and a tag first. Verify `/readyz`, an
