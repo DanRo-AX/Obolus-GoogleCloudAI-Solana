@@ -123,7 +123,7 @@ export function Composer({
           <details className="group/target relative">
             <summary
               className={cn(
-                'flex h-8 cursor-pointer list-none items-center rounded-[2px] px-2 font-mono text-[10px] uppercase tracking-[1px] transition-colors',
+                'flex h-11 cursor-pointer list-none items-center rounded-[2px] px-2 font-mono text-[11px] uppercase tracking-[1px] transition-colors sm:h-8',
                 dark
                   ? 'text-white/60 hover:bg-white/10 hover:text-white'
                   : 'text-muted-foreground hover:bg-muted',
@@ -153,7 +153,7 @@ export function Composer({
           disabled={!value.trim()}
           aria-label={t('Send')}
           className={cn(
-            'inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm font-medium transition-all cursor-pointer disabled:pointer-events-none disabled:opacity-50 shrink-0 outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px] size-8 rounded-md',
+            'inline-flex size-11 shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 sm:size-8',
             dark
               ? 'bg-[#e5e5e5] text-[#171717] hover:bg-white'
               : 'bg-primary text-primary-foreground hover:bg-primary/90',
@@ -164,7 +164,7 @@ export function Composer({
       </div>
       <p
         className={cn(
-          'px-4 pb-3 font-mono text-[9px] leading-4 tracking-[0.35px]',
+          'px-4 pb-3 font-mono text-[11px] leading-5 tracking-[0.2px]',
           dark ? 'text-white/40' : 'text-muted-foreground',
         )}
       >
@@ -189,12 +189,12 @@ function TargetSelect({
 }) {
   const t = useT()
   return (
-    <label className="grid gap-1 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+    <label className="grid gap-1 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
       {t(label)}
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-9 rounded-[3px] border border-border bg-background px-2 text-xs normal-case tracking-normal text-foreground"
+        className="h-11 rounded-[3px] border border-border bg-background px-2 text-sm normal-case tracking-normal text-foreground sm:h-9 sm:text-xs"
       >
         <option value="">{t('Any')}</option>
         {options.map((option) => (

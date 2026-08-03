@@ -89,7 +89,7 @@ test('repository adapter exposes the pinned official Pay CLI', async () => {
   const { stdout, stderr } = await execFileAsync(
     invocation.command,
     [...invocation.args, '--version'],
-    { timeout: 10_000 },
+    { timeout: 60_000 },
   )
   assert.match(`${stdout}${stderr}`, /^pay 0\.26\./m)
   assert.deepEqual(

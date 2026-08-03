@@ -16,7 +16,9 @@ export function AppLayout() {
   const { collapsed, setCollapsed, setMobileSidebar } = useUi()
   const [composerOpen, setComposerOpen] = useState(false)
   const location = useLocation()
-  const chatOwnsMobileNavigation = location.pathname.startsWith('/chat/')
+  const focusedTaskOwnsMobileNavigation =
+    location.pathname.startsWith('/chat/') ||
+    location.pathname.startsWith('/onboarding')
 
   useEffect(() => {
     setComposerOpen(false)
@@ -67,13 +69,17 @@ export function AppLayout() {
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <Outlet />
+          {!focusedTaskOwnsMobileNavigation ? (
+            <div className="h-24 shrink-0 md:hidden" aria-hidden="true" />
+          ) : null}
         </div>
 
         {/* Mobile pill nav ------------------------------------------------ */}
-        {!chatOwnsMobileNavigation ? (
+        {!focusedTaskOwnsMobileNavigation ? (
           <nav
+            aria-label="Mobile actions"
             className={cn(
-              'fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center rounded-md border border-border/60 bg-card/70 shadow-xl backdrop-blur-sm transition-all duration-300 ease-out md:hidden',
+              'fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-1/2 z-40 flex -translate-x-1/2 items-center rounded-md border border-border/60 bg-card/90 shadow-xl backdrop-blur-sm transition-all duration-300 ease-out md:hidden',
               'py-2.5 pr-2.5',
             )}
           >
@@ -81,7 +87,7 @@ export function AppLayout() {
               type="button"
               aria-label="Open sidebar"
               onClick={() => setMobileSidebar(true)}
-              className="flex size-9 shrink-0 cursor-pointer items-center justify-center text-foreground"
+              className="flex size-11 shrink-0 cursor-pointer items-center justify-center text-foreground"
             >
               <Menu className="size-4" />
             </button>
@@ -89,7 +95,7 @@ export function AppLayout() {
               <Button
                 type="button"
                 onClick={() => setComposerOpen(true)}
-                className="rounded-[2px] transition-all duration-300 bg-foreground/85 text-background border border-foreground/80 hover:bg-foreground/75 h-9 px-4 text-xs"
+                className="h-11 rounded-[2px] border border-foreground/80 bg-foreground/85 px-4 text-xs text-background transition-all duration-300 hover:bg-foreground/75"
               >
                 New question
               </Button>

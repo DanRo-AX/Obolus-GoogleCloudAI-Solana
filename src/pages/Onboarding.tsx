@@ -295,10 +295,15 @@ export default function Onboarding() {
                           'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-[2px] border transition-colors',
                           on
                             ? 'border-foreground bg-foreground text-background'
-                            : 'border-foreground/25',
+                          : 'border-foreground/25',
                         )}
                       >
-                        {on ? <Check className="size-3" /> : null}
+                        <Check
+                          className={cn(
+                            'size-3 transition-opacity',
+                            on ? 'opacity-100' : 'opacity-0',
+                          )}
+                        />
                       </span>
                       <span className="min-w-0">
                         <span className="flex items-center gap-1.5 text-sm font-medium">
@@ -347,16 +352,30 @@ export default function Onboarding() {
                       variant={payoutWallet === wallet.pubkey ? 'mono' : 'monoMuted'}
                       size="monoSm"
                       onClick={() => setPayoutWallet(wallet.pubkey ?? '')}
+                      aria-pressed={payoutWallet === wallet.pubkey}
                       type="button"
                     >
-                      {payoutWallet === wallet.pubkey ? (
-                        <Check className="size-3.5" />
-                      ) : (
-                        <Wallet className="size-3.5" />
-                      )}
-                      {payoutWallet === wallet.pubkey
-                        ? t('Payouts land here')
-                        : t('Use for payouts')}
+                      <Check
+                        className={cn(
+                          'size-3.5',
+                          payoutWallet === wallet.pubkey
+                            ? 'block'
+                            : 'hidden',
+                        )}
+                      />
+                      <Wallet
+                        className={cn(
+                          'size-3.5',
+                          payoutWallet === wallet.pubkey
+                            ? 'hidden'
+                            : 'block',
+                        )}
+                      />
+                      <span>
+                        {payoutWallet === wallet.pubkey
+                          ? t('Payouts land here')
+                          : t('Use for payouts')}
+                      </span>
                     </Button>
                     <Button
                       variant="monoGhost"
@@ -505,7 +524,12 @@ export default function Onboarding() {
                       : 'border-foreground/25',
                   )}
                 >
-                  {agreed ? <Check className="size-3" /> : null}
+                  <Check
+                    className={cn(
+                      'size-3 transition-opacity',
+                      agreed ? 'opacity-100' : 'opacity-0',
+                    )}
+                  />
                 </span>
                 <span className="text-sm leading-relaxed">
                   {t(
@@ -518,7 +542,7 @@ export default function Onboarding() {
         </div>
 
         {/* controls ----------------------------------------------------- */}
-        <div className="mt-10 flex items-center gap-3">
+        <div key={`controls-${step}`} className="mt-10 flex items-center gap-3">
           {step > 0 ? (
             <Button
               variant="monoGhost"
@@ -538,16 +562,22 @@ export default function Onboarding() {
             onClick={next}
             type="button"
           >
-            {saving ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <ArrowRight className="size-3.5" />
-            )}
-            {saving
-              ? t('Saving…')
-              : step === TOTAL - 1
-                ? t('Agree and finish')
-                : t('Continue')}
+            <Loader2
+              className={cn(
+                'size-3.5 animate-spin',
+                saving ? 'block' : 'hidden',
+              )}
+            />
+            <ArrowRight
+              className={cn('size-3.5', saving ? 'hidden' : 'block')}
+            />
+            <span>
+              {saving
+                ? t('Saving…')
+                : step === TOTAL - 1
+                  ? t('Agree and finish')
+                  : t('Continue')}
+            </span>
           </Button>
           <span className="hidden items-center gap-1 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground sm:flex">
             <CornerDownLeft className="size-3" />
@@ -593,7 +623,7 @@ function Group({
 }) {
   return (
     <div>
-      <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+      <p className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
         {label}
       </p>
       <div className="mt-2">{children}</div>
@@ -619,7 +649,7 @@ function Chips({
           type="button"
           onClick={() => onPick(o.value)}
           className={cn(
-            'h-9 cursor-pointer rounded-[2px] border px-3 text-sm transition-all',
+            'h-11 cursor-pointer rounded-[2px] border px-3 text-sm transition-all sm:h-9',
             value === o.value
               ? 'border-foreground/40 bg-foreground/[0.06] font-medium'
               : 'border-border text-muted-foreground hover:border-foreground/20 hover:text-foreground',

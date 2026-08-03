@@ -82,6 +82,7 @@ export default function Dashboard() {
     orders,
     memory,
     earnings,
+    account,
     profile,
     suspended,
     cancelOrder,
@@ -294,7 +295,9 @@ export default function Dashboard() {
               ₩{earnedToday.toLocaleString()}
             </span>
             {balance ? (
-              <span className="text-muted-foreground">· ₩{balance.availableKrw.toLocaleString()} {t('available')}</span>
+              <span className="text-muted-foreground">
+                · {t('Off-chain call credit')} ₩{balance.availableKrw.toLocaleString()}
+              </span>
             ) : null}
           </div>
         </div>
@@ -474,7 +477,7 @@ export default function Dashboard() {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="ml-auto flex h-9 cursor-pointer items-center gap-2 rounded-[2px] border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className="ml-auto flex h-11 cursor-pointer items-center gap-2 rounded-[2px] border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9"
               >
                 {t('Sort')}
                 <span className="text-foreground">{t(activeSort.label)}</span>
@@ -503,9 +506,15 @@ export default function Dashboard() {
           </DropdownMenu>
         </div>
 
-        {/* A vertical rail instead of a horizontal strip: eleven fields never
+        {/* category rail --------------------------------------------------
+            A vertical rail instead of a horizontal strip: eleven fields never
             fit across the top without truncating or scrolling sideways, and a
-            field you cannot see is a field nobody filters by. */}
+            field you cannot see is a field nobody filters by. On a phone the
+            rail lies down and scrolls sideways, so the swipe cue still has a
+            job — it only shows where the scrolling actually happens. */}
+        <p className="-mb-3 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground sm:hidden">
+          {t('Swipe to browse fields')} →
+        </p>
         <div className="-mx-4 grid gap-5 sm:-mx-6 lg:grid-cols-[184px_1fr] lg:gap-0">
           <nav className="flex gap-1 overflow-x-auto px-4 pb-1 sm:px-6 lg:min-h-[70vh] lg:flex-col lg:overflow-visible lg:border-r lg:border-border lg:px-2 lg:pb-0">
             <CatTab
@@ -552,7 +561,7 @@ export default function Dashboard() {
             label={t('Fits me')}
             muted={!profile}
           />
-          <span className="ml-auto font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+          <span className="ml-auto font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
             {list.length} {list.length === 1 ? t('call') : t('calls')}
           </span>
         </div>
@@ -576,7 +585,11 @@ export default function Dashboard() {
           <div className="flex flex-wrap items-center gap-3 rounded-[6px] border border-border bg-foreground/[0.03] px-4 py-3">
             <UserRound className="size-4 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
-              {t('You are reading signed out. Connect a wallet, name your fields, and calls in them sort to the top.')}
+              {/* Signed in already? Then never ask for another account — the
+                  only thing missing is the profile. */}
+              {account
+                ? t('Your account is ready. Name your fields, and calls in them sort to the top.')
+                : t('You are reading signed out. Connect a wallet, name your fields, and calls in them sort to the top.')}
             </p>
             <Button
               asChild
@@ -584,7 +597,9 @@ export default function Dashboard() {
               size="monoSm"
               className="ml-auto"
             >
-              <Link to="/login">{t('Connect wallet')}</Link>
+              <Link to={account ? '/onboarding' : '/login'}>
+                {account ? t('Set up profile') : t('Connect wallet')}
+              </Link>
             </Button>
           </div>
         ) : null}
@@ -853,7 +868,7 @@ function SegTab({
       type="button"
       onClick={onClick}
       className={cn(
-        'flex h-9 cursor-pointer items-center gap-2 rounded-[2px] px-3 font-mono text-xs font-medium uppercase tracking-[1px] transition-colors',
+        'flex h-11 cursor-pointer items-center gap-2 rounded-[2px] px-3 font-mono text-xs font-medium uppercase tracking-[1px] transition-colors sm:h-9',
         active
           ? 'border border-foreground/80 bg-foreground/85 text-background'
           : 'border border-transparent text-muted-foreground hover:bg-muted hover:text-foreground',
@@ -883,7 +898,9 @@ function CatTab({
       type="button"
       onClick={onClick}
       className={cn(
-        'flex h-8 shrink-0 cursor-pointer items-center gap-2 rounded-[4px] px-2.5 text-[13px] tracking-[-0.006em] transition-colors lg:w-full',
+        // min-h-11 is the accessible touch target, kept over the tighter h-8:
+        // on a phone this rail is the horizontal strip you thumb through.
+        'flex min-h-11 shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap rounded-[4px] px-2.5 text-[13px] tracking-[-0.006em] transition-colors lg:w-full',
         active
           ? 'bg-background font-medium text-foreground shadow-[0_1px_2px_rgba(20,20,25,0.05)] lg:bg-muted-2'
           : 'text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground',
@@ -896,10 +913,12 @@ function CatTab({
           style={{ backgroundColor: accent }}
         />
       ) : (
+        /* The 'All' tab has no accent, but the rail still needs its labels
+           to start on the same vertical line. */
         <span className="size-1.5 shrink-0" />
       )}
       <span className="truncate">{label}</span>
-      <span className="ml-auto pl-1 font-mono text-[10px] tabular-nums text-muted-foreground">
+      <span className="ml-auto pl-1 font-mono text-[11px] tabular-nums text-muted-foreground">
         {count}
       </span>
     </button>
@@ -922,7 +941,7 @@ function FilterChip({
       type="button"
       onClick={onClick}
       className={cn(
-        'h-7 cursor-pointer rounded-full border px-3 font-mono text-[11px] uppercase tracking-[1px] transition-colors',
+        'h-10 cursor-pointer rounded-full border px-3 font-mono text-[11px] uppercase tracking-[1px] transition-colors sm:h-7',
         active
           ? 'border-foreground/70 bg-foreground/[0.06] text-foreground'
           : 'border-border text-muted-foreground hover:border-foreground/25 hover:text-foreground',

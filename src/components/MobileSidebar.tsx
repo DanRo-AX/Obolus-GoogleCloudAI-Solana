@@ -35,7 +35,7 @@ export function MobileSidebar() {
           <div className="flex min-w-0 flex-1 flex-col gap-1 rounded-lg p-1">
             <Link
               to="/"
-              className="flex h-9 w-full items-center gap-2 rounded-sm bg-white p-2.5 text-sm font-medium shadow-lg shadow-black/5"
+              className="flex h-11 w-full items-center gap-2 rounded-sm bg-white p-2.5 text-sm font-medium shadow-lg shadow-black/5"
             >
               <span className="flex size-6 items-center justify-center rounded-[7px] bg-foreground">
                 <img
@@ -61,7 +61,7 @@ export function MobileSidebar() {
                     onClick={() => setMobileSidebar(false)}
                     className={({ isActive }) =>
                       cn(
-                        'flex h-8 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm font-medium transition-colors hover:bg-sidebar-accent [&>svg]:size-4',
+                        'flex h-11 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm font-medium transition-colors hover:bg-sidebar-accent [&>svg]:size-4',
                         isActive && to !== '/' && 'bg-foreground/4',
                       )
                     }
@@ -78,7 +78,7 @@ export function MobileSidebar() {
                     onClick={() => setMobileSidebar(false)}
                     className={({ isActive }) =>
                       cn(
-                        'flex h-8 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm font-medium transition-colors hover:bg-sidebar-accent [&>svg]:size-4',
+                        'flex h-11 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm font-medium transition-colors hover:bg-sidebar-accent [&>svg]:size-4',
                         isActive && 'bg-foreground/4',
                       )
                     }
@@ -111,14 +111,14 @@ export function MobileSidebar() {
           ) : <div className="flex gap-2">
             <Button
               asChild
-              className="rounded-[2px] bg-foreground/85 text-background border border-foreground/80 hover:bg-foreground/75 h-9 flex-1 px-4 text-xs"
+              className="h-11 flex-1 rounded-[2px] border border-foreground/80 bg-foreground/85 px-4 text-xs text-background hover:bg-foreground/75"
             >
               <Link to="/login">{t('Connect wallet')}</Link>
             </Button>
             <Button
               asChild
               aria-label={t('Connect a Phantom wallet you already have')}
-              className="font-mono uppercase rounded-[2px] bg-muted text-foreground hover:bg-muted/90 border border-foreground/5 h-9 w-9 p-0"
+              className="size-11 rounded-[2px] border border-foreground/5 bg-muted p-0 font-mono uppercase text-foreground hover:bg-muted/90"
             >
               <Link to="/login">
                 <LogIn className="size-4" />

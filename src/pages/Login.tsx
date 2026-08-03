@@ -1,19 +1,28 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
+  ArrowDown,
   ArrowRight,
   Check,
+  Database,
   ExternalLink,
   Loader2,
+  Search,
   ShieldCheck,
   Wallet,
+  WalletCards,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import Vortex from '@/components/originkit/Vortex'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
-import { PHANTOM_INSTALL_URL, shortKey, useWallet } from '@/state/wallet'
+import {
+  DEVNET_FAUCETS,
+  PHANTOM_INSTALL_URL,
+  shortKey,
+  useWallet,
+} from '@/state/wallet'
 
 /**
  * Sign in with a wallet, and only with a wallet.
@@ -21,7 +30,8 @@ import { PHANTOM_INSTALL_URL, shortKey, useWallet } from '@/state/wallet'
  * Email and social sign-in are gone on purpose. Every account here exists to
  * receive money or to spend it, so an account without a wallet cannot do
  * either — and collecting an email as well would mean holding a thing we
- * promise not to hold.
+ * promise not to hold. There is no ?mode=signup any more: an address the
+ * backend has not seen registers itself on first entry.
  *
  * The backend auth contract is left exactly as the team built it. Rather than
  * changing it, the credentials are derived from the connected public key: the
@@ -30,6 +40,11 @@ import { PHANTOM_INSTALL_URL, shortKey, useWallet } from '@/state/wallet'
  *
  * The 14-and-over confirmation stays visible, because that is a consent and not
  * a credential — a wallet cannot give it on someone's behalf.
+ *
+ * Split screen: the wallet connect flow on the left, the product flow on the
+ * right, so the desktop panel explains what the wallet is being connected to
+ * instead of sitting empty. Faucet links sit next to the connect button —
+ * a devnet wallet with no SOL and no USDC cannot open anything.
  */
 export default function Login() {
   const navigate = useNavigate()
@@ -165,6 +180,34 @@ export default function Login() {
               </div>
             )}
 
+            {/* Faucets belong before the connect, not after it: a fresh
+                devnet wallet arrives empty and cannot open a document. */}
+            {!pubkey ? (
+              <p className="mt-4 text-[13px] leading-relaxed text-muted-foreground">
+                {t(
+                  'A fresh devnet wallet has no SOL for fees and no USDC to settle with:',
+                )}{' '}
+                <a
+                  href={DEVNET_FAUCETS.sol}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline decoration-dotted underline-offset-4 hover:text-foreground"
+                >
+                  {t('SOL faucet')}
+                </a>
+                ,{' '}
+                <a
+                  href={DEVNET_FAUCETS.usdc}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline decoration-dotted underline-offset-4 hover:text-foreground"
+                >
+                  {t('USDC faucet')}
+                </a>
+                .
+              </p>
+            ) : null}
+
             {/* step 2 — consent + enter -------------------------------- */}
             {pubkey ? (
               <>
@@ -227,7 +270,9 @@ export default function Login() {
         </div>
       </div>
 
-      <div className="relative hidden lg:block">
+      {/* The desktop panel says what the wallet is being connected to: the
+          vortex is the canvas, the three steps are the product. */}
+      <aside className="relative hidden overflow-hidden lg:flex lg:flex-col lg:justify-between">
         <div className="absolute inset-0">
           <Vortex background="#08070F" />
         </div>
@@ -237,7 +282,39 @@ export default function Login() {
           aria-hidden
           className="pointer-events-none absolute inset-x-0 bottom-0 h-1/4 bg-gradient-to-t from-[#08070F] via-[#08070F]/70 to-transparent"
         />
-        <div className="absolute inset-x-0 bottom-0 p-10">
+
+        <div className="relative z-10 p-10 xl:p-14">
+          <h2 className="max-w-md font-display text-[30px] leading-[1.12] text-white xl:text-[34px]">
+            {t('How one question moves through Obolus')}
+          </h2>
+
+          <div className="mt-9 grid max-w-md gap-2">
+            <ProductStep
+              icon={Search}
+              number="01"
+              title={t('Ask a question')}
+              detail={t('A question goes into the chat box.')}
+            />
+            <ArrowDown aria-hidden className="ml-6 size-4 text-white/30" />
+            <ProductStep
+              icon={Database}
+              number="02"
+              title={t('Search the shelves')}
+              detail={t('SHELF-1 opens a handful, not the index')}
+            />
+            <ArrowDown aria-hidden className="ml-6 size-4 text-white/30" />
+            <ProductStep
+              icon={WalletCards}
+              number="03"
+              title={t('Paid citations + receipt')}
+              detail={t(
+                'Answers come back with the passages they cite, and ₩5 to ₩20 goes to whoever wrote each one.',
+              )}
+            />
+          </div>
+        </div>
+
+        <div className="relative z-10 p-10 xl:p-14">
           <div className="flex flex-wrap gap-x-8 gap-y-2 font-mono text-[10px] uppercase tracking-[1.4px] text-white/60">
             <span>
               {t('Settles on')} <span className="text-white/80">Solana</span>
@@ -250,6 +327,34 @@ export default function Login() {
             </span>
           </div>
         </div>
+      </aside>
+    </div>
+  )
+}
+
+/** One numbered step in the desktop panel. Strings arrive translated. */
+function ProductStep({
+  icon: Icon,
+  number,
+  title,
+  detail,
+}: {
+  icon: typeof Search
+  number: string
+  title: string
+  detail: string
+}) {
+  return (
+    <div className="flex items-start gap-4 rounded-[4px] border border-white/10 bg-white/[0.055] p-4 backdrop-blur-sm">
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-[3px] bg-white/10">
+        <Icon className="size-4 text-white/80" />
+      </span>
+      <div className="min-w-0">
+        <p className="font-mono text-[10px] uppercase tracking-[1.5px] text-[#aa9cf6]">
+          {number}
+        </p>
+        <p className="mt-1 text-[15px] font-medium text-white">{title}</p>
+        <p className="mt-1 text-[13px] leading-6 text-white/55">{detail}</p>
       </div>
     </div>
   )
