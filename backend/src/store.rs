@@ -9,11 +9,11 @@ use std::{
 };
 
 use ed25519_dalek::{Signature, VerifyingKey};
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::{
+    db::{self, Connection, OptionalExtension, Transaction},
     domain::{
         AccountControls, AiBaseline, AiBaselineDraft, AiLiquidityMetrics, AnswerIssue,
         BalanceSummary, ChainSettlementReceipt, ChatAnswer, Citation, ContributorManifest,
@@ -32,7 +32,7 @@ use crate::{
         SubmitShelfStarterAnswerResponse, UpdatePreferencesRequest, UpsertProfileRequest,
         UserAccount, UserProfile, WalletChallenge,
     },
-    quality, seed,
+    params, quality, seed,
 };
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -127,7 +127,7 @@ pub struct Store {
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error("database error: {0}")]
-    Database(#[from] rusqlite::Error),
+    Database(#[from] db::Error),
     #[error("storage I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("store lock was poisoned")]
@@ -206,9 +206,17 @@ impl StoredCall {
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         let path = path.as_ref();
-        let connection = Connection::open(path)?;
+        let database = path.to_string_lossy();
+        let connection = if database.starts_with("postgres://")
+            || database.starts_with("postgresql://")
+            || database.starts_with("host=")
+        {
+            Connection::connect_postgres(&database)?
+        } else {
+            Connection::open(path)?
+        };
         #[cfg(unix)]
-        if path != Path::new(":memory:") {
+        if connection.is_sqlite() && path != Path::new(":memory:") {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
         }
@@ -516,14 +524,15 @@ impl Store {
     }
 
     pub fn ready(&self) -> Result<(), StoreError> {
-        self.connection()?.query_row("SELECT 1", [], |_| Ok(()))?;
+        self.connection()?
+            .query_row("SELECT 1", params![], |_| Ok(()))?;
         Ok(())
     }
 
     pub fn contains_demo_seed_data(&self) -> Result<bool, StoreError> {
         Ok(self.connection()?.query_row(
-            "SELECT EXISTS(SELECT 1 FROM documents WHERE author_id GLOB 'author_*')",
-            [],
+            "SELECT EXISTS(SELECT 1 FROM documents WHERE author_id LIKE 'author_%')",
+            params![],
             |row| row.get::<_, bool>(0),
         )?)
     }
@@ -610,7 +619,7 @@ impl Store {
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
         let matured = transaction.query_row(
-            "SELECT COALESCE(SUM(amount_krw), 0) FROM earning_events
+            "SELECT COALESCE(CAST(SUM(amount_krw) AS BIGINT), 0) FROM earning_events
              WHERE author_id = ?1 AND payout_status = 'held' AND available_at <= ?2",
             params![user_id, as_i64(now)?],
             |row| as_u64(row.get(0)?),
@@ -1347,7 +1356,7 @@ impl Store {
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_verified_wallet_owner
              ON profiles(wallet)
              WHERE wallet IS NOT NULL AND wallet_verified_at IS NOT NULL",
-            [],
+            params![],
         )?;
         add_column_if_missing(
             &connection,
@@ -1392,23 +1401,23 @@ impl Store {
         }
         connection.execute(
             "UPDATE earning_events SET available_at = created_at WHERE available_at = 0",
-            [],
+            params![],
         )?;
         connection.execute(
             "UPDATE open_calls
              SET escrow_remaining_krw = unit_price_krw * (target - answered)
              WHERE escrow_remaining_krw = 0 AND status = 'open' AND unit_price_krw > 0",
-            [],
+            params![],
         )?;
         connection.execute(
             "UPDATE open_calls SET status = 'cancelled', escrow_remaining_krw = 0
              WHERE owner_id <> 'seed-buyer'
                AND NOT EXISTS(SELECT 1 FROM users u WHERE u.id = open_calls.owner_id)",
-            [],
+            params![],
         )?;
         connection.execute(
             "UPDATE dispute_events SET status = 'approved' WHERE status = 'pending' AND reason = ''",
-            [],
+            params![],
         )?;
         backfill_bundle_payout_claims(&connection)?;
         backfill_content_hashes(&connection)?;
@@ -1477,7 +1486,7 @@ impl Store {
                AND source.author_id <> target.author_id",
         )?;
         Ok(statement
-            .query_map([], |row| {
+            .query_map(params![], |row| {
                 Ok(EvidenceEdge {
                     source_document_id: row.get(0)?,
                     target_document_id: row.get(1)?,
@@ -4805,7 +4814,7 @@ impl Store {
              FROM dispute_events ORDER BY created_at ASC",
         )?;
         Ok(statement
-            .query_map([], dispute_from_row)?
+            .query_map(params![], dispute_from_row)?
             .collect::<Result<Vec<_>, _>>()?)
     }
 
@@ -5071,7 +5080,7 @@ impl Store {
              ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at ASC",
         )?;
         Ok(statement
-            .query_map([], document_feedback_from_row)?
+            .query_map(params![], document_feedback_from_row)?
             .collect::<Result<Vec<_>, _>>()?)
     }
 
@@ -5165,7 +5174,7 @@ impl Store {
                     SUM(CASE WHEN liquidity_state = 'hybrid_coverage' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN liquidity_state = 'human_covered' THEN 1 ELSE 0 END)
              FROM queries",
-            [],
+            params![],
             |row| {
                 Ok((
                     as_u64(row.get(0)?)?,
@@ -5189,7 +5198,7 @@ impl Store {
         let (shelf_starters_generated, shelf_starters_answered) = connection.query_row(
             "SELECT COUNT(*), SUM(CASE WHEN answered_at IS NOT NULL THEN 1 ELSE 0 END)
              FROM shelf_starters",
-            [],
+            params![],
             |row| {
                 Ok((
                     as_u64(row.get(0)?)?,
@@ -5198,18 +5207,18 @@ impl Store {
             },
         )?;
         let human_documents =
-            connection.query_row("SELECT COUNT(*) FROM documents", [], |row| {
+            connection.query_row("SELECT COUNT(*) FROM documents", params![], |row| {
                 as_u64(row.get(0)?)
             })?;
         let open_human_calls = connection.query_row(
             "SELECT COUNT(*) FROM open_calls WHERE status = 'open' AND answered < target",
-            [],
+            params![],
             |row| as_u64(row.get(0)?),
         )?;
         let ai_authority_edges = connection.query_row(
             "SELECT COUNT(*) FROM evidence_edges
              WHERE actor LIKE 'ai:%' OR provenance = 'ai_generated'",
-            [],
+            params![],
             |row| as_u64(row.get(0)?),
         )?;
         Ok(AiLiquidityMetrics {
@@ -5409,7 +5418,7 @@ impl Store {
             }
         }
         let refund = transaction.query_row(
-            "SELECT COALESCE(SUM(escrow_remaining_krw), 0)
+            "SELECT COALESCE(CAST(SUM(escrow_remaining_krw) AS BIGINT), 0)
              FROM open_calls WHERE owner_id = ?1 AND status = 'open' AND escrow_mode = 'sandbox'",
             [user_id],
             |row| as_u64(row.get(0)?),
@@ -8487,7 +8496,7 @@ fn materialize_call_notifications(
     Ok(())
 }
 
-fn notification_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ContributorNotification> {
+fn notification_from_row(row: &db::Row) -> db::Result<ContributorNotification> {
     Ok(ContributorNotification {
         id: row.get(0)?,
         kind: row.get(1)?,
@@ -8499,9 +8508,7 @@ fn notification_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Contributo
     })
 }
 
-fn wallet_siwx_challenge_from_row(
-    row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<WalletSiwxChallengeRecord> {
+fn wallet_siwx_challenge_from_row(row: &db::Row) -> db::Result<WalletSiwxChallengeRecord> {
     Ok(WalletSiwxChallengeRecord {
         id: row.get(0)?,
         user_id: row.get(1)?,
@@ -8557,7 +8564,7 @@ fn siwx_message(payload: &SiwxPayload) -> Result<String, StoreError> {
     Ok(lines.join("\n"))
 }
 
-fn shelf_starter_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ShelfStarter> {
+fn shelf_starter_from_row(row: &db::Row) -> db::Result<ShelfStarter> {
     Ok(ShelfStarter {
         id: row.get(0)?,
         prompt: row.get(1)?,
@@ -8611,7 +8618,7 @@ fn profile_matches(profile: &UserProfile, filters: &SearchFilters) -> bool {
             .is_none_or(|value| profile.speaks_to.iter().any(|field| field == value))
 }
 
-fn dispute_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DisputeCase> {
+fn dispute_from_row(row: &db::Row) -> db::Result<DisputeCase> {
     Ok(DisputeCase {
         memory_id: row.get(0)?,
         user_id: row.get(1)?,
@@ -8623,7 +8630,7 @@ fn dispute_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DisputeCase> {
     })
 }
 
-fn document_feedback_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocumentFeedback> {
+fn document_feedback_from_row(row: &db::Row) -> db::Result<DocumentFeedback> {
     Ok(DocumentFeedback {
         id: row.get(0)?,
         query_id: row.get(1)?,
@@ -8670,7 +8677,7 @@ fn recompute_document_reliability(
     Ok(())
 }
 
-fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserProfile> {
+fn profile_from_row(row: &db::Row) -> db::Result<UserProfile> {
     let speaks_to_json: String = row.get(6)?;
     let wallet_verified_at = row.get::<_, Option<i64>>(8)?.map(as_u64).transpose()?;
     let strikes = as_usize(row.get(15)?)?;
@@ -8698,7 +8705,7 @@ fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserProfile> {
     })
 }
 
-fn earning_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EarningEvent> {
+fn earning_from_row(row: &db::Row) -> db::Result<EarningEvent> {
     let stored_status: String = row.get(7)?;
     let available_at = as_u64(row.get(8)?)?;
     let payout_status = if stored_status == "held" && available_at <= now_ms() {
@@ -8728,7 +8735,7 @@ fn earning_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EarningEvent> {
     })
 }
 
-fn payout_claim_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PayoutClaim> {
+fn payout_claim_from_row(row: &db::Row) -> db::Result<PayoutClaim> {
     Ok(PayoutClaim {
         id: row.get(0)?,
         earning_event_id: row.get(1)?,
@@ -8785,7 +8792,7 @@ fn require_active_payout_lease(
     Ok(())
 }
 
-fn chain_settlement_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChainSettlementReceipt> {
+fn chain_settlement_from_row(row: &db::Row) -> db::Result<ChainSettlementReceipt> {
     Ok(ChainSettlementReceipt {
         id: row.get(0)?,
         quote_id: row.get(1)?,
@@ -9097,9 +9104,7 @@ fn load_research_job_status(
     })
 }
 
-fn open_call_funding_quote_from_row(
-    row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<OpenCallFundingQuote> {
+fn open_call_funding_quote_from_row(row: &db::Row) -> db::Result<OpenCallFundingQuote> {
     let id: String = row.get(0)?;
     Ok(OpenCallFundingQuote {
         resource_path: format!("/api/v1/funded-open-calls/{id}"),
@@ -9389,7 +9394,7 @@ fn backfill_bundle_payout_claims(connection: &Connection) -> Result<(), StoreErr
              ORDER BY e.settlement_id, e.created_at, e.id",
         )?;
         statement
-            .query_map([], |row| {
+            .query_map(params![], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -9529,7 +9534,7 @@ fn load_call(transaction: &Transaction<'_>, id: &str) -> Result<StoredCall, Stor
         .ok_or(StoreError::NotFound("open call"))
 }
 
-fn stored_call_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredCall> {
+fn stored_call_from_row(row: &db::Row) -> db::Result<StoredCall> {
     Ok(StoredCall {
         id: row.get(0)?,
         owner_id: row.get(1)?,
@@ -9562,7 +9567,7 @@ fn stored_call_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredCall>
     })
 }
 
-fn memory_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
+fn memory_from_row(row: &db::Row) -> db::Result<MemoryEntry> {
     let flags_json: String = row.get(8)?;
     let interview_json: String = row.get(11)?;
     Ok(MemoryEntry {
@@ -9590,7 +9595,7 @@ fn memory_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
     })
 }
 
-fn document_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Document> {
+fn document_from_row(row: &db::Row) -> db::Result<Document> {
     let created_at = as_u64(row.get(9)?)?;
     let age_days = now_ms().saturating_sub(created_at) / 86_400_000;
     let tags_json: String = row.get(7)?;
@@ -9656,7 +9661,7 @@ fn backfill_content_hashes(connection: &Connection) -> Result<(), StoreError> {
         let mut statement =
             connection.prepare("SELECT id, content FROM documents WHERE content_hash = ''")?;
         statement
-            .query_map([], |row| {
+            .query_map(params![], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?
             .collect::<Result<Vec<_>, _>>()?
@@ -9672,7 +9677,7 @@ fn backfill_content_hashes(connection: &Connection) -> Result<(), StoreError> {
         let mut statement =
             connection.prepare("SELECT id, answer FROM memory_entries WHERE content_hash = ''")?;
         statement
-            .query_map([], |row| {
+            .query_map(params![], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?
             .collect::<Result<Vec<_>, _>>()?
@@ -9755,7 +9760,7 @@ fn author_reliability(transaction: &Transaction<'_>, user_id: &str) -> Result<f3
         "SELECT
              SUM(CASE WHEN status = 'settled' THEN 1 ELSE 0 END),
              SUM(CASE WHEN status = 'voided' THEN 1 ELSE 0 END),
-             AVG(CASE WHEN rating IS NOT NULL THEN rating END)
+             CAST(AVG(CASE WHEN rating IS NOT NULL THEN rating END) AS REAL)
          FROM memory_entries WHERE user_id = ?1 AND memory_type = 'observation'",
         [user_id],
         |row| {
@@ -9776,7 +9781,7 @@ fn author_reliability_readonly(connection: &Connection, user_id: &str) -> Result
         "SELECT
              SUM(CASE WHEN status = 'settled' THEN 1 ELSE 0 END),
              SUM(CASE WHEN status = 'voided' THEN 1 ELSE 0 END),
-             AVG(CASE WHEN rating IS NOT NULL THEN rating END)
+             CAST(AVG(CASE WHEN rating IS NOT NULL THEN rating END) AS REAL)
          FROM memory_entries WHERE user_id = ?1 AND memory_type = 'observation'",
         [user_id],
         |row| {
@@ -10112,24 +10117,12 @@ fn as_i64(value: u64) -> Result<i64, StoreError> {
         .map_err(|_| StoreError::Validation("numeric value is too large".to_owned()))
 }
 
-fn as_u64(value: i64) -> rusqlite::Result<u64> {
-    u64::try_from(value).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            0,
-            rusqlite::types::Type::Integer,
-            Box::new(error),
-        )
-    })
+fn as_u64(value: i64) -> db::Result<u64> {
+    u64::try_from(value).map_err(|error| db::Error::Conversion(error.to_string()))
 }
 
-fn as_usize(value: i64) -> rusqlite::Result<usize> {
-    usize::try_from(value).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            0,
-            rusqlite::types::Type::Integer,
-            Box::new(error),
-        )
-    })
+fn as_usize(value: i64) -> db::Result<usize> {
+    usize::try_from(value).map_err(|error| db::Error::Conversion(error.to_string()))
 }
 
 fn add_column_if_missing(
@@ -10138,14 +10131,7 @@ fn add_column_if_missing(
     column: &str,
     definition: &str,
 ) -> Result<(), StoreError> {
-    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
-    let present = statement
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<Result<Vec<_>, _>>()?
-        .iter()
-        .any(|name| name == column);
-    drop(statement);
-    if !present {
+    if !connection.column_exists(table, column)? {
         connection.execute_batch(&format!(
             "ALTER TABLE {table} ADD COLUMN {column} {definition};"
         ))?;
@@ -10182,7 +10168,7 @@ mod tests {
             SearchFilters, ShelfStarterDraft, SiwxPayload, SubmitAnswerResponse,
             SubmitDocumentFeedbackRequest, UpdatePreferencesRequest, UpsertProfileRequest,
         },
-        search::Resolver,
+        params, search::Resolver,
     };
 
     use super::{
@@ -10345,7 +10331,7 @@ mod tests {
             .execute(
                 "UPDATE documents SET content = 'changed after quote',
                     content_hash = ?1, version = version + 1 WHERE handle = ?2",
-                rusqlite::params!["1".repeat(64), handle],
+                params!["1".repeat(64), handle],
             )
             .unwrap();
         assert!(matches!(
@@ -10401,7 +10387,7 @@ mod tests {
                     (SELECT COUNT(*) FROM earning_events WHERE settlement_id = ?1),
                     (SELECT COUNT(*) FROM memory_access_events
                      WHERE purpose = 'pay_sh_paid_evidence' AND quote_id = ?2)",
-                rusqlite::params![delivered.settlement.id, resource.quote_id],
+                params![delivered.settlement.id, resource.quote_id],
                 |row| Ok((super::as_u64(row.get(0)?)?, super::as_u64(row.get(1)?)?)),
             )
             .unwrap();

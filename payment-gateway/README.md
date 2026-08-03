@@ -11,12 +11,11 @@ Flow:
    requested refill amount only when the balance cannot cover the job.
 3. Phantom signs a Devnet USDC refill to `OPENSHELF_BUNDLE_RECEIVER`, the KMS
    service-wallet address. Later questions skip this step until credit is low.
-4. The append-only outbox records the chain settlement in Rust. Rust changes
-   credits the prepaid ledger and changes `quoted → funded`; no document is
-   released here. The repository's
-   NDJSON outbox is suitable for local/Devnet use. Cloud Run must mount
-   persistent storage or use a transactional queue before this is treated as
-   durable.
+4. The gateway first enqueues the settlement in the Seoul-region Cloud Tasks
+   queue, then performs the same idempotent Rust ledger write synchronously.
+   Rust credits the prepaid ledger and changes `quoted → funded`; no document
+   is released here. A process or instance restart cannot erase the queued
+   reconciliation.
 5. The gateway triggers `RESEARCH_ORCHESTRATOR_URL`. Status polling through
    `GET /api/v1/research-jobs/{id}` recovers the same job after response loss.
 
@@ -31,5 +30,6 @@ npm run dev
 ```
 
 The restricted `/rpc` proxy exposes only the read methods needed to construct
-a Phantom x402 refill. Settled outer payments are reconciled from
-`X402_OUTBOX_PATH` after a process restart when that path survives the restart.
+a Phantom x402 refill. Production requires `OPENSHELF_SETTLEMENT_QUEUE`,
+`OPENSHELF_SETTLEMENT_QUEUE_LOCATION=asia-northeast3`, and
+`OPENSHELF_SETTLEMENT_TARGET_URL`.

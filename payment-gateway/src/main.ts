@@ -1,5 +1,4 @@
 import express, { type NextFunction, type Request, type Response as ExpressResponse } from "express";
-import { appendFile, readFile } from "node:fs/promises";
 import { HTTPFacilitatorClient, type HTTPRequestContext } from "@x402/core/server";
 import type { Network } from "@x402/core/types";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
@@ -9,12 +8,17 @@ import {
   type PaymentRouteIdentity,
 } from "./payment-routing.js";
 import { createStableExactSvmServerScheme } from "./x402-svm.js";
+import {
+  DurableSettlementQueue,
+  type DurableSettlement,
+} from "./durable-outbox.js";
 import "./root-env.js";
 
 const DEVNET_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as Network;
 const DEFAULT_DEVNET_RPC_URL = "https://api.devnet.solana.com";
 const environment = env("OPENSHELF_ENV", env("NODE_ENV", "development")).toLowerCase();
 const production = ["production", "prod"].includes(environment);
+const managedEnvironment = production || ["staging", "stage"].includes(environment);
 const rustApiUrl = env("RUST_API_URL", "http://127.0.0.1:8787").replace(/\/$/, "");
 const internalToken = env("OPENSHELF_INTERNAL_TOKEN", "openshelf-local-internal");
 const facilitatorUrl = env("X402_FACILITATOR_URL", "https://x402.org/facilitator");
@@ -25,7 +29,6 @@ const allowedOrigin = env(
   env("OPENSHELF_FRONTEND_ORIGIN", "http://localhost:4319"),
 );
 const port = integerEnv("PORT", 1402);
-const outboxPath = env("X402_OUTBOX_PATH", "x402-outbox.ndjson");
 const rpcRateLimitPerMinute = integerEnv("X402_RPC_RATE_LIMIT_PER_MINUTE", 120);
 const researchOrchestratorUrl = env(
   "RESEARCH_ORCHESTRATOR_URL",
@@ -33,7 +36,7 @@ const researchOrchestratorUrl = env(
 ).replace(/\/$/, "");
 
 if (
-  production &&
+  managedEnvironment &&
   (internalToken.length < 32 ||
     ["openshelf-local-internal", "change-this-before-deploy"].includes(internalToken))
 ) {
@@ -41,10 +44,10 @@ if (
     "OPENSHELF_INTERNAL_TOKEN must be a non-default secret of at least 32 characters in production",
   );
 }
-if (production && !allowedOrigin.startsWith("https://")) {
+if (managedEnvironment && !allowedOrigin.startsWith("https://")) {
   throw new Error("FRONTEND_ORIGIN must use HTTPS in production");
 }
-if (production && rpcUrl === DEFAULT_DEVNET_RPC_URL) {
+if (managedEnvironment && rpcUrl === DEFAULT_DEVNET_RPC_URL) {
   throw new Error("X402_RPC_URL must use a managed RPC endpoint in production");
 }
 if (booleanEnv("OPENSHELF_REQUIRE_MAINNET", false) && network === DEVNET_NETWORK) {
@@ -124,22 +127,11 @@ type OpenCallFundingSnapshot = {
 
 type RouteIdentity = PaymentRouteIdentity;
 type QuoteCacheEntry = { quote: Promise<PayableQuote>; expiresAt: number };
-type PendingSettlement = {
-  settlementKind?: "document" | "bundle" | "open_call";
-  quoteId: string;
-  transactionSignature: string;
-  payer: string;
-  payTo: string;
-  amountAtomic: string;
-  network: string;
-  rawResponse: unknown;
-};
-type OutboxRecord =
-  | { kind: "pending"; settlement: PendingSettlement }
-  | { kind: "completed"; transactionSignature: string };
+type PendingSettlement = DurableSettlement;
 
 const quotes = new Map<string, QuoteCacheEntry>();
 const pendingSettlements = new Map<string, PendingSettlement>();
+const settlementQueue = DurableSettlementQueue.fromEnvironment(managedEnvironment, internalToken);
 const allowedBrowserRpcMethods = new Set(["getAccountInfo", "getLatestBlockhash"]);
 const rpcRateWindows = new Map<string, { startedAt: number; count: number }>();
 
@@ -230,15 +222,6 @@ async function recordSettlement(settlement: PendingSettlement): Promise<void> {
     void triggerResearchJob(settlement.quoteId);
   }
   pendingSettlements.delete(settlement.transactionSignature);
-  try {
-    await appendOutbox({
-      kind: "completed",
-      transactionSignature: settlement.transactionSignature,
-    });
-  } catch (error) {
-    // Replaying this entry is safe because the Rust endpoint is idempotent.
-    console.error("could not mark x402 outbox entry complete", safeError(error));
-  }
 }
 
 async function triggerResearchJob(jobId: string): Promise<void> {
@@ -263,43 +246,34 @@ async function triggerResearchJob(jobId: string): Promise<void> {
   }
 }
 
-async function appendOutbox(record: OutboxRecord): Promise<void> {
-  await appendFile(outboxPath, `${JSON.stringify(record)}\n`, { encoding: "utf8", mode: 0o600 });
-}
-
-async function restoreOutbox(): Promise<void> {
-  let contents: string;
-  try {
-    contents = await readFile(outboxPath, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
-  for (const line of contents.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const record = JSON.parse(line) as OutboxRecord;
-      if (record.kind === "pending") {
-        pendingSettlements.set(
-          record.settlement.transactionSignature,
-          record.settlement,
-        );
-      } else if (record.kind === "completed") {
-        pendingSettlements.delete(record.transactionSignature);
-      }
-    } catch (error) {
-      console.error("ignoring malformed x402 outbox line", safeError(error));
-    }
-  }
-}
-
 async function retryPendingSettlements(): Promise<void> {
   for (const settlement of pendingSettlements.values()) {
     try {
-      await recordSettlement(settlement);
+      await reconcileSettlement(settlement);
     } catch (error) {
       console.error("x402 reconciliation retry failed", safeError(error));
     }
+  }
+}
+
+async function reconcileSettlement(settlement: PendingSettlement): Promise<void> {
+  let durable = false;
+  if (settlementQueue) {
+    try {
+      await settlementQueue.enqueue(settlement);
+      durable = true;
+    } catch (error) {
+      console.error("could not enqueue durable x402 reconciliation", safeError(error));
+    }
+  }
+  try {
+    await recordSettlement(settlement);
+    durable = true;
+  } catch (error) {
+    console.error("could not write x402 settlement to Rust ledger", safeError(error));
+  }
+  if (!durable) {
+    throw new Error("x402 settlement is not yet durable");
   }
 }
 
@@ -345,10 +319,9 @@ resourceServer.onAfterSettle(async (context) => {
   };
   pendingSettlements.set(settlement.transactionSignature, settlement);
   try {
-    await appendOutbox({ kind: "pending", settlement });
-    await recordSettlement(settlement);
+    await reconcileSettlement(settlement);
   } catch (error) {
-    console.error("x402 settled on-chain; Rust ledger reconciliation queued", safeError(error));
+    console.error("x402 settled on-chain; reconciliation remains in memory", safeError(error));
   }
 });
 
@@ -425,6 +398,7 @@ app.get("/healthz", (_request, response) => {
     status: "ok",
     network,
     facilitator: facilitatorUrl,
+    durableSettlementQueue: settlementQueue !== null,
     pendingReconciliations: pendingSettlements.size,
   });
 });
@@ -435,6 +409,7 @@ app.get("/readyz", async (_request, response) => {
     response.json({
       status: "ready",
       network,
+      durableSettlementQueue: settlementQueue !== null,
       pendingReconciliations: pendingSettlements.size,
     });
   } catch (error) {
@@ -741,7 +716,6 @@ app.use((error: unknown, _request: Request, response: ExpressResponse, _next: Ne
   });
 });
 
-await restoreOutbox();
 setInterval(() => void retryPendingSettlements(), 5_000).unref();
 setInterval(() => pruneRpcRateWindows(), 60_000).unref();
 app.listen(port, "0.0.0.0", () => {

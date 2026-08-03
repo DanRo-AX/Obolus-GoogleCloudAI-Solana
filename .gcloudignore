@@ -1,0 +1,13 @@
+.gcloudignore
+.git
+#!include:.gitignore
+
+.omc
+**/.omc
+.tmp
+.presentation-work
+presentation-variants
+service-presentation
+*.pptx
+*.pptx.inspect.ndjson
+*.mov

@@ -66,10 +66,10 @@ atomic charges, preventing per-document rounding underfunding or overspending.
 ## Crash and replay behavior
 
 - The browser stores the job id before Phantom opens for a required refill.
-- The outer x402 gateway writes settled transactions to an append-only outbox.
-  The checked-in default is a local NDJSON file for Devnet. A Cloud Run release
-  must place it on persistent storage or replace it with a transactional queue;
-  an instance-local filesystem is not a durability boundary.
+- The outer x402 gateway enqueues settled transactions in Cloud Tasks in
+  `asia-northeast3` before attempting the synchronous ledger write. The Rust
+  settlement endpoints are idempotent, so queued replay is safe across process
+  and Cloud Run instance restarts.
 - The orchestrator polls `funded` and `processing` jobs, so the browser may close.
 - Before retrying a failed HTTP call, the worker reloads the plan. If the quote
   disappeared, Rust already recorded delivery and it is not paid again.

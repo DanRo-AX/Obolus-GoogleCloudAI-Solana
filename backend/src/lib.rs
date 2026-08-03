@@ -1,5 +1,6 @@
 pub mod api;
 pub mod authority;
+pub mod db;
 pub mod domain;
 pub mod orchestrator;
 pub mod quality;
