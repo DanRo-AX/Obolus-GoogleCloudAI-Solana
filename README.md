@@ -52,6 +52,20 @@ it invokes Pay. See
 [`integrations/antigravity/openshelf/README.md`](./integrations/antigravity/openshelf/README.md)
 and [`docs/ACCOUNT-LINKING.md`](./docs/ACCOUNT-LINKING.md).
 
+The same service can be used without Antigravity. List all 23 commands, inspect
+one exact input schema, or call a free tool directly:
+
+```bash
+npm run agent:tools
+npm run agent:tools -- ask_people
+npm run agent:call -- ask_people --json \
+  '{"question":"What do people living in Paris actually eat on weeknights?","requestedDocuments":3}'
+```
+
+Authenticated contributor commands use the same local session created by
+`server.mjs auth login`; paid commands return an exact URL and amount for the
+separate Pay MCP instead of receiving a private key.
+
 The paid path is live by default. Set `VITE_X402_ENABLED=false` only when you
 explicitly want the old sandbox-ledger path, or
 `VITE_BACKEND_ENABLED=false` for the fully static fallback.
