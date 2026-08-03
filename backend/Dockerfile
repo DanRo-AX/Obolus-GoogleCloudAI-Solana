@@ -5,7 +5,10 @@ COPY src ./src
 RUN cargo build --locked --release
 
 FROM debian:bookworm-slim
-RUN useradd --create-home --uid 10001 openshelf \
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 openshelf \
     && mkdir -p /data \
     && chown openshelf:openshelf /data
 COPY --from=builder /app/target/release/openshelf-api /usr/local/bin/openshelf-api
