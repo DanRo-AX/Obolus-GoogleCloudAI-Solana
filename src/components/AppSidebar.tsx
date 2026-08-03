@@ -11,15 +11,15 @@ import { useUi } from '@/state/ui'
 const MENU_BUTTON =
   'peer/menu-button flex w-full items-center gap-2 overflow-hidden text-left font-medium outline-hidden transition-[width,height,padding] focus-visible:ring-2 focus-visible:ring-sidebar-ring active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:shrink-0'
 
-function WorkspaceMark({ size = 'size-6' }: { size?: string }) {
+function WorkspaceMark({ size = 'size-8' }: { size?: string }) {
   return (
     <span
       className={cn(
         size,
-        'flex items-center justify-center rounded-[7px] bg-foreground',
+        'flex shrink-0 items-center justify-center rounded-[9px] bg-foreground',
       )}
     >
-      <img className="invert" src="/OBOLUS-MARK-SM.svg" alt="Obolus" width={15} height={15} />
+      <img className="invert" src="/OBOLUS-MARK-SM.svg" alt="Obolus" width={20} height={20} />
     </span>
   )
 }
@@ -203,13 +203,13 @@ export function AppSidebar() {
                     data-slot="sidebar-menu-button"
                     className={cn(
                       MENU_BUTTON,
-                      'text-sm h-9 cursor-pointer rounded-[3px] px-1.5 py-2 hover:bg-foreground/[0.04]',
+                      'h-11 cursor-pointer rounded-[4px] px-1.5 hover:bg-foreground/[0.04]',
                     )}
                   >
-                    <div className="flex aspect-square size-6 items-center justify-center">
+                    <div className="flex aspect-square size-8 items-center justify-center">
                       <WorkspaceMark />
                     </div>
-                    <span className="truncate text-[13px] font-semibold tracking-[-0.015em]">
+                    <span className="truncate text-[15px] font-semibold tracking-[-0.02em]">
                       Obolus
                     </span>
                   </Link>
