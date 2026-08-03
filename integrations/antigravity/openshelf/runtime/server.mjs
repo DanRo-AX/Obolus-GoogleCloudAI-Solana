@@ -2,7 +2,7 @@
 import { execFile } from 'node:child_process'
 import { createInterface } from 'node:readline/promises'
 import { pathToFileURL } from 'node:url'
-import { promisify } from 'node:util'
+import { promisify, stripVTControlCharacters } from 'node:util'
 
 import {
   AgentError,
@@ -265,11 +265,7 @@ async function payAccountStatus(env = process.env) {
   if (account) args.push('--account', account)
   try {
     const { stdout, stderr } = await execFileAsync('pay', args, { timeout: 10_000 })
-    const detail = [stdout, stderr]
-      .filter(Boolean)
-      .join('\n')
-      .replace(/\u001b\[[0-9;]*m/g, '')
-      .trim()
+    const detail = stripVTControlCharacters([stdout, stderr].filter(Boolean).join('\n')).trim()
     return {
       name: 'Pay account',
       ok: !/no mainnet account|run pay setup/i.test(detail),
