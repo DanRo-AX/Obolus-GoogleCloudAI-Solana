@@ -41,6 +41,7 @@ import { useUi, type Citation, type PaymentContext } from '@/state/ui'
 type Phase =
   | 'searching' // 2
   | 'ranking' // 3
+  | 'partial' // some paid evidence exists, but the requested coverage has a gap
   | 'confirm' // between 4 and 6, when the spend needs confirming
   | 'ask-order' // 4 missed → "want me to ask around?"
   | 'ask-count' // "how many people?"
@@ -121,6 +122,9 @@ export default function Chat() {
       paymentSession.payer !== wallet.pubkey,
   )
   const paymentIncomplete = phase === 'failed' && Boolean(paymentSession?.docs.length)
+  const gapWorkflowActive = Boolean(
+    openCallDraft && ['ask-order', 'ask-count', 'ask-price', 'ordered'].includes(phase),
+  )
 
   const total = pending.reduce((sum, c) => sum + c.price, 0)
   const estimatedUsdc =
@@ -290,25 +294,27 @@ export default function Chat() {
 
         // Step 4 — this is where it splits. Partial coverage is still a miss:
         // the open call asks only for the missing number of answers.
-        if (resolution.decision === 'miss') {
-          setPhase('ask-order')
-          return
-        }
         const cites: Citation[] = resolution.matches.map((match) => ({
           handle: match.handle,
           shelf: match.shelf,
           excerpt: '',
           price: match.priceKrw,
         }))
-        patchChat(chatId, {
-          paymentSession: {
-            queryId: resolution.queryId,
-            accessToken: resolution.paymentAccessToken,
-            docs: cites,
-            shelfName: cites[0]?.shelf ?? 'Unsorted',
-          },
-        })
-        setPending(cites)
+        if (cites.length) {
+          patchChat(chatId, {
+            paymentSession: {
+              queryId: resolution.queryId,
+              accessToken: resolution.paymentAccessToken,
+              docs: cites,
+              shelfName: cites[0]?.shelf ?? 'Unsorted',
+            },
+          })
+          setPending(cites)
+        }
+        if (resolution.decision === 'miss') {
+          setPhase(cites.length ? 'partial' : 'ask-order')
+          return
+        }
         setPhase('confirm')
       } catch (error) {
         if (cancelled) return
@@ -496,9 +502,35 @@ export default function Chat() {
             ),
           )}
 
-          {!hasAnswer || paymentIncomplete ? (
+          {!hasAnswer || paymentIncomplete || gapWorkflowActive ? (
             <div className="flex flex-col gap-4 rounded-[6px] border border-border bg-card p-4">
               <TraceSteps phase={phase} hits={hits} />
+
+              {phase === 'partial' ? (
+                <Branch
+                  title={`${pending.length} people already match; ${openCallDraft?.answersNeeded ?? 0} more are missing.`}
+                  body={`Open the existing evidence first for ₩${total.toLocaleString()}. After synthesis, the same chat will offer an open call only for the remaining people, so the available DB evidence is not discarded.`}
+                >
+                  {wallet.pubkey && !paymentPayerMismatch ? (
+                    <Button
+                      variant="mono"
+                      size="mono"
+                      onClick={() =>
+                        void settle(pending, pending[0]?.shelf ?? 'Unsorted', queryId)
+                      }
+                    >
+                      Pay and open existing {pending.length}
+                    </Button>
+                  ) : (
+                    <Button variant="mono" size="mono" onClick={() => void wallet.connect()}>
+                      Connect wallet to open existing evidence
+                    </Button>
+                  )}
+                  <Button variant="monoMuted" size="mono" onClick={() => setPhase('ask-count')}>
+                    Skip existing and ask {openCallDraft?.answersNeeded ?? 'more'} people
+                  </Button>
+                </Branch>
+              ) : null}
 
               {phase === 'confirm' ? (
                 <Branch
@@ -732,9 +764,21 @@ export default function Chat() {
           ) : null}
 
           {hasAnswer && !paymentIncomplete ? (
-            <p className="text-center font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
-              Each author was paid onchain · these documents can auto-match again
-            </p>
+            <div className="flex flex-col gap-3">
+              {openCallDraft?.answersNeeded && phase === 'answered' && !existingOrder ? (
+                <Branch
+                  title={`${openCallDraft.answersNeeded} more perspectives would complete the requested coverage.`}
+                  body="The existing paid evidence remains in this chat. Post a call only for the missing people."
+                >
+                  <Button variant="mono" size="mono" onClick={() => setPhase('ask-count')}>
+                    Fill the remaining gap
+                  </Button>
+                </Branch>
+              ) : null}
+              <p className="text-center font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
+                Each opened author was paid · these documents can auto-match again
+              </p>
+            </div>
           ) : null}
         </div>
       </div>

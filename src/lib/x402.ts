@@ -39,6 +39,8 @@ const X402_GATEWAY_BASE = (
 ).replace(/\/$/, '')
 const RESOURCE = '/api/flash-research'
 const DEVNET_NETWORK = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
+const DEVNET_USDC = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+const KRW_PER_USDC = Number(import.meta.env.VITE_KRW_PER_USDC ?? 1350)
 const DEVNET_RPC_BACKOFF_MS = [1_500, 3_000, 6_000]
 
 export class PaymentError extends Error {
@@ -216,6 +218,27 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
         mode = 'bundle_escrow'
       }
 
+      const expectedAtomic = BigInt(
+        Math.max(
+          1,
+          Math.ceil(
+            (unpaidDocuments.reduce((sum, document) => sum + document.price, 0) *
+              1_000_000) /
+              KRW_PER_USDC,
+          ),
+        ),
+      )
+      const expectedPayTo = await validateUnpaidRequirement(resource, expectedAtomic)
+      client.registerPolicy((_version, requirements) =>
+        requirements.filter(
+          (requirement) =>
+            requirement.network === DEVNET_NETWORK &&
+            requirement.asset === DEVNET_USDC &&
+            requirement.payTo === expectedPayTo &&
+            atomicAmountMatches(requirement.amount, expectedAtomic),
+        ),
+      )
+
       const response = await paidFetchWithRpcBackoff(paidFetch, resource)
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as
@@ -310,6 +333,48 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
       throw new PaymentError('Payment approval was cancelled in the wallet.', 'cancelled')
     }
     throw new PaymentError(`x402 payment failed: ${message}`)
+  }
+}
+
+async function validateUnpaidRequirement(
+  resource: string,
+  expectedAtomic: bigint,
+): Promise<string> {
+  const challenge = await window.fetch(resource, {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+  })
+  if (challenge.status !== 402) {
+    throw new Error(`Expected an x402 challenge, received ${challenge.status}.`)
+  }
+  const payload = (await challenge.json().catch(() => null)) as
+    | {
+        quote?: {
+          payTo?: string
+          network?: string
+          asset?: string
+          amountAtomic?: string
+        }
+      }
+    | null
+  const quote = payload?.quote
+  if (
+    !quote?.payTo ||
+    quote.network !== DEVNET_NETWORK ||
+    quote.asset !== DEVNET_USDC ||
+    !quote.amountAtomic ||
+    !atomicAmountMatches(quote.amountAtomic, expectedAtomic)
+  ) {
+    throw new Error('The x402 challenge does not match the displayed mint, amount, or network.')
+  }
+  return quote.payTo
+}
+
+function atomicAmountMatches(value: string, expected: bigint): boolean {
+  try {
+    return BigInt(value) === expected
+  } catch {
+    return false
   }
 }
 

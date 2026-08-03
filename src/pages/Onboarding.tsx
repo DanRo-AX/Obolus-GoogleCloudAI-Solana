@@ -58,6 +58,9 @@ export default function Onboarding() {
   const [years, setYears] = useState(profile?.years ?? '')
   const [speaksTo, setSpeaksTo] = useState<CategoryId[]>(profile?.speaksTo ?? [])
   const [payoutWallet, setPayoutWallet] = useState(profile?.wallet ?? '')
+  const [publicDemographics, setPublicDemographics] = useState(
+    profile?.publicDemographics ?? false,
+  )
   const [agreed, setAgreed] = useState(false)
   const [done, setDone] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -101,6 +104,7 @@ export default function Onboarding() {
         years,
         speaksTo,
         wallet: payoutWallet || undefined,
+        publicDemographics,
       })
       setDone(true)
       window.setTimeout(() => navigate('/dashboard'), 1400)
@@ -496,6 +500,27 @@ export default function Onboarding() {
                   I have read the three rules above. I will only answer about
                   things I have actually lived, and I accept that three confirmed
                   strikes suspends the account.
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPublicDemographics((value) => !value)}
+                className="mt-3 flex w-full cursor-pointer items-start gap-3 rounded-[4px] border border-border p-4 text-left transition-colors hover:bg-foreground/[0.02]"
+              >
+                <span
+                  className={cn(
+                    'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-[2px] border transition-colors',
+                    publicDemographics
+                      ? 'border-foreground bg-foreground text-background'
+                      : 'border-foreground/25',
+                  )}
+                >
+                  {publicDemographics ? <Check className="size-3" /> : null}
+                </span>
+                <span className="text-sm leading-relaxed">
+                  Make my broad age, region, household, and field bands public in
+                  the contributor manifest. This is optional and does not affect
+                  private matching or my ability to earn.
                 </span>
               </button>
             </Screen>

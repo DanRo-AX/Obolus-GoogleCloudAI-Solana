@@ -151,6 +151,8 @@ export type Profile = {
   agreedAt: number
   browserAlerts?: boolean
   emailAlerts?: boolean
+  /** Explicit opt-in for exposing broad demographic bands in public manifests. */
+  publicDemographics?: boolean
 }
 
 /** One line of the memory stream. Recent entries carry more weight. */
@@ -385,6 +387,7 @@ function profileFromServer(profile: ServerProfile): Profile {
     agreedAt: profile.agreedAt,
     browserAlerts: profile.browserAlerts,
     emailAlerts: profile.emailAlerts,
+    publicDemographics: profile.publicDemographics,
   }
 }
 
@@ -905,6 +908,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           years: profile.years,
           speaksTo: profile.speaksTo,
           wallet,
+          publicDemographics: profile.publicDemographics ?? false,
         },
         {
           autoMatch,

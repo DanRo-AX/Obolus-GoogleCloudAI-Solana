@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::domain::EvidenceEdge;
 
@@ -38,6 +38,16 @@ pub fn personalized_page_rank(
     normalise_or_uniform(&mut teleport);
 
     let mut outgoing = vec![Vec::<(usize, f32)>::new(); node_ids.len()];
+    let positive_pairs = edges
+        .iter()
+        .filter(|edge| effective_weight(edge) > 0.0)
+        .map(|edge| {
+            (
+                edge.source_document_id.as_str(),
+                edge.target_document_id.as_str(),
+            )
+        })
+        .collect::<HashSet<_>>();
     for edge in edges {
         let Some(&source) = positions.get(edge.source_document_id.as_str()) else {
             continue;
@@ -48,11 +58,10 @@ pub fn personalized_page_rank(
         if source == target {
             continue;
         }
-        let reciprocal = edges.iter().any(|other| {
-            other.source_document_id == edge.target_document_id
-                && other.target_document_id == edge.source_document_id
-                && effective_weight(other) > 0.0
-        });
+        let reciprocal = positive_pairs.contains(&(
+            edge.target_document_id.as_str(),
+            edge.source_document_id.as_str(),
+        ));
         let weight = effective_weight(edge)
             * if reciprocal && edge.provenance == "organic" {
                 0.2

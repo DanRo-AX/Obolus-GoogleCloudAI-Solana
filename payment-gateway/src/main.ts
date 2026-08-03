@@ -1,5 +1,5 @@
 import express, { type NextFunction, type Request, type Response as ExpressResponse } from "express";
-import { appendFile, readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { HTTPFacilitatorClient, type HTTPRequestContext } from "@x402/core/server";
 import type { Network } from "@x402/core/types";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
@@ -9,6 +9,7 @@ import {
   type PaymentRouteIdentity,
 } from "./payment-routing.js";
 import { createStableExactSvmServerScheme } from "./x402-svm.js";
+import { assertExactTokenTransfer, type TokenBalanceMeta } from "./chain-verification.js";
 
 const DEVNET_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as Network;
 const DEFAULT_DEVNET_RPC_URL = "https://api.devnet.solana.com";
@@ -106,6 +107,7 @@ type PendingSettlement = {
   payTo: string;
   amountAtomic: string;
   network: string;
+  asset: string;
   rawResponse: unknown;
 };
 type OutboxRecord =
@@ -169,11 +171,33 @@ async function getQuote(identity: RouteIdentity): Promise<PayableQuote> {
   }
 }
 
+// Settlement can finish immediately before a quote's wall-clock expiry. Once
+// the facilitator succeeded, expiry must not prevent us from durably recording
+// the already-completed transfer. The normal payment path has populated this
+// cache; the uncached fallback deliberately validates network but not expiry.
+async function getSettledQuote(identity: RouteIdentity): Promise<PayableQuote> {
+  const cached = quotes.get(identity.key);
+  const quote = cached
+    ? await cached.quote
+    : identity.kind === "document"
+      ? await internalJson<PaymentQuote>(
+          `/internal/v1/payment-quotes/${encodeURIComponent(identity.queryId)}/${encodeURIComponent(identity.handle)}`,
+        )
+      : await internalJson<PaymentBundleQuote>(
+          `/internal/v1/payment-bundles/${encodeURIComponent(identity.quoteId)}`,
+        );
+  if (quote.network !== network) {
+    throw new Error(`quote network ${quote.network} does not match gateway network ${network}`);
+  }
+  return quote;
+}
+
 async function quoteForContext(context: HTTPRequestContext): Promise<PayableQuote> {
   return getQuote(identityFromContext(context));
 }
 
 async function recordSettlement(settlement: PendingSettlement): Promise<void> {
+  await verifySettlementOnChain(settlement);
   const endpoint = settlement.settlementKind === "bundle"
     ? "/internal/v1/bundle-chain-settlements"
     : "/internal/v1/chain-settlements";
@@ -193,8 +217,45 @@ async function recordSettlement(settlement: PendingSettlement): Promise<void> {
   }
 }
 
+async function verifySettlementOnChain(settlement: PendingSettlement): Promise<void> {
+  const response = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: `openshelf-${settlement.transactionSignature.slice(0, 12)}`,
+      method: "getTransaction",
+      params: [
+        settlement.transactionSignature,
+        { commitment: "confirmed", encoding: "jsonParsed", maxSupportedTransactionVersion: 0 },
+      ],
+    }),
+  });
+  if (!response.ok) throw new Error(`chain verification RPC returned ${response.status}`);
+  const payload = await response.json() as {
+    result?: {
+      meta?: TokenBalanceMeta;
+    } | null;
+    error?: unknown;
+  };
+  const meta = payload.result?.meta;
+  if (!meta) throw new Error("settlement is not yet a confirmed transaction");
+  assertExactTokenTransfer(meta, {
+    payer: settlement.payer,
+    recipient: settlement.payTo,
+    mint: settlement.asset,
+    amountAtomic: settlement.amountAtomic,
+  });
+}
+
 async function appendOutbox(record: OutboxRecord): Promise<void> {
-  await appendFile(outboxPath, `${JSON.stringify(record)}\n`, { encoding: "utf8", mode: 0o600 });
+  const file = await open(outboxPath, "a", 0o600);
+  try {
+    await file.writeFile(`${JSON.stringify(record)}\n`, { encoding: "utf8" });
+    await file.sync();
+  } finally {
+    await file.close();
+  }
 }
 
 async function restoreOutbox(): Promise<void> {
@@ -262,7 +323,7 @@ resourceServer.onAfterSettle(async (context) => {
   )?.request?.path;
   const resourceUrl = context.paymentPayload.resource?.url;
   const identity = identityFromPath(requestPath ?? resourceUrl ?? "");
-  const quote = await getQuote(identity);
+  const quote = await getSettledQuote(identity);
   const settlement: PendingSettlement = {
     settlementKind: identity.kind,
     quoteId: quote.id,
@@ -271,6 +332,7 @@ resourceServer.onAfterSettle(async (context) => {
     payTo: context.requirements.payTo,
     amountAtomic: context.result.amount ?? context.requirements.amount,
     network: context.result.network,
+    asset: quote.asset,
     rawResponse: context.result,
   };
   pendingSettlements.set(settlement.transactionSignature, settlement);
@@ -292,6 +354,11 @@ app.use((request, response, next) => {
   response.setHeader("cache-control", "no-store");
   response.setHeader("x-content-type-options", "nosniff");
   response.setHeader("x-frame-options", "DENY");
+  response.setHeader("content-security-policy", "default-src 'none'; frame-ancestors 'none'");
+  response.setHeader("permissions-policy", "camera=(), microphone=(), geolocation=()");
+  if (production) {
+    response.setHeader("strict-transport-security", "max-age=31536000; includeSubDomains");
+  }
   response.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
   response.setHeader(
     "access-control-allow-headers",

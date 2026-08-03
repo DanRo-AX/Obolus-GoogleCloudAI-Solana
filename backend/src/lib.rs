@@ -11,7 +11,7 @@ use std::{sync::Arc, time::Duration};
 
 use axum::{
     Router,
-    extract::{DefaultBodyLimit, Request},
+    extract::{DefaultBodyLimit, Request, connect_info::MockConnectInfo},
     http::{HeaderName, HeaderValue, Method, StatusCode, header},
     middleware::{Next, from_fn},
     response::Response,
@@ -69,9 +69,24 @@ async fn default_response_headers(request: Request, next: Next) -> Response {
         HeaderName::from_static("referrer-policy"),
         HeaderValue::from_static("no-referrer"),
     );
+    headers.insert(
+        HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+    );
+    headers.insert(
+        HeaderName::from_static("strict-transport-security"),
+        HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+    );
     response
 }
 
 pub fn demo_app() -> Router {
-    build_app(Store::in_memory().expect("in-memory store should initialise"))
+    build_app(Store::in_memory().expect("in-memory store should initialise")).layer(
+        MockConnectInfo("127.0.0.1:4319".parse::<std::net::SocketAddr>().unwrap()),
+    )
 }

@@ -34,9 +34,8 @@ pub async fn synthesize(
         std::env::var("OPENSHELF_GEMINI_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_owned());
 
     if let Ok(endpoint) = std::env::var("OPENSHELF_VERTEX_ENDPOINT")
-        && let Ok(token) = std::env::var("OPENSHELF_GOOGLE_ACCESS_TOKEN")
         && !endpoint.trim().is_empty()
-        && !token.trim().is_empty()
+        && let Some(token) = google_access_token().await
     {
         let body = generation_body(request);
         if let Ok(response) = HTTP_CLIENT
@@ -75,6 +74,32 @@ pub async fn synthesize(
     }
 
     Ok(fallback(request))
+}
+
+async fn google_access_token() -> Option<String> {
+    if let Ok(token) = std::env::var("OPENSHELF_GOOGLE_ACCESS_TOKEN")
+        && !token.trim().is_empty()
+    {
+        return Some(token);
+    }
+    // Cloud Run/GCE service accounts expose short-lived ADC tokens through the
+    // metadata server. Fetching per request avoids deploying an expiring token
+    // or a service-account key file with the application.
+    let response = HTTP_CLIENT
+        .get("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token")
+        .header("Metadata-Flavor", "Google")
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?;
+    response
+        .json::<Value>()
+        .await
+        .ok()?
+        .get("access_token")?
+        .as_str()
+        .map(ToOwned::to_owned)
 }
 
 fn validate(request: &SynthesizeAnswerRequest) -> Result<(), OrchestratorError> {
@@ -162,15 +187,22 @@ fn parse_provider_response(
         .iter()
         .map(|citation| citation.handle.as_str())
         .collect::<HashSet<_>>();
-    if !inline_citations_are_allowed(&parsed.answer, &allowed) {
-        return None;
-    }
+    let cited_handles = inline_citations(&parsed.answer, &allowed)?;
     parsed.confidence = parsed.confidence.clamp(0.0, 1.0);
     parsed
         .used_handles
         .retain(|handle| allowed.contains(handle.as_str()));
     parsed.used_handles.sort_unstable();
     parsed.used_handles.dedup();
+    // The answer text is the authoritative record of evidence actually shown
+    // to the buyer. Do not accept a model-produced usedHandles list that omits
+    // an inline citation.
+    for handle in cited_handles {
+        if !parsed.used_handles.contains(&handle) {
+            parsed.used_handles.push(handle);
+        }
+    }
+    parsed.used_handles.sort_unstable();
     parsed
         .contributions
         .retain(|contribution| allowed.contains(contribution.handle.as_str()));
@@ -186,13 +218,19 @@ fn parse_provider_response(
     Some(parsed)
 }
 
-fn inline_citations_are_allowed(answer: &str, allowed: &HashSet<&str>) -> bool {
-    answer.split('[').skip(1).all(|suffix| {
-        let Some((handle, _)) = suffix.split_once(']') else {
-            return false;
-        };
-        !handle.trim().is_empty() && allowed.contains(handle.trim())
-    })
+fn inline_citations(answer: &str, allowed: &HashSet<&str>) -> Option<Vec<String>> {
+    let mut cited = Vec::new();
+    for suffix in answer.split('[').skip(1) {
+        let (handle, _) = suffix.split_once(']')?;
+        let handle = handle.trim();
+        if handle.is_empty() || !allowed.contains(handle) {
+            return None;
+        }
+        if !cited.iter().any(|existing| existing == handle) {
+            cited.push(handle.to_owned());
+        }
+    }
+    (!cited.is_empty()).then_some(cited)
 }
 
 fn fallback(request: &SynthesizeAnswerRequest) -> SynthesizeAnswerResponse {
@@ -295,6 +333,23 @@ mod tests {
             "candidates": [{"content": {"parts": [{"text": serde_json::to_string(&json!({
                 "answer": "Unsupported claim. [INVENTED]",
                 "confidence": 0.5,
+                "consensus": [],
+                "disagreements": [],
+                "usedHandles": ["PARISR_12"],
+                "contributions": [],
+                "model": "ignored",
+                "mode": "ignored"
+            })).unwrap()}]}}]
+        });
+        assert!(parse_provider_response(&payload, &request(), "test", "test").is_none());
+    }
+
+    #[test]
+    fn provider_answer_without_any_inline_citation_is_rejected() {
+        let payload = json!({
+            "candidates": [{"content": {"parts": [{"text": serde_json::to_string(&json!({
+                "answer": "Dinner is usually at home.",
+                "confidence": 0.8,
                 "consensus": [],
                 "disagreements": [],
                 "usedHandles": ["PARISR_12"],

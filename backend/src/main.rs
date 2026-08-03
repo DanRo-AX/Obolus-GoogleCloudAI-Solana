@@ -40,10 +40,13 @@ async fn main() {
         .unwrap_or_else(|error| panic!("failed to bind {address}: {error}"));
 
     info!(%address, %database_path, "OPENSHELF API listening");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .expect("server failed");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .expect("server failed");
 }
 
 async fn shutdown_signal() {

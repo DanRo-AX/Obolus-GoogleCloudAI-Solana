@@ -267,6 +267,9 @@ export type MemoryExport = {
   accessLog: Array<{
     id: string
     memoryId?: string
+    documentId?: string
+    quoteId?: string
+    actor: string
     purpose: string
     createdAt: number
   }>

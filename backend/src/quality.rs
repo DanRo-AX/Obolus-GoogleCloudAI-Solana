@@ -109,14 +109,25 @@ fn contains_direct_identifier(text: &str) -> bool {
     }) {
         return true;
     }
-    let digits = text
-        .chars()
-        .filter(char::is_ascii_digit)
-        .collect::<String>();
-    digits.len() >= 10
-        && text
-            .split(|c: char| c.is_whitespace() || ",.;:()[]{}".contains(c))
-            .any(|token| token.chars().filter(char::is_ascii_digit).count() >= 10)
+    // Phone/account/identity numbers are commonly formatted with spaces,
+    // dashes or parentheses. Count one contiguous identifier-like run while
+    // resetting at normal prose instead of requiring ten unbroken digits.
+    let mut digits_in_run = 0_usize;
+    for character in text.chars().chain(std::iter::once(' ')) {
+        if character.is_ascii_digit() {
+            digits_in_run += 1;
+        } else if "-+(). ".contains(character) {
+            if digits_in_run >= 10 {
+                return true;
+            }
+        } else {
+            if digits_in_run >= 10 {
+                return true;
+            }
+            digits_in_run = 0;
+        }
+    }
+    false
 }
 
 fn repeated_phrase_ratio(text: &str) -> f32 {
@@ -152,14 +163,6 @@ fn has_specifics(text: &str) -> bool {
     if text.chars().any(|character| character.is_ascii_digit()) {
         return true;
     }
-    if text
-        .split_whitespace()
-        .skip(1)
-        .any(|word| word.chars().next().is_some_and(char::is_uppercase))
-    {
-        return true;
-    }
-
     text.split_whitespace().any(|raw| {
         let word = raw.trim_matches(|character: char| !character.is_alphanumeric());
         if word.chars().count() < 3 || !word.chars().any(is_hangul) {

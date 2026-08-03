@@ -47,10 +47,12 @@ explicitly want the old sandbox-ledger path, or
    a cited synthesis. Without a provider, the UI shows an explicit evidence-only
    result instead of inventing an answer.
 7. Direct-to-author payments are marked `onchain`. Bundle shares are marked
-   `claimable` against each author's verified wallet and are not presented as
-   paid until a separate escrow payout executes. Neither is added again to the
-   sandbox KRW balance. Failed ledger mirrors remain in the gateway outbox and
-   retry safely.
+   `claimable` against each author's verified wallet. The opt-in payout worker
+   builds one exact USDC transfer per claim, persists the signed transaction
+   before broadcast, confirms it, and marks the claim `onchain` through an
+   idempotent internal ledger endpoint. Neither path is added again to the
+   sandbox KRW balance. Failed mirrors and signed payouts remain in fsynced
+   outboxes and retry safely.
 
 The seeded corpus has no real author wallets, so
 `OPENSHELF_DEFAULT_RECEIVER` is its demo beneficiary. User-authored documents
@@ -145,9 +147,8 @@ Accepted memories carry a SHA-256 content hash, immutable version, reliability
 and importance scores, lock state, and access count. Corrections create a new
 version and lock the superseded passage. Contributors can export their private
 memory/access log, while public contributor and document manifests expose only
-matching metadata (including profile demographic bands), hashes, versions,
-prices, and x402 links. Those bands therefore require an explicit disclosure
-and consent treatment before a public launch.
+matching metadata, hashes, versions, prices, and x402 links. Profile demographic
+bands stay hidden unless the contributor separately opts into public disclosure.
 
 ## Honest gaps
 
@@ -191,6 +192,12 @@ contributor memory agent is deliberately narrower than a generative responder:
 it reuses the exact original paid answer only for an opted-in, 82%+
 near-identical call that still meets targeting, pricing, lock, and conduct
 rules. Every other call still requires the person to answer.
+
+Buyer query capabilities expire after seven days. Search and synthesis have
+in-process abuse limits; forwarded client addresses are trusted only when
+`OPENSHELF_TRUST_PROXY=true` is explicitly configured behind an ingress that
+overwrites the header.
+
 See `SCENARIO-AUDIT.md` for the Chrome-verified scenarios and prioritized gaps,
 [`docs/CODE-REVIEW.md`](./docs/CODE-REVIEW.md) for the PR #2/#9 consolidation
 and production audit, and `backend/README.md` for the exact backend boundary.

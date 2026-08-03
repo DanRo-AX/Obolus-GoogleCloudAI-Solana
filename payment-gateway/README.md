@@ -27,8 +27,13 @@ The root `.env.example` documents every setting. For local development use
 non-chargeable immutable quote. `GET /api/v1/paid-bundles/{quoteId}` is the x402
 resource and therefore produces one wallet approval for the aggregate amount.
 The receiver is an escrow wallet: Rust records each author's verified
-beneficiary and `claimable` share, but does not claim that escrow custody itself
-is a completed author payout.
+beneficiary and `claimable` share. `npm run payout:worker` can execute those
+claims with exact SPL-token transfers. It is off by default, Devnet-only unless
+the separate mainnet guard is enabled, persists the signed wire transaction
+before broadcast, retries the same signature, and records completion
+idempotently. Configure the `OPENSHELF_*PAYOUT*` variables in `.env.example`.
+File-key custody and local NDJSON remain development boundaries; production
+requires KMS/HSM signing and a durable queue or volume.
 
 An agent can exercise a paid resource without the browser. Use a disposable
 Devnet wallet secret, never a production key:

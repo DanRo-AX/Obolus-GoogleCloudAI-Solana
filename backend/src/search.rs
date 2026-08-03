@@ -256,6 +256,9 @@ impl Resolver {
             })
             .cloned()
             .collect::<Vec<_>>();
+        if topical_edges.is_empty() {
+            return HashMap::new();
+        }
         let raw = personalized_page_rank(&node_ids, &topical_edges, &teleport);
         let maximum = raw.values().copied().fold(0.0_f32, f32::max);
         if maximum <= f32::EPSILON {

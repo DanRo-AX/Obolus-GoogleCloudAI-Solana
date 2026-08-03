@@ -13,7 +13,12 @@ import { Button } from '@/components/ui/button'
 import { CATEGORY_BY_ID } from '@/data/categories'
 import { AGE_BANDS, HOUSEHOLDS, REGIONS } from '@/data/onboarding'
 import { AUTO_MATCH_STRIKE_LIMIT, STRIKE_LIMIT } from '@/data/onboarding'
-import { MAIN_GUIDANCE, warmupsFor, type Warmup } from '@/data/survey'
+import {
+  adaptiveWarmupFor,
+  MAIN_GUIDANCE,
+  warmupsFor,
+  type Warmup,
+} from '@/data/survey'
 import { assess, type Issue } from '@/lib/quality'
 import {
   BACKEND_ENABLED,
@@ -37,9 +42,6 @@ export default function Survey() {
   const { orders, answerOrder, profile, suspended, authReady } = useUi()
   const order = orders.find((o) => o.id === orderId)
 
-  const warmups = useMemo(() => warmupsFor(order?.shelf ?? ''), [order?.shelf])
-  const total = warmups.length + 1
-
   const [step, setStep] = useState(0)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [main, setMain] = useState('')
@@ -53,6 +55,17 @@ export default function Survey() {
   const [reservationError, setReservationError] = useState<string | null>(null)
   const submittedRef = useRef(false)
   const mainRef = useRef<HTMLTextAreaElement>(null)
+  const warmups = useMemo(() => {
+    const base = warmupsFor(order?.shelf ?? '')
+    return [
+      ...base,
+      adaptiveWarmupFor(
+        order?.question ?? '',
+        base.map((warmup) => answers[warmup.id] ?? ''),
+      ),
+    ]
+  }, [answers, order?.question, order?.shelf])
+  const total = warmups.length + 1
 
   const onLast = step === warmups.length
   const current = warmups[step]
@@ -120,10 +133,12 @@ export default function Survey() {
     const text = main.trim()
     if (!text || submitting) return
     const issues = assess(order.question, text)
-    if (issues.length && !flags) {
+    if (issues.length) {
       setFlags(issues)
+      window.setTimeout(() => mainRef.current?.focus(), 0)
       return
     }
+    setFlags(null)
     setSubmitting(true)
     setSubmitError(null)
     try {

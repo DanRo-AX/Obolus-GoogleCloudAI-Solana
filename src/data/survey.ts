@@ -165,6 +165,28 @@ export function warmupsFor(shelf: string): Warmup[] {
   return WARMUPS[shelf] ?? DEFAULT_WARMUPS
 }
 
+/**
+ * A bounded follow-up chosen from what the respondent has actually said. This
+ * keeps the interview adaptive without sending private warm-up turns to a
+ * third-party model before consent and submission.
+ */
+export function adaptiveWarmupFor(
+  question: string,
+  priorAnswers: string[],
+): Warmup {
+  const anchor = [...priorAnswers].reverse().find((answer) => answer.trim())?.trim()
+  const subject = question.trim().replace(/\s+/g, ' ').slice(0, 120)
+  return {
+    id: 'adaptive-followup',
+    kind: 'short',
+    prompt: anchor
+      ? `You mentioned “${anchor.slice(0, 80)}”. What happened in one actual instance?`
+      : `Before the paid question — “${subject}” — what is one moment you personally remember?`,
+    hint: 'A place, time, action, and outcome are more useful than a general opinion.',
+    placeholder: 'What happened, and what did you do next?',
+  }
+}
+
 /** Shown on the last screen, above the box where the money question is answered. */
 export const MAIN_GUIDANCE = {
   eyebrow: 'The one that pays',

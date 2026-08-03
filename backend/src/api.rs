@@ -1,6 +1,10 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use argon2::{
@@ -9,7 +13,7 @@ use argon2::{
 };
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post},
@@ -20,20 +24,21 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     domain::{
-        AccountControls, AuthResponse, BalanceSummary, ChainSettlementReceipt, ChatAnswer,
-        ContributorManifest, ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
-        CreateEvidenceEdgeRequest, CreateOpenCallRequest, CreatePaymentBundleRequest, DisputeCase,
-        DocumentFeedback, EarningsSummary, EvidenceEdge, LoginRequest,
-        MarkNotificationsReadRequest, MemoryEntry, MemoryExport, OpenCall, OpenCallReservation,
-        OpenDocumentsResponse, PaidDocument, PaymentBundleQuote, PaymentBundleSnapshot,
-        PaymentDocumentSnapshot, PaymentProgress, PaymentQuote, PublicDocument,
-        RecordChainSettlementRequest, RecoveredPaidDocument, RegisterRequest, ResolveError,
-        ResolveQuestionRequest, ResolveQuestionResponse, ReviewDisputeRequest,
-        ReviewDocumentFeedbackRequest, SubmitAnswerRequest, SubmitAnswerResponse,
-        SubmitDisputeRequest, SubmitDocumentFeedbackRequest, SynthesizeAnswerRequest,
-        SynthesizeAnswerResponse, SynthesizePaidAnswerRequest, UpdateMemoryRequest,
-        UpdatePreferencesRequest, UpsertProfileRequest, UserAccount, UserProfile,
-        VerifyWalletRequest, WalletChallenge, WalletChallengeRequest,
+        AccountControls, AuthResponse, BalanceSummary, BundlePayoutClaim, BundlePayoutReceipt,
+        ChainSettlementReceipt, ChatAnswer, ContributorManifest, ContributorMemoryLink,
+        ContributorNotification, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
+        CreateOpenCallRequest, CreatePaymentBundleRequest, DisputeCase, DocumentFeedback,
+        EarningsSummary, EvidenceEdge, LoginRequest, MarkNotificationsReadRequest, MemoryEntry,
+        MemoryExport, OpenCall, OpenCallReservation, OpenDocumentsResponse, PaidDocument,
+        PaymentBundleQuote, PaymentBundleSnapshot, PaymentDocumentSnapshot, PaymentProgress,
+        PaymentQuote, PublicDocument, RecordBundlePayoutRequest, RecordChainSettlementRequest,
+        RecoveredPaidDocument, RegisterRequest, ResolveError, ResolveQuestionRequest,
+        ResolveQuestionResponse, ReviewDisputeRequest, ReviewDocumentFeedbackRequest,
+        SubmitAnswerRequest, SubmitAnswerResponse, SubmitDisputeRequest,
+        SubmitDocumentFeedbackRequest, SynthesizeAnswerRequest, SynthesizeAnswerResponse,
+        SynthesizePaidAnswerRequest, UpdateMemoryRequest, UpdatePreferencesRequest,
+        UpsertProfileRequest, UserAccount, UserProfile, VerifyWalletRequest, WalletChallenge,
+        WalletChallengeRequest,
     },
     orchestrator,
     search::Resolver,
@@ -59,6 +64,7 @@ pub struct AppState {
     email_api_key: Option<String>,
     email_from: Option<String>,
     email_delivery_active: AtomicBool,
+    rate_limits: Mutex<HashMap<String, (u64, u32)>>,
 }
 
 impl AppState {
@@ -142,7 +148,27 @@ impl AppState {
                 .ok()
                 .filter(|value| !value.trim().is_empty()),
             email_delivery_active: AtomicBool::new(false),
+            rate_limits: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn consume_rate_limit(&self, key: &str, limit: u32, window_ms: u64) -> bool {
+        let now = now_ms();
+        let Ok(mut windows) = self.rate_limits.lock() else {
+            return false;
+        };
+        let entry = windows.entry(key.to_owned()).or_insert((now, 0));
+        if now.saturating_sub(entry.0) >= window_ms {
+            *entry = (now, 0);
+        }
+        if entry.1 >= limit {
+            return false;
+        }
+        entry.1 += 1;
+        if windows.len() > 10_000 {
+            windows.retain(|_, (started_at, _)| now.saturating_sub(*started_at) < window_ms);
+        }
+        true
     }
 
     #[cfg(test)]
@@ -224,6 +250,17 @@ impl AppState {
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        let email_state = Arc::clone(&state);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                email_state.deliver_pending_emails().await;
+            }
+        });
+    }
     Router::new()
         .route("/healthz", get(health))
         .route("/readyz", get(ready))
@@ -333,6 +370,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/internal/v1/bundle-chain-settlements",
             post(record_bundle_chain_settlement),
         )
+        .route(
+            "/internal/v1/bundle-payouts",
+            get(pending_bundle_payouts).post(record_bundle_payout),
+        )
         .with_state(state)
 }
 
@@ -414,8 +455,16 @@ async fn me(
 
 async fn resolve_question(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(request): Json<ResolveQuestionRequest>,
 ) -> Result<Json<ResolveQuestionResponse>, ApiError> {
+    let client = client_key(&headers, peer);
+    if !state.consume_rate_limit(&format!("resolve:{client}"), 60, 60_000) {
+        return Err(ApiError::rate_limited(
+            "too many search requests; retry in a minute",
+        ));
+    }
     let question = request.question.clone();
     let resolver =
         Resolver::new(state.store.documents()?).with_evidence_edges(state.store.evidence_edges()?);
@@ -436,6 +485,15 @@ async fn synthesize_answer(
     Json(request): Json<SynthesizePaidAnswerRequest>,
 ) -> Result<(HeaderMap, Json<SynthesizeAnswerResponse>), ApiError> {
     let access_token = query_access_token(&headers)?;
+    if !state.consume_rate_limit(
+        &format!("synthesize:{}", token_hash(access_token)),
+        20,
+        60_000,
+    ) {
+        return Err(ApiError::rate_limited(
+            "too many synthesis requests; retry in a minute",
+        ));
+    }
     let (question, citations) = state.store.opened_evidence(
         &request.query_id,
         &request.handles,
@@ -977,6 +1035,36 @@ async fn record_bundle_chain_settlement(
     Ok(Json(state.store.record_bundle_chain_settlement(&request)?))
 }
 
+#[derive(Debug, Deserialize)]
+struct PayoutLimitQuery {
+    limit: Option<usize>,
+}
+
+async fn pending_bundle_payouts(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<PayoutLimitQuery>,
+) -> Result<Json<Vec<BundlePayoutClaim>>, ApiError> {
+    require_internal(&state, &headers)?;
+    Ok(Json(
+        state
+            .store
+            .pending_bundle_payouts(query.limit.unwrap_or(25))?,
+    ))
+}
+
+async fn record_bundle_payout(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<RecordBundlePayoutRequest>,
+) -> Result<(StatusCode, Json<BundlePayoutReceipt>), ApiError> {
+    require_internal(&state, &headers)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(state.store.record_bundle_payout(&request)?),
+    ))
+}
+
 fn private_no_store_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -1111,6 +1199,23 @@ fn query_access_token(headers: &HeaderMap) -> Result<&str, ApiError> {
         .ok_or_else(|| ApiError::unauthorized("invalid query payment token"))
 }
 
+fn client_key(headers: &HeaderMap, peer: SocketAddr) -> String {
+    let trust_proxy = std::env::var("OPENSHELF_TRUST_PROXY")
+        .ok()
+        .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+    if trust_proxy
+        && let Some(forwarded) = headers
+            .get("x-forwarded-for")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split(',').next())
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && value.len() <= 64)
+    {
+        return forwarded.to_owned();
+    }
+    peer.ip().to_string()
+}
+
 fn require_internal(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
     let token = headers
         .get(INTERNAL_TOKEN_HEADER)
@@ -1206,6 +1311,14 @@ impl ApiError {
         Self {
             status: StatusCode::FORBIDDEN,
             code: "forbidden",
+            message: message.to_owned(),
+        }
+    }
+
+    fn rate_limited(message: &str) -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            code: "rate_limited",
             message: message.to_owned(),
         }
     }
@@ -1557,6 +1670,7 @@ mod tests {
             "/internal/v1/payment-quotes/query/snapshot",
             "/internal/v1/payment-bundles/bundle",
             "/internal/v1/payment-bundles/bundle/snapshot",
+            "/internal/v1/bundle-payouts",
         ] {
             let response = demo_app()
                 .oneshot(Request::get(path).body(Body::empty()).unwrap())

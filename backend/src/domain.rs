@@ -309,6 +309,9 @@ pub struct MemoryExport {
 pub struct MemoryAccessEvent {
     pub id: String,
     pub memory_id: Option<String>,
+    pub document_id: Option<String>,
+    pub quote_id: Option<String>,
+    pub actor: String,
     pub purpose: String,
     pub created_at: u64,
 }
@@ -332,7 +335,7 @@ pub struct ContributorManifest {
     pub schema: &'static str,
     pub canonical_url: String,
     pub handle: String,
-    pub demographics: DemographicBands,
+    pub demographics: Option<DemographicBands>,
     pub reliability_score: f32,
     pub memory_count: usize,
     pub updated_at: u64,
@@ -392,6 +395,7 @@ pub struct UserProfile {
     pub agents: bool,
     pub browser_alerts: bool,
     pub email_alerts: bool,
+    pub public_demographics: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -413,6 +417,8 @@ pub struct UpsertProfileRequest {
     pub browser_alerts: bool,
     #[serde(default)]
     pub email_alerts: bool,
+    #[serde(default)]
+    pub public_demographics: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -647,6 +653,35 @@ pub struct ChainSettlementReceipt {
     pub amount_atomic: String,
     pub network: String,
     pub confirmed_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BundlePayoutClaim {
+    pub earning_event_id: String,
+    pub recipient_wallet: String,
+    pub amount_atomic: String,
+    pub network: String,
+    pub asset: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordBundlePayoutRequest {
+    pub earning_event_id: String,
+    pub recipient_wallet: String,
+    pub amount_atomic: String,
+    pub network: String,
+    pub asset: String,
+    pub transaction_signature: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BundlePayoutReceipt {
+    pub earning_event_id: String,
+    pub transaction_signature: String,
+    pub paid_at: u64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

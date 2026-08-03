@@ -47,6 +47,7 @@ directory. Configuration:
 | `OPENSHELF_ENV` | `development` | Enables production secret and secure-cookie guards |
 | `OPENSHELF_SEED_DEMO` | non-production-dependent | Seed demo personas/calls; forbidden in production |
 | `OPENSHELF_FRONTEND_ORIGIN` | `http://localhost:4319` | Exact credentialed CORS origin |
+| `OPENSHELF_TRUST_PROXY` | `false` | Trust ingress-overwritten `X-Forwarded-For` for per-client limits |
 | `OPENSHELF_SECURE_COOKIES` | production-dependent | Force the `Secure` session-cookie flag |
 | `OPENSHELF_REQUIRE_MAINNET` | `false` | Reject default Devnet network/mint configuration |
 | `RUST_LOG` | `openshelf_api=info,tower_http=info` | Log filter |
@@ -60,7 +61,7 @@ directory. Configuration:
 | `OPENSHELF_ALLOW_DEMO_OPEN` | development-dependent | Enable the non-x402 demo opener; keep false publicly |
 | `OPENSHELF_GEMINI_MODEL` | `gemini-2.5-flash` | Evidence synthesis model |
 | `OPENSHELF_VERTEX_ENDPOINT` | none | Vertex generate-content endpoint |
-| `OPENSHELF_GOOGLE_ACCESS_TOKEN` | none | Vertex bearer token |
+| `OPENSHELF_GOOGLE_ACCESS_TOKEN` | none | Local Vertex bearer override; Cloud Run/GCE uses metadata ADC |
 | `GEMINI_API_KEY` | none | Local Gemini API fallback |
 | `OPENSHELF_EMAIL_ENDPOINT` | none | Optional Resend-compatible contributor-alert endpoint |
 | `OPENSHELF_EMAIL_API_KEY` | none | Bearer token for the email endpoint |
@@ -122,6 +123,7 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data \
 | `GET` | `/internal/v1/payment-quotes/{id}/document` | Retrieve one quoted passage for the verified gateway |
 | `GET` | `/internal/v1/payment-quotes/{id}/snapshot` | Buffer the immutable quote snapshot without marking delivery |
 | `POST` | `/internal/v1/chain-settlements` | Idempotently mirror a confirmed facilitator receipt |
+| `GET/POST` | `/internal/v1/bundle-payouts` | Claim and idempotently record exact bundle-author payouts |
 
 The conduct ladder is enforced in the service, not just the UI. At two strikes,
 the author's documents leave auto-match and new payouts are held for 14 days;
@@ -181,11 +183,12 @@ curl -s http://localhost:8787/api/v1/questions/resolve \
   }'
 ```
 
-The resolution includes a one-time `paymentAccessToken`. Persist it only with
+The resolution includes a query-scoped `paymentAccessToken`. Persist it only with
 that local query and send it as `x-openshelf-query-token` when reading payment
 progress, recovering already-paid passages, synthesizing paid evidence, or
 submitting feedback. Only the
-SHA-256 token hash is stored. Progress and recovery additionally require the
+SHA-256 token hash is stored and the capability expires after seven days.
+Progress and recovery additionally require the
 settling payer public key, so a UI retry can recover settled handles and pay only
 the remaining ones.
 

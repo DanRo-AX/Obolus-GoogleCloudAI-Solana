@@ -1,6 +1,6 @@
 # OPENSHELF consolidation and production review
 
-Reviewed: 2026-08-02
+Reviewed: 2026-08-03
 
 Scope: PR #2 at `e94ff00`, draft PR #9 at `1655b46`, and the follow-up
 consolidation changes on `agent/rust-x402-backend`.
@@ -80,14 +80,16 @@ mistaken for production configuration.
    the settlement outbox is append-only NDJSON on local disk. Use a durable
    database and transactional queue, define compaction, fsync, replay,
    multi-instance ownership, and backup/restore drills.
-2. **Independent settlement assurance.** Rust trusts the internal gateway and
-   facilitator receipt. Production needs finalized-chain verification and a
-   reconciliation worker for the crash window between chain settlement and
-   durable outbox append.
-3. **Bundle escrow payouts.** Aggregate purchases now solve the N-approval UX,
-   but funds are custodial until a separately secured payout executor sends the
-   claim ledger to contributor wallets. Production needs KMS-backed signing,
-   withdrawal/finality reconciliation, fee policy, and an operator runbook.
+2. **Independent settlement assurance.** Before mirroring a purchase, the
+   gateway now checks a separate configured RPC for a confirmed transaction and
+   exact payer/recipient/mint token-balance deltas. Production still needs
+   finalized-chain reconciliation and coverage for the crash window between
+   facilitator settlement and the first durable outbox append.
+3. **Bundle escrow payouts.** A disabled-by-default Devnet worker now signs one
+   exact claim transfer, fsyncs it before broadcast, retries the same signature,
+   confirms it, and records it idempotently. Production still needs KMS/HSM
+   signing, a durable queue, withdrawal/finality reconciliation, fee policy,
+   and an operator runbook.
 4. **Mainnet operations.** Managed RPC/facilitator, mainnet mint/network,
    allowlists, KMS/secrets rotation, monitoring, alerts, and incident runbooks
    remain absent. The current verified path is Devnet.
@@ -100,21 +102,23 @@ mistaken for production configuration.
    does not yet implement. It also needs to disclose that demographic bands are
    free matching metadata and that paid passages may be sent to Gemini/Vertex
    for synthesis.
-7. **Abuse controls.** Login has email-keyed throttling and the RPC proxy has a
-   local safety limit, but registration, resolve, gateway quotes, model calls,
-   open calls, and wallet identities still need distributed IP/account/wallet
-   limits and Sybil controls at the edge.
+7. **Abuse controls.** Login, resolve, synthesis, and the RPC proxy now have
+   local safety limits, but registration, gateway quotes, open calls, and wallet
+   identities still need distributed IP/account/wallet limits and Sybil
+   controls at the edge.
 8. **Account operations.** Email verification, password reset/recovery, admin
    bootstrap/rotation, reviewer staffing, service contact, and audit tooling are
    missing.
-9. **Buyer capability lifecycle.** Query tokens are random and scoped, but have
-   no explicit expiry or server-owned buyer chat history. Add expiry/revocation
-   and authenticated or wallet-proven cross-device recovery.
+9. **Buyer capability lifecycle.** Query tokens are random, scoped, hashed, and
+   expire after seven days. Server-owned buyer chat history, explicit early
+   revocation, and authenticated or wallet-proven cross-device recovery remain.
 10. **Open-call money.** Open-call escrow and signup balances are `KRW_SANDBOX`,
    not fiat custody or on-chain escrow. Commercial copy must keep that boundary.
-11. **Frontend delivery security.** Add CSP, HSTS, frame policy, dependency/SBOM
-    scanning, x402 browser-bundle regression coverage, and an explicit failure
-    state instead of treating a backend outage as a signed-out session.
+11. **Frontend delivery security.** API/gateway CSP, HSTS, frame, referrer, and
+    permissions policies are present, and the gateway production dependency
+    audit is clean. Add an edge CSP tailored to the Vite application,
+    dependency/SBOM automation, x402 browser-bundle regression coverage, and an
+    explicit outage state instead of treating backend failure as signed-out.
 
 ## Merge recommendation
 
