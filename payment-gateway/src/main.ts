@@ -9,6 +9,7 @@ import {
   type PaymentRouteIdentity,
 } from "./payment-routing.js";
 import { createStableExactSvmServerScheme } from "./x402-svm.js";
+import "./root-env.js";
 
 const DEVNET_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as Network;
 const DEFAULT_DEVNET_RPC_URL = "https://api.devnet.solana.com";
@@ -26,6 +27,10 @@ const allowedOrigin = env(
 const port = integerEnv("PORT", 1402);
 const outboxPath = env("X402_OUTBOX_PATH", "x402-outbox.ndjson");
 const rpcRateLimitPerMinute = integerEnv("X402_RPC_RATE_LIMIT_PER_MINUTE", 120);
+const researchOrchestratorUrl = env(
+  "RESEARCH_ORCHESTRATOR_URL",
+  "http://127.0.0.1:1410",
+).replace(/\/$/, "");
 
 if (
   production &&
@@ -68,6 +73,9 @@ type PaymentBundleQuote = {
   network: Network;
   asset: string;
   amountAtomic: string;
+  budgetAtomic: string;
+  requiresPayment: boolean;
+  availableBalanceAtomic: string;
   totalPriceKrw: number;
   krwPerUsdc: number;
   expiresAt: number;
@@ -76,7 +84,22 @@ type PaymentBundleQuote = {
   status: string;
 };
 
-type PayableQuote = PaymentQuote | PaymentBundleQuote;
+type OpenCallFundingQuote = {
+  id: string;
+  payTo: string;
+  network: Network;
+  asset: string;
+  amountAtomic: string;
+  totalPriceKrw: number;
+  krwPerUsdc: number;
+  expiresAt: number;
+  resourcePath: string;
+  payloadHash: string;
+  status: string;
+  openCallId?: string | null;
+};
+
+type PayableQuote = PaymentQuote | PaymentBundleQuote | OpenCallFundingQuote;
 
 type PaidDocument = {
   quoteId: string;
@@ -90,16 +113,19 @@ type PaidDocument = {
 
 type PaymentDocumentSnapshot = PaidDocument;
 
-type PaymentBundleSnapshot = {
+type OpenCallFundingSnapshot = {
   quoteId: string;
-  bundleHash: string;
-  citations: PaidDocument["citation"][];
+  question: string;
+  target: number;
+  unitPriceKrw: number;
+  totalPriceKrw: number;
+  payloadHash: string;
 };
 
 type RouteIdentity = PaymentRouteIdentity;
 type QuoteCacheEntry = { quote: Promise<PayableQuote>; expiresAt: number };
 type PendingSettlement = {
-  settlementKind?: "document" | "bundle";
+  settlementKind?: "document" | "bundle" | "open_call";
   quoteId: string;
   transactionSignature: string;
   payer: string;
@@ -117,6 +143,12 @@ const pendingSettlements = new Map<string, PendingSettlement>();
 const allowedBrowserRpcMethods = new Set(["getAccountInfo", "getLatestBlockhash"]);
 const rpcRateWindows = new Map<string, { startedAt: number; count: number }>();
 
+class RustApiError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
 async function internalJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${rustApiUrl}${path}`, {
     ...init,
@@ -128,7 +160,14 @@ async function internalJson<T>(path: string, init: RequestInit = {}): Promise<T>
   });
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Rust API ${response.status}: ${body.slice(0, 500)}`);
+    let message = `Rust API ${response.status}`;
+    try {
+      const payload = JSON.parse(body) as { error?: { message?: string } };
+      message = payload.error?.message ?? message;
+    } catch {
+      // Keep internal response bodies out of public gateway errors.
+    }
+    throw new RustApiError(response.status, message);
   }
   return (await response.json()) as T;
 }
@@ -150,9 +189,13 @@ async function getQuote(identity: RouteIdentity): Promise<PayableQuote> {
     ? internalJson<PaymentQuote>(
         `/internal/v1/payment-quotes/${encodeURIComponent(identity.queryId)}/${encodeURIComponent(identity.handle)}`,
       )
-    : internalJson<PaymentBundleQuote>(
-        `/internal/v1/payment-bundles/${encodeURIComponent(identity.quoteId)}`,
-      );
+    : identity.kind === "bundle"
+      ? internalJson<PaymentBundleQuote>(
+          `/internal/v1/payment-bundles/${encodeURIComponent(identity.quoteId)}`,
+        )
+      : internalJson<OpenCallFundingQuote>(
+          `/internal/v1/open-call-funding-quotes/${encodeURIComponent(identity.quoteId)}`,
+        );
   const entry: QuoteCacheEntry = { quote: quotePromise, expiresAt: now + 30_000 };
   quotes.set(identity.key, entry);
   try {
@@ -176,11 +219,16 @@ async function quoteForContext(context: HTTPRequestContext): Promise<PayableQuot
 async function recordSettlement(settlement: PendingSettlement): Promise<void> {
   const endpoint = settlement.settlementKind === "bundle"
     ? "/internal/v1/bundle-chain-settlements"
-    : "/internal/v1/chain-settlements";
+    : settlement.settlementKind === "open_call"
+      ? "/internal/v1/open-call-chain-settlements"
+      : "/internal/v1/chain-settlements";
   await internalJson(endpoint, {
     method: "POST",
     body: JSON.stringify(settlement),
   });
+  if (settlement.settlementKind === "bundle") {
+    void triggerResearchJob(settlement.quoteId);
+  }
   pendingSettlements.delete(settlement.transactionSignature);
   try {
     await appendOutbox({
@@ -190,6 +238,28 @@ async function recordSettlement(settlement: PendingSettlement): Promise<void> {
   } catch (error) {
     // Replaying this entry is safe because the Rust endpoint is idempotent.
     console.error("could not mark x402 outbox entry complete", safeError(error));
+  }
+}
+
+async function triggerResearchJob(jobId: string): Promise<void> {
+  try {
+    const response = await fetch(
+      `${researchOrchestratorUrl}/internal/v1/research-jobs/${encodeURIComponent(jobId)}/run`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-openshelf-internal-token": internalToken,
+        },
+      },
+    );
+    if (!response.ok && response.status !== 202 && response.status !== 409) {
+      throw new Error(`orchestrator returned ${response.status}: ${(await response.text()).slice(0, 300)}`);
+    }
+  } catch (error) {
+    // The funding ledger is durable. Cloud Scheduler or the browser's status
+    // poll can safely trigger the same idempotent job again.
+    console.error("could not trigger funded research job", safeError(error));
   }
 }
 
@@ -298,7 +368,7 @@ app.use((request, response, next) => {
     // @x402/fetch adds Access-Control-Expose-Headers to its paid retry.
     // It is unusual as a request header, but must be allowed or the browser
     // blocks the signed retry during CORS preflight with `Failed to fetch`.
-    "Content-Type,Payment-Signature,X-Payment,Access-Control-Expose-Headers,Solana-Client,X-Openshelf-Query-Token",
+    "Content-Type,Payment-Signature,X-Payment,Access-Control-Expose-Headers,Solana-Client,X-Openshelf-Query-Token,X-Openshelf-Wallet-Session",
   );
   response.setHeader(
     "access-control-expose-headers",
@@ -376,25 +446,33 @@ app.get("/readyz", async (_request, response) => {
   }
 });
 
-// Preparing a bundle does not charge anything. It only commits an exact,
-// query-authorized document set and returns the x402 resource that will ask
-// the wallet for one aggregate transfer.
+// Preparing a research job is free. Phantom later funds the exact sum of the
+// independent Pay.sh charges with one transfer to the bounded agent wallet.
 app.post("/api/v1/payment-bundles", async (request, response, next) => {
   try {
     const accessToken = request.header("x-openshelf-query-token")?.trim();
+    const walletSession = request.header("x-openshelf-wallet-session")?.trim();
     if (!accessToken) {
       response.status(401).json({
         error: { code: "missing_query_token", message: "Query access token is required." },
       });
       return;
     }
-    const body = request.body as { queryId?: unknown; handles?: unknown };
+    if (!walletSession) {
+      response.status(401).json({
+        error: { code: "missing_wallet_session", message: "Verified prepaid wallet session is required." },
+      });
+      return;
+    }
+    const body = request.body as { queryId?: unknown; handles?: unknown; topUpAtomic?: unknown };
     if (
       typeof body?.queryId !== "string" ||
       !Array.isArray(body.handles) ||
       body.handles.length < 1 ||
       body.handles.length > 100 ||
-      body.handles.some((handle) => typeof handle !== "string")
+      body.handles.some((handle) => typeof handle !== "string") ||
+      (body.topUpAtomic !== undefined &&
+        (typeof body.topUpAtomic !== "string" || !/^\d+$/.test(body.topUpAtomic)))
     ) {
       response.status(400).json({
         error: {
@@ -406,13 +484,24 @@ app.post("/api/v1/payment-bundles", async (request, response, next) => {
     }
     const quote = await internalJson<PaymentBundleQuote>("/internal/v1/payment-bundles", {
       method: "POST",
-      headers: { "x-openshelf-query-token": accessToken },
-      body: JSON.stringify({ queryId: body.queryId, handles: body.handles }),
+      headers: {
+        "x-openshelf-query-token": accessToken,
+        "x-openshelf-wallet-session": walletSession,
+      },
+      body: JSON.stringify({
+        queryId: body.queryId,
+        handles: body.handles,
+        topUpAtomic: body.topUpAtomic,
+      }),
     });
-    quotes.set(`bundle\u0000${quote.id}`, {
-      quote: Promise.resolve(quote),
-      expiresAt: quote.expiresAt,
-    });
+    if (quote.requiresPayment) {
+      quotes.set(`bundle\u0000${quote.id}`, {
+        quote: Promise.resolve(quote),
+        expiresAt: quote.expiresAt,
+      });
+    } else if (quote.status === "funded") {
+      void triggerResearchJob(quote.id);
+    }
     response.status(201).json({
       quote,
       resourceUrl: `${request.protocol}://${request.get("host")}${quote.resourcePath}`,
@@ -470,7 +559,7 @@ app.use(
           },
           maxTimeoutSeconds: 60,
         },
-        description: "Open an exact bundle of matched OPENSHELF documents",
+        description: "Fund a Pay.sh research job for exact matched OPENSHELF documents",
         mimeType: "application/json",
         serviceName: "OPENSHELF",
         unpaidResponseBody: async (context) => {
@@ -478,7 +567,44 @@ app.use(
           return {
             contentType: "application/json",
             body: {
-              error: { code: "payment_required", message: "One aggregate USDC payment is required" },
+              error: { code: "payment_required", message: "One exact research budget deposit is required" },
+              quote,
+            },
+          };
+        },
+        settlementFailedResponseBody: (_context, result) => ({
+          contentType: "application/json",
+          body: {
+            error: {
+              code: "settlement_failed",
+              message: result.errorMessage ?? result.errorReason,
+            },
+          },
+        }),
+      },
+      "GET /api/v1/funded-open-calls/*": {
+        accepts: {
+          scheme: "exact",
+          network,
+          payTo: async (context) => (await quoteForContext(context)).payTo,
+          price: async (context) => {
+            const quote = await quoteForContext(context);
+            return { asset: quote.asset, amount: quote.amountAtomic };
+          },
+          maxTimeoutSeconds: 60,
+        },
+        description: "Fund one OPENSHELF open call on Solana Devnet",
+        mimeType: "application/json",
+        serviceName: "OPENSHELF",
+        unpaidResponseBody: async (context) => {
+          const quote = await quoteForContext(context);
+          return {
+            contentType: "application/json",
+            body: {
+              error: {
+                code: "payment_required",
+                message: "One exact Devnet USDC escrow payment is required",
+              },
               quote,
             },
           };
@@ -537,22 +663,65 @@ app.get("/api/v1/paid-bundles/:quoteId", async (request, response, next) => {
       key: `bundle\u0000${request.params.quoteId}`,
     };
     const quote = await getQuote(identity);
-    if (!("totalPriceKrw" in quote)) throw new Error("bundle route received a document quote");
-    const snapshot = await internalJson<PaymentBundleSnapshot>(
-      `/internal/v1/payment-bundles/${encodeURIComponent(quote.id)}/snapshot`,
+    if (!("bundleHash" in quote)) throw new Error("bundle route received another quote type");
+    response.json({
+      jobId: quote.id,
+      status: "funding",
+      documentCount: quote.documentHandles.length,
+      total: quote.totalPriceKrw,
+      network: quote.network,
+      mode: "pay_sh_orchestrated",
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/v1/research-jobs/:jobId", async (request, response, next) => {
+  try {
+    const accessToken = request.header("x-openshelf-query-token")?.trim();
+    if (!accessToken) {
+      response.status(401).json({
+        error: { code: "missing_query_token", message: "Query access token is required." },
+      });
+      return;
+    }
+    const job = await internalJson<unknown>(
+      `/api/v1/research-jobs/${encodeURIComponent(request.params.jobId)}`,
+      { headers: { "x-openshelf-query-token": accessToken } },
     );
-    if (snapshot.bundleHash !== quote.bundleHash) {
-      throw new Error("bundle snapshot does not match its quote commitment");
+    const status = (job as { status?: string }).status;
+    if (status === "funded") void triggerResearchJob(request.params.jobId);
+    response.json(job);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/v1/funded-open-calls/:quoteId", async (request, response, next) => {
+  try {
+    const identity: RouteIdentity = {
+      kind: "open_call",
+      quoteId: request.params.quoteId,
+      key: `open_call\u0000${request.params.quoteId}`,
+    };
+    const quote = await getQuote(identity);
+    if (!("payloadHash" in quote)) throw new Error("open-call route received another quote type");
+    const snapshot = await internalJson<OpenCallFundingSnapshot>(
+      `/internal/v1/open-call-funding-quotes/${encodeURIComponent(quote.id)}/snapshot`,
+    );
+    if (snapshot.payloadHash !== quote.payloadHash) {
+      throw new Error("open-call snapshot does not match its quote commitment");
     }
     response.json({
-      citations: snapshot.citations,
-      settlement: {
-        id: quote.id,
-        count: snapshot.citations.length,
-        total: quote.totalPriceKrw,
-        network: quote.network,
-        mode: "bundle_escrow",
-      },
+      quoteId: quote.id,
+      status: "settling",
+      question: snapshot.question,
+      target: snapshot.target,
+      unitPriceKrw: snapshot.unitPriceKrw,
+      totalPriceKrw: snapshot.totalPriceKrw,
+      network: quote.network,
+      mode: "open_call_escrow",
     });
   } catch (error) {
     next(error);
@@ -561,8 +730,14 @@ app.get("/api/v1/paid-bundles/:quoteId", async (request, response, next) => {
 
 app.use((error: unknown, _request: Request, response: ExpressResponse, _next: NextFunction) => {
   console.error("gateway request failed", safeError(error));
-  response.status(502).json({
-    error: { code: "gateway_error", message: "Payment service is temporarily unavailable." },
+  const status = error instanceof RustApiError && error.status >= 400 && error.status < 500
+    ? error.status
+    : 502;
+  response.status(status).json({
+    error: {
+      code: status === 401 ? "wallet_session_invalid" : "gateway_error",
+      message: status === 401 ? error instanceof Error ? error.message : "Wallet session expired." : "Payment service is temporarily unavailable.",
+    },
   });
 });
 
@@ -613,13 +788,21 @@ function rpcRequestId(body: unknown): unknown {
 }
 
 function consumeRpcRateLimit(client: string): boolean {
+  return consumeRateLimit(rpcRateWindows, client, rpcRateLimitPerMinute);
+}
+
+function consumeRateLimit(
+  windows: Map<string, { startedAt: number; count: number }>,
+  client: string,
+  limit: number,
+): boolean {
   const now = Date.now();
-  const current = rpcRateWindows.get(client);
+  const current = windows.get(client);
   if (!current || now - current.startedAt >= 60_000) {
-    rpcRateWindows.set(client, { startedAt: now, count: 1 });
+    windows.set(client, { startedAt: now, count: 1 });
     return true;
   }
-  if (current.count >= rpcRateLimitPerMinute) return false;
+  if (current.count >= limit) return false;
   current.count += 1;
   return true;
 }

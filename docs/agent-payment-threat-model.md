@@ -1,58 +1,42 @@
-# Agent payment session threat model
+# Research payment threat model
 
-Status: design gate for autonomous agent spending. Manual browser-wallet
-approval remains the only enabled authority, but an exact multi-document bundle
-now requires one approval rather than one approval per author. The UI must not
-enable unattended Agent payments until every control below is implemented and
-an end-to-end Devnet run passes.
+## Security boundary
 
-## Assets and trust boundaries
+The browser proves wallet ownership once and signs only balance refills with
+Phantom. OPENSHELF never receives a user private key, seed phrase, SPL delegate,
+or token-account authority. A revocable 30-day capability can spend only the
+verified wallet's OPENSHELF prepaid ledger balance.
 
-- The user's Solana signing authority and delegated session key.
-- Devnet or mainnet USDC controlled by the delegation.
-- The Rust query, payment quote, and chain-settlement ledgers.
-- The x402 resource origin and facilitator response.
-- Browser storage, which is untrusted and may be edited by the user or malware.
+Protected assets are private human passages, the query capability, the service
+wallet balance, verified owner recipients, and the original payer's refundable
+remainder.
 
-The Rust API is authoritative for the quoted document, recipient, network, mint,
-amount, expiry, and whether a settlement already exists. A client-side policy is
-display state only and cannot authorize a transfer by itself.
+## Enforced invariants
 
-## Required policy envelope
+- Search metadata is free; passage text is released only by a paid Pay.sh callback.
+- A job commits unique handles, content hashes, versions, consent versions,
+  recipients, and prices before balance reservation.
+- Balance check and reservation are atomic, so concurrent questions cannot
+  overspend one wallet.
+- A refill is credited only after exact on-chain settlement; the job budget is
+  the sum of per-DB atomic charges.
+- Outer settlement only funds a job; it never records owner earnings.
+- Each Pay.sh callback must match its job, query, handle, quote, price, owner,
+  network, asset, exchange rate, and internal service token.
+- Status exposes citations only for the exact job-linked quote marked delivered.
+- Completed and balance-refunded jobs are idempotently recovered, not re-quoted.
+- Partial failure restores only undelivered document amounts to prepaid credit.
+- Refunds use durable prepared transactions and signature replay protection.
 
-A session must bind all of the following in a signed, revocable capability:
+## Residual risks
 
-- delegated public key and parent wallet;
-- Solana network and exact USDC mint;
-- x402 gateway origin and Rust API origin;
-- maximum atomic amount per document;
-- maximum atomic amount per query;
-- rolling daily maximum;
-- exact query identifier and allowed recipient derivation rule;
-- issued-at, expiry, unique nonce, and revocation identifier.
-
-The session must refuse a request when any field is absent, changed, expired, or
-over budget. It must never fall back to an unrestricted wallet approval.
-
-## Threats and mandatory tests
-
-| Threat | Required control | Test |
-| --- | --- | --- |
-| Network substitution | Exact CAIP-2 network allowlist | Mainnet/devnet swap is rejected |
-| Mint substitution | Exact USDC mint allowlist | Unknown asset is rejected |
-| Amount inflation | Per-document, query, and daily atomic caps | One-unit overflow is rejected |
-| Recipient substitution | Recipient must match the Rust quote | Changed `payTo` is rejected |
-| Origin confusion | Exact HTTPS origin allowlist | Lookalike gateway is rejected |
-| Replay | Nonce plus settlement idempotency | Reused capability cannot pay twice |
-| Expired authority | Short expiry checked at signing time | Expired key is rejected |
-| Stolen browser state | Secret never stored in localStorage | Reload exposes no signing material |
-| User revocation | Server and wallet revocation checks | Revoked session is immediately rejected |
-| Response loss | Rust-ledger reconciliation before retry | Settled document is recovered, not repaid |
-
-## Implementation decision still required
-
-Choose a Solana wallet/session-key mechanism that supports non-custodial scoped
-delegation and revocation. Do not create a proprietary custody scheme or send a
-secret key to the Rust API. Once selected, the implementation needs independent
-security review and a Devnet test covering every row above before the disabled UI
-gate can be removed.
+- The service wallet and prepaid ledger are custodial. Keep KMS IAM scope small,
+  reconcile chain balance against the ledger, and separate production projects.
+- A stolen web session can spend its prepaid balance, but cannot access Phantom
+  or other wallet funds. CSP/XSS controls and session revocation remain required.
+- Cloud Run currently uses one orchestrator instance to prevent concurrent job
+  ownership. Horizontal scaling requires a database lease/fencing token.
+- A Pay.sh/facilitator or RPC outage delays completion/refund; it does not grant
+  content access.
+- Devnet assets have no production value or finality guarantees.
+- Query answers can still be inaccurate; payment proves provenance/access, not truth.

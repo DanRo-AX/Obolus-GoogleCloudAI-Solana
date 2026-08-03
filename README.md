@@ -2,19 +2,23 @@
 
 Implementation diagrams: [system architecture and ERD](./architecture.html)
 
-An agent that searches what people wrote instead of the web, and pays them over
-x402 for every document it opens.
+An agent that searches what people wrote instead of the web, and pays each
+human database owner through Pay.sh for every document it opens.
 
 > Turn the internet into a database, and charge x402 for access.
 
-React 19 + TypeScript + Vite + Tailwind v4, a Rust/Axum API, SQLite, and an
-x402/Solana payment gateway.
+React 19 + TypeScript + Vite + Tailwind v4, a Rust/Axum API, SQLite, Phantom
+x402 deposits, and a GCP KMS-backed Pay.sh/MPP agent that pays each selected DB.
 
 ```bash
 npm ci
 npm --prefix payment-gateway ci
-cp .env.example .env  # set the direct and bundle receiver Devnet wallets
+npm --prefix agent-orchestrator ci
+cp .env.example .env  # set the KMS service-wallet public key and Devnet RPC
+gcloud auth application-default login  # local Vertex AI ADC; no API key
+# set GOOGLE_CLOUD_PROJECT in .env; Vertex AI API must be enabled for it
 npm run dev:stack     # frontend :4319, Rust :8787, x402 gateway :1402
+npm run pay:gateway:sandbox # official Pay.sh gateway :3402
 npm run x402:devnet:smoke # optional funded-wallet settlement verification
 ```
 
@@ -25,43 +29,93 @@ npm run check:all
 npm run build
 ```
 
+## Antigravity CLI
+
+The repository includes an Antigravity plugin that exposes the complete asker
+and contributor lifecycles as 23 `openshelf` MCP tools, plus the official
+Pay.sh MCP wallet behind a narrow Antigravity 1.1.10 handshake adapter.
+
+```bash
+agy plugin install ./integrations/antigravity/openshelf
+npm run agent:doctor
+node integrations/antigravity/openshelf/runtime/server.mjs auth login \
+  --email YOU@example.com
+agy
+```
+
+Use `/mcp` to confirm both `openshelf` and `pay` are connected. Free search and
+AI baselines do not require a Pay account. Before the first paid action, create
+or select a locally protected named Pay account; set
+`OPENSHELF_PAY_ACCOUNT=NAME` when it should differ from the Pay default. The
+plugin requires explicit approval for the exact aggregate Devnet amount before
+it invokes Pay. See
+[`integrations/antigravity/openshelf/README.md`](./integrations/antigravity/openshelf/README.md)
+and [`docs/ACCOUNT-LINKING.md`](./docs/ACCOUNT-LINKING.md).
+
 The paid path is live by default. Set `VITE_X402_ENABLED=false` only when you
 explicitly want the old sandbox-ledger path, or
 `VITE_BACKEND_ENABLED=false` for the fully static fallback.
 
 ## Actual payment path
 
+For autonomous agents, the official Pay.sh gateway is the default path:
+
+1. Free search returns payment-safe handles and a query-scoped recovery token.
+2. The agent checks the free recovery URL, then prepares one query-bound Pay.sh
+   resource per unopened handle.
+3. `pay curl` handles the HTTP 402/MPP exchange. Pay.sh dynamically splits all
+   but one USDC atomic unit directly to the verified contributor wallet.
+4. Rust validates the immutable quote, price band, asset, network, query,
+   handle, and runtime recipient again before returning the quoted snapshot.
+5. A lost response is recovered for free; retries do not accrue twice.
+
+See [`pay/PAY.md`](./pay/PAY.md) for the agent contract and
+[`docs/PAY-SH.md`](./docs/PAY-SH.md) for Cloud Run + GCP KMS deployment.
+
+The hosted web UI requires no companion process or separate installation. The
+user proves Phantom ownership once and refills a prepaid Devnet USDC balance
+only when it is low. Questions then reserve credit automatically without a new
+wallet popup. No delegate or withdrawal authority is granted, and the browser
+can close while the Cloud Run agent pays each DB's Pay.sh challenge.
+
+The browser settlement path is:
+
 1. Rust searches private documents and returns only safe handles and KRW prices.
-2. For one document, the gateway asks Rust for a short-lived direct-author
-   quote. For two or more, Rust commits the exact handles, content hashes,
-   beneficiary wallets, total, mint, network, and expiry into one bundle quote.
-3. An unpaid resource request returns x402 v2 `402 Payment Required` with a
-   `PAYMENT-REQUIRED` header.
-4. The browser x402 client asks Phantom once. A single document pays its author
-   directly; a multi-document purchase sends one aggregate transfer to the
-   configured bundle escrow and retries with `PAYMENT-SIGNATURE`.
-5. The public Devnet facilitator verifies and settles it, the gateway releases
-   the purchase-time content snapshot, and Rust records the signature
-   idempotently.
-6. Rust reloads only server-proven opened passages, then Gemini/Vertex produces
+2. Rust commits the exact handles, content hashes, beneficiary wallets,
+   per-document atomic prices, total, mint, network, and expiry into one job.
+3. Rust atomically reserves the exact job cost from verified prepaid credit.
+   If credit is low, an unpaid refill resource returns x402 v2 `402 Payment
+   Required` and Phantom tops up once.
+4. A confirmed refill credits the ledger and funds the job; it does not reveal
+   passages or accrue earnings.
+5. The server agent uses Pay.sh/MPP for each DB. Pay.sh splits the document
+   amount directly to the verified owner; Rust releases only that exact paid
+   snapshot and records it idempotently.
+6. Rust reloads only server-proven opened passages, then Gemini on Vertex AI produces
    a cited synthesis. Without a provider, the UI shows an explicit evidence-only
    result instead of inventing an answer.
-7. Direct-to-author payments are marked `onchain`. Bundle shares are marked
-   `claimable` against each author's verified wallet and are not presented as
-   paid until a separate escrow payout executes. Neither is added again to the
-   sandbox KRW balance. Failed ledger mirrors remain in the gateway outbox and
-   retry safely.
+7. A permanent partial failure restores the exact unpaid atomic remainder to
+   prepaid credit. Failed chain-settlement mirrors remain in the gateway outbox.
+
+Paid MISS/open-call commissions use the same one-approval model. Rust commits
+the question, target, display budget, exact Devnet USDC amount, mint, escrow
+receiver, and expiry. Phantom approves one transfer for the whole target; only
+the confirmed settlement creates the call. Every accepted answer receives a
+deterministic atomic share, and cancellation or account deletion returns the
+exact unused remainder to the original payer through a payout claim. A
+zero-price call keeps the explicitly labelled sandbox path because there is no
+token transfer to settle.
 
 The seeded corpus has no real author wallets, so
 `OPENSHELF_DEFAULT_RECEIVER` is its demo beneficiary. User-authored documents
-snapshot the verified wallet saved on that author's profile. Multi-document
-transfers land in `OPENSHELF_BUNDLE_RECEIVER`; the contributor Memory screen
-shows the corresponding escrow claim separately from sandbox and direct-chain
-balances.
+snapshot the verified wallet saved on that author's profile. Question deposits
+land in `OPENSHELF_BUNDLE_RECEIVER`, which must be the KMS public key;
+individual Pay.sh settlements still go directly to DB owners.
 
 If a browser loses the response after settlement, the client reconciles the
 query with Rust, recovers passages that are already proven paid, and retries
-only unpaid handles. The query recovery token is scoped to the original query
+only unpaid handles. The query recovery token is scoped to the original query,
+expires after 24 hours,
 and payer-sensitive recovery APIs; it is also required for paid-evidence
 synthesis and is never a general document-access credential.
 
@@ -83,16 +137,15 @@ the exact dialogue the meeting settled on:
 
 ```
 ask → search the shelves → rank by similarity → HIT or MISS
-  HIT  → open N docs → one exact bundle quote → one x402 approval → author claims
+  HIT  → reserve prepaid credit → Pay.sh pays N owners → cited answer
   MISS → "Nobody has covered this yet. Want me to ask people?"
        → "How many people?"  → "What do you want to pay per answer?"
        → call posted → dashboard
 ```
 
-The browser-wallet path confirms every spend before opening anything. Phantom
-signs once for the exact set: one document is direct-to-author, while two or
-more use the bundle escrow and beneficiary ledger. The preview shows KRW,
-estimated Devnet USDC, approval count, network, and the token mint. A question that already
+The browser-wallet path proves ownership once, refills only when needed, and
+never installs a reusable token allowance. The preview shows KRW, estimated
+Devnet USDC, network, and token mint. A question that already
 has enough matching documents skips the call entirely and offers to settle on
 the spot — the inverted order the meeting called out. Seeded opens cost ₩5–₩25;
 the five-document Seongsu example currently resolves to ₩50 (about 0.03704
@@ -104,6 +157,25 @@ hash embeddings, word/character n-grams, entity anchors, trust, freshness, and
 topic-personalized PageRank over curator-verified independent evidence edges.
 Paid, self-owned, inferred, and raw UGC edges cannot buy authority. The search
 response contains handles and prices but never paid passages.
+
+## AI supplies liquidity; people create the asset
+
+When human coverage is empty or thin, Gemini on Vertex AI may provide a free **AI general
+baseline** so a questioner does not hit a blank screen. That baseline lives in
+`ai_baselines`, never `documents`: it has zero price, expires, cannot be resold,
+earns no authority, cannot satisfy an open-call slot, and is never used by the
+contributor Memory agent. Its structured output is limited to stable
+orientation and decision criteria, then explicitly lists the current,
+firsthand gaps that still require people. If enough human documents exist—even
+when the buyer's budget is too low—the server refuses to generate a baseline.
+
+The opposite cold start is explicit too. A contributor can ask Gemini on Vertex AI for
+three **Shelf starter** interview prompts based only on broad fields they
+agreed to answer in. The UI states that no buyer is waiting and no upfront
+reward is guaranteed. A prompt has no price or evidence status; only the
+contributor's quality-checked firsthand answer becomes a sellable human
+document. Gemini on Vertex AI supplies demand-side context, supply-side interviewing, and
+post-purchase synthesis without ever becoming a marketplace author.
 
 ## Canvases
 
@@ -169,19 +241,23 @@ three-strike suspension. Chat transcripts remain tab-session local in backend
 mode (durable local storage is reserved for the offline demo); authenticated
 account, money, memory, and authorization state are server-owned.
 
-The KRW signup/open-call balance is still a clearly labelled sandbox ledger; it
-models reservations and refunds but is not fiat or on-chain escrow. Paid
-document opens now use actual x402 exact/SVM settlement on Solana Devnet.
-The official Pay.sh YAML is a separate static localnet compatibility path; it
-is not proof of Devnet settlement. See [`docs/PAY-SH.md`](./docs/PAY-SH.md).
-Production still requires a mainnet facilitator credential, managed RPC,
-durable outbox volume or queue, rate limiting, email verification/recovery, KMS
-secret management, and an external identity provider if social login is
-desired. A policy-limited agent wallet and the projected monthly top-up product
-are not implemented yet. Agent payments
-remain visibly disabled until the controls in
-[`docs/agent-payment-threat-model.md`](./docs/agent-payment-threat-model.md) are
-implemented and reviewed. Browser settlement reconciliation is implemented;
+The KRW signup balance and zero-price calls remain a clearly labelled sandbox
+ledger; they are not fiat. Paid document opens and paid open-call budgets use
+actual x402 exact/SVM settlement on Solana Devnet.
+The official Pay.sh YAML is now the primary agent API and has both a reproducible
+local sandbox and a Devnet Cloud Run/GCP KMS deployment definition. A local
+sandbox proves the full 402/delivery/recovery contract, not a Devnet transfer;
+the final funded Devnet receipt still requires the team's external Pay account,
+KMS IAM principal, and Devnet USDC. See [`docs/PAY-SH.md`](./docs/PAY-SH.md).
+Mainnet operation is intentionally out of scope. A public Devnet service still
+needs a managed RPC, durable multi-instance queue/database, distributed rate
+limits, email verification, KMS secret management, and an external identity
+provider if social login is desired. Password reset/recovery is implemented via
+the email outbox and revokes all sessions. The service wallet signs through GCP
+KMS; no user private key, browser helper key, or SPL delegate reaches Rust, the
+gateway, or Cloud Run. See
+[`docs/agent-payment-threat-model.md`](./docs/agent-payment-threat-model.md).
+Browser settlement reconciliation is implemented;
 paid handles are recovered before any retry.
 
 Contributor question delivery now includes server-ranked recommendations, a

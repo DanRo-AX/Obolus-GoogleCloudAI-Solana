@@ -6,12 +6,19 @@
   "scripts": {
     "dev": "vite",
     "dev:stack": "bash scripts/dev-stack.sh",
-    "pay:gateway:sandbox": "npx --yes @solana/pay --sandbox gate api backend/paywall.yml --bind 127.0.0.1:3402 --no-register",
+    "pay:gateway:sandbox": "OPENSHELF_BACKEND_URL=${OPENSHELF_BACKEND_URL:-http://127.0.0.1:8787} npx --yes @solana/pay --sandbox gate api backend/paywall.yml --bind 127.0.0.1:3402 --openapi openapi.json --no-register",
+    "pay:smoke": "npx --yes tsx@4.21.0 scripts/pay-sh-smoke.ts",
+    "pay:image:gcloud": "docker build -f pay/Dockerfile -t openshelf-pay:gcp-kms .",
     "pay:version": "npx --yes @solana/pay --version",
+    "agent:test": "node --test integrations/antigravity/openshelf/runtime/*.test.mjs",
+    "agent:doctor": "node integrations/antigravity/openshelf/runtime/server.mjs doctor",
+    "agent:call": "node integrations/antigravity/openshelf/runtime/server.mjs call",
+    "orchestrator:dev": "npm --prefix agent-orchestrator run dev",
+    "orchestrator:test": "npm --prefix agent-orchestrator run test",
     "x402:devnet:smoke": "npx --yes tsx@4.21.0 scripts/devnet-x402-smoke.ts",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "check:all": "npm run build && npm run lint && npm --prefix payment-gateway run typecheck && npm --prefix payment-gateway run test && cargo test --manifest-path backend/Cargo.toml && cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings",
+    "check:all": "npm run build && npm run lint && npm --prefix payment-gateway run typecheck && npm --prefix payment-gateway run test && npm --prefix agent-orchestrator run typecheck && npm --prefix agent-orchestrator run test && cargo test --manifest-path backend/Cargo.toml && cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -38,6 +45,7 @@
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.54.2",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",

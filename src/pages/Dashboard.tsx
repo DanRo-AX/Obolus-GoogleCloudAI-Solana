@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Check,
@@ -9,6 +9,8 @@ import {
   Coins,
   MessageSquareText,
   Mail,
+  Loader2,
+  Sparkles,
   ShieldAlert,
   UserRound,
   type LucideIcon,
@@ -24,7 +26,15 @@ import {
 } from '@/components/ui/primitives'
 import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from '@/data/categories'
 import { STRIKE_LIMIT } from '@/data/onboarding'
-import { ApiError, getChatAnswers, type ChatAnswer } from '@/lib/api'
+import {
+  ApiError,
+  generateShelfStarters,
+  getChatAnswers,
+  listShelfStarters,
+  submitShelfStarterAnswer,
+  type ChatAnswer,
+  type ShelfStarter,
+} from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useUi, type Order } from '@/state/ui'
 
@@ -102,6 +112,72 @@ export default function Dashboard() {
   const [answersLoading, setAnswersLoading] = useState<string | null>(null)
   const [answersError, setAnswersError] = useState<Record<string, string>>({})
   const [alertError, setAlertError] = useState<string | null>(null)
+  const [starters, setStarters] = useState<ShelfStarter[]>([])
+  const [startersLoading, setStartersLoading] = useState(false)
+  const [starterError, setStarterError] = useState<string | null>(null)
+  const [starterAnswers, setStarterAnswers] = useState<Record<string, string>>({})
+  const [starterPrices, setStarterPrices] = useState<Record<string, number>>({})
+  const [submittingStarter, setSubmittingStarter] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!profile) {
+      setStarters([])
+      return
+    }
+    let cancelled = false
+    void listShelfStarters()
+      .then((items) => {
+        if (!cancelled) setStarters(items)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [profile])
+
+  async function createStarters() {
+    setStartersLoading(true)
+    setStarterError(null)
+    try {
+      const result = await generateShelfStarters()
+      setStarters(result.starters)
+      if (result.status === 'unavailable') {
+        setStarterError('Vertex AI interview prompts are unavailable. No fake buyer calls were created.')
+      }
+    } catch (error) {
+      setStarterError(error instanceof Error ? error.message : 'Could not create shelf starters.')
+    } finally {
+      setStartersLoading(false)
+    }
+  }
+
+  async function publishStarter(starter: ShelfStarter) {
+    const answer = starterAnswers[starter.id]?.trim() ?? ''
+    if (!answer) {
+      setStarterError('Write a firsthand answer before publishing it to your shelf.')
+      return
+    }
+    setSubmittingStarter(starter.id)
+    setStarterError(null)
+    try {
+      await submitShelfStarterAnswer(
+        starter.id,
+        answer,
+        starterPrices[starter.id] ?? 300,
+      )
+      setStarters((current) => current.filter((item) => item.id !== starter.id))
+      setStarterAnswers((current) => {
+        const next = { ...current }
+        delete next[starter.id]
+        return next
+      })
+      await refreshLedger()
+    } catch (error) {
+      setStarterError(error instanceof Error ? error.message : 'Could not publish this answer.')
+    } finally {
+      setSubmittingStarter(null)
+    }
+  }
 
   async function toggleAnswers(order: Order) {
     if (!order.chatId) return
@@ -293,6 +369,86 @@ export default function Dashboard() {
               ))}
             </div>
           </div>
+        ) : null}
+
+        {profile && tab === 'open' ? (
+          <section className="rounded-[6px] border border-[#6D5BD0]/25 bg-[#6D5BD0]/[0.035] p-4">
+            <div className="flex flex-wrap items-start gap-3">
+              <Sparkles className="mt-0.5 size-4 text-[#5540BE]" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">Build human supply before a buyer arrives</p>
+                <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
+                  Gemini on Vertex AI receives only your broad field and opted-in categories and creates interview prompts only. There is no buyer waiting and no guaranteed upfront reward. Your firsthand answer—not the AI prompt—becomes a priced human document that can earn when opened later.
+                </p>
+              </div>
+              <Button
+                variant="monoMuted"
+                size="monoSm"
+                onClick={() => void createStarters()}
+                disabled={startersLoading || starters.length > 0}
+              >
+                {startersLoading ? (
+                  <><Loader2 className="size-3 animate-spin" /> Interviewing…</>
+                ) : starters.length ? '3 prompts ready' : 'Create 3 shelf starters'}
+              </Button>
+            </div>
+
+            {starters.length ? (
+              <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                {starters.map((starter) => (
+                  <div key={starter.id} className="flex flex-col rounded-[5px] border border-border bg-card p-4">
+                    <div className="font-mono text-[9px] uppercase tracking-[1px] text-[#5540BE]">
+                      AI interview prompt · {CATEGORY_BY_ID[starter.category]?.label ?? starter.category}
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-foreground">{starter.prompt}</p>
+                    <p className="mt-2 text-xs leading-5 text-muted-foreground">{starter.rationale}</p>
+                    <textarea
+                      value={starterAnswers[starter.id] ?? ''}
+                      onChange={(event) => setStarterAnswers((current) => ({
+                        ...current,
+                        [starter.id]: event.target.value,
+                      }))}
+                      placeholder="Write what actually happened. Include a place, time, number, or concrete outcome."
+                      className="mt-3 min-h-28 resize-y rounded-[4px] border border-border bg-background p-3 text-sm leading-6 outline-none focus:border-foreground/35"
+                      maxLength={10000}
+                    />
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      {[100, 300, 500].map((price) => (
+                        <button
+                          key={price}
+                          type="button"
+                          className={cn(
+                            'rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.7px]',
+                            (starterPrices[starter.id] ?? 300) === price
+                              ? 'border-foreground/60 text-foreground'
+                              : 'border-border text-muted-foreground',
+                          )}
+                          onClick={() => setStarterPrices((current) => ({
+                            ...current,
+                            [starter.id]: price,
+                          }))}
+                        >
+                          ₩{price} future open
+                        </button>
+                      ))}
+                    </div>
+                    <Button
+                      variant="mono"
+                      size="monoSm"
+                      className="mt-3 self-start"
+                      disabled={submittingStarter === starter.id}
+                      onClick={() => void publishStarter(starter)}
+                    >
+                      {submittingStarter === starter.id ? 'Publishing…' : 'Publish my human answer'}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {starterError ? (
+              <p className="mt-3 text-xs leading-relaxed text-destructive">{starterError}</p>
+            ) : null}
+          </section>
         ) : null}
 
         {/* tab + sort ---------------------------------------------------- */}
@@ -531,6 +687,9 @@ export default function Dashboard() {
                   <div className="mt-3 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
                     <Clock className="size-3" />
                     {relative(order.createdAt)}
+                    {order.escrowMode === 'x402_solana_escrow' && !cancelled ? (
+                      <span className="text-[#0F766E]">Devnet USDC escrow</span>
+                    ) : null}
                     {cancelled ? (
                       <span className="ml-auto text-muted-foreground">
                         Cancelled · unused escrow refunded

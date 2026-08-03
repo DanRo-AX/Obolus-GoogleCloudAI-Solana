@@ -14,7 +14,7 @@ export const HOME_FAQ: Faq[] = [
   },
   {
     q: 'Why not just ask a general AI?',
-    a: 'A general AI fills the blank with conditional probability. Ask it “what do people in Paris like?” and it assembles the most plausible sentence out of what it learned about the city. Cafes, bakeries, the Seine. Not wrong, but nothing you could not have guessed.\n\nOPENSHELF opens only the MDs of people who actually live in Paris, and pays each of them for the open. If the answer is not on the shelves, it posts an open call to Paris residents and asks.\n\nThat is also why MDs are left rough on purpose. The more the sentences get polished, the closer they drift back to what a general AI would have said. Raw, specific records are the ones that sell.'
+    a: 'A general AI is useful for the part that is genuinely general. When human coverage is empty, OPENSHELF can show a free AI baseline with stable background, decision criteria, and a clear list of what still needs firsthand evidence. It never presents that output as somebody’s experience.\n\nAI baselines have zero price, expire, cannot be resold, and never enter Shelf ranking, authority, or Memory. If enough human documents already exist, the server switches the baseline off instead of letting free AI undercut them.\n\nOPENSHELF pays for the scarce layer: what people actually did, when they did it, what changed, and where their experiences disagree. Gemini supplies liquidity and organizes purchased evidence; people create the asset.'
   },
   {
     q: 'How is this different from a survey panel?',
@@ -26,7 +26,7 @@ export const HOME_FAQ: Faq[] = [
   },
   {
     q: 'What happens if the shelves are empty at launch?',
-    a: 'This is the hardest problem we have. We have not solved it, and we are not going to talk around it here. When the shelves are empty, the librarian has nothing to do.\n\nEarly on, most questions will land on “this has not been researched yet.” That means posting an open call and waiting for answers, so OPENSHELF at the start is not an instant-answer service. It is closer to asking a question and waiting hours or days.\n\nThe direction we are looking at is narrow rather than wide. Build density in one region or one subject first, and once search starts working inside it, widen sideways. Which subject to start with, and how to gather the first respondents, is still undecided.'
+    a: 'The user does not get a blank page. Gemini provides a clearly labelled general baseline immediately, then shows the specific local, current, or experiential gaps it cannot honestly fill. The question can continue as an open call without pretending the AI result is human coverage.\n\nIf contributors arrive before buyers, Gemini acts as an interviewer instead. It creates optional Shelf starter prompts from the contributor’s broad fields, but no fake buyer or bounty. Only the person’s quality-checked answer becomes a priced document and starts with zero earnings until somebody opens it.\n\nThis does not eliminate cold start; it makes it survivable. The product still needs density in a narrow region or subject, but both sides can get useful work done while that density forms.'
   },
   {
     q: 'What if the answers are careless?',
@@ -45,7 +45,7 @@ export const PRICING_FAQ: Faq[] = [
   },
   {
     q: 'Does the amount change with the number of respondents?',
-    a: 'It does. Rate × headcount is the order total. Asking ten people a ₩300 question comes to ₩3,000.\n\nSet the headcount to whatever you need. Three people gives you a direction, thirty shows you a distribution. A call in progress shows its remaining slots live, like 4/7 left.\n\nIf the call never fills, the unfilled slots are not billed. Post for seven, get three answers, and you pay for three.'
+    a: 'It does. Rate × headcount is the maximum order total. Asking ten people a ₩300 question comes to ₩3,000.\n\nSet the headcount to whatever you need. Three people gives you a direction, thirty shows you a distribution. One Phantom approval funds all paid slots in Devnet USDC, and a call in progress shows its remaining slots live, like 4/7 left.\n\nIf the call stops early, accepted answers keep their exact shares and cancelling creates a refund claim for every unused atomic unit. Post for seven, get three answers, and the other four shares return to the original payer wallet.'
   },
   {
     q: 'If the answer already exists, does it charge without an open call?',
@@ -53,11 +53,11 @@ export const PRICING_FAQ: Faq[] = [
   },
   {
     q: 'What is x402?',
-    a: 'A payment convention that actually uses HTTP 402 Payment Required. The status code sat reserved and empty for a long time; this puts money through it.\n\nIn the current browser demo, Phantom asks once for the exact selected set. One document pays its author directly; a multi-document purchase lands in payout escrow and records each contributor’s claim. A production agent can make the same x402 request autonomously only after you give it a policy-limited wallet or spending delegation. There is no card checkout.\n\nThe rail is USDC on Solana. Display is in KRW, and a ₩5–₩25 document open goes through the same way. Phantom may label Devnet USDC as Unknown, so the payment screen also shows the mint to verify.'
+    a: 'A payment convention that actually uses HTTP 402 Payment Required. The status code sat reserved and empty for a long time; this puts money through it.\n\nYou prove ownership with one Phantom message signature and refill a prepaid USDC balance. Later questions reserve that balance automatically, so Phantom appears again only when funds are low. A bounded GCP KMS agent pays every selected DB owner through Pay.sh. No delegate, private key transfer, or local companion is installed.\n\nThe rail is USDC on Solana. Display is in KRW, and a ₩5–₩25 document open goes through the same way. Phantom may label Devnet USDC as Unknown, so the refill screen also shows the mint to verify.'
   },
   {
     q: 'When does settlement happen?',
-    a: 'The buyer settlement happens when the selected documents open. A one-document purchase pays that author directly onchain. For a multi-document purchase, one transfer lands in the configured payout escrow and each author’s claim is recorded against the verified wallet shown in My Memory. The current build does not pretend that claim is already a completed wallet payout.\n\nFor answers to an open call, the rate moves through the explicitly labelled KRW_SANDBOX ledger when the client receives an accepted answer. Even if a call closes short of its headcount, everyone who already answered keeps that sandbox credit and unused slots are refunded.\n\nDevnet tokens and sandbox KRW are test value. Production withdrawals require a secured payout executor, custody/compliance policy, and mainnet reconciliation that are not enabled in this build.'
+    a: 'The buyer settlement happens when the selected documents open. A one-document purchase pays that author directly onchain. For a multi-document purchase, one transfer lands in the configured payout escrow and each author’s exact claim is recorded against the verified wallet shown in My Memory.\n\nA paid open call is funded once for its whole target before it is posted. Each accepted human answer or opted-in exact-memory match creates a deterministic Devnet USDC payout claim; cancellation returns the exact unused remainder to the payer. The crash-safe worker marks a claim paid only after confirmation. Zero-price calls alone use the labelled KRW_SANDBOX path.\n\nDevnet tokens and sandbox KRW are test value. Mainnet operation, real-value custody, and commercial withdrawals are intentionally not enabled in this build.'
   },
   {
     q: 'Am I charged for MDs that were never opened?',

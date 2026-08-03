@@ -7,8 +7,11 @@ publish = false
 [dependencies]
 argon2 = "0.5.3"
 axum = "0.8.9"
+base64 = "0.22"
 bs58 = "0.5"
 ed25519-dalek = "2"
+google-cloud-auth = "1.15.0"
+http = "1"
 rand_core = { version = "0.6.4", features = ["getrandom"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
@@ -16,6 +19,7 @@ serde_json = "1"
 sha2 = "0.10.9"
 rusqlite = { version = "0.37", features = ["bundled"] }
 thiserror = "2"
+time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
 tower-http = { version = "0.7", features = ["cors", "timeout", "trace"] }
 tracing = "0.1"

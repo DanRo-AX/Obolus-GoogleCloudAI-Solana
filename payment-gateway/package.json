@@ -9,10 +9,14 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test src/*.test.ts",
-    "pay": "tsx src/client.ts"
+    "pay": "tsx src/client.ts",
+    "payout:once": "tsx src/payout-worker.ts",
+    "payout:watch": "tsx src/payout-worker.ts --watch",
+    "escrow:create": "tsx src/create-devnet-escrow.ts"
   },
   "dependencies": {
     "@scure/base": "^1.2.6",
+    "@solana-program/token": "^0.9.0",
     "@solana/kit": "^5.5.1",
     "@x402/core": "^2.20.0",
     "@x402/express": "^2.20.0",
@@ -21,6 +25,7 @@
     "express": "^5.2.1"
   },
   "devDependencies": {
+    "@solana/web3.js": "^1.98.4",
     "@types/express": "^5.0.6",
     "@types/node": "^24.0.0",
     "tsx": "^4.21.0",

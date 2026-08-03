@@ -51,6 +51,8 @@ export type Resolution = {
     | 'no_relevant_documents'
     | 'insufficient_coverage'
     | 'budget_too_low'
+  liquidityState: 'ai_liquidity_only' | 'hybrid_coverage' | 'human_covered'
+  aiBaselineEligible: boolean
   requestedDocuments: number
   candidateCount: number
   matches: ResolvedMatch[]
@@ -67,6 +69,46 @@ export type Resolution = {
     suggestedUnitPriceKrw: number
     suggestedBudgetKrw: number
   }
+}
+
+export type AiBaseline = {
+  id: string
+  queryId: string
+  kind: 'ai_baseline'
+  orientation: string
+  generalPoints: string[]
+  humanGaps: string[]
+  questionsForPeople: string[]
+  model: string
+  mode: 'vertex' | 'gemini_api' | string
+  policyVersion: string
+  generatedAt: number
+  expiresAt: number
+  priceKrw: 0
+  sellable: false
+  countsAsHumanCoverage: false
+}
+
+export type AiBaselineResult = {
+  status: 'generated' | 'cached' | 'unavailable'
+  baseline?: AiBaseline | null
+}
+
+export type ShelfStarter = {
+  id: string
+  prompt: string
+  rationale: string
+  category: CategoryId
+  source: 'ai_interview_prompt'
+  buyerWaiting: false
+  guaranteedRewardKrw: 0
+  generatedAt: number
+  expiresAt: number
+}
+
+export type ShelfStarterResult = {
+  status: 'generated' | 'cached' | 'unavailable'
+  starters: ShelfStarter[]
 }
 
 export type Account = {
@@ -177,6 +219,22 @@ export function logout(): Promise<void> {
   return apiFetch('/api/v1/auth/logout', { method: 'POST' })
 }
 
+export function forgotPassword(email: string): Promise<void> {
+  return apiFetch('/api/v1/auth/password/forgot', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email }),
+  })
+}
+
+export function resetPassword(token: string, password: string): Promise<void> {
+  return apiFetch('/api/v1/auth/password/reset', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token, password }),
+  })
+}
+
 export function deleteAccount(): Promise<void> {
   return apiFetch('/api/v1/account', { method: 'DELETE' })
 }
@@ -197,6 +255,36 @@ export function resolveQuestion(
   })
 }
 
+export function generateAiBaseline(
+  queryId: string,
+  paymentAccessToken: string,
+): Promise<AiBaselineResult> {
+  return apiFetch(`/api/v1/questions/${encodeURIComponent(queryId)}/ai-baseline`, {
+    method: 'POST',
+    headers: { 'x-openshelf-query-token': paymentAccessToken },
+  })
+}
+
+export function listShelfStarters(): Promise<ShelfStarter[]> {
+  return apiFetch('/api/v1/shelf-starters')
+}
+
+export function generateShelfStarters(): Promise<ShelfStarterResult> {
+  return apiFetch('/api/v1/shelf-starters', { method: 'POST' })
+}
+
+export function submitShelfStarterAnswer(
+  starterId: string,
+  answer: string,
+  priceKrw: number,
+): Promise<{ memory: MemoryEntry; documentHandle: string }> {
+  return apiFetch(`/api/v1/shelf-starters/${encodeURIComponent(starterId)}/answer`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ answer, priceKrw }),
+  })
+}
+
 type ApiOrder = Omit<Order, 'category'> & { category: string }
 
 function orderFromApi(order: ApiOrder): Order {
@@ -208,7 +296,7 @@ export async function listOpenCalls(): Promise<Order[]> {
   return calls.map(orderFromApi)
 }
 
-export async function createOpenCall(input: {
+export type CreateOpenCallInput = {
   question: string
   unitPrice: number
   target: number
@@ -216,13 +304,44 @@ export async function createOpenCall(input: {
   shelf: string
   category: CategoryId
   filters?: TargetFilters
-}): Promise<Order> {
+}
+
+export type OpenCallFundingQuote = {
+  id: string
+  payTo: string
+  network: string
+  asset: string
+  amountAtomic: string
+  totalPriceKrw: number
+  krwPerUsdc: number
+  expiresAt: number
+  resourcePath: string
+  payloadHash: string
+  status: 'quoted' | 'funded' | 'expired'
+  openCallId?: string | null
+}
+
+export async function createOpenCall(input: CreateOpenCallInput): Promise<Order> {
   const call = await apiFetch<ApiOrder>('/api/v1/open-calls', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   })
   return orderFromApi(call)
+}
+
+export function prepareOpenCallFundingQuote(
+  input: CreateOpenCallInput,
+): Promise<OpenCallFundingQuote> {
+  return apiFetch('/api/v1/open-call-funding-quotes', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function getOpenCallFundingQuote(quoteId: string): Promise<OpenCallFundingQuote> {
+  return apiFetch(`/api/v1/open-call-funding-quotes/${encodeURIComponent(quoteId)}`)
 }
 
 export async function cancelOpenCall(orderId: string): Promise<Order> {
@@ -341,6 +460,47 @@ export function verifyWalletChallenge(
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ challengeId, signature }),
+  })
+}
+
+export type PrepaidWalletSession = {
+  token: string
+  wallet: string
+  payTo: string
+  network: string
+  asset: string
+  availableAtomic: string
+  expiresAt: number
+}
+
+export type PrepaidBalance = Omit<PrepaidWalletSession, 'token' | 'expiresAt'>
+
+export function createPrepaidWalletSession(
+  wallet: string,
+  challengeId: string,
+  signature: string,
+): Promise<PrepaidWalletSession> {
+  return apiFetch('/api/v1/prepaid/session', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet, challengeId, signature }),
+  })
+}
+
+export function getPrepaidBalance(): Promise<PrepaidBalance> {
+  return apiFetch('/api/v1/prepaid/balance')
+}
+
+export function withdrawPrepaidBalance(amountAtomic?: string): Promise<{
+  id: string
+  status: string
+  amountAtomic: string
+  recipientWallet: string
+}> {
+  return apiFetch('/api/v1/prepaid/withdrawals', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ amountAtomic }),
   })
 }
 
@@ -509,7 +669,11 @@ export type EarningEvent = {
   source: 'seed' | 'open_call' | 'dispute_restored' | 'document_open' | 'document_open_bundle'
   amountKrw: number
   recipientWallet?: string
-  payoutStatus: 'accrued' | 'held' | 'onchain' | 'claimable'
+  payoutStatus: 'accrued' | 'held' | 'onchain' | 'claimable' | 'paid'
+  payoutClaimId?: string
+  payoutClaimStatus?: 'pending' | 'leased' | 'prepared' | 'failed' | 'confirmed' | string
+  payoutTransactionSignature?: string
+  payoutAmountAtomic?: string
   availableAt: number
   createdAt: number
 }

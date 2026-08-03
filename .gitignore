@@ -8,6 +8,9 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+agent-orchestrator/node_modules
+test-results/
+playwright-report/
 dist
 dist-ssr
 *.local
@@ -32,3 +35,4 @@ openshelf.db-wal
 *.sln
 *.sw?
 .gstack/
+.secrets/

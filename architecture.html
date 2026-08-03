@@ -570,8 +570,8 @@
         </div>
         <aside class="release" aria-label="문서 기준">
           <strong>As implemented</strong>
-          <span>2026-08-03 · one-approval bundle settlement + recovery</span>
-          <span>21 tables · 37 Rust route contracts + gateway resources</span>
+          <span>2026-08-03 · human-first AI liquidity + settlement recovery</span>
+          <span>23 tables · 40+ Rust route contracts + gateway resources</span>
           <span>Rust modular monolith</span>
         </aside>
       </header>
@@ -668,10 +668,12 @@ flowchart LR
     API["api.rs\nroute · session · authorization"]
     DOMAIN["domain.rs\nrequest / response contracts"]
     SEARCH["search.rs\n768d lexical embedding · HIT / MISS"]
+    ORCH["orchestrator.rs\nAI liquidity · paid-evidence synthesis"]
     QUALITY["quality.rs\nanswer quality rules"]
     STORE["store.rs\ntransactions · invariants · migrations"]
     API --> DOMAIN
     API --> SEARCH
+    API --> ORCH
     API --> QUALITY
     API --> STORE
     SEARCH --> STORE
@@ -679,18 +681,22 @@ flowchart LR
   end
 
   subgraph DATA["SQLite · source of truth"]
-    IDENTITY[("Identity\nusers · sessions · profiles\nwallet challenges · auth limits")]
+    IDENTITY[("Identity\nusers · sessions · profiles\nwallet challenges · reset tokens")]
     MARKET[("Marketplace\nopen_calls · memory · documents")]
     SEARCHDB[("Retrieval\nqueries · query_matches")]
-    LEDGER[("Ledger\nbalances · funding · settlements · earnings")]
+    LIQUIDITY[("AI liquidity\nai_baselines · shelf_starters")]
+    LEDGER[("Ledger\nbalances · settlements · earnings\npayout claims · open-call funding")]
     REVIEW[("Enforcement\ndisputes · paid feedback")]
   end
 
   subgraph EXTERNAL["External payment boundary"]
-    GATE["x402 gateway · TypeScript\ndirect / bundle quote · durable outbox"]
+    GATE["x402 gateway · TypeScript\ndirect / bundle / open-call · durable outbox"]
+    PAYOUT["Devnet payout worker\nlease · sign · persist · confirm"]
     FAC["x402 facilitator\nverify · settle · fee payer"]
     RPC["Solana Devnet RPC"]
+    GEMINI["Gemini on Vertex AI\nADC-authenticated · no API keys"]
     GATE --> FAC --> RPC
+    PAYOUT --> RPC
   end
 
   V --> UI
@@ -703,9 +709,12 @@ flowchart LR
   STORE -->|"ACID SQL transaction"| IDENTITY
   STORE --> MARKET
   STORE --> SEARCHDB
+  STORE --> LIQUIDITY
   STORE --> LEDGER
   STORE --> REVIEW
   GATE -->|"internal token · quote / passage / receipt"| API
+  PAYOUT -->|"internal token · payout claim lease/state"| API
+  ORCH -->|"no private shelf text on baseline/starter paths"| GEMINI
 
   classDef actor fill:#e8e2f4,stroke:#5b4b8a,color:#191918
   classDef client fill:#dcefeb,stroke:#0f766e,color:#191918
@@ -714,9 +723,9 @@ flowchart LR
   classDef external fill:#f6e8bd,stroke:#9a6700,color:#191918
   class V,B,C,A actor
   class UI,STATE,CLIENT,WALLET client
-  class API,DOMAIN,SEARCH,QUALITY,STORE rust
-  class IDENTITY,MARKET,SEARCHDB,LEDGER,REVIEW data
-  class GATE,FAC,RPC external
+  class API,DOMAIN,SEARCH,ORCH,QUALITY,STORE rust
+  class IDENTITY,MARKET,SEARCHDB,LIQUIDITY,LEDGER,REVIEW data
+  class GATE,FAC,RPC,GEMINI external
           </pre>
         </div>
 
@@ -742,6 +751,14 @@ flowchart LR
               x402를 처리하고, 실패한 Rust 원장 mirror는 outbox에서 재시도한다.
             </p>
           </article>
+          <article class="note accent">
+            <h3>AI liquidity boundary</h3>
+            <p>
+              Gemini는 일반 Baseline과 인터뷰 질문만 공급한다. AI 산출물은
+              documents, Memory, authority, 정산에 들어가지 않고 인간 공급이
+              충분하면 Baseline 호출 자체가 차단된다.
+            </p>
+          </article>
         </div>
 
         <div class="domain-grid" aria-label="Rust 모듈 책임">
@@ -759,6 +776,11 @@ flowchart LR
             <span class="kicker">Retrieval</span>
             <h3>search.rs</h3>
             <p>문서 후보, 타깃 필터, 예산, HIT/MISS 및 안전한 quote.</p>
+          </article>
+          <article class="domain">
+            <span class="kicker">AI liquidity</span>
+            <h3>orchestrator.rs</h3>
+            <p>일반 Baseline, 기여자 인터뷰 질문, 결제된 인간 증거 종합의 서로 다른 경계.</p>
           </article>
           <article class="domain">
             <span class="kicker">Enforcement</span>
@@ -797,11 +819,14 @@ flowchart LR
 erDiagram
   USERS ||--o{ SESSIONS : "owns FK"
   USERS ||--o{ WALLET_CHALLENGES : "proves wallet FK"
+  USERS ||--o{ SHELF_STARTERS : "requests prompts FK"
   USERS ||--|| BALANCES : "owns FK"
   USERS ||..o| PROFILES : "has logical"
 
   QUERIES ||--o{ QUERY_MATCHES : "quotes FK"
+  QUERIES ||--o| AI_BASELINES : "temporary liquidity FK"
   DOCUMENTS ||--o{ QUERY_MATCHES : "matched by handle FK"
+  DOCUMENTS o|--o| SHELF_STARTERS : "human answer materializes"
   QUERIES ||--o{ SETTLEMENTS : "opened under FK"
   QUERIES ||..o{ PAYMENT_QUOTES : "prices logical"
   DOCUMENTS ||..o{ PAYMENT_QUOTES : "recipient snapshot"
@@ -823,6 +848,11 @@ erDiagram
   MEMORY_ENTRIES o|--o{ EARNING_EVENTS : "source answer FK"
   DOCUMENTS o|--o{ EARNING_EVENTS : "source document FK"
   OPEN_CALLS ||..o{ FUNDING_EVENTS : "reserve or refund"
+  USERS ||--o{ PASSWORD_RESET_TOKENS : "recovers account"
+  OPEN_CALL_FUNDING_QUOTES ||--o| OPEN_CALL_CHAIN_SETTLEMENTS : "funds exactly once"
+  OPEN_CALLS ||--o| OPEN_CALL_CHAIN_SETTLEMENTS : "activated by receipt"
+  EARNING_EVENTS o|--o| PAYOUT_CLAIMS : "becomes payable"
+  OPEN_CALLS o|--o{ PAYOUT_CLAIMS : "answer or refund"
 
   USERS {
     TEXT id PK
@@ -846,6 +876,15 @@ erDiagram
     INTEGER window_started_at
     INTEGER blocked_until
     INTEGER updated_at
+  }
+
+  PASSWORD_RESET_TOKENS {
+    TEXT id PK
+    TEXT user_id FK
+    TEXT token_hash UK
+    INTEGER expires_at
+    INTEGER used_at
+    INTEGER created_at
   }
 
   BALANCES {
@@ -898,6 +937,40 @@ erDiagram
     TEXT target_region
     TEXT target_household
     TEXT target_field
+    TEXT escrow_mode
+    TEXT escrow_wallet
+    TEXT escrow_asset
+    TEXT escrow_network
+    INTEGER escrow_total_atomic
+    INTEGER escrow_remaining_atomic
+    TEXT funding_transaction_signature
+  }
+
+  OPEN_CALL_FUNDING_QUOTES {
+    TEXT id PK
+    TEXT owner_id FK
+    TEXT request_json
+    TEXT payload_hash
+    TEXT pay_to
+    TEXT network
+    TEXT asset
+    INTEGER amount_atomic
+    INTEGER total_price_krw
+    INTEGER expires_at
+    TEXT status
+    TEXT open_call_id FK
+  }
+
+  OPEN_CALL_CHAIN_SETTLEMENTS {
+    TEXT id PK
+    TEXT quote_id UK
+    TEXT open_call_id UK
+    TEXT transaction_signature UK
+    TEXT payer
+    TEXT pay_to
+    INTEGER amount_atomic
+    TEXT network
+    INTEGER confirmed_at
   }
 
   MEMORY_ENTRIES {
@@ -935,8 +1008,37 @@ erDiagram
     TEXT id PK
     TEXT question
     TEXT decision
+    TEXT liquidity_state
     TEXT payment_token_hash
+    INTEGER payment_token_expires_at
     INTEGER created_at
+  }
+
+  AI_BASELINES {
+    TEXT id PK
+    TEXT query_id FK
+    TEXT orientation
+    TEXT general_points_json
+    TEXT human_gaps_json
+    TEXT questions_for_people_json
+    TEXT model
+    TEXT policy_version
+    INTEGER generated_at
+    INTEGER expires_at
+  }
+
+  SHELF_STARTERS {
+    TEXT id PK
+    TEXT user_id FK
+    TEXT prompt
+    TEXT rationale
+    TEXT category
+    TEXT model
+    TEXT policy_version
+    INTEGER generated_at
+    INTEGER expires_at
+    INTEGER answered_at
+    TEXT document_id FK
   }
 
   QUERY_MATCHES {
@@ -1038,6 +1140,25 @@ erDiagram
     INTEGER created_at
   }
 
+  PAYOUT_CLAIMS {
+    TEXT id PK
+    TEXT earning_event_id UK
+    TEXT open_call_id FK
+    TEXT beneficiary_user_id
+    TEXT kind
+    TEXT escrow_wallet
+    TEXT recipient_wallet
+    TEXT asset
+    TEXT network
+    INTEGER amount_atomic
+    TEXT status
+    TEXT transaction_signature UK
+    TEXT signed_transaction_base64
+    INTEGER last_valid_block_height
+    INTEGER attempt_count
+    INTEGER confirmed_at
+  }
+
   FUNDING_EVENTS {
     TEXT id PK
     TEXT user_id
@@ -1109,12 +1230,24 @@ erDiagram
             <span>검색 응답은 handle과 가격만 제공하고 본문은 settlement 뒤 반환.</span>
           </article>
           <article class="invariant">
+            <strong>AI는 시장 자산이 아님</strong>
+            <span>ai_baselines와 shelf_starters는 documents와 분리되며 인간 답변만 문서화.</span>
+          </article>
+          <article class="invariant">
             <strong>온체인 중복 정산 차단</strong>
             <span>quote_id와 transaction_signature UNIQUE, 수취인·network·atomic amount 완전 일치.</span>
           </article>
           <article class="invariant">
             <strong>검증된 저자에게만 지급</strong>
             <span>Ed25519 서명 완료 지갑만 payout에 사용하고 주소 변경 시 검증을 폐기.</span>
+          </article>
+          <article class="invariant">
+            <strong>서명 후 장애도 중복 송금 없음</strong>
+            <span>payout worker는 signed bytes·signature를 방송 전에 저장하고 동일 transaction만 재전송.</span>
+          </article>
+          <article class="invariant">
+            <strong>복구 권한 만료</strong>
+            <span>query payment token은 24시간, password reset token은 1시간·1회로 제한.</span>
           </article>
         </div>
       </section>
@@ -1171,7 +1304,7 @@ erDiagram
             <ol class="steps">
               <li class="step">
                 <span class="step-number">01</span>
-                <div><strong>전체 예산 예약</strong><p>available에서 unit price × target을 빼고 reserved에 더한다.</p></div>
+                <div><strong>전체 예산 한 번 결제</strong><p>유료 콜은 unit price × target의 정확한 Devnet USDC를 Phantom 한 번으로 에스크로에 보내고, 영수증이 mirror된 뒤에만 게시한다. ₩0 콜만 sandbox를 쓴다.</p></div>
               </li>
               <li class="step">
                 <span class="step-number">02</span>
@@ -1183,7 +1316,7 @@ erDiagram
               </li>
               <li class="step">
                 <span class="step-number">04</span>
-                <div><strong>단위 지급 또는 환불</strong><p>답변당 reserved 한 단위를 지급하고, 취소 시 남은 escrow만 구매자에게 환불.</p></div>
+                <div><strong>원자 단위 지급·환불</strong><p>답변마다 전체 atomic amount의 결정론적 몫을 payout claim으로 만들고, 취소·계정 삭제 시 남은 모든 atomic unit을 원 payer에게 환불 claim으로 만든다.</p></div>
               </li>
             </ol>
           </article>

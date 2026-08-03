@@ -6,8 +6,10 @@ The Rust service owns the complete question lifecycle:
 question -> search/rank private MDs -> HIT -> quote safe metadata
                                   \-> MISS -> create an open call
 account -> HttpOnly session -> profile / private memory / balance
-open call -> reserve full sandbox budget -> recommend + notify matching contributors
-          -> hold a 10-minute answer slot -> accepted answer -> escrow release
+open call -> zero-price sandbox or one exact Devnet escrow funding transaction
+          -> recommend + notify matching contributors -> hold a 10-minute answer slot
+          -> accepted answer -> deterministic contributor payout claim
+          -> cancellation/account deletion -> exact unused payer refund claim
           -> 82%+ near-identical paid memory + opted-in agent -> exact answer reuse
                                             \-> voided -> pending dispute
 pending dispute -> admin approve -> document + slot + escrow release
@@ -15,9 +17,9 @@ pending dispute -> admin approve -> document + slot + escrow release
 quoted handles -> direct quote (1) or exact bundle quote (2–100)
                -> one USDC settlement -> reveal committed passage snapshots
                \-> progress/recovery token -> immutable chain receipt + beneficiary claims
-author wallet -> signed Ed25519 challenge -> verified payout destination
+author wallet -> browser Ed25519 challenge or Pay SIWX -> verified payout destination
 paid passage -> buyer feedback/report -> admin review -> ranking reliability
-opened passages -> server-canonical evidence -> Gemini/Vertex cited synthesis
+opened passages -> server-canonical evidence -> Gemini on Vertex AI cited synthesis
 memory -> hash/version/lock/correction -> public manifest + private export log
 ```
 
@@ -47,6 +49,7 @@ directory. Configuration:
 | `OPENSHELF_ENV` | `development` | Enables production secret and secure-cookie guards |
 | `OPENSHELF_SEED_DEMO` | non-production-dependent | Seed demo personas/calls; forbidden in production |
 | `OPENSHELF_FRONTEND_ORIGIN` | `http://localhost:4319` | Exact credentialed CORS origin |
+| `OPENSHELF_AGENT_API_ORIGIN` | `http://127.0.0.1:8787` | Exact public API origin embedded in one-time Pay SIWX wallet-link resources; remote production values require HTTPS |
 | `OPENSHELF_SECURE_COOKIES` | production-dependent | Force the `Secure` session-cookie flag |
 | `OPENSHELF_REQUIRE_MAINNET` | `false` | Reject default Devnet network/mint configuration |
 | `RUST_LOG` | `openshelf_api=info,tower_http=info` | Log filter |
@@ -58,10 +61,10 @@ directory. Configuration:
 | `OPENSHELF_KRW_PER_USDC` | `1350` | Deterministic quote conversion rate |
 | `OPENSHELF_QUOTE_TTL_MS` | `300000` | Quote lifetime |
 | `OPENSHELF_ALLOW_DEMO_OPEN` | development-dependent | Enable the non-x402 demo opener; keep false publicly |
-| `OPENSHELF_GEMINI_MODEL` | `gemini-2.5-flash` | Evidence synthesis model |
-| `OPENSHELF_VERTEX_ENDPOINT` | none | Vertex generate-content endpoint |
-| `OPENSHELF_GOOGLE_ACCESS_TOKEN` | none | Vertex bearer token |
-| `GEMINI_API_KEY` | none | Local Gemini API fallback |
+| `GOOGLE_CLOUD_PROJECT` | none | Vertex AI billing/resource project; required for model calls |
+| `GOOGLE_CLOUD_LOCATION` | `global` | Vertex AI location; regional endpoints are derived safely |
+| `OPENSHELF_VERTEX_MODEL` | `gemini-2.5-flash` | Gemini model hosted by Vertex AI |
+| `OPENSHELF_AI_BASELINE_TTL_MS` | `21600000` | Lifetime of a zero-price general AI baseline; never a human document |
 | `OPENSHELF_EMAIL_ENDPOINT` | none | Optional Resend-compatible contributor-alert endpoint |
 | `OPENSHELF_EMAIL_API_KEY` | none | Bearer token for the email endpoint |
 | `OPENSHELF_EMAIL_FROM` | none | Verified sender used for contributor alerts |
@@ -69,6 +72,12 @@ directory. Configuration:
 Production also refuses to start against a database that already contains the
 demo corpus. Use a clean production database rather than relabelling a populated
 development volume.
+
+Vertex authentication uses Application Default Credentials. For local
+development, run `gcloud auth application-default login`; for production,
+attach a least-privilege runtime service account with `roles/aiplatform.user`
+through the hosting platform or Workload Identity. Do not create or commit a
+service-account key, and do not manage expiring bearer tokens in `.env`.
 
 Docker persists SQLite in `/data`:
 
@@ -88,11 +97,15 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data \
 | `POST` | `/api/v1/auth/register` `/login` `/logout` | Create, issue, or revoke an HttpOnly session |
 | `GET` | `/api/v1/auth/me` | Read the authenticated account and sandbox balance |
 | `POST` | `/api/v1/questions/resolve` | Search, rank, and return HIT/MISS plus a safe quote |
+| `POST` | `/api/v1/questions/{id}/ai-baseline` | Generate/cache general AI liquidity only when human coverage is thin (query token required) |
 | `POST` | `/api/v1/answers/synthesize` | Synthesize only server-proven opened passages (query token required) |
+| `GET/POST` | `/api/v1/shelf-starters` | List or explicitly generate AI interview prompts; never fake buyers or bounties |
+| `POST` | `/api/v1/shelf-starters/{id}/answer` | Turn a quality-checked human answer—not the AI prompt—into a priced document |
 | `GET` | `/api/v1/questions/{id}/payment-progress` | Reconcile settled/quoted/unpaid handles for a payer |
 | `GET` | `/api/v1/questions/{id}/paid-documents/{handle}` | Recover a previously settled passage without paying again |
 | `POST` | `/api/v1/questions/{id}/paid-documents/{handle}/feedback` | Record paid-buyer feedback or a report |
 | `GET/POST` | `/api/v1/open-calls` | List or commission missing coverage |
+| `POST/GET` | `/api/v1/open-call-funding-quotes[/{id}]` | Prepare or reconcile one exact Devnet funding quote for a paid call |
 | `DELETE` | `/api/v1/open-calls/{id}` | Cancel an owned call and refund unused escrow |
 | `POST` | `/api/v1/open-calls/{id}/answers` | Validate an answer, retain private interview context, and add accepted memory |
 | `POST/DELETE` | `/api/v1/open-calls/{id}/reservation` | Hold, renew, or release one answer slot for ten minutes |
@@ -116,12 +129,18 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data \
 | `GET/POST` | `/api/v1/profile` | Read or persist the anonymous profile and payout wallet |
 | `POST` | `/api/v1/profile/preferences` | Persist search auto-match, exact-memory agent, browser, and email-alert preferences |
 | `POST` | `/api/v1/profile/wallet/challenge` `/verify` | Prove payout-wallet ownership with a signed message |
+| `POST/GET` | `/api/v1/profile/wallet/siwx[/{id}]` | Create an authenticated one-time payout link, then verify a Pay `SIGN-IN-WITH-X` ownership signature without exporting its key |
 | `GET` | `/api/v1/earnings` | Audit append-only earnings and wallet snapshots |
+| `GET` | `/api/v1/payout-claims` | Inspect contributor/refund claim status and confirmed payout signatures |
+| `POST` | `/api/v1/auth/password/forgot` `/reset` | Queue an enumeration-safe one-hour reset link and rotate the password/session set |
+| `GET` | `/api/v1/admin/ai-liquidity-metrics` | Audit AI-only/hybrid coverage, starter conversion, and zero priced-AI/authority invariants |
 | `GET` | `/api/flash-research` | Reveal only handles quoted for a query and accrue them once |
 | `GET` | `/internal/v1/payment-quotes/{queryId}/{handle}` | Create/reuse an exact short-lived x402 quote (internal token required) |
 | `GET` | `/internal/v1/payment-quotes/{id}/document` | Retrieve one quoted passage for the verified gateway |
 | `GET` | `/internal/v1/payment-quotes/{id}/snapshot` | Buffer the immutable quote snapshot without marking delivery |
 | `POST` | `/internal/v1/chain-settlements` | Idempotently mirror a confirmed facilitator receipt |
+| `POST` | `/internal/v1/open-call-chain-settlements` | Activate a paid call only after its exact Devnet receipt is mirrored |
+| `POST` | `/internal/v1/payout-claims/*` | Lease, prepare, complete, or fail crash-safe Devnet payout work |
 
 The conduct ladder is enforced in the service, not just the UI. At two strikes,
 the author's documents leave auto-match and new payouts are held for 14 days;
@@ -131,6 +150,11 @@ strike or payment. An admin approval performs the restoration atomically.
 An unverified profile wallet is never used as an on-chain recipient. Updating the
 address revokes verification, one verified wallet cannot belong to two accounts,
 and user-authored documents cannot fall back to the seeded-content receiver.
+The SIWX path uses Pay's canonical Solana sign-in message, checks domain, URI,
+chain, nonce, issued/expiry time, request ID, Ed25519 signature, and one-time
+consumption before applying the same wallet-uniqueness rule. It links a wallet
+to an already authenticated OpenShelf user; it does not infer identity from a
+Google account or email address.
 
 Answer submissions may include `interviewResponses` from the optional warm-up
 conversation. Those turns are returned only in the respondent's authenticated
@@ -151,6 +175,22 @@ and new questions score at least 82% similar, the category and demographic
 target match, the old document remains unlocked, its price floor is met, and
 the account is below the two-strike restriction. Otherwise the call is sent to
 the person for a fresh interview.
+
+AI market liquidity is a separate provenance lane. A resolve response reports
+`ai_liquidity_only`, `hybrid_coverage`, or `human_covered` from human supply
+alone. Only the first two permit the token-scoped baseline endpoint. The model
+returns general orientation, stable decision factors, human evidence gaps, and
+questions for people under `general-liquidity-v1`; a deterministic post-check
+rejects first-person or direct recommendation language. The result lives in
+`ai_baselines`, expires, costs zero, and has no path into documents, authority,
+memory, matching, or settlement.
+
+Shelf starters cover the inverse cold start. Gemini on Vertex AI receives only the
+contributor's broad field and opted-in categories and returns prompts, not
+answers. They live in `shelf_starters` with `buyerWaiting=false` and
+`guaranteedRewardKrw=0`. A human may answer one and choose a future per-open
+price; normal specificity, identifier, duplicate, profile, and suspension
+checks run before Rust creates a document with `via = Shelf starter`.
 
 Register and keep the cookie in a local cookie jar:
 
@@ -224,7 +264,8 @@ normal wallet setup. One document produces one transfer and one receipt.
 
 `backend/paywall.yml` is a static Pay.sh localnet compatibility example. The
 Devnet application path remains `payment-gateway/src/main.ts`, because recipients
-and prices must be generated per document rather than fixed in YAML. See
+and prices must be generated per document rather than fixed in YAML. Antigravity
+can authorize those dynamic URLs through Pay's MCP server. See
 [`../docs/PAY-SH.md`](../docs/PAY-SH.md).
 
 ## Verify

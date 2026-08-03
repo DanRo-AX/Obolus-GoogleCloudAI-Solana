@@ -9,6 +9,7 @@ import {
   Menu,
   Search,
   SlidersHorizontal,
+  Sparkles,
   ThumbsDown,
   ThumbsUp,
 } from 'lucide-react'
@@ -17,10 +18,12 @@ import { Button } from '@/components/ui/button'
 import { SHELVES, type Shelf } from '@/data/shelf'
 import {
   getChatAnswers,
+  generateAiBaseline,
   resolveQuestion,
   submitDocumentFeedback,
   synthesizeAnswer,
   type DocumentFeedback,
+  type AiBaseline,
   type Resolution,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -33,9 +36,10 @@ import { useUi, type Citation, type PaymentContext } from '@/state/ui'
  *
  *   1 ask  2 search  3 rank  4 hit/miss  5 open call  6 x402  7 accrue
  *
- * Step 4 is the whole service. A hit ends as search; a miss posts an open call
- * on the spot. The browser-wallet demo confirms every spend because Phantom
- * asks the person to sign one exact direct or aggregate payment.
+ * Step 4 is the whole service. A human hit ends as paid search; a miss may add
+ * zero-price general AI liquidity while keeping the human gap open for a call.
+ * Phantom approves a reusable prepaid balance refill only when funds are low. The server agent then pays the
+ * selected DBs independently through Pay.sh and returns only paid evidence.
  */
 
 type Phase =
@@ -56,7 +60,7 @@ const KRW_PER_USDC = Number(import.meta.env.VITE_KRW_PER_USDC ?? 1350)
 const STEPS = [
   { n: 2, label: 'Search the shelves', blurb: 'People\u2019s documents, not the web' },
   { n: 3, label: 'Rank by similarity', blurb: 'The closest few, not everything' },
-  { n: 4, label: 'Hit or miss', blurb: 'A miss posts an open call' },
+  { n: 4, label: 'Human coverage', blurb: 'AI bridges a miss; people fill it' },
 ]
 
 const COUNT_CHOICES = [3, 7, 12]
@@ -101,6 +105,12 @@ export default function Chat() {
   const [openCallDraft, setOpenCallDraft] = useState<Resolution['openCall'] | null>(
     null,
   )
+  const [aiBaseline, setAiBaseline] = useState<AiBaseline | null>(
+    () => chat?.aiBaseline ?? null,
+  )
+  const [aiBaselineStatus, setAiBaselineStatus] = useState<
+    'idle' | 'loading' | 'ready' | 'unavailable'
+  >(() => (chat?.aiBaseline ? 'ready' : 'idle'))
   const startedRef = useRef<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -115,8 +125,10 @@ export default function Chat() {
     (order) => order.mine && order.chatId === chatId && order.status !== 'cancelled',
   )
   const paymentSession = chat?.paymentSession
+  const paymentUsesLegacyPaySh = paymentSession?.payer === 'pay.sh'
   const paymentPayerMismatch = Boolean(
     paymentSession?.payer &&
+      !paymentUsesLegacyPaySh &&
       wallet.pubkey &&
       paymentSession.payer !== wallet.pubkey,
   )
@@ -144,7 +156,7 @@ export default function Chat() {
     [openCallDraft?.suggestedUnitPriceKrw],
   )
 
-  /** Steps 6–7. Phantom signs one exact x402/SVM payment per opened document. */
+  /** Steps 6–7. Reserve prepaid credit, then server-side Pay.sh orchestration. */
   const settle = useCallback(
     async (
       citations: Citation[],
@@ -155,6 +167,11 @@ export default function Chat() {
       const session = chat?.paymentSession
       if (!session) {
         setPayError('The payment recovery session is missing. Start a new query.')
+        setPhase('failed')
+        return
+      }
+      if (session.payer === 'pay.sh') {
+        setPayError('This is an old local Pay.sh session. Start a new query to use server orchestration.')
         setPhase('failed')
         return
       }
@@ -169,25 +186,28 @@ export default function Chat() {
         setPhase('failed')
         return
       }
+      const payer = wallet.pubkey
+      if (!payer) return
       if (!session.payer) {
         patchChat(chatId, {
-          paymentSession: { ...session, payer: wallet.pubkey },
+          paymentSession: { ...session, payer },
         })
       }
       setPhase('settling')
       setPayError(null)
       try {
-        const result = await openDocuments({
+        const request = {
           queryId: resolvedQueryId,
           question: prompt ?? '',
-          payer: wallet.pubkey,
+          payer,
           accessToken: session.accessToken,
           docs: citations.map((c) => ({
             handle: c.handle,
             shelf: c.shelf,
             price: c.price,
           })),
-        })
+        }
+        const result = await openDocuments(request)
         const openedHandles = new Set(result.citations.map((citation) => citation.handle))
         const remaining = citations.filter(
           (citation) => !openedHandles.has(citation.handle),
@@ -222,12 +242,12 @@ export default function Chat() {
           paymentContext: {
             queryId: session.queryId,
             accessToken: session.accessToken,
-            payer: wallet.pubkey,
+            payer,
           },
         })
         void refreshLedger().catch(() => undefined)
         if (result.settlement.partial && remaining.length) {
-          const nextSession = { ...session, payer: wallet.pubkey, docs: remaining }
+          const nextSession = { ...session, payer, docs: remaining }
           patchChat(chatId, { paymentSession: nextSession })
           setPending(remaining)
           setPayError(
@@ -246,7 +266,15 @@ export default function Chat() {
         setPhase('failed')
       }
     },
-    [appendAssistant, chat?.paymentSession, chatId, patchChat, prompt, refreshLedger, wallet],
+    [
+      appendAssistant,
+      chat?.paymentSession,
+      chatId,
+      patchChat,
+      prompt,
+      refreshLedger,
+      wallet,
+    ],
   )
 
   // search → rank → branch. The guard is released in cleanup so StrictMode's
@@ -263,6 +291,8 @@ export default function Chat() {
     setQueryId(null)
     setResolutionReason(null)
     setOpenCallDraft(null)
+    setAiBaseline(null)
+    setAiBaselineStatus('idle')
 
     const run = async () => {
       try {
@@ -292,6 +322,27 @@ export default function Chat() {
         // the open call asks only for the missing number of answers.
         if (resolution.decision === 'miss') {
           setPhase('ask-order')
+          if (resolution.aiBaselineEligible) {
+            setAiBaselineStatus('loading')
+            void generateAiBaseline(
+              resolution.queryId,
+              resolution.paymentAccessToken,
+            ).then(
+              (result) => {
+                if (cancelled) return
+                if (result.baseline) {
+                  setAiBaseline(result.baseline)
+                  setAiBaselineStatus('ready')
+                  patchChat(chatId, { aiBaseline: result.baseline })
+                } else {
+                  setAiBaselineStatus('unavailable')
+                }
+              },
+              () => {
+                if (!cancelled) setAiBaselineStatus('unavailable')
+              },
+            )
+          }
           return
         }
         const cites: Citation[] = resolution.matches.map((match) => ({
@@ -338,7 +389,10 @@ export default function Chat() {
         appendAssistant(chatId, {
           id: messageId,
           role: 'assistant',
-          content: 'A targeted open-call answer arrived. The passage was paid from the reserved sandbox escrow.',
+          content:
+            existingOrder.escrowMode === 'x402_solana_escrow'
+              ? 'A targeted open-call answer arrived. Its Devnet USDC share is now a durable payout claim for the contributor.'
+              : 'A targeted open-call answer arrived. The passage was paid from the reserved sandbox escrow.',
           citations: [
             {
               handle: answer.handle,
@@ -351,7 +405,14 @@ export default function Chat() {
           settlement: {
             count: 1,
             total: answer.price,
-            network: 'sandbox-escrow',
+            network:
+              existingOrder.escrowMode === 'x402_solana_escrow'
+                ? (existingOrder.escrowNetwork ?? 'devnet')
+                : 'sandbox-escrow',
+            mode:
+              existingOrder.escrowMode === 'x402_solana_escrow'
+                ? 'open_call_escrow'
+                : undefined,
           },
         })
       }
@@ -466,8 +527,14 @@ export default function Chat() {
                           ? 'paid from reserved sandbox escrow'
                         : m.settlement.network === 'offline'
                           ? 'offline preview · no payment sent'
+                        : m.settlement.mode === 'open_call_escrow'
+                          ? 'Devnet escrow · contributor payout claim created'
                         : m.settlement.mode === 'bundle_escrow'
                           ? 'one x402 bundle · contributor shares recorded as claimable'
+                        : m.settlement.mode === 'pay_sh_direct'
+                          ? 'local Pay.sh · paid only the DBs opened by the agent'
+                        : m.settlement.mode === 'pay_sh_orchestrated'
+                          ? 'prepaid balance · server agent paid each DB through Pay.sh'
                           : 'settled through x402 · unopened documents cost nothing'}
                     </span>
                     {(m.settlement.txSigs?.length
@@ -503,16 +570,15 @@ export default function Chat() {
               {phase === 'confirm' ? (
                 <Branch
                   title={`${pending.length} people already match.`}
-                  body={`No open call needed. ${pending.length} documents cost ₩${total.toLocaleString()} total (about ${estimatedUsdc.toFixed(6)} USDC). ${pending.length === 1 ? 'This pays that author directly with one Phantom approval.' : 'One Phantom approval pays the exact bundle into the payout escrow; each contributor share is recorded against their verified wallet.'}`}
+                  body={`No open call needed. ${pending.length} documents cost ₩${total.toLocaleString()} total (about ${estimatedUsdc.toFixed(6)} USDC). ${paymentUsesLegacyPaySh ? 'This old local Pay.sh session cannot continue; start a new query.' : 'The amount is reserved from your prepaid USDC balance. Phantom appears only for the first refill or when the balance is low; the server agent pays each selected DB through Pay.sh.'}`}
                 >
                   <div className="w-full rounded-[4px] bg-foreground/[0.04] px-3 py-2 font-mono text-[10px] uppercase leading-relaxed tracking-[0.8px] text-muted-foreground">
-                    Devnet USDC may appear as “Unknown” in Phantom. Verify mint{' '}
+                    One-time wallet proof · refill only when low · no delegate permission or browser helper key. Verify Devnet USDC mint{' '}
                     <span className="text-foreground" title={DEVNET_USDC}>
                       {shortKey(DEVNET_USDC)}
-                    </span>{' '}
-                    and network Devnet before approving.
+                    </span>.
                   </div>
-                  {wallet.pubkey && !paymentPayerMismatch ? (
+                  {!paymentUsesLegacyPaySh && wallet.pubkey && !paymentPayerMismatch ? (
                     <Button
                       variant="mono"
                       size="mono"
@@ -524,15 +590,26 @@ export default function Chat() {
                         )
                       }
                     >
-                      Pay and open · 1 approval
+                      Pay once · agent opens DBs
                     </Button>
                   ) : (
                     <Button
                       variant="mono"
                       size="mono"
-                      onClick={() => void wallet.connect()}
+                      onClick={() => {
+                        if (paymentUsesLegacyPaySh) {
+                          const next = createChat(prompt ?? '', chat.filters)
+                          navigate(`/chat/${next}`)
+                        } else {
+                          void wallet.connect()
+                        }
+                      }}
                     >
-                      {paymentPayerMismatch ? 'Switch to the original wallet' : 'Connect wallet to pay'}
+                      {paymentUsesLegacyPaySh
+                          ? 'Start a new query'
+                        : paymentPayerMismatch
+                          ? 'Switch to the original wallet'
+                          : 'Connect wallet to pay'}
                     </Button>
                   )}
                   <Button
@@ -547,7 +624,13 @@ export default function Chat() {
 
               {phase === 'ask-order' ? (
                 <Branch
-                  title="Nobody has covered this yet."
+                  title={
+                    resolutionReason === 'insufficient_coverage'
+                      ? 'Human coverage is still thin.'
+                      : resolutionReason === 'budget_too_low'
+                        ? 'Human knowledge exists outside this budget.'
+                        : 'Nobody has covered this yet.'
+                  }
                   body={
                     resolutionReason === 'insufficient_coverage'
                       ? 'Some relevant documents exist, but not enough for the requested coverage. Want me to fill the gap?'
@@ -556,6 +639,23 @@ export default function Chat() {
                         : 'Nothing on the shelves matches. Want me to ask people?'
                   }
                 >
+                  {aiBaselineStatus === 'loading' ? (
+                    <div className="w-full rounded-[5px] border border-[#6D5BD0]/20 bg-[#6D5BD0]/[0.04] p-4">
+                      <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[1px] text-[#5540BE]">
+                        <Loader2 className="size-3 animate-spin" />
+                        AI liquidity · preparing general context
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                        This will not count as human coverage or become a sellable document.
+                      </p>
+                    </div>
+                  ) : null}
+                  {aiBaseline ? <AiBaselineCard baseline={aiBaseline} /> : null}
+                  {aiBaselineStatus === 'unavailable' ? (
+                    <div className="w-full rounded-[4px] border border-border px-3 py-2 text-xs leading-5 text-muted-foreground">
+                      The general AI baseline is unavailable. The human call remains available and unchanged.
+                    </div>
+                  ) : null}
                   <Button
                     variant="mono"
                     size="mono"
@@ -654,7 +754,7 @@ export default function Chat() {
               {phase === 'ordered' && placedOrder ? (
                 <Branch
                   title="Call posted."
-                    body={`${placedOrder.target} people · ₩${placedOrder.unitPrice.toLocaleString()} each. ₩${placedOrder.escrowRemainingKrw?.toLocaleString() ?? (placedOrder.target * placedOrder.unitPrice).toLocaleString()} is reserved; accepted answers are paid from it and the unused amount is refundable.`}
+                  body={`${placedOrder.target} people · ₩${placedOrder.unitPrice.toLocaleString()} each. ₩${placedOrder.escrowRemainingKrw?.toLocaleString() ?? (placedOrder.target * placedOrder.unitPrice).toLocaleString()} is ${placedOrder.escrowMode === 'x402_solana_escrow' ? 'funded in Devnet USDC escrow with one wallet approval' : 'reserved in the sandbox ledger'}; accepted answers are paid from it and the unused amount is refundable.`}
                 >
                   <Button
                     variant="mono"
@@ -677,10 +777,8 @@ export default function Chat() {
 
               {phase === 'settling' ? (
                 <Branch
-                  title="Settling over x402…"
-                  body={pending.length > 1
-                    ? 'Paying the exact document bundle once, recording contributor claims, then returning every passage.'
-                    : 'Paying the document author, then returning the passage.'}
+                  title="The Pay.sh agent is opening the selected DBs…"
+                  body="The server reserves this question from your prepaid balance, checks each 402 price and recipient, pays the DB owner, and returns only successfully paid passages. Phantom appears only if a refill is needed. You may close this tab; the job is durable."
                 />
               ) : null}
 
@@ -689,7 +787,7 @@ export default function Chat() {
                   title={queryId ? 'Settlement did not go through.' : 'SHELF-1 could not reach the backend.'}
                   body={
                     payError ??
-                    'The documents stayed closed. If Phantom already showed a confirmed transfer, check the explorer before retrying.'
+                    'The documents stayed closed. Retry recovers the same durable job and prepaid reservation without paying twice.'
                   }
                 >
                   {queryId && pending.length && !paymentPayerMismatch ? (
@@ -745,6 +843,49 @@ export default function Chat() {
         </div>
       </div>
     </div>
+  )
+}
+
+function AiBaselineCard({ baseline }: { baseline: AiBaseline }) {
+  return (
+    <section className="w-full rounded-[6px] border border-[#6D5BD0]/25 bg-[#6D5BD0]/[0.045] p-4 text-left">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[1px] text-[#5540BE]">
+          <Sparkles className="size-3" />
+          AI general baseline
+        </div>
+        <span className="rounded-full border border-[#6D5BD0]/20 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.7px] text-[#6D5BD0]">
+          Free · not human evidence
+        </span>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-foreground/85">
+        {baseline.orientation}
+      </p>
+      <ul className="mt-3 space-y-1.5 text-[13px] leading-5 text-foreground/75">
+        {baseline.generalPoints.map((point) => (
+          <li key={point} className="flex gap-2">
+            <span aria-hidden className="text-[#6D5BD0]">·</span>
+            <span>{point}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-4 border-t border-[#6D5BD0]/15 pt-3">
+        <p className="font-mono text-[9px] font-medium uppercase tracking-[1px] text-muted-foreground">
+          Still needs people
+        </p>
+        <ul className="mt-2 space-y-1.5 text-[13px] leading-5 text-foreground/75">
+          {baseline.humanGaps.map((gap) => (
+            <li key={gap} className="flex gap-2">
+              <span aria-hidden className="text-[#C24D32]">—</span>
+              <span>{gap}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <p className="mt-3 font-mono text-[9px] uppercase leading-4 tracking-[0.7px] text-muted-foreground">
+        ₩0 · question sent to Gemini on Vertex AI without private shelf passages · cannot be bought or resold · never enters Shelf ranking
+      </p>
+    </section>
   )
 }
 

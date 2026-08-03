@@ -4,6 +4,7 @@ import { x402Client } from "@x402/core/client";
 import type { Network } from "@x402/core/types";
 import { decodePaymentResponseHeader, wrapFetchWithPayment } from "@x402/fetch";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
+import "./root-env.js";
 
 const resourceUrl = required("PAID_RESOURCE_URL");
 const privateKey = required("SVM_PRIVATE_KEY");

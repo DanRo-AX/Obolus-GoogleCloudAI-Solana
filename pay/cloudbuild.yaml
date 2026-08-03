@@ -1,0 +1,43 @@
+substitutions:
+  _REGION: asia-northeast3
+  _REPOSITORY: openshelf
+  _SERVICE: openshelf-pay
+  _BACKEND_URL: https://REPLACE_WITH_BACKEND_RUN_URL
+  _OPERATOR_WALLET: REPLACE_WITH_OPERATOR_SOLANA_WALLET
+  _KMS_KEY_NAME: projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY/cryptoKeyVersions/1
+  _KMS_PUBKEY: REPLACE_WITH_KMS_SOLANA_PUBKEY
+  _SERVICE_ACCOUNT: openshelf-pay@PROJECT_ID.iam.gserviceaccount.com
+
+timeout: 1800s
+options:
+  machineType: E2_HIGHCPU_8
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file
+      - pay/Dockerfile
+      - --tag
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/pay:$BUILD_ID
+      - .
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/pay:$BUILD_ID
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/pay:$BUILD_ID
+      - --region=${_REGION}
+      - --platform=managed
+      - --service-account=${_SERVICE_ACCOUNT}
+      - --allow-unauthenticated
+      - --set-env-vars=OPENSHELF_BACKEND_URL=${_BACKEND_URL},OPENSHELF_PAY_OPERATOR_WALLET=${_OPERATOR_WALLET},OPENSHELF_PAY_GCP_KMS_KEY_NAME=${_KMS_KEY_NAME},OPENSHELF_PAY_GCP_KMS_PUBKEY=${_KMS_PUBKEY}
+      - --set-secrets=OPENSHELF_INTERNAL_TOKEN=openshelf-internal-token:latest,OPENSHELF_PAY_RPC_URL=openshelf-pay-rpc-url:latest
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/pay:$BUILD_ID

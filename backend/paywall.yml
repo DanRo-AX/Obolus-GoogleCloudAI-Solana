@@ -1,36 +1,218 @@
-# Static local sandbox compatibility only. Production settlement uses the
-# dynamic per-document gateway in payment-gateway/src/main.ts.
+# Official Pay.sh sandbox gateway for the agent-facing OPENSHELF API.
+#
+# The free resolve/prepare calls expose only payment-safe metadata. Each paid
+# path opens exactly one quoted human document. Pay.sh resolves OWNER_WALLET
+# from the `owner_wallet` query parameter and transfers all but one atomic USDC
+# unit directly to that verified contributor wallet. Rust re-validates the
+# path price, query capability, and owner wallet after payment and before text
+# is released.
 name: openshelf
 subdomain: openshelf
-title: "OPENSHELF"
-description: "Search paid, first-person documents and open only purchased passages."
+title: "OPENSHELF Human Data API"
+description: "Search first-person human memory, then pay only for the individual documents an agent opens."
 category: data
 version: v1
 routing:
   type: proxy
-  url: http://127.0.0.1:8787/
+  url: "${OPENSHELF_BACKEND_URL}/"
+  auth:
+    method: header
+    key: x-openshelf-internal-token
+    value_from_env: OPENSHELF_INTERNAL_TOKEN
 operator:
   currencies:
     usd: ["USDC"]
   network: localnet
   fee_payer: true
 
+recipients:
+  owner:
+    account: "${OWNER_WALLET}"
+    label: "Verified human DB owner"
+
 endpoints:
   - method: GET
     path: "healthz"
-    description: "Backend health check"
+    description: "Check whether the OPENSHELF human-data backend is healthy."
 
   - method: POST
     path: "api/v1/questions/resolve"
-    description: "Search document metadata and return a payment-safe quote or open-call draft"
+    description: "Search payment-safe human-document metadata without opening private passages."
 
   - method: GET
-    path: "api/flash-research"
-    description: "Open the passages previously quoted for a query"
+    path: "api/v1/questions/{query_id}/pay-sh-resources/{handle}"
+    description: "Prepare one query-bound Pay.sh URL and its verified contributor recipient."
+
+  - method: GET
+    path: "api/v1/questions/{query_id}/pay-sh-documents/{handle}"
+    description: "Recover a Pay.sh document already opened for the same query without charging again."
+
+  - method: GET
+    path: "api/v1/pay-sh/documents/5/{query_id}/{handle}"
+    resource: "human-document-krw-5"
+    description: "Open one quoted five-won human document after an exact MPP charge."
     metering:
+      schemes: ["mpp-charge"]
       dimensions:
         - direction: usage
           unit: requests
           scale: 1
           tiers:
-            - price_usd: 0.001
+            - price_usd: 0.003704
+      splits:
+        - recipient: owner
+          amount: 0.003703
+          memo: "OPENSHELF human document owner"
+
+  - method: GET
+    path: "api/v1/pay-sh/documents/10/{query_id}/{handle}"
+    resource: "human-document-krw-10"
+    description: "Open one quoted ten-won human document after an exact MPP charge."
+    metering:
+      schemes: ["mpp-charge"]
+      dimensions:
+        - direction: usage
+          unit: requests
+          scale: 1
+          tiers:
+            - price_usd: 0.007408
+      splits:
+        - recipient: owner
+          amount: 0.007407
+          memo: "OPENSHELF human document owner"
+
+  - method: GET
+    path: "api/v1/pay-sh/documents/100/{query_id}/{handle}"
+    resource: "human-document-krw-100"
+    description: "Open one quoted one-hundred-won human document after an exact MPP charge."
+    metering:
+      schemes: ["mpp-charge"]
+      dimensions:
+        - direction: usage
+          unit: requests
+          scale: 1
+          tiers:
+            - price_usd: 0.074075
+      splits:
+        - recipient: owner
+          amount: 0.074074
+          memo: "OPENSHELF human document owner"
+
+  - method: GET
+    path: "api/v1/pay-sh/documents/15/{query_id}/{handle}"
+    resource: "human-document-krw-15"
+    description: "Open one quoted fifteen-won human document after an exact MPP charge."
+    metering:
+      schemes: ["mpp-charge"]
+      dimensions:
+        - direction: usage
+          unit: requests
+          scale: 1
+          tiers:
+            - price_usd: 0.011112
+      splits:
+        - recipient: owner
+          amount: 0.011111
+          memo: "OPENSHELF human document owner"
+
+  - method: GET
+    path: "api/v1/pay-sh/documents/25/{query_id}/{handle}"
+    resource: "human-document-krw-25"
+    description: "Open one quoted twenty-five-won human document after an exact MPP charge."
+    metering:
+      schemes: ["mpp-charge"]
+      dimensions:
+        - direction: usage
+          unit: requests
+          scale: 1
+          tiers:
+            - price_usd: 0.018519
+      splits:
+        - recipient: owner
+          amount: 0.018518
+          memo: "OPENSHELF human document owner"
+
+  - method: GET
+    path: "api/v1/pay-sh/documents/300/{query_id}/{handle}"
+    resource: "human-document-krw-300"
+    description: "Open one quoted three-hundred-won human document after an exact MPP charge."
+    metering:
+      schemes: ["mpp-charge"]
+      dimensions:
+        - direction: usage
+          unit: requests
+          scale: 1
+          tiers:
+            - price_usd: 0.222223
+      splits:
+        - recipient: owner
+          amount: 0.222222
+          memo: "OPENSHELF human document owner"
+
+  - method: GET
+    path: "api/v1/pay-sh/documents/500/{query_id}/{handle}"
+    resource: "human-document-krw-500"
+    description: "Open one quoted five-hundred-won human document after an exact MPP charge."
+    metering:
+      schemes: ["mpp-charge"]
+      dimensions:
+        - direction: usage
+          unit: requests
+          scale: 1
+          tiers:
+            - price_usd: 0.370371
+      splits:
+        - recipient: owner
+          amount: 0.370370
+          memo: "OPENSHELF human document owner"
+
+  - method: GET
+    path: "api/v1/pay-sh/documents/700/{query_id}/{handle}"
+    resource: "human-document-krw-700"
+    description: "Open one quoted seven-hundred-won human document after an exact MPP charge."
+    metering:
+      schemes: ["mpp-charge"]
+      dimensions:
+        - direction: usage
+          unit: requests
+          scale: 1
+          tiers:
+            - price_usd: 0.518519
+      splits:
+        - recipient: owner
+          amount: 0.518518
+          memo: "OPENSHELF human document owner"
+
+  - method: GET
+    path: "api/v1/pay-sh/documents/800/{query_id}/{handle}"
+    resource: "human-document-krw-800"
+    description: "Open one quoted eight-hundred-won human document after an exact MPP charge."
+    metering:
+      schemes: ["mpp-charge"]
+      dimensions:
+        - direction: usage
+          unit: requests
+          scale: 1
+          tiers:
+            - price_usd: 0.592593
+      splits:
+        - recipient: owner
+          amount: 0.592592
+          memo: "OPENSHELF human document owner"
+
+  - method: GET
+    path: "api/v1/pay-sh/documents/1000/{query_id}/{handle}"
+    resource: "human-document-krw-1000"
+    description: "Open one quoted one-thousand-won human document after an exact MPP charge."
+    metering:
+      schemes: ["mpp-charge"]
+      dimensions:
+        - direction: usage
+          unit: requests
+          scale: 1
+          tiers:
+            - price_usd: 0.740741
+      splits:
+        - recipient: owner
+          amount: 0.740740
+          memo: "OPENSHELF human document owner"

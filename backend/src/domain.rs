@@ -108,6 +108,116 @@ pub enum DecisionReason {
     BudgetTooLow,
 }
 
+/// Human supply and AI liquidity are deliberately separate. This state is
+/// computed only from human documents; an AI baseline can never promote a
+/// question into a covered state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LiquidityState {
+    AiLiquidityOnly,
+    HybridCoverage,
+    HumanCovered,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiBaselineDraft {
+    pub orientation: String,
+    pub general_points: Vec<String>,
+    pub human_gaps: Vec<String>,
+    pub questions_for_people: Vec<String>,
+}
+
+/// An ephemeral, zero-price market-liquidity response. It is not a Document,
+/// cannot enter ranking/authority/memory, and never counts toward a call.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiBaseline {
+    pub id: String,
+    pub query_id: String,
+    pub kind: &'static str,
+    pub orientation: String,
+    pub general_points: Vec<String>,
+    pub human_gaps: Vec<String>,
+    pub questions_for_people: Vec<String>,
+    pub model: String,
+    pub mode: String,
+    pub policy_version: String,
+    pub generated_at: u64,
+    pub expires_at: u64,
+    pub price_krw: u64,
+    pub sellable: bool,
+    pub counts_as_human_coverage: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateAiBaselineResponse {
+    pub status: &'static str,
+    pub baseline: Option<AiBaseline>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShelfStarterDraft {
+    pub prompt: String,
+    pub rationale: String,
+    pub category: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShelfStarter {
+    pub id: String,
+    pub prompt: String,
+    pub rationale: String,
+    pub category: String,
+    pub source: &'static str,
+    pub buyer_waiting: bool,
+    pub guaranteed_reward_krw: u64,
+    pub generated_at: u64,
+    pub expires_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateShelfStartersResponse {
+    pub status: &'static str,
+    pub starters: Vec<ShelfStarter>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiLiquidityMetrics {
+    pub total_queries: u64,
+    pub ai_liquidity_only_queries: u64,
+    pub hybrid_coverage_queries: u64,
+    pub human_covered_queries: u64,
+    pub baselines_generated: u64,
+    pub active_baselines: u64,
+    pub shelf_starters_generated: u64,
+    pub shelf_starters_answered: u64,
+    pub human_documents: u64,
+    pub open_human_calls: u64,
+    pub priced_ai_documents: u64,
+    pub ai_authority_edges: u64,
+    pub starter_to_human_document_rate: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitShelfStarterAnswerRequest {
+    pub answer: String,
+    pub price_krw: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitShelfStarterAnswerResponse {
+    pub memory: MemoryEntry,
+    pub document_handle: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScoreBreakdown {
@@ -160,6 +270,8 @@ pub struct ResolveQuestionResponse {
     pub payment_access_token: Option<String>,
     pub decision: Decision,
     pub reason: DecisionReason,
+    pub liquidity_state: LiquidityState,
+    pub ai_baseline_eligible: bool,
     pub requested_documents: usize,
     pub candidate_count: usize,
     pub matches: Vec<MatchedDocument>,
@@ -183,6 +295,13 @@ pub struct OpenCall {
     pub filters: SearchFilters,
     pub eligible: bool,
     pub escrow_remaining_krw: u64,
+    pub escrow_mode: String,
+    pub escrow_wallet: Option<String>,
+    pub escrow_asset: Option<String>,
+    pub escrow_network: Option<String>,
+    pub escrow_total_atomic: Option<String>,
+    pub escrow_remaining_atomic: Option<String>,
+    pub funding_transaction_signature: Option<String>,
     pub status: String,
     /// Active answer slots temporarily held by contributors who opened the interview.
     pub reserved_slots: usize,
@@ -219,7 +338,7 @@ pub struct MarkNotificationsReadRequest {
     pub ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateOpenCallRequest {
     pub question: String,
@@ -230,6 +349,34 @@ pub struct CreateOpenCallRequest {
     pub category: String,
     #[serde(default)]
     pub filters: SearchFilters,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCallFundingQuote {
+    pub id: String,
+    pub pay_to: String,
+    pub network: String,
+    pub asset: String,
+    pub amount_atomic: String,
+    pub total_price_krw: u64,
+    pub krw_per_usdc: u64,
+    pub expires_at: u64,
+    pub resource_path: String,
+    pub payload_hash: String,
+    pub status: String,
+    pub open_call_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCallFundingSnapshot {
+    pub quote_id: String,
+    pub question: String,
+    pub target: usize,
+    pub unit_price_krw: u64,
+    pub total_price_krw: u64,
+    pub payload_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -430,6 +577,40 @@ pub struct WalletChallenge {
     pub expires_at: u64,
 }
 
+/// A one-time x402 sign-in resource used to prove ownership of the local
+/// Pay.sh wallet without exporting its private key.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WalletSiwxLink {
+    pub id: String,
+    pub resource_url: String,
+    pub network: String,
+    pub expires_at: u64,
+}
+
+/// Signed `SIGN-IN-WITH-X` payload produced by Pay.sh. The server reconstructs
+/// the canonical Sign-In With Solana message and verifies its Ed25519 signature.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SiwxPayload {
+    pub domain: String,
+    pub address: String,
+    pub uri: String,
+    pub statement: Option<String>,
+    pub version: String,
+    pub chain_id: String,
+    pub nonce: String,
+    pub issued_at: String,
+    pub expiration_time: Option<String>,
+    pub not_before: Option<String>,
+    pub request_id: Option<String>,
+    pub resources: Option<Vec<String>>,
+    #[serde(rename = "type")]
+    pub signature_type: String,
+    pub signature_scheme: Option<String>,
+    pub signature: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VerifyWalletRequest {
@@ -462,6 +643,10 @@ pub struct EarningEvent {
     pub amount_krw: u64,
     pub recipient_wallet: Option<String>,
     pub payout_status: String,
+    pub payout_claim_id: Option<String>,
+    pub payout_claim_status: Option<String>,
+    pub payout_transaction_signature: Option<String>,
+    pub payout_amount_atomic: Option<String>,
     pub available_at: u64,
     pub created_at: u64,
 }
@@ -475,6 +660,86 @@ pub struct EarningsSummary {
     pub claimable_krw: u64,
     pub event_count: usize,
     pub events: Vec<EarningEvent>,
+}
+
+/// One exact transfer owed by the server-managed Devnet escrow.
+///
+/// A claim is prepared before broadcast. Persisting the signed transaction
+/// makes a worker crash replay the same Solana signature instead of paying a
+/// contributor twice.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PayoutClaim {
+    pub id: String,
+    pub earning_event_id: Option<String>,
+    pub open_call_id: Option<String>,
+    pub beneficiary_user_id: String,
+    pub kind: String,
+    pub escrow_wallet: String,
+    pub recipient_wallet: String,
+    pub asset: String,
+    pub network: String,
+    pub amount_atomic: String,
+    pub amount_krw: u64,
+    pub status: String,
+    pub transaction_signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signed_transaction_base64: Option<String>,
+    pub recent_blockhash: Option<String>,
+    pub last_valid_block_height: Option<u64>,
+    pub attempt_count: u32,
+    pub last_error: Option<String>,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub confirmed_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LeasePayoutClaimsRequest {
+    pub worker_id: String,
+    pub escrow_wallet: String,
+    pub network: String,
+    #[serde(default = "default_payout_lease_limit")]
+    pub limit: usize,
+    #[serde(default = "default_payout_lease_ms")]
+    pub lease_ms: u64,
+}
+
+fn default_payout_lease_limit() -> usize {
+    20
+}
+
+fn default_payout_lease_ms() -> u64 {
+    60_000
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreparePayoutClaimRequest {
+    pub worker_id: String,
+    pub transaction_signature: String,
+    pub signed_transaction_base64: String,
+    pub recent_blockhash: String,
+    pub last_valid_block_height: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletePayoutClaimRequest {
+    pub worker_id: String,
+    pub transaction_signature: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FailPayoutClaimRequest {
+    pub worker_id: String,
+    pub error: String,
+    /// Set only after the worker proves the prepared signature is absent and
+    /// its blockhash has expired. This permits a safely re-signed retry.
+    #[serde(default)]
+    pub abandon_prepared_transaction: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -563,6 +828,34 @@ pub struct PaymentQuote {
     pub consent_version: String,
 }
 
+/// Agent-readable paid resource prepared for the official Pay.sh gateway.
+///
+/// Pay.sh resolves the runtime `owner_wallet` recipient from the resource URL,
+/// charges the exact price band over MPP, and only then proxies the request to
+/// the private delivery handler. One atomic unit remains with the gateway's
+/// primary recipient because Pay.sh requires every split set to leave a
+/// positive primary share.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PayShResource {
+    pub quote_id: String,
+    pub query_id: String,
+    pub document_handle: String,
+    pub recipient_wallet: String,
+    pub network: String,
+    pub asset: String,
+    pub amount_atomic: String,
+    pub owner_amount_atomic: String,
+    pub platform_amount_atomic: String,
+    pub price_krw: u64,
+    pub krw_per_usdc: u64,
+    pub expires_at: u64,
+    pub status: String,
+    pub resource_path: String,
+    pub recovery_path: String,
+    pub protocol: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaidDocument {
@@ -595,6 +888,9 @@ pub struct PaymentDocumentSnapshot {
 pub struct CreatePaymentBundleRequest {
     pub query_id: String,
     pub handles: Vec<String>,
+    /// Preferred refill size when the verified prepaid wallet cannot cover
+    /// this job. The server always raises it to at least the exact deficit.
+    pub top_up_atomic: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -607,6 +903,11 @@ pub struct PaymentBundleQuote {
     pub network: String,
     pub asset: String,
     pub amount_atomic: String,
+    /// Exact research budget reserved from the prepaid account. `amount_atomic`
+    /// is only the Phantom refill required for this quote and can be zero.
+    pub budget_atomic: String,
+    pub requires_payment: bool,
+    pub available_balance_atomic: String,
     pub total_price_krw: u64,
     pub krw_per_usdc: u64,
     pub expires_at: u64,
@@ -615,12 +916,94 @@ pub struct PaymentBundleQuote {
     pub status: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatePrepaidSessionRequest {
+    pub wallet: String,
+    pub challenge_id: String,
+    /// Base58 Ed25519 signature over the fresh OPENSHELF wallet challenge.
+    pub signature: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PrepaidWalletSession {
+    pub token: String,
+    pub wallet: String,
+    pub pay_to: String,
+    pub network: String,
+    pub asset: String,
+    pub available_atomic: String,
+    pub expires_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PrepaidBalance {
+    pub wallet: String,
+    pub pay_to: String,
+    pub network: String,
+    pub asset: String,
+    pub available_atomic: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatePrepaidWithdrawalRequest {
+    /// Omit to withdraw the full available balance.
+    pub amount_atomic: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaymentBundleSnapshot {
     pub quote_id: String,
     pub bundle_hash: String,
     pub citations: Vec<Citation>,
+}
+
+/// Durable status for one browser-funded, server-executed research job.
+/// The browser pays `amount_atomic` once; the Pay.sh worker then buys each
+/// document independently from the same bounded service wallet.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchJobStatus {
+    pub id: String,
+    pub query_id: String,
+    pub payer: Option<String>,
+    pub pay_to: String,
+    pub network: String,
+    pub asset: String,
+    pub amount_atomic: String,
+    pub spent_atomic: String,
+    pub refundable_atomic: String,
+    pub status: String,
+    pub transaction_signature: Option<String>,
+    pub failure_reason: Option<String>,
+    pub created_at: u64,
+    pub funded_at: Option<u64>,
+    pub completed_at: Option<u64>,
+    pub citations: Vec<Citation>,
+    pub pending_handles: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchJobPlan {
+    pub id: String,
+    pub payer: String,
+    pub pay_to: String,
+    pub network: String,
+    pub asset: String,
+    pub amount_atomic: String,
+    pub status: String,
+    pub resources: Vec<PayShResource>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FailResearchJobRequest {
+    pub error: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -735,6 +1118,19 @@ pub struct RegisterRequest {
 #[serde(rename_all = "camelCase")]
 pub struct LoginRequest {
     pub email: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgotPasswordRequest {
+    pub email: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetPasswordRequest {
+    pub token: String,
     pub password: String,
 }
 

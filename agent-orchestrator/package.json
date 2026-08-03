@@ -1,0 +1,27 @@
+{
+  "name": "openshelf-pay-sh-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@solana-program/token": "^0.13.0",
+    "@solana/keychain-gcp-kms": "^1.4.0",
+    "@solana/kit": "^6.10.0",
+    "@solana/pay-kit": "^0.8.0",
+    "express": "^5.2.1",
+    "mppx": "^0.5.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "~5.9.3"
+  }
+}

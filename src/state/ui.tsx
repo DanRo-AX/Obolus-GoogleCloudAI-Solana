@@ -32,6 +32,7 @@ import {
   upsertProfile,
   verifyWalletChallenge,
   type EarningsSummary,
+  type AiBaseline,
   type Account,
   type BalanceSummary,
   type DemographicBands,
@@ -40,6 +41,7 @@ import {
   type TargetFilters,
 } from '@/lib/api'
 import type { Issue } from '@/lib/quality'
+import { fundOpenCall, X402_ENABLED } from '@/lib/x402'
 
 /** One quoted MD. Once the open is confirmed it becomes the settlement unit. */
 export type Citation = {
@@ -82,7 +84,7 @@ export type ChatMessage = {
     txSigs?: string[]
     network?: string
     partial?: boolean
-    mode?: 'direct' | 'bundle_escrow'
+    mode?: 'direct' | 'bundle_escrow' | 'open_call_escrow' | 'pay_sh_direct' | 'pay_sh_orchestrated'
   }
   /** Kept privately in local chat state so a paid buyer can recover and rate. */
   paymentContext?: PaymentContext
@@ -96,6 +98,8 @@ export type Chat = {
   filters?: TargetFilters
   ownerId?: string
   paymentSession?: PaymentSession
+  /** Ephemeral zero-price context; never a citation, memory, or shelf asset. */
+  aiBaseline?: AiBaseline
 }
 
 /** An open call. Posted on the spot when the shelves come up empty. */
@@ -116,6 +120,13 @@ export type Order = {
   filters?: TargetFilters
   eligible?: boolean
   escrowRemainingKrw?: number
+  escrowMode?: 'sandbox' | 'x402_solana_escrow'
+  escrowWallet?: string
+  escrowAsset?: string
+  escrowNetwork?: string
+  escrowTotalAtomic?: string
+  escrowRemainingAtomic?: string
+  fundingTransactionSignature?: string
   status?: 'open' | 'filled' | 'cancelled'
   reservedSlots?: number
   reservationExpiresAt?: number
@@ -167,7 +178,7 @@ export type MemoryEntry = {
   shelf: string
   earned: number
   createdAt: number
-  via: 'Open call' | 'Auto-match' | 'Correction' | 'Reflection'
+  via: 'Open call' | 'Auto-match' | 'Shelf starter' | 'Correction' | 'Reflection'
   /** Voided entries keep the attempted answer but earn zero until disputed. */
   status: 'settled' | 'voided'
   disputeStatus?: 'pending' | 'approved' | 'rejected'
@@ -636,7 +647,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
         order.filters?.field ??
         categoryFor(order.shelf, order.question)
       if (BACKEND_ENABLED) {
-        const created = await createOpenCall({
+        const input = {
           question: order.question,
           unitPrice: order.unitPrice,
           target: order.target,
@@ -644,7 +655,13 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           shelf: order.shelf,
           category,
           filters: order.filters,
-        })
+        }
+        // Zero-price calls have no token transfer to settle. Paid calls use one
+        // exact Devnet escrow approval for the whole target, then fan out via
+        // durable payout claims as answers arrive.
+        const created = X402_ENABLED && order.unitPrice > 0
+          ? await fundOpenCall(input)
+          : await createOpenCall(input)
         setOrders((prev) => [created, ...prev.filter((item) => item.id !== created.id)])
         setBalance(await getBalance())
         return created.id
@@ -971,6 +988,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     setChats([])
     if (BACKEND_ENABLED) {
       window.sessionStorage.removeItem(SESSION_STORAGE_KEY)
+      window.localStorage.removeItem('openshelf:prepaid-wallet-session:v1')
       setOrders(await listOpenCalls().catch(() => []))
     }
   }, [])
@@ -988,6 +1006,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     setOrders(BACKEND_ENABLED ? await listOpenCalls().catch(() => []) : SEED_ORDERS)
     try {
       window.localStorage.removeItem(STORAGE_KEY)
+      window.localStorage.removeItem('openshelf:prepaid-wallet-session:v1')
       window.sessionStorage.removeItem(SESSION_STORAGE_KEY)
     } catch {
       // Storage is optional.
