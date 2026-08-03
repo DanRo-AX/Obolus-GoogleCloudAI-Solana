@@ -25,7 +25,7 @@ The payment gateway must set:
 GOOGLE_CLOUD_PROJECT=sweetspot-ax
 OPENSHELF_SETTLEMENT_QUEUE_LOCATION=asia-northeast3
 OPENSHELF_SETTLEMENT_QUEUE=obolus-settlements
-OPENSHELF_SETTLEMENT_TARGET_URL=https://obolus-api-270739039690.asia-northeast3.run.app
+OPENSHELF_SETTLEMENT_TARGET_URL=https://obolus-api-amjeodet3q-du.a.run.app
 ```
 
 `production` and `staging` gateway processes fail at startup when this queue
@@ -58,6 +58,24 @@ authenticated write/read cycle, and Cloud SQL persistence before promotion.
 Promote the API before the gateway so a settlement can never be routed from the
 durable gateway back into the retired SQLite ledger.
 
+Use the canonical service URLs returned by Cloud Run instead of constructing a
+regional URL from the project number. Older services may not have the newer
+regional alias, and an invented alias returns Google's generic 404 before the
+request reaches the container:
+
+```bash
+gcloud run services describe obolus-api \
+  --project=sweetspot-ax --region=asia-northeast3 \
+  --format='value(status.url)'
+```
+
+For a tagged candidate, point the candidate web revision at the tagged API and
+gateway URLs. The gateway candidate must likewise use the tagged web URL as
+`FRONTEND_ORIGIN`, the tagged API URL as both `RUST_API_URL` and
+`OPENSHELF_SETTLEMENT_TARGET_URL`, and the canonical orchestrator URL as
+`RESEARCH_ORCHESTRATOR_URL`. Repoint all four values to canonical service URLs
+when creating the release revision for promotion.
+
 ```bash
 gcloud run services update-traffic obolus-api \
   --project=sweetspot-ax --region=asia-northeast3 --to-latest
@@ -77,8 +95,8 @@ cargo test --manifest-path backend/Cargo.toml --lib
 npm --prefix payment-gateway run typecheck
 npm --prefix payment-gateway test
 
-curl -fsS https://obolus-api-270739039690.asia-northeast3.run.app/readyz
-curl -fsS https://obolus-gateway-270739039690.asia-northeast3.run.app/readyz
+curl -fsS https://obolus-api-amjeodet3q-du.a.run.app/readyz
+curl -fsS https://obolus-gateway-amjeodet3q-du.a.run.app/readyz
 ```
 
 Expected gateway readiness includes `"durableSettlementQueue":true`. This
