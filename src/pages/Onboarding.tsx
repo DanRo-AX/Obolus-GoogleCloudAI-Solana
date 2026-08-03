@@ -283,10 +283,15 @@ export default function Onboarding() {
                           'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-[2px] border transition-colors',
                           on
                             ? 'border-foreground bg-foreground text-background'
-                            : 'border-foreground/25',
+                          : 'border-foreground/25',
                         )}
                       >
-                        {on ? <Check className="size-3" /> : null}
+                        <Check
+                          className={cn(
+                            'size-3 transition-opacity',
+                            on ? 'opacity-100' : 'opacity-0',
+                          )}
+                        />
                       </span>
                       <span className="min-w-0">
                         <span className="flex items-center gap-1.5 text-sm font-medium">
@@ -333,16 +338,26 @@ export default function Onboarding() {
                       variant={payoutWallet === wallet.pubkey ? 'mono' : 'monoMuted'}
                       size="monoSm"
                       onClick={() => setPayoutWallet(wallet.pubkey ?? '')}
+                      aria-pressed={payoutWallet === wallet.pubkey}
                       type="button"
                     >
-                      {payoutWallet === wallet.pubkey ? (
-                        <Check className="size-3.5" />
-                      ) : (
-                        <Wallet className="size-3.5" />
-                      )}
-                      {payoutWallet === wallet.pubkey
-                        ? 'Selected as payout address'
-                        : 'Use this as payout address'}
+                      <Check
+                        className={cn(
+                          'size-3.5',
+                          payoutWallet === wallet.pubkey
+                            ? 'block'
+                            : 'hidden',
+                        )}
+                      />
+                      <Wallet
+                        className={cn(
+                          'size-3.5',
+                          payoutWallet === wallet.pubkey
+                            ? 'hidden'
+                            : 'block',
+                        )}
+                      />
+                      <span>Use this as payout address</span>
                     </Button>
                     <Button
                       variant="monoGhost"
@@ -491,7 +506,12 @@ export default function Onboarding() {
                       : 'border-foreground/25',
                   )}
                 >
-                  {agreed ? <Check className="size-3" /> : null}
+                  <Check
+                    className={cn(
+                      'size-3 transition-opacity',
+                      agreed ? 'opacity-100' : 'opacity-0',
+                    )}
+                  />
                 </span>
                 <span className="text-sm leading-relaxed">
                   I have read the three rules above. I will only answer about
@@ -504,7 +524,7 @@ export default function Onboarding() {
         </div>
 
         {/* controls ----------------------------------------------------- */}
-        <div className="mt-10 flex items-center gap-3">
+        <div key={`controls-${step}`} className="mt-10 flex items-center gap-3">
           {step > 0 ? (
             <Button
               variant="monoGhost"
@@ -524,16 +544,16 @@ export default function Onboarding() {
             onClick={next}
             type="button"
           >
-            {saving ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <ArrowRight className="size-3.5" />
-            )}
-            {saving
-              ? 'Saving…'
-              : step === TOTAL - 1
-                ? 'Agree and finish'
-                : 'Continue'}
+            <Loader2
+              className={cn(
+                'size-3.5 animate-spin',
+                saving ? 'block' : 'hidden',
+              )}
+            />
+            <ArrowRight
+              className={cn('size-3.5', saving ? 'hidden' : 'block')}
+            />
+            <span>{step === TOTAL - 1 ? 'Agree and finish' : 'Continue'}</span>
           </Button>
           <span className="hidden items-center gap-1 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground sm:flex">
             <CornerDownLeft className="size-3" />
