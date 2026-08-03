@@ -421,7 +421,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
         }
       } catch {
         // Chat surfaces backend connectivity errors when a request is made.
-        // Keeping the seed state here lets the rest of the site still render.
+        // Public surfaces still render, but private state is never fabricated.
       } finally {
         if (!cancelled) setAuthReady(true)
       }

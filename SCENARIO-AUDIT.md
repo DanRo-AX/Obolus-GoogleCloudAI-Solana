@@ -14,8 +14,9 @@ Updated: 2026-08-03
 | Disputant | Challenge one voided answer | One unused dispute | Submission remains pending and unpaid; submitter cannot approve it | My memory |
 | Reviewer | Approve or reject a pending dispute | Authenticated `admin` role | Approval restores document, slot, and escrow payment atomically; rejection changes none of them; decision cannot be replayed | `/admin/disputes` |
 | Departing user | Remove their account | Authenticated session | Open reservations refunded, sessions revoked, profile/memory/document text deleted, financial rows anonymized | My memory → Delete account |
-| Browser-wallet buyer | Inspect and pay for existing passages | Phantom on Solana Devnet with SOL and Devnet USDC | Exact direct quote for one document or one committed bundle for many; passages stay closed until settlement | Chat payment preview |
-| Autonomous buyer agent | Open documents within a policy without repeated human approval | Policy-limited wallet or spending delegation | **Not implemented yet**; the current Phantom path is intentionally interactive | Agent-readable mode (preview only) |
+| Browser-wallet buyer | Inspect and pay for existing passages | Phantom ownership proof and prepaid Devnet USDC balance | Exact query budget is reserved; the KMS-backed agent pays each committed DB independently through Pay.sh; passages stay closed until their individual settlement | Chat payment preview |
+| Hosted autonomous buyer agent | Open documents without a wallet popup for every question | Fresh Phantom ownership proof plus a funded, revocable prepaid balance | Rust reserves only the exact committed question budget; the KMS-backed Cloud Run agent pays each selected DB through Pay.sh, and unused partial-failure credit is restored | Chat prepaid payment flow |
+| Local CLI buyer agent | Search, commission, contribute, and open evidence from Antigravity or another MCP client | Local OpenShelf session; Pay account only for paid actions | OpenShelf exposes no private key; exact Devnet payment intent is shown before Pay requests local wallet authorization | Antigravity plugin / MCP |
 | Buyer before human supply | Get immediate orientation without mistaking AI for experience | A question with zero/thin human coverage | General baseline is zero-price, expiring, non-sellable, excluded from human HIT/authority/Memory; human gaps stay open | Chat → AI general baseline → Ask people |
 | Contributor before buyer demand | Build useful supply without a fake buyer or fake bounty | Authenticated contributor profile | Gemini creates prompts only; no buyer/upfront reward is represented; only the quality-checked human answer becomes a priced document | Dashboard → Shelf starters |
 
@@ -50,22 +51,19 @@ Updated: 2026-08-03
 
 ### Browser-wallet payment
 
-1. A hit always stops at a payment preview before Phantom is invoked.
-2. The preview shows the exact KRW total, approximate Devnet USDC amount,
-   one approval, network, and the shortened Devnet USDC mint. Phantom
-   may label that test token `Unknown`; the UI explains that before approval.
-3. One document stays a direct-to-author x402 resource. Two or more are bound
-   into one quote by handle, content hash/version, consent version, price, and
-   beneficiary wallet, so the browser signs one aggregate transfer. Rust keeps
-   one chain receipt and a separate `claimable` earning row per author/document.
-4. Seeded document opens are true micropayments: ₩5–₩25 each. The five-document
-   Seongsu example currently resolves to ₩50, about 0.03704 USDC at
-   ₩1,350/USDC.
-5. A failure finishes the hit/miss trace instead of leaving Step 4 spinning.
-6. The browser stores the query recovery token with the tab-session chat, asks Rust
-   which handles already settled for the connected payer, recovers those paid
-   passages, and retries only the unpaid remainder. A connected-wallet mismatch
-   is stopped before a payment request is created.
+1. A hit stops at a preview of the exact committed DB set and maximum question
+   budget before any prepaid credit is reserved.
+2. A fresh Phantom `signMessage` proves wallet possession and creates a
+   revocable 30-day service session with no private key or token allowance.
+3. Rust reserves the exact question budget atomically. Phantom appears for one
+   bounded Devnet USDC refill only when available prepaid credit is too low.
+4. The Cloud Run worker uses the KMS service signer and Pay.sh to settle each DB
+   independently. Only each successfully paid immutable snapshot is returned.
+5. A lost response is recovered from the durable job ledger without paying the
+   same DB twice. A permanent partial failure restores the unopened remainder
+   to prepaid credit, which the user can withdraw.
+6. Paid open calls remain a separate one-approval Devnet escrow flow because
+   their beneficiary set does not exist until contributors answer.
 7. Helpful/not-helpful/report feedback is accepted only for a document the same
    payer actually settled in that query. Reports enter the admin review queue.
 
@@ -156,10 +154,11 @@ and buyer retrieval of that returned answer after a full account switch erased
 the original local chat. The latest legacy live Devnet pass completed the ₩50/5-approval
 HIT across a response-loss recovery boundary, proved that failed attempts did not
 create chain settlements, and finalized all five legacy direct x402/SVM
-transfers. The new bundle gateway integration additionally verified that three
-₩10 documents produce one 22,223 atomic-unit 402 requirement and one immutable
-bundle hash; the final Phantom signature remains a user-run Devnet check. It also
-confirmed projected subscriptions and agent payments remain disabled. Earlier
+transfers. The hosted-agent integration verifies exact prepaid reservation,
+independent Pay.sh resource validation, lost-response idempotency, and
+partial-failure refund accounting. Legacy bundle tests remain for
+compatibility, while the default browser path pays every selected DB
+independently. Earlier
 passes covered Phantom reconnect, signed-out route guards, desktop and 390px
 mobile payment previews, and mobile navigation overlap. The contributor-delivery
 pass verified the Dashboard alert controls/inbox/recommendation copy, direct
@@ -178,11 +177,11 @@ release, and a clean browser console after reload.
 
 ## Remaining product and production work, in priority order
 
-1. **Autonomous agent wallet.** Agent mode is disabled. Add a
-   policy-limited wallet/session key with per-open, per-query, and daily caps;
-   expiry; allowlisted asset/network; and revocation. Until then, claims of
-   “no human approval” must stay out of current-product copy. The mandatory
-   controls and tests are in `docs/agent-payment-threat-model.md`.
+1. **Production policy storage.** Hosted automatic purchases are implemented
+   for the hackathon Devnet path with a revocable prepaid session and exact
+   per-query reservation. A public-value launch still needs durable multi-node
+   policy storage, rate limits, operational revocation tooling, and audited
+   KMS/IAM controls.
 2. **Bundle payout execution.** Approval batching and per-author claim
    accounting are implemented. Funds remain in the configured escrow until a
    separately secured payout worker executes and reconciles those claims.

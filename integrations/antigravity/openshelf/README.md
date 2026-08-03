@@ -8,7 +8,7 @@ Prerequisites:
 
 - Node.js 20 or newer
 - Antigravity CLI (`agy`)
-- Pay.sh (`pay`) 0.27.0 or newer, with a named local account configured before a paid action
+- Pay.sh (`pay`) 0.26.0 or newer, with a named local account configured before a paid action
 - a running or hosted OpenShelf Rust API and x402 gateway
 
 From this repository:
@@ -20,6 +20,11 @@ node integrations/antigravity/openshelf/runtime/server.mjs auth login --email YO
 agy
 ```
 
+The checked-in `.agents/mcp_config.json` first uses a project-local or global
+`pay` executable. If neither exists, its adapter runs the pinned official
+`@solana/pay@1.0.26` CLI through `npx`; the first launch therefore needs network
+access. `OPENSHELF_PAY_COMMAND` can select an explicit trusted executable.
+
 `pay setup` creates or reuses a locally protected Pay account and may enter an
 interactive funding flow. It is not needed merely to discover OpenShelf or run
 free search, so do it deliberately before the first payment rather than during
@@ -30,6 +35,10 @@ use a non-default Pay account.
 `npm run agent:doctor` reports `ok: true` when free marketplace access is ready
 and reports `paidActionsReady` separately. A missing Pay account therefore does
 not block search, but it is visible before the first purchase or SIWX link.
+
+For direct terminal use, `npm run agent:tools` lists every service action and
+`npm run agent:tools -- TOOL` prints its exact JSON schema. Invoke the same
+validated implementation with `npm run agent:call -- TOOL --json '{...}'`.
 
 For two-role testing without two Google accounts, use two named local profiles:
 

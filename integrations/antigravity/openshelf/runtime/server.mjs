@@ -15,6 +15,7 @@ import {
   writeState,
 } from './core.mjs'
 import { callTool, tools } from './tools.mjs'
+import { payInvocation } from './pay-command.mjs'
 
 const execFileAsync = promisify(execFile)
 
@@ -152,12 +153,26 @@ async function runCli(argv = process.argv.slice(2)) {
   if (command === 'mcp') return runMcp()
   if (command === 'auth') return authCommand(subcommand, rest, config)
   if (command === 'call') return toolCommand(subcommand, rest, config)
+  if (command === 'tools') return toolsCommand(subcommand)
   if (command === 'doctor') return doctor(config)
   if (command === 'help' || command === '--help' || command === '-h') {
     printHelp()
     return
   }
   throw new AgentError(`Unknown command: ${command}`, 'unknown_command')
+}
+
+function toolsCommand(name) {
+  process.stdout.write(`${JSON.stringify(describeTools(name), null, 2)}\n`)
+}
+
+export function describeTools(name) {
+  if (!name) {
+    return tools.map((tool) => ({ name: tool.name, description: tool.description }))
+  }
+  const tool = tools.find((candidate) => candidate.name === name)
+  if (!tool) throw new AgentError(`Unknown tool: ${name}`, 'tool_not_found', 404)
+  return tool
 }
 
 export async function invokeCliTool(name, rawArguments, config = runtimeConfig()) {
@@ -239,37 +254,49 @@ async function authCommand(command, argv, config) {
 }
 
 async function doctor(config) {
+  const pay = payInvocation()
   const checks = await Promise.all([
     health(`${config.apiOrigin}/readyz`, 'Rust API'),
-    health(`${config.gatewayOrigin}/readyz`, 'x402 gateway'),
-    executableVersion('pay', ['--version'], 'Pay.sh'),
-    payAccountStatus(),
+    health(`${config.gatewayOrigin}/readyz`, 'x402 gateway', 'paid actions only'),
+    executableVersion(pay, ['--version'], 'Pay.sh', 'paid actions only'),
+    payAccountStatus(process.env, pay),
   ])
-  const payAccount = checks.find((check) => check.name === 'Pay account')
+  const readiness = runtimeReadiness(checks)
   const report = {
     networkPolicy: 'Solana Devnet only',
     apiOrigin: config.apiOrigin,
     gatewayOrigin: config.gatewayOrigin,
     statePath: config.statePath,
     checks,
-    paidActionsReady: payAccount?.ok === true,
-    ok: checks.every((check) => check.ok || check.requiredFor === 'paid actions only'),
+    ...readiness,
   }
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
   if (!report.ok) process.exitCode = 1
 }
 
-async function payAccountStatus(env = process.env) {
+export function runtimeReadiness(checks) {
+  return {
+    paidActionsReady: checks.every((check) => check.ok),
+    ok: checks.every((check) => check.ok || check.requiredFor === 'paid actions only'),
+  }
+}
+
+async function payAccountStatus(env = process.env, invocation = payInvocation(env)) {
   const args = ['whoami']
   const account = env.OPENSHELF_PAY_ACCOUNT?.trim()
   if (account) args.push('--account', account)
   try {
-    const { stdout, stderr } = await execFileAsync('pay', args, { timeout: 10_000 })
+    const { stdout, stderr } = await execFileAsync(
+      invocation.command,
+      [...invocation.args, ...args],
+      { timeout: 10_000 },
+    )
     const detail = stripVTControlCharacters([stdout, stderr].filter(Boolean).join('\n')).trim()
     return {
       name: 'Pay account',
       ok: !/no mainnet account|run pay setup/i.test(detail),
       requiredFor: 'paid actions only',
+      source: invocation.source,
       detail,
     }
   } catch (error) {
@@ -277,26 +304,46 @@ async function payAccountStatus(env = process.env) {
       name: 'Pay account',
       ok: false,
       requiredFor: 'paid actions only',
+      source: invocation.source,
       detail: error.code === 'ENOENT' ? 'pay is not installed' : error.message,
     }
   }
 }
 
-async function health(url, name) {
+async function health(url, name, requiredFor) {
   try {
     const { body } = await jsonRequest(url)
-    return { name, ok: true, detail: body }
+    return { name, ok: true, requiredFor, detail: body }
   } catch (error) {
-    return { name, ok: false, detail: error.message }
+    return { name, ok: false, requiredFor, detail: error.message }
   }
 }
 
-async function executableVersion(command, args, name) {
+async function executableVersion(invocation, args, name, requiredFor) {
   try {
-    const { stdout, stderr } = await execFileAsync(command, args, { timeout: 10_000 })
-    return { name, ok: true, detail: (stdout || stderr).trim() }
+    const { stdout, stderr } = await execFileAsync(
+      invocation.command,
+      [...invocation.args, ...args],
+      { timeout: 10_000 },
+    )
+    return {
+      name,
+      ok: true,
+      requiredFor,
+      source: invocation.source,
+      detail: (stdout || stderr).trim(),
+    }
   } catch (error) {
-    return { name, ok: false, detail: error.code === 'ENOENT' ? `${command} is not installed` : error.message }
+    return {
+      name,
+      ok: false,
+      requiredFor,
+      source: invocation.source,
+      detail:
+        error.code === 'ENOENT'
+          ? `${invocation.command} is not installed`
+          : error.message,
+    }
   }
 }
 
@@ -363,6 +410,7 @@ function printHelp() {
   process.stdout.write(`  server.mjs auth register --email you@example.com --age-confirmed\n`)
   process.stdout.write(`  server.mjs auth status\n`)
   process.stdout.write(`  server.mjs auth logout\n`)
+  process.stdout.write(`  server.mjs tools [TOOL]\n`)
   process.stdout.write(`  server.mjs call TOOL --json-b64 BASE64\n`)
   process.stdout.write(`  server.mjs doctor\n`)
   process.stdout.write(`  server.mjs mcp\n`)

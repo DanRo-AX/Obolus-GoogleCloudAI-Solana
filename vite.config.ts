@@ -11,6 +11,10 @@ export default defineConfig({
       // @solana/web3.js still imports Node's `buffer` name. Point it at the
       // browser package so Vite does not externalize Buffer at runtime.
       buffer: 'buffer/',
+      // @x402/svm keeps server-side verification helpers in the same browser
+      // chunk as its client. Supply the small createHash surface those helpers
+      // import instead of Vite's non-functional Node external.
+      crypto: path.resolve(import.meta.dirname, './src/lib/cryptoBrowser.ts'),
     },
   },
   optimizeDeps: { include: ['buffer'] },

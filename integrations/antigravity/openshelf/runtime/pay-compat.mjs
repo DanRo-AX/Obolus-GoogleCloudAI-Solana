@@ -3,7 +3,9 @@ import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { pathToFileURL } from 'node:url'
 
-// Pay 0.27.0 implements the stable MCP handshake. Antigravity CLI 1.1.10
+import { payInvocation } from './pay-command.mjs'
+
+// Pay 0.26.0 implements the stable MCP handshake. Antigravity CLI 1.1.10
 // sends a draft 2026-07-28 server/discover probe first. rmcp 0.9 closes the
 // stream when it sees that newer request, so this narrow adapter rejects only
 // the probe with the standard Method not found response and forwards every
@@ -19,16 +21,17 @@ export function discoveryFallback(request) {
 }
 
 export async function proxyPayMcp(input = process.stdin, output = process.stdout, env = process.env) {
-  const command = env.OPENSHELF_PAY_COMMAND || 'pay'
-  const args = ['mcp']
+  const invocation = payInvocation(env)
+  const args = [...invocation.args, 'mcp']
   const account = env.OPENSHELF_PAY_ACCOUNT?.trim()
   if (account) args.push('--account', account)
 
-  const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'inherit'] })
-  child.stdout.pipe(output)
-  child.on('error', (error) => {
-    process.stderr.write(`Could not start Pay MCP (${command}): ${error.message}\n`)
+  const child = spawn(invocation.command, args, { stdio: ['pipe', 'pipe', 'inherit'] })
+  await new Promise((resolve, reject) => {
+    child.once('spawn', resolve)
+    child.once('error', reject)
   })
+  child.stdout.pipe(output)
 
   const lines = createInterface({ input, crlfDelay: Infinity, terminal: false })
   for await (const line of lines) {
@@ -48,7 +51,13 @@ export async function proxyPayMcp(input = process.stdin, output = process.stdout
     }
   }
   child.stdin.end()
-  await new Promise((resolve) => child.once('exit', resolve))
+  const exitCode = await new Promise((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', resolve)
+  })
+  if (exitCode !== 0) {
+    throw new Error(`Pay MCP exited with status ${String(exitCode)}`)
+  }
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null

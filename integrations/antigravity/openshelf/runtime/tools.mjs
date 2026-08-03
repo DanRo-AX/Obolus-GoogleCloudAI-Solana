@@ -24,22 +24,41 @@ const objectSchema = (properties = {}, required = []) => ({
 const string = (description, extra = {}) => ({ type: 'string', description, ...extra })
 const integer = (description, extra = {}) => ({ type: 'integer', description, ...extra })
 const boolean = (description) => ({ type: 'boolean', description })
-const stringArray = (description) => ({
+const stringArray = (description, itemOptions = {}) => ({
   type: 'array',
   description,
-  items: { type: 'string' },
+  items: { type: 'string', ...itemOptions },
 })
+
+const CATEGORIES = [
+  'life',
+  'food',
+  'family',
+  'health',
+  'business',
+  'sales',
+  'engineering',
+  'education',
+  'sports',
+  'travel',
+  'money',
+]
+const AGE_BANDS = ['under-25', '25-34', '35-44', '45-54', '55-plus']
+const REGIONS = ['seoul', 'gyeonggi', 'metro', 'town', 'abroad']
+const HOUSEHOLDS = ['alone', 'partner', 'kids', 'parents', 'shared']
+const YEARS = ['under-1', '1-3', '3-7', '7-plus']
+const DOCUMENT_PRICE_BANDS = [5, 10, 15, 25, 100, 300, 500, 700, 800, 1000]
 
 const filtersSchema = {
   type: 'object',
   description: 'Optional human targeting filters. Omit unknown fields.',
   properties: {
-    category: string('One of life, food, family, health, business, sales, engineering, education, sports, travel, money.'),
+    category: string('Human-document category.', { enum: CATEGORIES }),
     maxUnitPriceKrw: integer('Maximum KRW price for one existing document.', { minimum: 1 }),
-    ageBand: string('One of under-25, 25-34, 35-44, 45-54, 55-plus.'),
-    region: string('One of seoul, gyeonggi, metro, town, abroad.'),
-    household: string('One of alone, partner, kids, parents, shared.'),
-    field: string('Contributor field filter.'),
+    ageBand: string('Contributor age band.', { enum: AGE_BANDS }),
+    region: string('Contributor region band.', { enum: REGIONS }),
+    household: string('Contributor household band.', { enum: HOUSEHOLDS }),
+    field: string('Contributor field filter.', { enum: CATEGORIES }),
   },
   additionalProperties: false,
 }
@@ -56,7 +75,7 @@ export const tools = [
       'Resolve a question against human documents, returning coverage, exact prices, and an open-call draft when human supply is missing. This does not spend money.',
     inputSchema: objectSchema(
       {
-        question: string('The concrete question to ask people.', { minLength: 8, maxLength: 2000 }),
+        question: string('The concrete question to ask people.', { minLength: 8, maxLength: 1000 }),
         requestedDocuments: integer('Maximum human documents to rank.', { minimum: 1, maximum: 20 }),
         budgetKrw: integer('Optional total budget ceiling in KRW.', { minimum: 1 }),
         filters: filtersSchema,
@@ -100,12 +119,12 @@ export const tools = [
       'Prepare one aggregate Devnet escrow payment for a new human open call. The returned URL must be passed to Pay curl only after user approval.',
     inputSchema: objectSchema(
       {
-        question: string('Question contributors will answer.', { minLength: 8, maxLength: 2000 }),
+        question: string('Question contributors will answer.', { minLength: 8, maxLength: 1000 }),
         unitPriceKrw: integer('Reward for each accepted human answer.', { minimum: 1 }),
         target: integer('Number of human answers requested.', { minimum: 1, maximum: 100 }),
         chatId: string('Stable local chat id used to retrieve incoming answers.'),
         shelf: string('Human cohort or shelf label.', { minLength: 2, maxLength: 120 }),
-        category: string('OpenShelf category id.'),
+        category: string('OpenShelf category id.', { enum: CATEGORIES }),
         filters: filtersSchema,
       },
       ['question', 'unitPriceKrw', 'target', 'shelf', 'category'],
@@ -152,12 +171,14 @@ export const tools = [
     inputSchema: objectSchema(
       {
         handle: string('Anonymous public handle.', { minLength: 3, maxLength: 32 }),
-        ageBand: string('under-25, 25-34, 35-44, 45-54, or 55-plus.'),
-        region: string('seoul, gyeonggi, metro, town, or abroad.'),
-        household: string('alone, partner, kids, parents, or shared.'),
-        field: string('Primary lived-experience field.'),
-        years: string('under-1, 1-3, 3-7, or 7-plus.'),
-        speaksTo: stringArray('Categories this contributor can answer from experience.'),
+        ageBand: string('Contributor age band.', { enum: AGE_BANDS }),
+        region: string('Contributor region band.', { enum: REGIONS }),
+        household: string('Contributor household band.', { enum: HOUSEHOLDS }),
+        field: string('Primary lived-experience field.', { enum: CATEGORIES }),
+        years: string('Time in the primary field.', { enum: YEARS }),
+        speaksTo: stringArray('Categories this contributor can answer from experience.', {
+          enum: CATEGORIES,
+        }),
         autoMatch: boolean('Allow high-confidence automatic reuse of existing human memory.'),
         agents: boolean('Allow agent delivery of matching questions.'),
         browserAlerts: boolean('Enable browser alerts.'),
@@ -235,7 +256,9 @@ export const tools = [
       {
         starterId: string('Shelf starter id.'),
         answer: string('Contributor-authored lived experience.', { minLength: 10, maxLength: 10000 }),
-        priceKrw: integer('Future document opening price.', { minimum: 1 }),
+        priceKrw: integer('Future document opening price.', {
+          enum: DOCUMENT_PRICE_BANDS,
+        }),
       },
       ['starterId', 'answer', 'priceKrw'],
     ),
@@ -291,6 +314,9 @@ export const tools = [
 ]
 
 export async function callTool(name, args = {}, options = {}) {
+  const tool = tools.find((candidate) => candidate.name === name)
+  if (!tool) throw new AgentError(`Unknown tool: ${name}`, 'tool_not_found', 404)
+  validateSchema(args, tool.inputSchema, 'arguments')
   const config = options.config || runtimeConfig()
   const state = options.state || (await readState(config))
   switch (name) {
@@ -544,6 +570,64 @@ export async function callTool(name, args = {}, options = {}) {
       ).body
     default:
       throw new AgentError(`Unknown tool: ${name}`, 'tool_not_found', 404)
+  }
+}
+
+function validateSchema(value, schema, path) {
+  if (value === undefined) return
+  if (schema.type === 'object') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new AgentError(`${path} must be an object`, 'invalid_arguments')
+    }
+    for (const required of schema.required || []) {
+      if (value[required] === undefined) {
+        throw new AgentError(`${path}.${required} is required`, 'invalid_arguments')
+      }
+    }
+    if (schema.additionalProperties === false) {
+      for (const key of Object.keys(value)) {
+        if (!Object.hasOwn(schema.properties || {}, key)) {
+          throw new AgentError(`${path}.${key} is not supported`, 'invalid_arguments')
+        }
+      }
+    }
+    for (const [key, child] of Object.entries(schema.properties || {})) {
+      if (value[key] !== undefined) validateSchema(value[key], child, `${path}.${key}`)
+    }
+    return
+  }
+  if (schema.type === 'string') {
+    if (typeof value !== 'string') {
+      throw new AgentError(`${path} must be a string`, 'invalid_arguments')
+    }
+    if (schema.minLength !== undefined && value.trim().length < schema.minLength) {
+      throw new AgentError(`${path} is too short`, 'invalid_arguments')
+    }
+    if (schema.maxLength !== undefined && value.length > schema.maxLength) {
+      throw new AgentError(`${path} is too long`, 'invalid_arguments')
+    }
+  } else if (schema.type === 'integer') {
+    if (!Number.isSafeInteger(value)) {
+      throw new AgentError(`${path} must be a safe integer`, 'invalid_arguments')
+    }
+    if (schema.minimum !== undefined && value < schema.minimum) {
+      throw new AgentError(`${path} is below the minimum`, 'invalid_arguments')
+    }
+    if (schema.maximum !== undefined && value > schema.maximum) {
+      throw new AgentError(`${path} is above the maximum`, 'invalid_arguments')
+    }
+  } else if (schema.type === 'boolean') {
+    if (typeof value !== 'boolean') {
+      throw new AgentError(`${path} must be a boolean`, 'invalid_arguments')
+    }
+  } else if (schema.type === 'array') {
+    if (!Array.isArray(value)) {
+      throw new AgentError(`${path} must be an array`, 'invalid_arguments')
+    }
+    value.forEach((item, index) => validateSchema(item, schema.items, `${path}[${index}]`))
+  }
+  if (schema.enum && !schema.enum.includes(value)) {
+    throw new AgentError(`${path} must be one of: ${schema.enum.join(', ')}`, 'invalid_arguments')
   }
 }
 
