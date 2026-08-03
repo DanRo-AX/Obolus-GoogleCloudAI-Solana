@@ -388,3 +388,38 @@
 :root[data-lang="ko"] .uppercase:lang(ko) {
   text-transform: none;
 }
+
+/* ---------------------------------------------------------------------------
+   Korean line breaking. The browser default breaks Hangul at any character,
+   so "우리는 / 둘을" splits a phrase across lines mid-thought. keep-all forces
+   breaks at word boundaries the way Korean is actually read; break-word is the
+   escape hatch for a single token longer than its column.
+--------------------------------------------------------------------------- */
+:root[data-lang="ko"] body,
+:root[data-lang="ko"] h1,
+:root[data-lang="ko"] h2,
+:root[data-lang="ko"] h3,
+:root[data-lang="ko"] h4,
+:root[data-lang="ko"] p,
+:root[data-lang="ko"] li,
+:root[data-lang="ko"] span,
+:root[data-lang="ko"] a,
+:root[data-lang="ko"] button,
+:root[data-lang="ko"] td,
+:root[data-lang="ko"] th,
+:root[data-lang="ko"] label {
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+/* Ragged edges read worse in Hangul than in Latin because the glyphs are all
+   one width — even out the last line rather than leaving an orphan. */
+:root[data-lang="ko"] h1,
+:root[data-lang="ko"] h2,
+:root[data-lang="ko"] .font-display {
+  text-wrap: balance;
+}
+
+:root[data-lang="ko"] p {
+  text-wrap: pretty;
+}
