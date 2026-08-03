@@ -172,6 +172,49 @@
         }
       }
     },
+    "/api/v1/questions/{queryId}/pay-sh-resources/{handle}": {
+      "get": {
+        "summary": "Prepare a query-bound Pay.sh URL for one human document",
+        "parameters": [
+          { "$ref": "#/components/parameters/QueryId" },
+          { "$ref": "#/components/parameters/Handle" },
+          { "$ref": "#/components/parameters/QueryToken" }
+        ],
+        "responses": {
+          "200": {
+            "description": "MPP charge URL, immutable quote, and verified dynamic recipient",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PayShResource" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/questions/{queryId}/pay-sh-documents/{handle}": {
+      "get": {
+        "summary": "Recover an already delivered Pay.sh document without paying again",
+        "parameters": [
+          { "$ref": "#/components/parameters/QueryId" },
+          { "$ref": "#/components/parameters/Handle" },
+          { "$ref": "#/components/parameters/QueryToken" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Previously delivered immutable quote snapshot",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OpenDocumentsResponse" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/v1/questions/{queryId}/paid-documents/{handle}/feedback": {
       "post": {
         "summary": "Submit feedback for a passage paid by this payer",
@@ -463,6 +506,87 @@
         "responses": { "200": { "description": "Hash, version, price, and x402 template" } }
       }
     },
+    "/api/v1/pay-sh/documents/5/{query_id}/{handle}": {
+      "get": { "summary": "Open one quoted 5 KRW human document through Pay.sh", "parameters": [{ "$ref": "#/components/parameters/PayShQueryId" }, { "$ref": "#/components/parameters/Handle" }, { "$ref": "#/components/parameters/OwnerWallet" }, { "$ref": "#/components/parameters/QuoteId" }, { "$ref": "#/components/parameters/QueryToken" }], "responses": { "200": { "description": "Paid immutable human-document snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenDocumentsResponse" } } } }, "402": { "description": "MPP payment required" } } }
+    },
+    "/api/v1/pay-sh/documents/10/{query_id}/{handle}": {
+      "get": { "summary": "Open one quoted 10 KRW human document through Pay.sh", "parameters": [{ "$ref": "#/components/parameters/PayShQueryId" }, { "$ref": "#/components/parameters/Handle" }, { "$ref": "#/components/parameters/OwnerWallet" }, { "$ref": "#/components/parameters/QuoteId" }, { "$ref": "#/components/parameters/QueryToken" }], "responses": { "200": { "description": "Paid immutable human-document snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenDocumentsResponse" } } } }, "402": { "description": "MPP payment required" } } }
+    },
+    "/api/v1/pay-sh/documents/15/{query_id}/{handle}": {
+      "get": { "summary": "Open one quoted 15 KRW human document through Pay.sh", "parameters": [{ "$ref": "#/components/parameters/PayShQueryId" }, { "$ref": "#/components/parameters/Handle" }, { "$ref": "#/components/parameters/OwnerWallet" }, { "$ref": "#/components/parameters/QuoteId" }, { "$ref": "#/components/parameters/QueryToken" }], "responses": { "200": { "description": "Paid immutable human-document snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenDocumentsResponse" } } } }, "402": { "description": "MPP payment required" } } }
+    },
+    "/api/v1/pay-sh/documents/25/{query_id}/{handle}": {
+      "get": { "summary": "Open one quoted 25 KRW human document through Pay.sh", "parameters": [{ "$ref": "#/components/parameters/PayShQueryId" }, { "$ref": "#/components/parameters/Handle" }, { "$ref": "#/components/parameters/OwnerWallet" }, { "$ref": "#/components/parameters/QuoteId" }, { "$ref": "#/components/parameters/QueryToken" }], "responses": { "200": { "description": "Paid immutable human-document snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenDocumentsResponse" } } } }, "402": { "description": "MPP payment required" } } }
+    },
+    "/api/v1/pay-sh/documents/100/{query_id}/{handle}": {
+      "get": { "summary": "Open one quoted 100 KRW human document through Pay.sh", "parameters": [{ "$ref": "#/components/parameters/PayShQueryId" }, { "$ref": "#/components/parameters/Handle" }, { "$ref": "#/components/parameters/OwnerWallet" }, { "$ref": "#/components/parameters/QuoteId" }, { "$ref": "#/components/parameters/QueryToken" }], "responses": { "200": { "description": "Paid immutable human-document snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenDocumentsResponse" } } } }, "402": { "description": "MPP payment required" } } }
+    },
+    "/api/v1/pay-sh/documents/300/{query_id}/{handle}": {
+      "get": { "summary": "Open one quoted 300 KRW human document through Pay.sh", "parameters": [{ "$ref": "#/components/parameters/PayShQueryId" }, { "$ref": "#/components/parameters/Handle" }, { "$ref": "#/components/parameters/OwnerWallet" }, { "$ref": "#/components/parameters/QuoteId" }, { "$ref": "#/components/parameters/QueryToken" }], "responses": { "200": { "description": "Paid immutable human-document snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenDocumentsResponse" } } } }, "402": { "description": "MPP payment required" } } }
+    },
+    "/api/v1/pay-sh/documents/500/{query_id}/{handle}": {
+      "get": { "summary": "Open one quoted 500 KRW human document through Pay.sh", "parameters": [{ "$ref": "#/components/parameters/PayShQueryId" }, { "$ref": "#/components/parameters/Handle" }, { "$ref": "#/components/parameters/OwnerWallet" }, { "$ref": "#/components/parameters/QuoteId" }, { "$ref": "#/components/parameters/QueryToken" }], "responses": { "200": { "description": "Paid immutable human-document snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenDocumentsResponse" } } } }, "402": { "description": "MPP payment required" } } }
+    },
+    "/api/v1/pay-sh/documents/700/{query_id}/{handle}": {
+      "get": { "summary": "Open one quoted 700 KRW human document through Pay.sh", "parameters": [{ "$ref": "#/components/parameters/PayShQueryId" }, { "$ref": "#/components/parameters/Handle" }, { "$ref": "#/components/parameters/OwnerWallet" }, { "$ref": "#/components/parameters/QuoteId" }, { "$ref": "#/components/parameters/QueryToken" }], "responses": { "200": { "description": "Paid immutable human-document snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenDocumentsResponse" } } } }, "402": { "description": "MPP payment required" } } }
+    },
+    "/api/v1/pay-sh/documents/800/{query_id}/{handle}": {
+      "get": { "summary": "Open one quoted 800 KRW human document through Pay.sh", "parameters": [{ "$ref": "#/components/parameters/PayShQueryId" }, { "$ref": "#/components/parameters/Handle" }, { "$ref": "#/components/parameters/OwnerWallet" }, { "$ref": "#/components/parameters/QuoteId" }, { "$ref": "#/components/parameters/QueryToken" }], "responses": { "200": { "description": "Paid immutable human-document snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenDocumentsResponse" } } } }, "402": { "description": "MPP payment required" } } }
+    },
+    "/api/v1/pay-sh/documents/1000/{query_id}/{handle}": {
+      "get": { "summary": "Open one quoted 1000 KRW human document through Pay.sh", "parameters": [{ "$ref": "#/components/parameters/PayShQueryId" }, { "$ref": "#/components/parameters/Handle" }, { "$ref": "#/components/parameters/OwnerWallet" }, { "$ref": "#/components/parameters/QuoteId" }, { "$ref": "#/components/parameters/QueryToken" }], "responses": { "200": { "description": "Paid immutable human-document snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenDocumentsResponse" } } } }, "402": { "description": "MPP payment required" } } }
+    },
+    "/api/v1/prepaid/session": {
+      "post": {
+        "summary": "Issue a 30-day prepaid spending capability for the authenticated user's verified wallet",
+        "security": [{ "sessionCookie": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object", "required": ["wallet", "challengeId", "signature"],
+            "properties": {
+              "wallet": { "type": "string" },
+              "challengeId": { "type": "string" },
+              "signature": { "type": "string", "description": "Base58 Ed25519 signature over a fresh wallet challenge" }
+            }
+          } } }
+        },
+        "responses": { "201": { "description": "Expiring prepaid wallet session", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PrepaidWalletSession" } } } } }
+      }
+    },
+    "/api/v1/prepaid/balance": {
+      "get": {
+        "summary": "Read the authenticated verified wallet's available prepaid USDC",
+        "security": [{ "sessionCookie": [] }],
+        "responses": { "200": { "description": "Available prepaid balance", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PrepaidBalance" } } } } }
+      }
+    },
+    "/api/v1/prepaid/withdrawals": {
+      "post": {
+        "summary": "Reserve some or all prepaid credit for KMS payout to the verified wallet",
+        "security": [{ "sessionCookie": [] }],
+        "requestBody": { "content": { "application/json": { "schema": {
+          "type": "object",
+          "properties": { "amountAtomic": { "type": "string", "description": "Omit to withdraw all available credit" } }
+        } } } },
+        "responses": { "201": { "description": "Durable payout claim" } }
+      }
+    },
+    "/api/v1/research-jobs/{id}": {
+      "get": {
+        "summary": "Recover a browser-funded Pay.sh research job",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/QueryToken" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Durable funded, processing, completed, on-chain refund, or prepaid-balance restoration state",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResearchJobStatus" } } }
+          }
+        }
+      }
+    },
     "/api/flash-research": {
       "get": {
         "summary": "Sandbox-only idempotent document opening",
@@ -500,6 +624,12 @@
         "required": true,
         "schema": { "type": "string" }
       },
+      "PayShQueryId": {
+        "name": "query_id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
       "Handle": {
         "name": "handle",
         "in": "path",
@@ -525,11 +655,26 @@
         "schema": { "type": "string" },
         "description": "Base58 Solana public key that settled the purchase"
       },
+      "OwnerWallet": {
+        "name": "owner_wallet",
+        "in": "query",
+        "required": true,
+        "schema": { "type": "string" },
+        "description": "Server-issued verified contributor recipient; never substitute it"
+      },
+      "QuoteId": {
+        "name": "quote_id",
+        "in": "query",
+        "required": true,
+        "schema": { "type": "string" },
+        "description": "Immutable quote id returned in the prepared Pay.sh resource URL"
+      },
       "QueryToken": {
         "name": "x-openshelf-query-token",
         "in": "header",
-        "required": true,
-        "schema": { "type": "string" }
+        "required": false,
+        "schema": { "type": "string" },
+        "description": "Required for user/external-agent access. A paid internal callback may instead carry its query-bound research_job_id."
       }
     },
     "responses": {
@@ -649,6 +794,79 @@
         "required": ["citation", "settlement"],
         "properties": {
           "citation": { "type": "object" },
+          "settlement": { "type": "object" }
+        }
+      },
+      "PayShResource": {
+        "type": "object",
+        "required": ["quoteId", "queryId", "documentHandle", "recipientWallet", "network", "asset", "amountAtomic", "ownerAmountAtomic", "platformAmountAtomic", "priceKrw", "krwPerUsdc", "expiresAt", "status", "resourcePath", "recoveryPath", "protocol"],
+        "properties": {
+          "quoteId": { "type": "string" },
+          "queryId": { "type": "string" },
+          "documentHandle": { "type": "string" },
+          "recipientWallet": { "type": "string", "description": "Verified contributor wallet used by Pay.sh dynamic splits" },
+          "network": { "type": "string" },
+          "asset": { "type": "string" },
+          "amountAtomic": { "type": "string" },
+          "ownerAmountAtomic": { "type": "string" },
+          "platformAmountAtomic": { "type": "string", "const": "1" },
+          "priceKrw": { "type": "integer", "enum": [5, 10, 15, 25, 100, 300, 500, 700, 800, 1000] },
+          "krwPerUsdc": { "type": "integer", "const": 1350 },
+          "expiresAt": { "type": "integer" },
+          "status": { "type": "string", "enum": ["quoted", "delivered"] },
+          "resourcePath": { "type": "string" },
+          "recoveryPath": { "type": "string" },
+          "protocol": { "type": "string", "const": "mpp-charge" }
+        }
+      },
+      "ResearchJobStatus": {
+        "type": "object",
+        "required": ["id", "queryId", "payTo", "network", "asset", "amountAtomic", "spentAtomic", "refundableAtomic", "status", "createdAt", "citations", "pendingHandles"],
+        "properties": {
+          "id": { "type": "string" },
+          "queryId": { "type": "string" },
+          "payer": { "type": ["string", "null"] },
+          "payTo": { "type": "string" },
+          "network": { "type": "string" },
+          "asset": { "type": "string" },
+          "amountAtomic": { "type": "string" },
+          "spentAtomic": { "type": "string" },
+          "refundableAtomic": { "type": "string" },
+          "status": { "type": "string", "enum": ["quoted", "funded", "processing", "completed", "refund_pending", "balance_refunded"] },
+          "transactionSignature": { "type": ["string", "null"] },
+          "failureReason": { "type": ["string", "null"] },
+          "createdAt": { "type": "integer" },
+          "fundedAt": { "type": ["integer", "null"] },
+          "completedAt": { "type": ["integer", "null"] },
+          "citations": { "type": "array", "items": { "type": "object" } },
+          "pendingHandles": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "PrepaidBalance": {
+        "type": "object",
+        "required": ["wallet", "payTo", "network", "asset", "availableAtomic"],
+        "properties": {
+          "wallet": { "type": "string" },
+          "payTo": { "type": "string" },
+          "network": { "type": "string" },
+          "asset": { "type": "string" },
+          "availableAtomic": { "type": "string" }
+        }
+      },
+      "PrepaidWalletSession": {
+        "allOf": [
+          { "$ref": "#/components/schemas/PrepaidBalance" },
+          { "type": "object", "required": ["token", "expiresAt"], "properties": {
+            "token": { "type": "string", "readOnly": true },
+            "expiresAt": { "type": "integer" }
+          } }
+        ]
+      },
+      "OpenDocumentsResponse": {
+        "type": "object",
+        "required": ["citations", "settlement"],
+        "properties": {
+          "citations": { "type": "array", "items": { "type": "object" } },
           "settlement": { "type": "object" }
         }
       },

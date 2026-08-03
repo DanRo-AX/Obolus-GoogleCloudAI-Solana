@@ -84,7 +84,7 @@ export type ChatMessage = {
     txSigs?: string[]
     network?: string
     partial?: boolean
-    mode?: 'direct' | 'bundle_escrow' | 'open_call_escrow'
+    mode?: 'direct' | 'bundle_escrow' | 'open_call_escrow' | 'pay_sh_direct' | 'pay_sh_orchestrated'
   }
   /** Kept privately in local chat state so a paid buyer can recover and rate. */
   paymentContext?: PaymentContext
@@ -988,6 +988,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     setChats([])
     if (BACKEND_ENABLED) {
       window.sessionStorage.removeItem(SESSION_STORAGE_KEY)
+      window.localStorage.removeItem('openshelf:prepaid-wallet-session:v1')
       setOrders(await listOpenCalls().catch(() => []))
     }
   }, [])
@@ -1005,6 +1006,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     setOrders(BACKEND_ENABLED ? await listOpenCalls().catch(() => []) : SEED_ORDERS)
     try {
       window.localStorage.removeItem(STORAGE_KEY)
+      window.localStorage.removeItem('openshelf:prepaid-wallet-session:v1')
       window.sessionStorage.removeItem(SESSION_STORAGE_KEY)
     } catch {
       // Storage is optional.

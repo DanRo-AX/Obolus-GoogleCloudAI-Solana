@@ -828,6 +828,34 @@ pub struct PaymentQuote {
     pub consent_version: String,
 }
 
+/// Agent-readable paid resource prepared for the official Pay.sh gateway.
+///
+/// Pay.sh resolves the runtime `owner_wallet` recipient from the resource URL,
+/// charges the exact price band over MPP, and only then proxies the request to
+/// the private delivery handler. One atomic unit remains with the gateway's
+/// primary recipient because Pay.sh requires every split set to leave a
+/// positive primary share.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PayShResource {
+    pub quote_id: String,
+    pub query_id: String,
+    pub document_handle: String,
+    pub recipient_wallet: String,
+    pub network: String,
+    pub asset: String,
+    pub amount_atomic: String,
+    pub owner_amount_atomic: String,
+    pub platform_amount_atomic: String,
+    pub price_krw: u64,
+    pub krw_per_usdc: u64,
+    pub expires_at: u64,
+    pub status: String,
+    pub resource_path: String,
+    pub recovery_path: String,
+    pub protocol: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaidDocument {
@@ -860,6 +888,9 @@ pub struct PaymentDocumentSnapshot {
 pub struct CreatePaymentBundleRequest {
     pub query_id: String,
     pub handles: Vec<String>,
+    /// Preferred refill size when the verified prepaid wallet cannot cover
+    /// this job. The server always raises it to at least the exact deficit.
+    pub top_up_atomic: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -872,6 +903,11 @@ pub struct PaymentBundleQuote {
     pub network: String,
     pub asset: String,
     pub amount_atomic: String,
+    /// Exact research budget reserved from the prepaid account. `amount_atomic`
+    /// is only the Phantom refill required for this quote and can be zero.
+    pub budget_atomic: String,
+    pub requires_payment: bool,
+    pub available_balance_atomic: String,
     pub total_price_krw: u64,
     pub krw_per_usdc: u64,
     pub expires_at: u64,
@@ -880,12 +916,94 @@ pub struct PaymentBundleQuote {
     pub status: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatePrepaidSessionRequest {
+    pub wallet: String,
+    pub challenge_id: String,
+    /// Base58 Ed25519 signature over the fresh OPENSHELF wallet challenge.
+    pub signature: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PrepaidWalletSession {
+    pub token: String,
+    pub wallet: String,
+    pub pay_to: String,
+    pub network: String,
+    pub asset: String,
+    pub available_atomic: String,
+    pub expires_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PrepaidBalance {
+    pub wallet: String,
+    pub pay_to: String,
+    pub network: String,
+    pub asset: String,
+    pub available_atomic: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatePrepaidWithdrawalRequest {
+    /// Omit to withdraw the full available balance.
+    pub amount_atomic: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaymentBundleSnapshot {
     pub quote_id: String,
     pub bundle_hash: String,
     pub citations: Vec<Citation>,
+}
+
+/// Durable status for one browser-funded, server-executed research job.
+/// The browser pays `amount_atomic` once; the Pay.sh worker then buys each
+/// document independently from the same bounded service wallet.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchJobStatus {
+    pub id: String,
+    pub query_id: String,
+    pub payer: Option<String>,
+    pub pay_to: String,
+    pub network: String,
+    pub asset: String,
+    pub amount_atomic: String,
+    pub spent_atomic: String,
+    pub refundable_atomic: String,
+    pub status: String,
+    pub transaction_signature: Option<String>,
+    pub failure_reason: Option<String>,
+    pub created_at: u64,
+    pub funded_at: Option<u64>,
+    pub completed_at: Option<u64>,
+    pub citations: Vec<Citation>,
+    pub pending_handles: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchJobPlan {
+    pub id: String,
+    pub payer: String,
+    pub pay_to: String,
+    pub network: String,
+    pub asset: String,
+    pub amount_atomic: String,
+    pub status: String,
+    pub resources: Vec<PayShResource>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FailResearchJobRequest {
+    pub error: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

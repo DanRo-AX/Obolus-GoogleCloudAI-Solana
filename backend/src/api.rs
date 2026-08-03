@@ -25,34 +25,39 @@ use crate::{
         AccountControls, AiLiquidityMetrics, AuthResponse, BalanceSummary, ChainSettlementReceipt,
         ChatAnswer, CompletePayoutClaimRequest, ContributorManifest, ContributorMemoryLink,
         ContributorNotification, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
-        CreateOpenCallRequest, CreatePaymentBundleRequest, DisputeCase, DocumentFeedback,
-        EarningsSummary, EvidenceEdge, FailPayoutClaimRequest, ForgotPasswordRequest,
+        CreateOpenCallRequest, CreatePaymentBundleRequest, CreatePrepaidSessionRequest,
+        CreatePrepaidWithdrawalRequest, DisputeCase, DocumentFeedback, EarningsSummary,
+        EvidenceEdge, FailPayoutClaimRequest, FailResearchJobRequest, ForgotPasswordRequest,
         GenerateAiBaselineResponse, GenerateShelfStartersResponse, LeasePayoutClaimsRequest,
         LoginRequest, MarkNotificationsReadRequest, MemoryEntry, MemoryExport, OpenCall,
         OpenCallFundingQuote, OpenCallFundingSnapshot, OpenCallReservation, OpenDocumentsResponse,
-        PaidDocument, PaymentBundleQuote, PaymentBundleSnapshot, PaymentDocumentSnapshot,
-        PaymentProgress, PaymentQuote, PayoutClaim, PreparePayoutClaimRequest, PublicDocument,
-        RecordChainSettlementRequest, RecoveredPaidDocument, RegisterRequest, ResetPasswordRequest,
-        ResolveError, ResolveQuestionRequest, ResolveQuestionResponse, ReviewDisputeRequest,
-        ReviewDocumentFeedbackRequest, ShelfStarter, SiwxPayload, SubmitAnswerRequest,
-        SubmitAnswerResponse, SubmitDisputeRequest, SubmitDocumentFeedbackRequest,
-        SubmitShelfStarterAnswerRequest, SubmitShelfStarterAnswerResponse, SynthesizeAnswerRequest,
-        SynthesizeAnswerResponse, SynthesizePaidAnswerRequest, UpdateMemoryRequest,
-        UpdatePreferencesRequest, UpsertProfileRequest, UserAccount, UserProfile,
-        VerifyWalletRequest, WalletChallenge, WalletChallengeRequest, WalletSiwxLink,
+        PaidDocument, PayShResource, PaymentBundleQuote, PaymentBundleSnapshot,
+        PaymentDocumentSnapshot, PaymentProgress, PaymentQuote, PayoutClaim, PrepaidBalance,
+        PrepaidWalletSession, PreparePayoutClaimRequest, PublicDocument,
+        RecordChainSettlementRequest, RecoveredPaidDocument, RegisterRequest, ResearchJobPlan,
+        ResearchJobStatus, ResetPasswordRequest, ResolveError, ResolveQuestionRequest,
+        ResolveQuestionResponse, ReviewDisputeRequest, ReviewDocumentFeedbackRequest, ShelfStarter,
+        SiwxPayload, SubmitAnswerRequest, SubmitAnswerResponse, SubmitDisputeRequest,
+        SubmitDocumentFeedbackRequest, SubmitShelfStarterAnswerRequest,
+        SubmitShelfStarterAnswerResponse, SynthesizeAnswerRequest, SynthesizeAnswerResponse,
+        SynthesizePaidAnswerRequest, UpdateMemoryRequest, UpdatePreferencesRequest,
+        UpsertProfileRequest, UserAccount, UserProfile, VerifyWalletRequest, WalletChallenge,
+        WalletChallengeRequest, WalletSiwxLink,
     },
     orchestrator,
     search::Resolver,
-    store::{AiArtifactMetadata, PaymentQuotePolicy, Store, StoreError},
+    store::{AiArtifactMetadata, PayShDeliveryRequest, PaymentQuotePolicy, Store, StoreError},
 };
 
 const SESSION_COOKIE: &str = "openshelf_session";
+const PREPAID_SESSION_HEADER: &str = "x-openshelf-wallet-session";
 const SESSION_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
 const INTERNAL_TOKEN_HEADER: &str = "x-openshelf-internal-token";
 const QUERY_TOKEN_HEADER: &str = "x-openshelf-query-token";
 const DEFAULT_INTERNAL_TOKEN: &str = "openshelf-local-internal";
 const DEVNET_NETWORK: &str = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 const DEVNET_USDC: &str = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+const PAY_SH_KRW_PER_USDC: u64 = 1_350;
 
 pub struct AppState {
     store: Store,
@@ -364,8 +369,26 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/v1/profile/wallet/siwx/{id}",
             get(verify_wallet_siwx_link),
         )
+        .route("/api/v1/prepaid/session", post(create_prepaid_session))
+        .route("/api/v1/prepaid/balance", get(prepaid_balance))
+        .route(
+            "/api/v1/prepaid/withdrawals",
+            post(create_prepaid_withdrawal),
+        )
         .route("/api/v1/earnings", get(get_earnings))
         .route("/api/v1/payout-claims", get(list_payout_claims))
+        .route(
+            "/api/v1/questions/{query_id}/pay-sh-resources/{handle}",
+            get(pay_sh_resource),
+        )
+        .route(
+            "/api/v1/questions/{query_id}/pay-sh-documents/{handle}",
+            get(recover_pay_sh_document),
+        )
+        .route(
+            "/api/v1/pay-sh/documents/{price_krw}/{query_id}/{handle}",
+            get(open_pay_sh_document),
+        )
         .route("/api/flash-research", get(open_documents))
         .route(
             "/internal/v1/payment-quotes/{query_id}/{handle}",
@@ -395,6 +418,23 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/internal/v1/bundle-chain-settlements",
             post(record_bundle_chain_settlement),
+        )
+        .route("/api/v1/research-jobs/{id}", get(research_job_status))
+        .route(
+            "/internal/v1/research-jobs/runnable",
+            get(runnable_research_jobs),
+        )
+        .route(
+            "/internal/v1/research-jobs/{id}/plan",
+            get(research_job_plan),
+        )
+        .route(
+            "/internal/v1/research-jobs/{id}/complete",
+            post(complete_research_job),
+        )
+        .route(
+            "/internal/v1/research-jobs/{id}/fail",
+            post(fail_research_job),
         )
         .route(
             "/internal/v1/open-call-funding-quotes/{id}",
@@ -521,7 +561,11 @@ async fn logout(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
     if let Some(token) = session_token(&headers) {
-        state.store.revoke_session(&token_hash(&token))?;
+        let hash = token_hash(&token);
+        if let Ok(user) = state.store.authenticate_session(&hash) {
+            state.store.revoke_prepaid_sessions(&user.id)?;
+        }
+        state.store.revoke_session(&hash)?;
     }
     let mut response_headers = HeaderMap::new();
     response_headers.insert(header::SET_COOKIE, expired_session_cookie(&state)?);
@@ -1250,6 +1294,60 @@ async fn verify_wallet_siwx_link(
     Ok((response_headers, Json(profile)).into_response())
 }
 
+async fn create_prepaid_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<CreatePrepaidSessionRequest>,
+) -> Result<(StatusCode, HeaderMap, Json<PrepaidWalletSession>), ApiError> {
+    let user = authenticated(&state, &headers)?;
+    state
+        .store
+        .verify_wallet_challenge(&user.id, &request.challenge_id, &request.signature)?;
+    let session = state.store.issue_prepaid_wallet_session(
+        &user.id,
+        &request.wallet,
+        &random_token(),
+        30 * 24 * 60 * 60 * 1_000,
+        &state.payment_policy,
+    )?;
+    Ok((
+        StatusCode::CREATED,
+        private_no_store_headers(),
+        Json(session),
+    ))
+}
+
+async fn prepaid_balance(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<(HeaderMap, Json<PrepaidBalance>), ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok((
+        private_no_store_headers(),
+        Json(
+            state
+                .store
+                .prepaid_balance(&user.id, &state.payment_policy)?,
+        ),
+    ))
+}
+
+async fn create_prepaid_withdrawal(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<CreatePrepaidWithdrawalRequest>,
+) -> Result<(StatusCode, Json<PayoutClaim>), ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(state.store.create_prepaid_withdrawal(
+            &user.id,
+            request.amount_atomic.as_deref(),
+            &state.payment_policy,
+        )?),
+    ))
+}
+
 async fn get_earnings(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1264,6 +1362,78 @@ async fn list_payout_claims(
 ) -> Result<Json<Vec<PayoutClaim>>, ApiError> {
     let user = authenticated(&state, &headers)?;
     Ok(Json(state.store.payout_claims(&user.id)?))
+}
+
+async fn pay_sh_resource(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((query_id, handle)): Path<(String, String)>,
+) -> Result<(HeaderMap, Json<PayShResource>), ApiError> {
+    let access_token = query_access_token(&headers)?;
+    if state.payment_policy.krw_per_usdc != PAY_SH_KRW_PER_USDC {
+        return Err(ApiError::conflict(
+            "Pay.sh price bands require OPENSHELF_KRW_PER_USDC=1350",
+        ));
+    }
+    Ok((
+        private_no_store_headers(),
+        Json(state.store.pay_sh_resource(
+            &query_id,
+            &handle,
+            &token_hash(access_token),
+            &state.payment_policy,
+        )?),
+    ))
+}
+
+async fn recover_pay_sh_document(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((query_id, handle)): Path<(String, String)>,
+) -> Result<(HeaderMap, Json<OpenDocumentsResponse>), ApiError> {
+    let access_token = query_access_token(&headers)?;
+    Ok((
+        private_no_store_headers(),
+        Json(
+            state
+                .store
+                .recover_pay_sh_document(&query_id, &handle, &token_hash(access_token))?,
+        ),
+    ))
+}
+
+async fn open_pay_sh_document(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((price_krw, query_id, handle)): Path<(u64, String, String)>,
+    Query(query): Query<PayShDocumentQuery>,
+) -> Result<(HeaderMap, Json<OpenDocumentsResponse>), ApiError> {
+    // The official Pay.sh gateway strips the caller's payment credential and
+    // injects this internal header only after it has verified the MPP charge.
+    // A direct request to the Rust service therefore cannot release content.
+    require_internal(&state, &headers)?;
+    let access_token_hash = headers
+        .get(QUERY_TOKEN_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(token_hash);
+    if state.payment_policy.krw_per_usdc != PAY_SH_KRW_PER_USDC {
+        return Err(ApiError::conflict(
+            "Pay.sh price bands require OPENSHELF_KRW_PER_USDC=1350",
+        ));
+    }
+    Ok((
+        private_no_store_headers(),
+        Json(state.store.open_pay_sh_document(PayShDeliveryRequest {
+            query_id: &query_id,
+            handle: &handle,
+            path_price_krw: price_krw,
+            owner_wallet: &query.owner_wallet,
+            quote_id: &query.quote_id,
+            payment_token_hash: access_token_hash.as_deref(),
+            research_job_id: query.research_job_id.as_deref(),
+            policy: &state.payment_policy,
+        })?),
+    ))
 }
 
 async fn open_documents(
@@ -1342,9 +1512,16 @@ async fn create_payment_bundle(
 ) -> Result<Json<PaymentBundleQuote>, ApiError> {
     require_internal(&state, &headers)?;
     let access_token = query_access_token(&headers)?;
+    let wallet_session = headers
+        .get(PREPAID_SESSION_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::unauthorized("prepaid wallet session is required"))?;
     Ok(Json(state.store.create_payment_bundle(
         &request,
         &token_hash(access_token),
+        &token_hash(wallet_session),
         &state.payment_policy,
     )?))
 }
@@ -1377,6 +1554,60 @@ async fn record_bundle_chain_settlement(
 ) -> Result<Json<ChainSettlementReceipt>, ApiError> {
     require_internal(&state, &headers)?;
     Ok(Json(state.store.record_bundle_chain_settlement(&request)?))
+}
+
+async fn research_job_status(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<(HeaderMap, Json<ResearchJobStatus>), ApiError> {
+    let access_token = query_access_token(&headers)?;
+    Ok((
+        private_no_store_headers(),
+        Json(
+            state
+                .store
+                .research_job_status(&id, &token_hash(access_token))?,
+        ),
+    ))
+}
+
+async fn research_job_plan(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<ResearchJobPlan>, ApiError> {
+    require_internal(&state, &headers)?;
+    Ok(Json(
+        state.store.research_job_plan(&id, &state.payment_policy)?,
+    ))
+}
+
+async fn runnable_research_jobs(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<String>>, ApiError> {
+    require_internal(&state, &headers)?;
+    Ok(Json(state.store.runnable_research_jobs(50)?))
+}
+
+async fn complete_research_job(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<ResearchJobStatus>, ApiError> {
+    require_internal(&state, &headers)?;
+    Ok(Json(state.store.complete_research_job(&id)?))
+}
+
+async fn fail_research_job(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<FailResearchJobRequest>,
+) -> Result<Json<ResearchJobStatus>, ApiError> {
+    require_internal(&state, &headers)?;
+    Ok(Json(state.store.fail_research_job(&id, &request.error)?))
 }
 
 async fn open_call_funding_quote(
@@ -1652,6 +1883,13 @@ struct OpenDocumentsQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct PayShDocumentQuery {
+    owner_wallet: String,
+    quote_id: String,
+    research_job_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct PayerQuery {
     payer: String,
 }
@@ -1701,6 +1939,14 @@ impl ApiError {
         Self {
             status: StatusCode::FORBIDDEN,
             code: "forbidden",
+            message: message.to_owned(),
+        }
+    }
+
+    fn conflict(message: &str) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            code: "conflict",
             message: message.to_owned(),
         }
     }

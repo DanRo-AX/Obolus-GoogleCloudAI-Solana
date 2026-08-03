@@ -463,6 +463,47 @@ export function verifyWalletChallenge(
   })
 }
 
+export type PrepaidWalletSession = {
+  token: string
+  wallet: string
+  payTo: string
+  network: string
+  asset: string
+  availableAtomic: string
+  expiresAt: number
+}
+
+export type PrepaidBalance = Omit<PrepaidWalletSession, 'token' | 'expiresAt'>
+
+export function createPrepaidWalletSession(
+  wallet: string,
+  challengeId: string,
+  signature: string,
+): Promise<PrepaidWalletSession> {
+  return apiFetch('/api/v1/prepaid/session', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet, challengeId, signature }),
+  })
+}
+
+export function getPrepaidBalance(): Promise<PrepaidBalance> {
+  return apiFetch('/api/v1/prepaid/balance')
+}
+
+export function withdrawPrepaidBalance(amountAtomic?: string): Promise<{
+  id: string
+  status: string
+  amountAtomic: string
+  recipientWallet: string
+}> {
+  return apiFetch('/api/v1/prepaid/withdrawals', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ amountAtomic }),
+  })
+}
+
 const QUERY_TOKEN_HEADER = 'x-openshelf-query-token'
 
 export type PaymentDocumentProgress = {

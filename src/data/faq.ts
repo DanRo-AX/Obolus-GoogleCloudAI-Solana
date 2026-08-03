@@ -53,7 +53,7 @@ export const PRICING_FAQ: Faq[] = [
   },
   {
     q: 'What is x402?',
-    a: 'A payment convention that actually uses HTTP 402 Payment Required. The status code sat reserved and empty for a long time; this puts money through it.\n\nIn the current browser demo, Phantom asks once for the exact selected set. One document pays its author directly; a multi-document purchase lands in payout escrow and records each contributor’s claim. A production agent can make the same x402 request autonomously only after you give it a policy-limited wallet or spending delegation. There is no card checkout.\n\nThe rail is USDC on Solana. Display is in KRW, and a ₩5–₩25 document open goes through the same way. Phantom may label Devnet USDC as Unknown, so the payment screen also shows the mint to verify.'
+    a: 'A payment convention that actually uses HTTP 402 Payment Required. The status code sat reserved and empty for a long time; this puts money through it.\n\nYou prove ownership with one Phantom message signature and refill a prepaid USDC balance. Later questions reserve that balance automatically, so Phantom appears again only when funds are low. A bounded GCP KMS agent pays every selected DB owner through Pay.sh. No delegate, private key transfer, or local companion is installed.\n\nThe rail is USDC on Solana. Display is in KRW, and a ₩5–₩25 document open goes through the same way. Phantom may label Devnet USDC as Unknown, so the refill screen also shows the mint to verify.'
   },
   {
     q: 'When does settlement happen?',

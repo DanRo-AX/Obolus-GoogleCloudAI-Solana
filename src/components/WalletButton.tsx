@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { getBase58Decoder } from '@solana/kit'
 import { CheckCircle2, ShieldAlert, Wallet } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -11,6 +11,7 @@ import {
 } from '@/state/wallet'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
+import { getPrepaidBalance, withdrawPrepaidBalance } from '@/lib/api'
 
 /**
  * Connect a browser wallet for Devnet payment. The public key stays separate
@@ -24,6 +25,9 @@ export function WalletButton({ className }: { className?: string }) {
   const [verifying, setVerifying] = useState(false)
   const [verifyError, setVerifyError] = useState<string | null>(null)
   const [confirmReplace, setConfirmReplace] = useState(false)
+  const [prepaidAtomic, setPrepaidAtomic] = useState<string | null>(null)
+  const [withdrawing, setWithdrawing] = useState(false)
+  const [confirmWithdraw, setConfirmWithdraw] = useState(false)
 
   const verified = Boolean(
     pubkey && profile?.wallet === pubkey && profile.walletVerified,
@@ -31,6 +35,32 @@ export function WalletButton({ className }: { className?: string }) {
   const replacing = Boolean(
     pubkey && profile?.wallet && profile.wallet !== pubkey,
   )
+
+  useEffect(() => {
+    if (!showHint || !verified) return
+    void getPrepaidBalance()
+      .then((balance) => setPrepaidAtomic(balance.availableAtomic))
+      .catch(() => setPrepaidAtomic(null))
+  }, [showHint, verified])
+
+  const withdrawAll = async () => {
+    if (!prepaidAtomic || prepaidAtomic === '0' || withdrawing) return
+    if (!confirmWithdraw) {
+      setConfirmWithdraw(true)
+      return
+    }
+    setWithdrawing(true)
+    setVerifyError(null)
+    try {
+      await withdrawPrepaidBalance()
+      setPrepaidAtomic('0')
+      setConfirmWithdraw(false)
+    } catch (cause) {
+      setVerifyError(cause instanceof Error ? cause.message : 'Withdrawal request failed.')
+    } finally {
+      setWithdrawing(false)
+    }
+  }
 
   const verify = async () => {
     if (!pubkey || !profile || verifying) return
@@ -135,6 +165,32 @@ export function WalletButton({ className }: { className?: string }) {
                   </button>
                 ) : null}
               </>
+            ) : null}
+            {verified ? (
+              <div className="rounded-[3px] bg-foreground/[0.04] p-2 text-xs text-muted-foreground">
+                <span className="block font-mono text-[10px] uppercase tracking-[1px]">
+                  Prepaid balance
+                </span>
+                <span className="mt-1 block text-foreground">
+                  {prepaidAtomic === null
+                    ? 'Loading…'
+                    : `${(Number(prepaidAtomic) / 1_000_000).toFixed(6)} Devnet USDC`}
+                </span>
+                {prepaidAtomic && prepaidAtomic !== '0' ? (
+                  <button
+                    type="button"
+                    disabled={withdrawing}
+                    onClick={() => void withdrawAll()}
+                    className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-foreground underline decoration-dotted underline-offset-4 disabled:opacity-50"
+                  >
+                    {withdrawing
+                      ? 'Queueing withdrawal…'
+                      : confirmWithdraw
+                        ? 'Confirm withdraw all'
+                        : 'Withdraw all'}
+                  </button>
+                ) : null}
+              </div>
             ) : null}
             <span className="mt-1 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
               Devnet test assets · no monetary value

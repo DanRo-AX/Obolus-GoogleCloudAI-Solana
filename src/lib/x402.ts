@@ -1,18 +1,19 @@
 /**
  * Paid-content boundary.
  *
- * The default browser flow uses the local x402 gateway. It receives the 402,
- * asks Phantom to sign the exact Solana USDC transfer, retries the URL with a
- * PAYMENT-SIGNATURE header, and reads the facilitator's settlement receipt.
+ * The default browser flow reserves a verified prepaid balance. Only when that
+ * balance is low does the x402 gateway return 402, ask Phantom for a USDC
+ * refill, and retry with the facilitator's settlement proof.
  */
 
 import type { Citation, Order } from '@/state/ui'
+import { getBase58Decoder } from '@solana/kit'
 import {
+  createPrepaidWalletSession,
+  createWalletChallenge,
   getOpenCallFundingQuote,
-  getPaymentProgress,
   listOpenCalls,
   prepareOpenCallFundingQuote,
-  recoverPaidDocument,
   type CreateOpenCallInput,
   type OpenCallFundingQuote,
 } from '@/lib/api'
@@ -35,7 +36,7 @@ export type OpenResult = {
     txSigs?: string[]
     network?: string
     partial?: boolean
-    mode?: 'direct' | 'bundle_escrow'
+    mode?: 'direct' | 'bundle_escrow' | 'pay_sh_direct' | 'pay_sh_orchestrated'
   }
 }
 
@@ -49,6 +50,12 @@ const RESOURCE = '/api/flash-research'
 const DEVNET_NETWORK = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
 const DEVNET_RPC_BACKOFF_MS = [1_500, 3_000, 6_000]
 const PENDING_OPEN_CALL_KEY = 'openshelf:pending-funded-open-call:v1'
+const PENDING_RESEARCH_KEY = 'openshelf:pending-research-job:v1'
+const PREPAID_SESSION_KEY = 'openshelf:prepaid-wallet-session:v1'
+const DEFAULT_TOP_UP_ATOMIC = Math.round(
+  Math.min(1_000, Math.max(0.1, Number(import.meta.env.VITE_PREPAID_TOPUP_USDC ?? 5))) *
+    1_000_000,
+)
 
 export class PaymentError extends Error {
   code: 'cancelled' | 'identity_mismatch' | 'failed'
@@ -205,6 +212,40 @@ function readPendingOpenCall(): { quoteId: string; input: CreateOpenCallInput } 
   }
 }
 
+type ResearchJobStatus = {
+  id: string
+  queryId: string
+  payer?: string | null
+  network: string
+  amountAtomic: string
+  spentAtomic: string
+  refundableAtomic: string
+  status:
+    | 'quoted'
+    | 'funded'
+    | 'processing'
+    | 'completed'
+    | 'refund_pending'
+    | 'balance_refunded'
+  transactionSignature?: string | null
+  failureReason?: string | null
+  citations: Citation[]
+  pendingHandles: string[]
+}
+
+type PendingResearchJob = {
+  jobId: string
+  queryId: string
+  handles: string[]
+  payer: string
+}
+
+type StoredPrepaidSession = {
+  wallet: string
+  token: string
+  expiresAt: number
+}
+
 async function openOverX402(req: OpenRequest): Promise<OpenResult> {
   const provider = getPhantom()
   if (!provider?.publicKey) {
@@ -221,49 +262,22 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
     throw new PaymentError('The payment recovery token is missing. Start a new query.')
   }
 
-  const citations: Citation[] = []
-  const transactions: string[] = []
-  let settledNetwork = DEVNET_NETWORK
-  const requestedHandles = new Set(req.docs.map((document) => document.handle))
-  const openedHandles = new Set<string>()
-
-  const recoverSettled = async () => {
-    const progress = await getPaymentProgress(
-      req.queryId,
-      connectedPayer,
-      req.accessToken,
-    )
-    const newlySettled = progress.documents.filter(
-      (document) =>
-        document.status === 'settled' &&
-        requestedHandles.has(document.handle) &&
-        !openedHandles.has(document.handle),
-    )
-    const recovered = await Promise.all(
-      newlySettled.map((document) =>
-        recoverPaidDocument(
-          req.queryId,
-          document.handle,
-          connectedPayer,
-          req.accessToken,
-        ),
-      ),
-    )
-    for (const document of recovered) {
-      openedHandles.add(document.citation.handle)
-      citations.push(document.citation)
-      if (!transactions.includes(document.settlement.transactionSignature)) {
-        transactions.push(document.settlement.transactionSignature)
-      }
-      settledNetwork = document.settlement.network
-    }
-    return progress
-  }
-
   try {
-    // A prior transfer may have settled even if the browser lost its response.
-    // Recover those passages before requesting any new wallet approval.
-    await recoverSettled()
+    const handles = req.docs.map((document) => document.handle)
+    const pending = readPendingResearchJob()
+    if (
+      pending &&
+      pending.queryId === req.queryId &&
+      pending.payer === connectedPayer &&
+      JSON.stringify(pending.handles) === JSON.stringify(handles)
+    ) {
+      const recovered = await pollResearchJob(pending.jobId, req.accessToken, 1)
+      if (recovered && recovered.status !== 'quoted') {
+        return researchResult(recovered)
+      }
+    }
+    let walletSession = await ensurePrepaidWalletSession(provider, connectedPayer)
+
     const [
       { x402Client },
       { wrapFetchWithPayment, decodePaymentResponseHeader },
@@ -280,153 +294,198 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
       ])
     const client = new x402Client()
     const signer = phantomSvmSigner(provider)
-    svm.registerExactSvmScheme(client, {
-      signer,
-      networks: [DEVNET_NETWORK],
-    })
-    // Override the V2 scheme with the gateway's restricted RPC proxy. The
-    // registration helper remains above to preserve its V1 compatibility.
+    svm.registerExactSvmScheme(client, { signer, networks: [DEVNET_NETWORK] })
     client.register(
       DEVNET_NETWORK,
       new svm.ExactSvmScheme(signer, { rpcUrl: `${X402_GATEWAY_BASE}/rpc` }),
     )
     const paidFetch = wrapFetchWithPayment(window.fetch.bind(window), client)
-    const unpaidDocuments = req.docs.filter(
-      (document) => !openedHandles.has(document.handle),
-    )
-    if (unpaidDocuments.length > 0) {
-      // Preserve direct-to-author settlement for a single document. Two or
-      // more documents use one exact bundle quote, one Phantom approval, and
-      // contributor claim records against the configured escrow receiver.
-      let resource: string
-      let mode: OpenResult['settlement']['mode'] = 'direct'
-      if (unpaidDocuments.length === 1) {
-        const document = unpaidDocuments[0]
-        resource = `${X402_GATEWAY_BASE}/api/v1/paid-documents/${encodeURIComponent(
-          req.queryId,
-        )}/${encodeURIComponent(document.handle)}`
-      } else {
-        const prepared = await fetch(`${X402_GATEWAY_BASE}/api/v1/payment-bundles`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-openshelf-query-token': req.accessToken,
-          },
-          body: JSON.stringify({
-            queryId: req.queryId,
-            handles: unpaidDocuments.map((document) => document.handle),
-          }),
-        })
-        if (!prepared.ok) {
-          const payload = (await prepared.json().catch(() => null)) as
-            | { error?: { message?: string } }
-            | null
-          throw new Error(
-            payload?.error?.message ?? `Could not prepare aggregate payment (${prepared.status}).`,
-          )
-        }
-        const bundle = (await prepared.json()) as {
-          quote: { resourcePath: string }
-        }
-        resource = `${X402_GATEWAY_BASE}${bundle.quote.resourcePath}`
-        mode = 'bundle_escrow'
-      }
-
-      const response = await paidFetchWithRpcBackoff(paidFetch, resource)
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as
-          | { error?: { message?: string } }
-          | null
-        const settlementHeader = response.headers.get('PAYMENT-RESPONSE')
-        const requirementHeader = response.headers.get('PAYMENT-REQUIRED')
-        const protocolMessage = settlementHeader
-          ? settlementFailureMessage(settlementHeader, decodePaymentResponseHeader)
-          : requirementHeader
-            ? verificationFailureMessage(requirementHeader, decodePaymentRequiredHeader)
-            : null
-        throw new Error(
-          payload?.error?.message ?? protocolMessage ?? `x402 gateway returned ${response.status}.`,
-        )
-      }
-      const payload = (await response.json()) as OpenResult
-      for (const citation of payload.citations) {
-        if (openedHandles.has(citation.handle)) continue
-        openedHandles.add(citation.handle)
-        citations.push(citation)
-      }
-      const paymentResponse = response.headers.get('PAYMENT-RESPONSE')
-      if (paymentResponse) {
-        const settlement = decodePaymentResponseHeader(paymentResponse)
-        if (!transactions.includes(settlement.transaction)) {
-          transactions.push(settlement.transaction)
-        }
-        settledNetwork = settlement.network
-      }
-      return {
-        citations,
-        settlement: {
-          count: citations.length,
-          total: citations.reduce((sum, citation) => sum + citation.price, 0),
-          txSig: transactions[0],
-          txSigs: transactions,
-          network: settledNetwork,
-          mode,
+    const prepare = (token: string) =>
+      fetch(`${X402_GATEWAY_BASE}/api/v1/payment-bundles`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-openshelf-query-token': req.accessToken,
+          'x-openshelf-wallet-session': token,
         },
+        body: JSON.stringify({
+          queryId: req.queryId,
+          handles,
+          topUpAtomic: DEFAULT_TOP_UP_ATOMIC.toString(),
+        }),
+      })
+    let prepared = await prepare(walletSession.token)
+    if (prepared.status === 401) {
+      window.localStorage.removeItem(PREPAID_SESSION_KEY)
+      walletSession = await ensurePrepaidWalletSession(provider, connectedPayer)
+      prepared = await prepare(walletSession.token)
+    }
+    if (!prepared.ok) {
+      const payload = (await prepared.json().catch(() => null)) as
+        | { error?: { message?: string } }
+        | null
+      throw new Error(payload?.error?.message ?? `Could not prepare research job (${prepared.status}).`)
+    }
+    const bundle = (await prepared.json()) as {
+      quote: {
+        id: string
+        resourcePath: string
+        status: string
+        requiresPayment: boolean
+        amountAtomic: string
+        availableBalanceAtomic: string
       }
     }
-
-    return {
-      citations,
-      settlement: {
-        count: citations.length,
-        total: citations.reduce((sum, citation) => sum + citation.price, 0),
-        txSig: transactions[0],
-        txSigs: transactions,
-        network: settledNetwork,
-        mode: citations.length > 1 && transactions.length === 1 ? 'bundle_escrow' : 'direct',
-      },
+    writePendingResearchJob({
+      jobId: bundle.quote.id,
+      queryId: req.queryId,
+      handles,
+      payer: connectedPayer,
+    })
+    if (!bundle.quote.requiresPayment) {
+      const recovered = await pollResearchJob(bundle.quote.id, req.accessToken, 120)
+      if (!recovered) {
+        throw new Error('The existing Pay.sh research job is still working. Retry to check it again without paying.')
+      }
+      return researchResult(recovered)
     }
+    const response = await paidFetchWithRpcBackoff(
+      paidFetch,
+      `${X402_GATEWAY_BASE}${bundle.quote.resourcePath}`,
+    )
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: { message?: string } }
+        | null
+      const settlementHeader = response.headers.get('PAYMENT-RESPONSE')
+      const requirementHeader = response.headers.get('PAYMENT-REQUIRED')
+      const protocolMessage = settlementHeader
+        ? settlementFailureMessage(settlementHeader, decodePaymentResponseHeader)
+        : requirementHeader
+          ? verificationFailureMessage(requirementHeader, decodePaymentRequiredHeader)
+          : null
+      throw new Error(
+        payload?.error?.message ?? protocolMessage ?? `x402 gateway returned ${response.status}.`,
+      )
+    }
+    const result = await pollResearchJob(bundle.quote.id, req.accessToken, 120)
+    if (!result) {
+      throw new Error('The deposit settled and the Pay.sh agent is still working. Retry to recover this same job without paying again.')
+    }
+    return researchResult(result)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const cancelled = /reject|declin|cancel/i.test(message)
-
-    // Settlement confirmation can lag behind a lost gateway response. Poll a
-    // bounded number of times, then return only what the Rust ledger proves.
-    const attempts = cancelled ? 1 : 4
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      try {
-        await recoverSettled()
-      } catch {
-        // Preserve the original payment error; Retry can reconcile again.
-      }
-      if (openedHandles.size === requestedHandles.size) {
-        return paymentResult(citations, transactions, settledNetwork, false)
-      }
-      if (attempt + 1 < attempts) {
-        await new Promise((resolve) => window.setTimeout(resolve, 750))
-      }
-    }
-
-    if (citations.length > 0) {
-      return {
-        citations,
-        settlement: {
-          count: citations.length,
-          total: citations.reduce((sum, citation) => sum + citation.price, 0),
-          txSig: transactions[0],
-          txSigs: transactions,
-          network: settledNetwork,
-          partial: true,
-          mode: citations.length > 1 && transactions.length === 1 ? 'bundle_escrow' : 'direct',
-        },
-      }
-    }
     if (error instanceof PaymentError) throw error
     if (cancelled) {
       throw new PaymentError('Payment approval was cancelled in the wallet.', 'cancelled')
     }
     throw new PaymentError(`x402 payment failed: ${message}`)
   }
+}
+
+async function pollResearchJob(
+  jobId: string,
+  accessToken: string,
+  attempts: number,
+): Promise<ResearchJobStatus | null> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const response = await fetch(
+      `${X402_GATEWAY_BASE}/api/v1/research-jobs/${encodeURIComponent(jobId)}`,
+      { headers: { 'x-openshelf-query-token': accessToken } },
+    )
+    if (!response.ok) {
+      if (attempt + 1 === attempts) throw new Error(`Research job recovery returned ${response.status}.`)
+    } else {
+      const job = (await response.json()) as ResearchJobStatus
+      if (
+        job.status === 'completed' ||
+        job.status === 'refund_pending' ||
+        job.status === 'balance_refunded'
+      ) return job
+    }
+    if (attempt + 1 < attempts) await delay(1_000)
+  }
+  return null
+}
+
+function researchResult(job: ResearchJobStatus): OpenResult {
+  if (job.status === 'balance_refunded' && job.citations.length === 0) {
+    window.localStorage.removeItem(PENDING_RESEARCH_KEY)
+    throw new PaymentError(
+      `Pay.sh could not complete the job. ${Number(job.refundableAtomic) / 1_000_000} USDC was restored to your OPENSHELF prepaid balance.${job.failureReason ? ` ${job.failureReason}` : ''}`,
+    )
+  }
+  if (job.status === 'refund_pending' && job.citations.length === 0) {
+    window.localStorage.removeItem(PENDING_RESEARCH_KEY)
+    throw new PaymentError(
+      `Pay.sh could not complete the job. ${Number(job.refundableAtomic) / 1_000_000} USDC was queued for refund.${job.failureReason ? ` ${job.failureReason}` : ''}`,
+    )
+  }
+  window.localStorage.removeItem(PENDING_RESEARCH_KEY)
+  return {
+    citations: job.citations,
+    settlement: {
+      count: job.citations.length,
+      total: job.citations.reduce((sum, citation) => sum + citation.price, 0),
+      txSig: job.transactionSignature ?? undefined,
+      txSigs: job.transactionSignature ? [job.transactionSignature] : [],
+      network: job.network,
+      partial: job.status === 'refund_pending' || job.status === 'balance_refunded',
+      mode: 'pay_sh_orchestrated',
+    },
+  }
+}
+
+async function ensurePrepaidWalletSession(
+  provider: NonNullable<ReturnType<typeof getPhantom>>,
+  wallet: string,
+): Promise<StoredPrepaidSession> {
+  const existing = readPrepaidWalletSession()
+  if (existing?.wallet === wallet && existing.expiresAt > Date.now() + 60_000) {
+    return existing
+  }
+  if (!provider.signMessage) {
+    throw new PaymentError(
+      'This wallet cannot sign the one-time prepaid spending authorization message.',
+    )
+  }
+  const challenge = await createWalletChallenge(wallet)
+  const signed = await provider.signMessage(
+    new TextEncoder().encode(challenge.message),
+    'utf8',
+  )
+  const bytes = signed instanceof Uint8Array ? signed : signed.signature
+  const session = await createPrepaidWalletSession(
+    wallet,
+    challenge.id,
+    getBase58Decoder().decode(bytes),
+  )
+  const stored = { wallet: session.wallet, token: session.token, expiresAt: session.expiresAt }
+  window.localStorage.setItem(PREPAID_SESSION_KEY, JSON.stringify(stored))
+  return stored
+}
+
+function readPrepaidWalletSession(): StoredPrepaidSession | null {
+  try {
+    return JSON.parse(
+      window.localStorage.getItem(PREPAID_SESSION_KEY) ?? 'null',
+    ) as StoredPrepaidSession | null
+  } catch {
+    return null
+  }
+}
+
+function readPendingResearchJob(): PendingResearchJob | null {
+  try {
+    return JSON.parse(window.localStorage.getItem(PENDING_RESEARCH_KEY) ?? 'null') as PendingResearchJob | null
+  } catch {
+    return null
+  }
+}
+
+function writePendingResearchJob(job: PendingResearchJob): void {
+  window.localStorage.setItem(PENDING_RESEARCH_KEY, JSON.stringify(job))
 }
 
 async function paidFetchWithRpcBackoff(
@@ -483,26 +542,6 @@ function isPayloadRpcRateLimit(message: string): boolean {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
-}
-
-function paymentResult(
-  citations: Citation[],
-  transactions: string[],
-  network: string,
-  partial: boolean,
-): OpenResult {
-  return {
-    citations,
-    settlement: {
-      count: citations.length,
-      total: citations.reduce((sum, citation) => sum + citation.price, 0),
-      txSig: transactions[0],
-      txSigs: transactions,
-      network,
-      partial,
-      mode: citations.length > 1 && transactions.length === 1 ? 'bundle_escrow' : 'direct',
-    },
-  }
 }
 
 /** Offline-only fallback used when VITE_BACKEND_ENABLED=false. */

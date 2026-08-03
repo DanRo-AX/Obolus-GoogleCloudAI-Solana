@@ -1,7 +1,6 @@
 import { NavLink, Link } from 'react-router-dom'
 import { LogIn, LogOut, PanelLeft, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/primitives'
 import { WalletButton } from '@/components/WalletButton'
 import { CATEGORY_BY_ID } from '@/data/categories'
 import { NAV_ITEMS } from '@/data/nav'
@@ -271,18 +270,6 @@ export function AppSidebar() {
                 <WalletButton />
               </li>
             </ul>
-            <div className="-mx-2 -mb-2 flex items-center gap-2 px-3 pb-2.5 pt-1">
-              <Switch
-                checked={false}
-                disabled
-                aria-label="Agent payments are not available"
-              />
-              <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground/70">
-                Buyer-agent payments · future
-              </span>
-              {/* The original's theme toggle sits here. This build is light-mode
-                  only, so the control is omitted rather than shipped dead. */}
-            </div>
           </div>
         </div>
       </div>

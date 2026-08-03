@@ -214,11 +214,11 @@ export const SECTIONS: Section[] = [
     blocks: [
       {
         kind: 'p',
-        text: 'Per-open pricing only works at true micropayment scale. The Devnet browser demo bundles the exact selected documents into one explicit Phantom approval; unattended agents still need a policy-limited wallet.',
+        text: 'Per-open pricing only works at true micropayment scale. Phantom refills a prepaid balance only when needed; a bounded GCP KMS agent then pays each DB independently through Pay.sh.',
       },
       {
         kind: 'p',
-        text: 'HTTP already has the status code for this. A request arrives, the server answers 402 with a price, payment is presented, and the body is released. The current browser demo signs through Phantom. A delegated agent wallet is the next step for machine-to-machine settlement.',
+        text: 'HTTP already has the status code for this. A request arrives, the server answers 402 with a price, payment is presented, and the body is released. Phantom signs only balance refills; the server agent handles machine-to-machine 402 settlement without a user delegate.',
       },
       {
         kind: 'code',

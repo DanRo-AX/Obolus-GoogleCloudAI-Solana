@@ -1,0 +1,10 @@
+.git
+.env
+.secrets
+node_modules
+payment-gateway/node_modules
+agent-orchestrator/node_modules
+backend/target
+backend/openshelf.db*
+dist
+*.log
