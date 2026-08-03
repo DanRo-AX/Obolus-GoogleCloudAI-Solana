@@ -171,7 +171,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     })
   } catch {
     throw new ApiError(
-      'OPENSHELF backend is not reachable. Start it on port 8787.',
+      'Obolus backend is not reachable. Start it on port 8787.',
       0,
       'offline',
     )

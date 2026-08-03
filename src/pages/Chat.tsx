@@ -626,7 +626,7 @@ export default function Chat() {
                         ? 'Ask again to start a new one'
                         : paymentPayerMismatch
                           ? 'Switch to the original wallet'
-                          : 'Connect Phantom to pay'}
+                          : 'Connect a wallet to pay'}
                     </Button>
                   )}
                   <Button

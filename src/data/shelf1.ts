@@ -32,7 +32,7 @@ export const HERO = {
     'Every crawler in production today reads for free. SHELF-1 pays ₩5 to ₩20 per open, and the USDC lands in the author’s wallet. This is what changes when the document on the other end has an author.',
   meta: [
     { label: 'Published', value: 'July 31, 2026' },
-    { label: 'By', value: 'The OPENSHELF team' },
+    { label: 'By', value: 'The Obolus team' },
     { label: 'Reading', value: '8 min' },
     { label: 'Version', value: 'v0.1 · draft' },
   ],
@@ -100,7 +100,7 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'p',
-        text: 'So that half never lands anywhere a crawler can see it. It stays in people. OPENSHELF puts a price on the door instead of asking anyone to be generous.',
+        text: 'So that half never lands anywhere a crawler can see it. It stays in people. Obolus puts a price on the door instead of asking anyone to be generous.',
       },
     ],
   },
@@ -252,7 +252,7 @@ export const SECTIONS: Section[] = [
     blocks: [
       {
         kind: 'p',
-        text: 'No bank details, card number, seed phrase, private key, or national ID. OPENSHELF does store account data, demographic bands, a public payout address, wallet proofs, and life-level records such as where the day goes, what lunch costs, and which errand changes a route.',
+        text: 'No bank details, card number, seed phrase, private key, or national ID. Obolus does store account data, demographic bands, a public payout address, wallet proofs, and life-level records such as where the day goes, what lunch costs, and which errand changes a route.',
       },
       {
         kind: 'list',

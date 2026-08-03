@@ -369,7 +369,7 @@ export default function Onboarding() {
                       type="button"
                     >
                       <Wallet className="size-3.5" />
-                      {wallet.connecting ? 'Connecting…' : 'Connect browser wallet'}
+                      {wallet.connecting ? 'Connecting…' : 'Connect wallet'}
                     </Button>
                   ) : (
                     <a

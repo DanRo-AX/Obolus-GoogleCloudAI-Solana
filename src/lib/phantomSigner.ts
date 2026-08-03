@@ -14,7 +14,7 @@ import type { PhantomProvider } from '@/state/wallet'
 /** Adapts Phantom's injected signer to the signer interface used by x402/SVM. */
 export function phantomSvmSigner(provider: PhantomProvider): TransactionModifyingSigner {
   const publicKey = provider.publicKey?.toString()
-  if (!publicKey) throw new Error('Connect Phantom before paying.')
+  if (!publicKey) throw new Error('Connect a wallet before paying.')
 
   const encoder = getTransactionEncoder()
   const decoder = getTransactionDecoder()

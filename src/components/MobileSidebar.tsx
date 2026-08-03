@@ -39,12 +39,12 @@ export function MobileSidebar() {
                 <img
                   className="invert"
                   src="/SHELF-SYMBOL.svg"
-                  alt="OPENSHELF"
+                  alt="Obolus"
                   width={14}
                   height={14}
                 />
               </span>
-              <span className="truncate text-xs font-semibold">OPENSHELF</span>
+              <span className="truncate text-xs font-semibold">Obolus</span>
             </Link>
           </div>
         </div>
@@ -111,7 +111,7 @@ export function MobileSidebar() {
               asChild
               className="rounded-[2px] bg-foreground/85 text-background border border-foreground/80 hover:bg-foreground/75 h-9 flex-1 px-4 text-xs"
             >
-              <Link to="/login">Connect Phantom</Link>
+              <Link to="/login">Connect wallet</Link>
             </Button>
             <Button
               asChild

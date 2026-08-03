@@ -1,7 +1,6 @@
 import { NavLink, Link } from 'react-router-dom'
 import { LogIn, LogOut, PanelLeft, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/primitives'
 import { CATEGORY_BY_ID } from '@/data/categories'
 import { NAV_ITEMS } from '@/data/nav'
 import { STRIKE_LIMIT } from '@/data/onboarding'
@@ -19,7 +18,7 @@ function WorkspaceMark({ size = 'size-6' }: { size?: string }) {
         'flex items-center justify-center rounded-[2px] bg-foreground',
       )}
     >
-      <img className="invert" src="/SHELF-SYMBOL.svg" alt="OPENSHELF" width={15} height={15} />
+      <img className="invert" src="/SHELF-SYMBOL.svg" alt="Obolus" width={15} height={15} />
     </span>
   )
 }
@@ -29,7 +28,7 @@ function WorkspaceMark({ size = 'size-6' }: { size?: string }) {
  * rule you only ever see once, on the way in, is not a rule anybody remembers.
  */
 function ProfileChip() {
-  const { account, profile, signOut, suspended } = useUi()
+  const { profile, signOut, suspended } = useUi()
   if (!profile) return null
   const cat = CATEGORY_BY_ID[profile.field]
   return (
@@ -72,11 +71,60 @@ function ProfileChip() {
         </span>
       </div>
       <div className="mt-2 border-t border-border/70 pt-2 font-mono text-[9px] leading-relaxed text-muted-foreground">
-        <p className="truncate normal-case tracking-normal">Signed in · {account?.email}</p>
         <p className="mt-0.5 truncate uppercase tracking-[0.7px]">
           Wallet · {profile.wallet ? `${profile.wallet.slice(0, 4)}…${profile.wallet.slice(-4)} · ${profile.walletVerified ? 'verified' : 'unverified'}` : 'not connected'}
         </p>
       </div>
+    </div>
+  )
+}
+
+/**
+ * The two numbers that bring somebody back: what the shelf has earned, and how
+ * many open calls are sitting in the fields they claimed. Both are links —
+ * a figure you cannot act on is decoration.
+ */
+function LiveStrip() {
+  const { earnings, orders, profile } = useUi()
+  if (!profile) return null
+
+  const fits = orders.filter(
+    (o) => !o.mine && o.answered < o.target && profile.speaksTo.includes(o.category),
+  ).length
+  const earned = earnings?.accruedKrw ?? 0
+  const held = earnings?.heldKrw ?? 0
+
+  return (
+    <div className="flex flex-col divide-y divide-border/70 rounded-[2px] border border-border bg-card">
+      <Link
+        to="/memory"
+        className="flex items-baseline justify-between gap-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <span>Earned</span>
+        <span className="tabular-nums text-foreground">
+          ₩{earned.toLocaleString()}
+          {held ? (
+            <span className="text-muted-foreground">
+              {' '}
+              · ₩{held.toLocaleString()} held
+            </span>
+          ) : null}
+        </span>
+      </Link>
+      <Link
+        to="/dashboard"
+        className="flex items-baseline justify-between gap-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <span>Fit you</span>
+        <span
+          className={cn(
+            'tabular-nums',
+            fits > 0 ? 'text-foreground' : 'text-muted-foreground/70',
+          )}
+        >
+          {fits} {fits === 1 ? 'call' : 'calls'}
+        </span>
+      </Link>
     </div>
   )
 }
@@ -131,7 +179,7 @@ export function AppSidebar() {
                       <WorkspaceMark />
                     </div>
                     <span className="truncate text-xs font-semibold">
-                      OPENSHELF
+                      Obolus
                     </span>
                   </Link>
                 </div>
@@ -217,7 +265,10 @@ export function AppSidebar() {
                 className="group/menu-item relative flex flex-col gap-2"
               >
                 {profile ? (
-                  <ProfileChip />
+                  <>
+                    <LiveStrip />
+                    <ProfileChip />
+                  </>
                 ) : account ? (
                   <div className="space-y-2 rounded-[2px] border border-border bg-card p-2.5">
                     <p className="truncate font-mono text-[10px] text-muted-foreground">
@@ -247,7 +298,7 @@ export function AppSidebar() {
                         asChild
                         className="rounded-[2px] transition-all duration-300 bg-foreground/85 text-background border border-foreground/80 hover:bg-foreground/75 px-4 py-2 h-9 flex-1 text-xs"
                       >
-                        <Link to="/login">Connect Phantom</Link>
+                        <Link to="/login">Connect wallet</Link>
                       </Button>
                       <Button
                         asChild
@@ -263,18 +314,6 @@ export function AppSidebar() {
                 )}
               </li>
             </ul>
-            <div className="-mx-2 -mb-2 flex items-center gap-2 px-3 pb-2.5 pt-1">
-              <Switch
-                checked={false}
-                disabled
-                aria-label="Asker-agent payments, not available yet"
-              />
-              <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground/70">
-                Asker-agent payments · later
-              </span>
-              {/* The original's theme toggle sits here. This build is light-mode
-                  only, so the control is omitted rather than shipped dead. */}
-            </div>
           </div>
         </div>
       </div>

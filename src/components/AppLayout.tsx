@@ -29,7 +29,7 @@ export function AppLayout() {
       className="group/sidebar-wrapper flex h-svh w-full overflow-hidden"
       style={
         {
-          '--sidebar-width': '14rem',
+          '--sidebar-width': '12.5rem',
           '--sidebar-width-icon': '3rem',
         } as React.CSSProperties
       }

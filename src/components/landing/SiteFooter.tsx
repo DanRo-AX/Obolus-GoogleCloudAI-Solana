@@ -1,4 +1,4 @@
-/** Footer: the OPENSHELF wordmark, and nothing else to click. */
+/** Footer: the Obolus wordmark, and nothing else to click. */
 export function SiteFooter() {
   return (
     <section
@@ -7,10 +7,10 @@ export function SiteFooter() {
     >
       <div className="flex items-end justify-center pb-6 pt-16 sm:pb-10 sm:pt-24">
         <span
-          aria-label="OPENSHELF"
+          aria-label="Obolus"
           className="select-none font-display text-[14vw] font-semibold leading-none tracking-tight text-foreground/[0.07] sm:text-[13vw]"
         >
-          OPENSHELF
+          Obolus
         </span>
       </div>
     </section>

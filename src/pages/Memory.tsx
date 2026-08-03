@@ -127,7 +127,7 @@ export default function Memory() {
     if (!profile?.wallet || verifying) return
     const provider = getPhantom()
     if (!provider?.signMessage) {
-      setWalletError('Connect Phantom to sign the challenge.')
+      setWalletError('Connect your wallet to sign the challenge.')
       return
     }
     setWalletError(null)

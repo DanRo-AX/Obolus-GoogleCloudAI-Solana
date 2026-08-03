@@ -571,7 +571,7 @@ export default function Dashboard() {
           <div className="flex flex-wrap items-center gap-3 rounded-[6px] border border-border bg-foreground/[0.03] px-4 py-3">
             <UserRound className="size-4 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
-              You are reading signed out. Connect Phantom, name your fields, and
+              You are reading signed out. Connect a wallet, name your fields, and
               calls in them sort to the top.
             </p>
             <Button
@@ -580,7 +580,7 @@ export default function Dashboard() {
               size="monoSm"
               className="ml-auto"
             >
-              <Link to="/login">Connect Phantom</Link>
+              <Link to="/login">Connect wallet</Link>
             </Button>
           </div>
         ) : null}

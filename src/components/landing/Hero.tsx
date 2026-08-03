@@ -16,7 +16,7 @@ export function Hero() {
         </div>
 
         <div className="relative flex size-14 items-center justify-center rounded-[2px] bg-background">
-          <img src="/SHELF-SYMBOL.svg" alt="OPENSHELF" width={30} height={30} />
+          <img src="/SHELF-SYMBOL.svg" alt="Obolus" width={30} height={30} />
         </div>
 
         <div className="relative -mt-2 mx-auto max-w-2xl text-center mix-blend-difference">

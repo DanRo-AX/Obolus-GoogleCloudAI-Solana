@@ -2,12 +2,12 @@ export type Faq = { q: string; a: string }
 
 export const HOME_FAQ: Faq[] = [
   {
-    q: 'What is OPENSHELF?',
+    q: 'What is Obolus?',
     a: 'People write short documents about things they have lived through. SHELF-1 searches those documents instead of the web, opens a handful, and quotes them. Every open pays its author, over x402.\n\nThe shape is a library. One document is one book, the shelves are the stacks, and SHELF-1 is the librarian. A question comes in, it pulls the few books that fit, and hands back the passages that matter.\n\nWe copied the shape of the internet almost exactly. One document is one URL, the closest matches rise to the top, and SHELF-1 opens a handful of them. One thing is different: opening that URL pays the author.'
   },
   {
     q: 'Is this a search engine?',
-    a: 'No. What makes it onto the web is the tip of the iceberg. Where someone who has lived in Seongsu for three years goes for lunch was never posted anywhere.\n\nThe web an agent reads has no way to charge either. A crawler reads everything it wants and nothing goes back to whoever wrote it. OPENSHELF puts what people wrote into that gap, with a price on it.\n\nSearch is the first step, not the whole thing. SHELF-1 checks the shelves first, and posts an open call only when the answer is not there.'
+    a: 'No. What makes it onto the web is the tip of the iceberg. Where someone who has lived in Seongsu for three years goes for lunch was never posted anywhere.\n\nThe web an agent reads has no way to charge either. A crawler reads everything it wants and nothing goes back to whoever wrote it. Obolus puts what people wrote into that gap, with a price on it.\n\nSearch is the first step, not the whole thing. SHELF-1 checks the shelves first, and posts an open call only when the answer is not there.'
   },
   {
     q: 'How does SHELF-1 decide which documents to open?',
@@ -35,7 +35,7 @@ export const HOME_FAQ: Faq[] = [
   },
   {
     q: 'What happens if the shelves are empty at launch?',
-    a: 'This is the hardest problem we have. We have not solved it, and we are not going to talk around it here. An empty shelf leaves the librarian nothing to do.\n\nEarly on, most questions will land on “nobody has lived this yet.” That means posting an open call and waiting, so OPENSHELF at the start is not an instant answer. It is closer to asking a question and waiting hours or days.\n\nThe plan is narrow before wide. Fill one region or one subject until search works inside it, then widen sideways. Which subject to start with, and how to find the first authors, is still undecided.'
+    a: 'This is the hardest problem we have. We have not solved it, and we are not going to talk around it here. An empty shelf leaves the librarian nothing to do.\n\nEarly on, most questions will land on “nobody has lived this yet.” That means posting an open call and waiting, so Obolus at the start is not an instant answer. It is closer to asking a question and waiting hours or days.\n\nThe plan is narrow before wide. Fill one region or one subject until search works inside it, then widen sideways. Which subject to start with, and how to find the first authors, is still undecided.'
   },
   {
     q: 'What if the answers are careless?',
@@ -74,11 +74,11 @@ export const PRICING_FAQ: Faq[] = [
   },
   {
     q: 'Do I sign for every open?',
-    a: 'No. You sign one fresh Phantom ownership message and get a revocable 30-day OPENSHELF session. That session holds no Solana key and no token allowance — the only thing it can reserve is the prepaid balance you deposited.\n\nWhen the balance runs low, Phantom signs a bounded Devnet USDC refill. Questions after that reserve credit on their own.\n\nThe payouts run from a Cloud Run worker over Pay.sh/MPP, signed by a non-exportable GCP KMS service key, and every author on the list is paid independently.'
+    a: 'No. You sign one fresh Phantom ownership message and get a revocable 30-day Obolus session. That session holds no Solana key and no token allowance — the only thing it can reserve is the prepaid balance you deposited.\n\nWhen the balance runs low, Phantom signs a bounded Devnet USDC refill. Questions after that reserve credit on their own.\n\nThe payouts run from a Cloud Run worker over Pay.sh/MPP, signed by a non-exportable GCP KMS service key, and every author on the list is paid independently.'
   },
   {
     q: 'Who holds the keys?',
-    a: 'Your key stays inside Phantom. OPENSHELF never receives a seed phrase, a private key, an SPL delegate or token-account authority.\n\nThe service key is held by Google Cloud KMS and cannot be exported; Cloud Run only gets IAM permission to ask it for a signature.\n\nAn author publishes a verified receiving address and never hands OPENSHELF a signing key.'
+    a: 'Your key stays inside Phantom. Obolus never receives a seed phrase, a private key, an SPL delegate or token-account authority.\n\nThe service key is held by Google Cloud KMS and cannot be exported; Cloud Run only gets IAM permission to ask it for a signature.\n\nAn author publishes a verified receiving address and never hands Obolus a signing key.'
   },
   {
     q: 'When does settlement happen?',

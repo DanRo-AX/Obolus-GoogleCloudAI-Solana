@@ -169,7 +169,7 @@ export function FlowDiagram({ className }: { className?: string }) {
           viewBox="0 0 1000 730"
           className="h-auto w-full min-w-[720px]"
           role="img"
-          aria-label="How one question moves through OPENSHELF"
+          aria-label="How one question moves through Obolus"
         >
           <defs>
             {[

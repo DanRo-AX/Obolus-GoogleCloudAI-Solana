@@ -66,7 +66,7 @@ export function NotASurveySection() {
                   A survey panel
                 </th>
                 <th className="py-3 font-mono text-[10px] font-normal uppercase tracking-[1.5px] text-foreground">
-                  OPENSHELF
+                  Obolus
                 </th>
               </tr>
             </thead>

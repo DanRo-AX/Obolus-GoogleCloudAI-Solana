@@ -91,7 +91,7 @@ export default function Login() {
             />
           </span>
           <span className="font-mono text-xs font-semibold uppercase tracking-[1.5px]">
-            OPENSHELF
+            Obolus
           </span>
         </Link>
 
@@ -140,7 +140,7 @@ export default function Login() {
                 ) : (
                   <Wallet className="size-4" />
                 )}
-                {connecting ? 'Connecting…' : 'Connect Phantom'}
+                {connecting ? 'Connecting…' : 'Connect wallet'}
               </Button>
             ) : (
               <div className="mt-8 flex flex-col gap-3">

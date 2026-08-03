@@ -24,22 +24,22 @@ import Survey from '@/pages/Survey'
 import AdminDisputes from '@/pages/AdminDisputes'
 
 const TITLES: Record<string, string> = {
-  '/': 'OPENSHELF — The internet, as a database',
-  '/dashboard': 'Dashboard · OPENSHELF',
-  '/archive': 'Archive · OPENSHELF',
-  '/memory': 'My memory · OPENSHELF',
-  '/onboarding': 'Set up your account · OPENSHELF',
-  '/coverage': 'Coverage · OPENSHELF',
-  '/whitepaper': 'Whitepaper · OPENSHELF',
-  '/terms': 'Terms · OPENSHELF',
-  '/privacy': 'Privacy · OPENSHELF',
-  '/login': 'OPENSHELF',
+  '/': 'Obolus — The internet, as a database',
+  '/dashboard': 'Dashboard · Obolus',
+  '/archive': 'Archive · Obolus',
+  '/memory': 'My memory · Obolus',
+  '/onboarding': 'Set up your account · Obolus',
+  '/coverage': 'Coverage · Obolus',
+  '/whitepaper': 'Whitepaper · Obolus',
+  '/terms': 'Terms · Obolus',
+  '/privacy': 'Privacy · Obolus',
+  '/login': 'Obolus',
 }
 
 function DocumentTitle() {
   const { pathname } = useLocation()
   useEffect(() => {
-    document.title = TITLES[pathname] ?? 'OPENSHELF — The internet, as a database'
+    document.title = TITLES[pathname] ?? 'Obolus — The internet, as a database'
   }, [pathname])
   return null
 }
