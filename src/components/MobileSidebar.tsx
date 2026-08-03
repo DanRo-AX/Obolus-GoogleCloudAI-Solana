@@ -3,11 +3,13 @@ import { LogIn, LogOut, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { NAV_ITEMS } from '@/data/nav'
 import { cn } from '@/lib/utils'
+import { useT } from '@/i18n'
 import { useUi } from '@/state/ui'
 
 /** Sheet version of the sidebar for viewports below md. */
 export function MobileSidebar() {
   const { mobileSidebar, setMobileSidebar, account, profile, signOut } = useUi()
+  const t = useT()
 
   return (
     <div
@@ -35,10 +37,10 @@ export function MobileSidebar() {
               to="/"
               className="flex h-9 w-full items-center gap-2 rounded-sm bg-white p-2.5 text-sm font-medium shadow-lg shadow-black/5"
             >
-              <span className="flex size-6 items-center justify-center rounded-[2px] bg-foreground">
+              <span className="flex size-6 items-center justify-center rounded-[7px] bg-foreground">
                 <img
                   className="invert"
-                  src="/SHELF-SYMBOL.svg"
+                  src="/OBOLUS-MARK-SM.svg"
                   alt="Obolus"
                   width={14}
                   height={14}
@@ -65,7 +67,7 @@ export function MobileSidebar() {
                     }
                   >
                     <Icon className="text-muted-foreground/60" />
-                    <span>{label}</span>
+                    <span>{t(label)}</span>
                   </NavLink>
                 </li>
               ))}
@@ -82,7 +84,7 @@ export function MobileSidebar() {
                     }
                   >
                     <ShieldCheck className="text-muted-foreground/60" />
-                    <span>Disputes</span>
+                    <span>{t('Disputes')}</span>
                   </NavLink>
                 </li>
               ) : null}
@@ -94,13 +96,13 @@ export function MobileSidebar() {
             <div className="flex gap-2">
               <Button asChild variant="mono" size="mono" className="flex-1">
                 <Link to={profile ? '/memory' : '/onboarding'}>
-                  {profile?.handle ?? 'Set up your shelf'}
+                  {profile?.handle ?? t('Set up your shelf')}
                 </Link>
               </Button>
               <Button
                 variant="monoMuted"
                 size="mono"
-                aria-label="Disconnect Phantom"
+                aria-label={t('Disconnect Phantom')}
                 onClick={() => void signOut()}
               >
                 <LogOut className="size-4" />
@@ -111,11 +113,11 @@ export function MobileSidebar() {
               asChild
               className="rounded-[2px] bg-foreground/85 text-background border border-foreground/80 hover:bg-foreground/75 h-9 flex-1 px-4 text-xs"
             >
-              <Link to="/login">Connect wallet</Link>
+              <Link to="/login">{t('Connect wallet')}</Link>
             </Button>
             <Button
               asChild
-              aria-label="Connect a Phantom wallet you already have"
+              aria-label={t('Connect a Phantom wallet you already have')}
               className="font-mono uppercase rounded-[2px] bg-muted text-foreground hover:bg-muted/90 border border-foreground/5 h-9 w-9 p-0"
             >
               <Link to="/login">

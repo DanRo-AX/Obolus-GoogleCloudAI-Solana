@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { GlitterWrap } from '@/components/GlitterWrap'
+import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
 import { PHANTOM_INSTALL_URL, shortKey, useWallet } from '@/state/wallet'
@@ -32,6 +33,7 @@ import { PHANTOM_INSTALL_URL, shortKey, useWallet } from '@/state/wallet'
  */
 export default function Login() {
   const navigate = useNavigate()
+  const t = useT()
   const [params] = useSearchParams()
   // Reset links the backend already sent still land here. Say what happened
   // instead of swallowing the token and bouncing to the dashboard.
@@ -61,14 +63,14 @@ export default function Login() {
       try {
         await authenticate(email, password, false)
       } catch {
-        if (!ageConfirmed) throw new Error('Confirm you are 14 or over.')
+        if (!ageConfirmed) throw new Error(t('Confirm you are 14 or over.'))
         await authenticate(email, password, true, ageConfirmed)
       }
     } catch (e) {
       setError(
         e instanceof Error
           ? e.message
-          : 'Could not sign in. Reload the page and connect Phantom again.',
+          : t('Could not sign in. Reload the page and connect Phantom again.'),
       )
     } finally {
       setSigningIn(false)
@@ -81,10 +83,10 @@ export default function Login() {
     <div className="grid min-h-svh lg:grid-cols-2">
       <div className="flex flex-col gap-4 p-6 md:p-10">
         <Link to="/" className="flex w-fit items-center gap-2">
-          <span className="flex size-7 items-center justify-center rounded-[2px] bg-foreground">
+          <span className="flex size-7 items-center justify-center rounded-[8px] bg-foreground">
             <img
               className="invert"
-              src="/SHELF-SYMBOL.svg"
+              src="/OBOLUS-MARK-SM.svg"
               alt=""
               width={16}
               height={16}
@@ -98,24 +100,25 @@ export default function Login() {
         <div className="flex flex-1 items-center justify-center">
           <div className="w-full max-w-sm">
             <p className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-              Sign in
+              {t('Sign in')}
             </p>
 
             {staleReset ? (
               <div className="mt-4 rounded-[4px] border border-border bg-muted-2/60 p-4">
                 <p className="text-[13px] leading-relaxed">
-                  That link resets a password, and there are no passwords here
-                  any more. Connect the wallet you used before and you are back
-                  in — nothing was lost.
+                  {t(
+                    'That link resets a password, and there are no passwords here any more. Connect the wallet you used before and you are back in — nothing was lost.',
+                  )}
                 </p>
               </div>
             ) : null}
             <h1 className="mt-4 font-display text-[30px] leading-tight">
-              Your wallet is the account
+              {t('Your wallet is the account')}
             </h1>
             <p className="mt-3 text-[15px] leading-7 text-muted-foreground">
-              No password, no email. Money moves wallet to wallet here —
-              connect the one it should move through.
+              {t(
+                'No password, no email. Money moves wallet to wallet here — connect the one it should move through.',
+              )}
             </p>
 
             {/* step 1 — connect ---------------------------------------- */}
@@ -124,7 +127,7 @@ export default function Login() {
                 <Check className="size-4 shrink-0 text-[#0F766E]" />
                 <span className="font-mono text-sm">{shortKey(pubkey)}</span>
                 <span className="ml-auto font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                  connected
+                  {t('connected')}
                 </span>
               </div>
             ) : available ? (
@@ -140,7 +143,7 @@ export default function Login() {
                 ) : (
                   <Wallet className="size-4" />
                 )}
-                {connecting ? 'Connecting…' : 'Connect wallet'}
+                {connecting ? t('Connecting…') : t('Connect wallet')}
               </Button>
             ) : (
               <div className="mt-8 flex flex-col gap-3">
@@ -151,12 +154,13 @@ export default function Login() {
                   className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-[2px] bg-foreground px-4 text-sm font-medium text-background transition-colors hover:bg-foreground/85"
                 >
                   <Wallet className="size-4" />
-                  Install Phantom
+                  {t('Install Phantom')}
                   <ExternalLink className="size-3.5" />
                 </a>
                 <p className="text-sm leading-relaxed text-muted-foreground">
-                  Phantom is a browser extension. Install it, reload this page,
-                  and the button becomes a sign-in.
+                  {t(
+                    'Phantom is a browser extension. Install it, reload this page, and the button becomes a sign-in.',
+                  )}
                 </p>
               </div>
             )}
@@ -180,8 +184,9 @@ export default function Login() {
                     {ageConfirmed ? <Check className="size-3" /> : null}
                   </span>
                   <span className="text-[13px] leading-relaxed">
-                    I am 14 or over. Required only the first time an address
-                    signs in.
+                    {t(
+                      'I am 14 or over. Required only the first time an address signs in.',
+                    )}
                   </span>
                 </button>
 
@@ -195,7 +200,7 @@ export default function Login() {
                   {signingIn ? (
                     <Loader2 className="size-4 animate-spin" />
                   ) : null}
-                  {signingIn ? 'Signing in…' : 'Enter'}
+                  {signingIn ? t('Signing in…') : t('Enter')}
                   <ArrowRight className="size-3.5" />
                 </Button>
               </>
@@ -203,7 +208,7 @@ export default function Login() {
 
             {error || walletError ? (
               <p className="mt-4 text-sm text-destructive">
-                {error ?? walletError}
+                {t(error ?? walletError ?? '')}
               </p>
             ) : null}
 
@@ -214,7 +219,7 @@ export default function Login() {
                   className="flex items-start gap-2.5 text-[13px] leading-relaxed text-muted-foreground"
                 >
                   <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-[#0F766E]" />
-                  {a}
+                  {t(a)}
                 </p>
               ))}
             </div>
@@ -228,8 +233,9 @@ export default function Login() {
         </div>
         <div className="absolute inset-x-0 bottom-0 p-10 mix-blend-difference">
           <p className="max-w-md font-display text-[22px] leading-snug text-white">
-            The wallet is the account. We never hold a key, and there is nothing
-            to reset.
+            {t(
+              'The wallet is the account. We never hold a key, and there is nothing to reset.',
+            )}
           </p>
         </div>
       </div>

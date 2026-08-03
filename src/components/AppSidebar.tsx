@@ -5,6 +5,7 @@ import { CATEGORY_BY_ID } from '@/data/categories'
 import { NAV_ITEMS } from '@/data/nav'
 import { STRIKE_LIMIT } from '@/data/onboarding'
 import { cn } from '@/lib/utils'
+import { useLang, useT } from '@/i18n'
 import { useUi } from '@/state/ui'
 
 const MENU_BUTTON =
@@ -15,10 +16,10 @@ function WorkspaceMark({ size = 'size-6' }: { size?: string }) {
     <span
       className={cn(
         size,
-        'flex items-center justify-center rounded-[2px] bg-foreground',
+        'flex items-center justify-center rounded-[7px] bg-foreground',
       )}
     >
-      <img className="invert" src="/SHELF-SYMBOL.svg" alt="Obolus" width={15} height={15} />
+      <img className="invert" src="/OBOLUS-MARK-SM.svg" alt="Obolus" width={15} height={15} />
     </span>
   )
 }
@@ -29,6 +30,7 @@ function WorkspaceMark({ size = 'size-6' }: { size?: string }) {
  */
 function ProfileChip() {
   const { profile, signOut, suspended } = useUi()
+  const t = useT()
   if (!profile) return null
   const cat = CATEGORY_BY_ID[profile.field]
   return (
@@ -51,7 +53,7 @@ function ProfileChip() {
         <button
           type="button"
           onClick={signOut}
-          aria-label="Disconnect Phantom"
+          aria-label={t('Disconnect Phantom')}
           className="ml-auto cursor-pointer text-muted-foreground/60 transition-colors hover:text-foreground"
         >
           <LogOut className="size-3.5" />
@@ -59,7 +61,9 @@ function ProfileChip() {
       </div>
       <div className="mt-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
         <span className="truncate">
-          {suspended ? 'Suspended' : `${profile.speaksTo.length} shelves`}
+          {suspended
+            ? t('Suspended')
+            : `${profile.speaksTo.length} ${t('shelves')}`}
         </span>
         <span
           className={cn(
@@ -67,12 +71,12 @@ function ProfileChip() {
             profile.strikes > 0 && 'text-destructive',
           )}
         >
-          strike {profile.strikes} of {STRIKE_LIMIT}
+          {t('strike')} {profile.strikes} {t('of')} {STRIKE_LIMIT}
         </span>
       </div>
       <div className="mt-2 border-t border-border/70 pt-2 font-mono text-[9px] leading-relaxed text-muted-foreground">
         <p className="mt-0.5 truncate uppercase tracking-[0.7px]">
-          Wallet · {profile.wallet ? `${profile.wallet.slice(0, 4)}…${profile.wallet.slice(-4)} · ${profile.walletVerified ? 'verified' : 'unverified'}` : 'not connected'}
+          {t('Wallet')} · {profile.wallet ? `${profile.wallet.slice(0, 4)}…${profile.wallet.slice(-4)} · ${profile.walletVerified ? t('verified') : t('unverified')}` : t('not connected')}
         </p>
       </div>
     </div>
@@ -86,6 +90,7 @@ function ProfileChip() {
  */
 function LiveStrip() {
   const { earnings, orders, profile } = useUi()
+  const t = useT()
 
   const open = orders.filter((o) => !o.mine && o.answered < o.target)
   const fits = profile
@@ -100,13 +105,13 @@ function LiveStrip() {
         to="/memory"
         className="flex items-baseline justify-between gap-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground"
       >
-        <span>{profile ? 'Earned' : 'Paid out'}</span>
+        <span>{profile ? t('Earned') : t('Paid out')}</span>
         <span className="tabular-nums text-foreground">
           ₩{earned.toLocaleString()}
           {held ? (
             <span className="text-muted-foreground">
               {' '}
-              · ₩{held.toLocaleString()} held
+              · ₩{held.toLocaleString()} {t('held')}
             </span>
           ) : null}
         </span>
@@ -115,22 +120,48 @@ function LiveStrip() {
         to="/dashboard"
         className="flex items-baseline justify-between gap-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground"
       >
-        <span>{profile ? 'Fit you' : 'Open now'}</span>
+        <span>{profile ? t('Fit you') : t('Open now')}</span>
         <span
           className={cn(
             'tabular-nums',
             fits > 0 ? 'text-foreground' : 'text-muted-foreground/70',
           )}
         >
-          {fits} {fits === 1 ? 'call' : 'calls'}
+          {fits} {fits === 1 ? t('call') : t('calls')}
         </span>
       </Link>
     </div>
   )
 }
 
+/** Two languages, one control. A select would be heavier than the choice. */
+function LangSwitch() {
+  const { lang, setLang } = useLang()
+  return (
+    <div className="flex items-center gap-0.5 rounded-[3px] border border-border bg-card p-0.5">
+      {(['en', 'ko'] as const).map((code) => (
+        <button
+          key={code}
+          type="button"
+          onClick={() => setLang(code)}
+          aria-pressed={lang === code}
+          className={cn(
+            'flex-1 cursor-pointer rounded-[2px] py-1 font-mono text-[10px] uppercase tracking-[1px] transition-colors',
+            lang === code
+              ? 'bg-foreground text-background'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          {code === 'en' ? 'EN' : '한국어'}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export function AppSidebar() {
   const { collapsed, setCollapsed, profile, account, signOut, balance } = useUi()
+  const t = useT()
 
   return (
     <div
@@ -185,7 +216,7 @@ export function AppSidebar() {
                 </div>
                 <button
                   type="button"
-                  aria-label="Collapse sidebar"
+                  aria-label={t('Collapse sidebar')}
                   onClick={() => setCollapsed(true)}
                   className="mt-2 flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-sm text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-foreground"
                 >
@@ -229,7 +260,7 @@ export function AppSidebar() {
                       }
                     >
                       <Icon className="opacity-70" />
-                      <span>{label}</span>
+                      <span>{t(label)}</span>
                     </NavLink>
                   </li>
               ))}
@@ -248,7 +279,7 @@ export function AppSidebar() {
                     }
                   >
                     <ShieldCheck className="opacity-70" />
-                    <span>Disputes</span>
+                    <span>{t('Disputes')}</span>
                   </NavLink>
                 </li>
               ) : null}
@@ -267,6 +298,7 @@ export function AppSidebar() {
                 className="group/menu-item relative flex flex-col gap-2"
               >
                 <LiveStrip />
+                <LangSwitch />
                 {profile ? (
                   <ProfileChip />
                 ) : account ? (
@@ -275,16 +307,16 @@ export function AppSidebar() {
                       {account.email}
                     </p>
                     <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                      ₩{(balance?.availableKrw ?? 0).toLocaleString()} sandbox for opens
+                      ₩{(balance?.availableKrw ?? 0).toLocaleString()} {t('sandbox for opens')}
                     </p>
                     <div className="flex gap-2">
                       <Button asChild variant="mono" size="monoSm" className="flex-1">
-                        <Link to="/onboarding">Set up your shelf</Link>
+                        <Link to="/onboarding">{t('Set up your shelf')}</Link>
                       </Button>
                       <Button
                         variant="monoMuted"
                         size="monoSm"
-                        aria-label="Disconnect Phantom"
+                        aria-label={t('Disconnect Phantom')}
                         onClick={() => void signOut()}
                       >
                         <LogOut className="size-3.5" />
@@ -298,11 +330,11 @@ export function AppSidebar() {
                         asChild
                         className="rounded-[2px] transition-all duration-300 bg-foreground/85 text-background border border-foreground/80 hover:bg-foreground/75 px-4 py-2 h-9 flex-1 text-xs"
                       >
-                        <Link to="/login">Connect wallet</Link>
+                        <Link to="/login">{t('Connect wallet')}</Link>
                       </Button>
                       <Button
                         asChild
-                        aria-label="Connect a Phantom wallet you already have"
+                        aria-label={t('Connect a Phantom wallet you already have')}
                         className="rounded-[2px] transition-all duration-300 bg-muted text-foreground hover:bg-muted/90 border border-foreground/5 h-9 w-9 p-0 text-xs"
                       >
                         <Link to="/login">
