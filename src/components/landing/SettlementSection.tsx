@@ -17,11 +17,11 @@ export function SettlementSection() {
             {t('Where the money goes')}
           </p>
 
-          <h2 className="mt-5 font-display text-[32px] leading-[1.1] sm:text-[44px]">
+          <h2 className="mt-5 text-balance font-display text-[32px] leading-[1.1] sm:text-[44px]">
             {t('Nobody approves a ₩12 payment.')}
           </h2>
 
-          <p className="mt-6 max-w-xl text-[15px] leading-7 text-muted-foreground">
+          <p className="mt-6 max-w-xl text-pretty text-[15px] leading-7 text-muted-foreground">
             {t(
               'So nobody is asked to. HTTP has a status code for this: the server answers',
             )}{' '}
@@ -37,7 +37,7 @@ export function SettlementSection() {
                 <span className="mt-1 size-1.5 shrink-0 rounded-full bg-foreground" />
                 <div>
                   <p className="text-[15px] font-medium">{t(p.head)}</p>
-                  <p className="mt-1 max-w-lg text-sm leading-relaxed text-muted-foreground">
+                  <p className="mt-1 max-w-lg text-pretty text-sm leading-relaxed text-muted-foreground">
                     {t(p.body)}
                   </p>
                 </div>

@@ -552,9 +552,9 @@ export default function Chat() {
                         : m.settlement.mode === 'bundle_escrow'
                           ? t('legacy x402 bundle · each author’s share is claimable')
                         : m.settlement.mode === 'pay_sh_direct'
-                          ? t('local Pay.sh · paid only the documents SHELF-1 opened')
+                          ? t('local Pay.sh · paid only the documents SHELF opened')
                         : m.settlement.mode === 'pay_sh_orchestrated'
-                          ? t('prepaid balance · SHELF-1 paid each author through Pay.sh')
+                          ? t('prepaid balance · SHELF paid each author through Pay.sh')
                           : t('settled through x402 · unopened documents cost nothing')}
                     </span>
                     {(m.settlement.txSigs?.length
@@ -590,7 +590,7 @@ export default function Chat() {
               {phase === 'confirm' ? (
                 <Branch
                   title={`${pending.length} ${t('documents already answer this.')}`}
-                  body={`${t('No open call needed. Opening all')} ${pending.length} ${t('costs')} ₩${total.toLocaleString()}${t(', which settles as')} ${estimatedUsdc.toFixed(6)} ${t('USDC on Solana.')} ${paymentUsesLegacyPaySh ? t('This old local Pay.sh session cannot continue. Ask again to start a new one.') : t('That amount is reserved from your prepaid USDC balance. Phantom appears only for the first refill, or when the balance runs low; SHELF-1 then pays each author through Pay.sh.')}`}
+                  body={`${t('No open call needed. Opening all')} ${pending.length} ${t('costs')} ₩${total.toLocaleString()}${t(', which settles as')} ${estimatedUsdc.toFixed(6)} ${t('USDC on Solana.')} ${paymentUsesLegacyPaySh ? t('This old local Pay.sh session cannot continue. Ask again to start a new one.') : t('That amount is reserved from your prepaid USDC balance. Phantom appears only for the first refill, or when the balance runs low; SHELF then pays each author through Pay.sh.')}`}
                 >
                   <div className="w-full rounded-[4px] bg-foreground/[0.04] px-3 py-2 font-mono text-[10px] uppercase leading-relaxed tracking-[0.8px] text-muted-foreground">
                     {t('One-time wallet proof · refill only when low · no delegate permission or browser helper key. Verify Devnet USDC mint')}{' '}
@@ -797,14 +797,14 @@ export default function Chat() {
 
               {phase === 'settling' ? (
                 <Branch
-                  title={t('SHELF-1 is opening the documents…')}
-                  body={t('The question is reserved against your prepaid balance. SHELF-1 checks each 402 price and recipient, pays the author, and returns only the passages it paid for. Phantom appears only if the balance needs a refill. You can close this tab — the job keeps running.')}
+                  title={t('SHELF is opening the documents…')}
+                  body={t('The question is reserved against your prepaid balance. SHELF checks each 402 price and recipient, pays the author, and returns only the passages it paid for. Phantom appears only if the balance needs a refill. You can close this tab — the job keeps running.')}
                 />
               ) : null}
 
               {phase === 'failed' ? (
                 <Branch
-                  title={queryId ? t('The payment did not go through.') : t('SHELF-1 could not reach the shelves.')}
+                  title={queryId ? t('The payment did not go through.') : t('SHELF could not reach the shelves.')}
                   body={t(
                     payError ??
                       'The documents stayed closed. Retry picks up the same job and the same reservation, so nothing is paid twice.',
@@ -917,7 +917,7 @@ function AgentLabel() {
         <img className="size-3.5 invert" src="/OBOLUS-MARK-SM.svg" alt="" />
       </span>
       <span className="font-mono text-xs font-medium uppercase tracking-[1px] text-muted-foreground">
-        SHELF-1
+        SHELF
       </span>
     </div>
   )

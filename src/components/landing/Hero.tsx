@@ -22,12 +22,12 @@ export function Hero() {
         </div>
 
         <div className="relative -mt-2 mx-auto max-w-2xl text-center mix-blend-difference">
-          <h1 className="font-display text-[30px] font-semibold leading-[1.15] text-white sm:text-[40px]">
+          <h1 className="text-balance font-display text-[30px] font-semibold leading-[1.15] text-white sm:text-[40px]">
             {t('Turn the internet into a database')}
           </h1>
-          <p className="mx-auto mt-2 max-w-lg text-[17px] font-medium text-white/80">
+          <p className="mx-auto mt-2 max-w-lg text-pretty text-[17px] font-medium text-white/80">
             {t(
-              'SHELF-1 searches what people wrote instead of the web. ₩5 to ₩20 to open one document, and it lands in the wallet of whoever wrote it.',
+              'SHELF searches what people wrote instead of the web. ₩5 to ₩20 to open one document, and it lands in the wallet of whoever wrote it.',
             )}
           </p>
         </div>

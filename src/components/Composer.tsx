@@ -104,7 +104,7 @@ export function Composer({
         <div className="flex items-center gap-1">
           <Link
             to="/whitepaper"
-            aria-label={t('How SHELF-1 works')}
+            aria-label={t('How SHELF works')}
             className={cn(
               'group flex h-8 items-center rounded-[2px] px-2 transition-colors',
               dark ? 'hover:bg-white/10' : 'hover:bg-muted-foreground/10',
@@ -117,7 +117,7 @@ export function Composer({
                 dark ? 'text-white/80' : 'text-foreground/80',
               )}
             >
-              SHELF-1
+              SHELF
             </span>
           </Link>
           <details className="group/target relative">

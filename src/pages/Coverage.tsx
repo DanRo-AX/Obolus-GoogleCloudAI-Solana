@@ -134,7 +134,7 @@ export default function Coverage() {
               {t('This page is the honest version of the hardest problem.')}
             </span>{' '}
             {t(
-              'An empty shelf leaves SHELF-1 nothing to open. Every number here comes from the authenticated open-call state — a baseline answer written by a model never appears in it, never fills a slot, and is never paid for.',
+              'An empty shelf leaves SHELF nothing to open. Every number here comes from the authenticated open-call state — a baseline answer written by a model never appears in it, never fills a slot, and is never paid for.',
             )}
           </p>
         </section>

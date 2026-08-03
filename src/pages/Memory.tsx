@@ -350,7 +350,7 @@ export default function Memory() {
                 {voided.length}
                 {voided.length > 1 ? t(' answers voided.') : t(' answer voided.')}
               </span>{' '}
-              {t('They stay on your shelf so you can see what tripped. SHELF-1 will not quote them, and they earn nothing.')}
+              {t('They stay on your shelf so you can see what tripped. SHELF will not quote them, and they earn nothing.')}
             </p>
           </div>
         ) : null}
@@ -368,7 +368,7 @@ export default function Memory() {
             <span className="text-sm leading-relaxed text-muted-foreground">
               {(profile?.strikes ?? 0) >= AUTO_MATCH_STRIKE_LIMIT
                 ? `${t('Strike')} ${AUTO_MATCH_STRIKE_LIMIT}${t(' of ')}${STRIKE_LIMIT}${t(' — auto-match is off. New payouts are held 14 days. Win the dispute and the strike lifts.')}`
-                : t('Leave it on and SHELF-1 quotes your documents the moment one fits a question — no open call, no waiting. USDC lands in your wallet each time someone opens one, with nothing new written.')}
+                : t('Leave it on and SHELF quotes your documents the moment one fits a question — no open call, no waiting. USDC lands in your wallet each time someone opens one, with nothing new written.')}
             </span>
           </div>
         </div>
@@ -533,7 +533,7 @@ export default function Memory() {
                             disabled={lockingId === m.id}
                             onClick={() => void toggleMemoryLock(m.id, !m.locked)}
                             className="inline-flex size-6 cursor-pointer items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground disabled:cursor-wait"
-                            title={m.locked ? t('Unlock it so SHELF-1 can quote it') : t('Lock it so SHELF-1 stops quoting it')}
+                            title={m.locked ? t('Unlock it so SHELF can quote it') : t('Lock it so SHELF stops quoting it')}
                             aria-label={m.locked ? t('Unlock document') : t('Lock document')}
                           >
                             {lockingId === m.id ? (

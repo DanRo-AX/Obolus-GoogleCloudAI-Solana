@@ -1,5 +1,5 @@
 /**
- * The SHELF-1 page, as structure rather than a wall of HTML.
+ * The SHELF page, as structure rather than a wall of HTML.
  *
  * Sections are numbered 00–06 and carry a mono eyebrow, which is the same
  * document language the project's own briefs use. Keeping it as data means the
@@ -26,10 +26,10 @@ export type Section = {
 }
 
 export const HERO = {
-  eyebrow: 'The argument · SHELF-1',
+  eyebrow: 'The argument · SHELF',
   title: 'An agent that searches people instead of the web',
   standfirst:
-    'Every crawler in production today reads for free. SHELF-1 pays ₩5 to ₩20 per open, and the USDC lands in the author’s wallet. This is what changes when the document on the other end has an author.',
+    'Every crawler in production today reads for free. SHELF pays ₩5 to ₩20 per open, and the USDC lands in the author’s wallet. This is what changes when the document on the other end has an author.',
   meta: [
     { label: 'Published', value: 'July 31, 2026' },
     { label: 'By', value: 'The Obolus team' },
@@ -38,7 +38,7 @@ export const HERO = {
   ],
 }
 
-export const DEFINITION = 'SHELF-1 searches the shelves, opens a handful, and pays each author ₩5 to ₩20 per open.'
+export const DEFINITION = 'SHELF searches the shelves, opens a handful, and pays each author ₩5 to ₩20 per open.'
 
 /** The 7 steps, rendered as a table. Step 4 is the branch the product turns on. */
 export const LIFECYCLE = [
@@ -111,7 +111,7 @@ export const SECTIONS: Section[] = [
     blocks: [
       {
         kind: 'p',
-        text: 'We did not invent a retrieval architecture. We copied the internet: one person writes one memory-backed document about what they lived, and it behaves like a URL — an owner, public discovery metadata, a content hash, a version, a price, and a body that opens only once it is paid for. SHELF-1 ranks the closest few and opens a handful, never the index.',
+        text: 'We did not invent a retrieval architecture. We copied the internet: one person writes one memory-backed document about what they lived, and it behaves like a URL — an owner, public discovery metadata, a content hash, a version, a price, and a body that opens only once it is paid for. SHELF ranks the closest few and opens a handful, never the index.',
       },
       {
         kind: 'p',
@@ -157,7 +157,7 @@ export const SECTIONS: Section[] = [
           ],
         },
         right: {
-          label: 'SHELF-1',
+          label: 'SHELF',
           title: 'Seven people who live there',
           lines: [
             'PARIS_11 · 6 years — “Go at 19:30 and you walk in. 20:30 and you wait 40 minutes.”',
@@ -168,14 +168,14 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'p',
-        text: 'So SHELF-1 does not rewrite documents. Not the grammar, not the phrasing. A line like “left at 11:40, ₩8,500, fifteen minutes standing” is awkward and is exactly the part that sells.',
+        text: 'So SHELF does not rewrite documents. Not the grammar, not the phrasing. A line like “left at 11:40, ₩8,500, fifteen minutes standing” is awkward and is exactly the part that sells.',
       },
     ],
   },
   {
     n: '03',
     eyebrow: 'The branch',
-    title: 'If the shelves come up empty, AI answers for now and SHELF-1 posts an open call',
+    title: 'If the shelves come up empty, AI answers for now and SHELF posts an open call',
     blocks: [
       {
         kind: 'p',
@@ -187,7 +187,7 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'code',
-        caption: 'The miss path, as SHELF-1 says it',
+        caption: 'The miss path, as SHELF says it',
         lines: [
           '“Here is the general baseline. It is AI, it is free, and it is not evidence.”',
           '“Nothing on the shelves has lived this part yet. Ask people?”',
@@ -203,7 +203,7 @@ export const SECTIONS: Section[] = [
       {
         kind: 'note',
         label: 'The inverted case',
-        text: 'Sometimes enough matching documents already exist. Then no call is posted — SHELF-1 goes straight to “this can be answered now, here is the price.” Search the shelves first, post a call only when they come up empty.',
+        text: 'Sometimes enough matching documents already exist. Then no call is posted — SHELF goes straight to “this can be answered now, here is the price.” Search the shelves first, post a call only when they come up empty.',
       },
     ],
   },
@@ -266,7 +266,7 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'p',
-        text: 'That last point is the whole recruitment argument. Somebody who wrote it down once earns ₩5 to ₩20 each time SHELF-1 opens it.',
+        text: 'That last point is the whole recruitment argument. Somebody who wrote it down once earns ₩5 to ₩20 each time SHELF opens it.',
       },
     ],
   },

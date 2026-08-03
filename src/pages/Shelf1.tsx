@@ -17,7 +17,7 @@ import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 
 /**
- * The SHELF-1 page, laid out as our own document rather than a wall of prose:
+ * The SHELF page, laid out as our own document rather than a wall of prose:
  * numbered sections with mono eyebrows, a section rail that tracks scroll, the
  * flow diagram where the branch is explained, and the open problems left as
  * status cards instead of being buried in a paragraph.

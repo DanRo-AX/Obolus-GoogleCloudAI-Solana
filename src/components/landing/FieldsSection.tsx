@@ -35,10 +35,10 @@ export function FieldsSection() {
 
   return (
     <div className="px-4 sm:px-6">
-      <h2 className="max-w-3xl font-display text-[30px] leading-[1.15] font-medium sm:text-[38px]">
+      <h2 className="max-w-3xl text-balance font-display text-[30px] leading-[1.15] font-medium sm:text-[38px]">
         {t('Somebody is already paying for what you know')}
       </h2>
-      <p className="mt-4 max-w-2xl text-[15px] leading-7 text-muted-foreground">
+      <p className="mt-4 max-w-2xl text-pretty text-[15px] leading-7 text-muted-foreground">
         {t(
           'These are the open calls right now, by field. Pick a field you have actually lived and the money is on the other side of one honest answer. The answer lands on your shelf and earns again every time an asker pays to open it.',
         )}

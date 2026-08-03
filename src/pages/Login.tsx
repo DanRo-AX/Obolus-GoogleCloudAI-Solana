@@ -300,7 +300,7 @@ export default function Login() {
               icon={Database}
               number="02"
               title={t('Search the shelves')}
-              detail={t('SHELF-1 opens a handful, not the index')}
+              detail={t('SHELF opens a handful, not the index')}
             />
             <ArrowDown aria-hidden className="ml-6 size-4 text-white/30" />
             <ProductStep

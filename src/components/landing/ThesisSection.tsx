@@ -17,14 +17,14 @@ export function ThesisSection() {
           {t('Why nobody wrote it down')}
         </p>
 
-        <h2 className="mt-5 max-w-[38rem] font-display text-[30px] leading-[1.12] sm:max-w-[46rem] sm:text-[44px]">
+        <h2 className="mt-5 max-w-[38rem] text-balance font-display text-[30px] leading-[1.12] sm:max-w-[46rem] sm:text-[44px]">
           {t('Every agent on the internet reads for free.')}
         </h2>
-        <p className="mt-4 max-w-[34rem] font-display text-[22px] leading-snug text-muted-foreground sm:text-[28px]">
+        <p className="mt-4 max-w-[34rem] text-balance font-display text-[22px] leading-snug text-muted-foreground sm:text-[28px]">
           {t('So nobody bothered writing down the part worth reading.')}
         </p>
 
-        <p className="mt-6 max-w-2xl text-[15px] leading-7 text-muted-foreground">
+        <p className="mt-6 max-w-2xl text-pretty text-[15px] leading-7 text-muted-foreground">
           {t(
             'Publishing a blog post is one thing. Writing down where you eat lunch on a Tuesday, what it cost, how long the queue was is another. Nobody ever had a reason to give that away.',
           )}
@@ -41,7 +41,7 @@ export function ThesisSection() {
                 {t('Free')}
               </span>
             </div>
-            <p className="text-[17px] leading-relaxed text-muted-foreground">
+            <p className="text-pretty text-[17px] leading-relaxed text-muted-foreground">
               {t(
                 '“Locals tend to eat later than tourists. Neighbourhood bistros are usually a good bet, and reservations are generally recommended.”',
               )}

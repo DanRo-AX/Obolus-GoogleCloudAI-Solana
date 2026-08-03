@@ -50,11 +50,11 @@ export function NotASurveySection() {
           {t('A survey panel, side by side')}
         </p>
 
-        <h2 className="mt-5 max-w-3xl font-display text-[32px] leading-[1.1] sm:text-[44px]">
+        <h2 className="mt-5 max-w-3xl text-balance font-display text-[32px] leading-[1.1] sm:text-[44px]">
           {t('Sold by the cigarette, not by the pack.')}
         </h2>
 
-        <p className="mt-6 max-w-2xl text-[15px] leading-7 text-muted-foreground">
+        <p className="mt-6 max-w-2xl text-pretty text-[15px] leading-7 text-muted-foreground">
           {t(
             'What people know has only ever traded whole — a panel study, an annual licence, three hundred lives flattened into one report. Here the unit is one document, one open, one answer.',
           )}
