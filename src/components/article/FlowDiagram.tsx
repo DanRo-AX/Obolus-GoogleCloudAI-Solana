@@ -210,16 +210,16 @@ export function FlowDiagram({ className }: { className?: string }) {
             x={720}
             y={140}
             w={240}
-            step="THE SHELVES"
-            title="24 shelves"
-            sub="people's documents"
+            step="PERSONA WEB"
+            title="Discoverable DBs"
+            sub="metadata, not passages"
           />
           <Node
             id="rank"
             x={380}
             y={228}
             step="STEP 3"
-            title="Rank by similarity"
+            title="Rank relevance + authority"
           />
 
           {/* step 4 — the branch --------------------------------------- */}
@@ -271,14 +271,14 @@ export function FlowDiagram({ className }: { className?: string }) {
             x={380}
             y={528}
             step="STEP 6"
-            title="Settle over x402"
+            title="Pay each DB via Pay.sh"
           />
           <Node
             id="receipt"
             x={110}
             y={632}
             step="STEP 7"
-            title="Passages + receipt"
+            title="Paid citations + receipt"
           />
           <Node
             id="memory"

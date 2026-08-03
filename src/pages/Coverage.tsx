@@ -1,224 +1,137 @@
-import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { AlertTriangle, ArrowUpRight, TrendingUp } from 'lucide-react'
+import { useMemo } from 'react'
+import { Link } from 'react-router-dom'
+import { ArrowUpRight, Database, GitBranch, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/primitives'
-import { categoryFor } from '@/data/categories'
-import { COVERAGE, GAPS, THIN_BELOW, type Gap } from '@/data/coverage'
-import { cn } from '@/lib/utils'
+import { CATEGORIES } from '@/data/categories'
 import { useUi } from '@/state/ui'
 
-/**
- * Coverage, not a catalogue. Density per category on top, and underneath the
- * questions people asked that nothing could answer — which is where an open
- * call comes from. Nothing here shows a passage: the passages are the product.
- */
+const RANKING = [
+  {
+    Icon: Database,
+    title: 'Free discovery',
+    body: 'The index exposes handles, prices, category, optional demographic bands, hashes, and score components—not private passage text.',
+  },
+  {
+    Icon: GitBranch,
+    title: 'Query-specific authority',
+    body: 'Rust combines lexical and hash relevance, freshness, trust, and personalized PageRank over independently verified evidence edges.',
+  },
+  {
+    Icon: ShieldCheck,
+    title: 'Paid boundary',
+    body: 'The selected content hash, owner, amount, mint, and network are committed before payment. Only a matching paid callback releases the snapshot.',
+  },
+] as const
+
 export default function Coverage() {
-  const navigate = useNavigate()
-  const { createChat, placeOrder } = useUi()
-  const [posting, setPosting] = useState<string | null>(null)
+  const { orders } = useUi()
+  const rows = useMemo(() => {
+    return CATEGORIES.map((category) => {
+      const calls = orders.filter(
+        (order) => order.category === category.id && order.answered < order.target,
+      )
+      const remaining = calls.reduce(
+        (total, order) => total + Math.max(0, order.target - order.answered),
+        0,
+      )
+      const budget = calls.reduce(
+        (total, order) =>
+          total + Math.max(0, order.target - order.answered) * order.unitPrice,
+        0,
+      )
+      const topRate = calls.reduce((top, order) => Math.max(top, order.unitPrice), 0)
+      return { ...category, calls: calls.length, remaining, budget, topRate }
+    }).sort((a, b) => b.budget - a.budget)
+  }, [orders])
 
-  const totals = useMemo(
-    () => ({
-      docs: COVERAGE.reduce((s, c) => s + c.docs, 0),
-      shelves: COVERAGE.reduce((s, c) => s + c.shelves, 0),
-      thin: COVERAGE.filter((c) => c.docs < THIN_BELOW).length,
+  const totals = rows.reduce(
+    (sum, row) => ({
+      calls: sum.calls + row.calls,
+      remaining: sum.remaining + row.remaining,
+      budget: sum.budget + row.budget,
     }),
-    [],
+    { calls: 0, remaining: 0, budget: 0 },
   )
-  const max = Math.max(...COVERAGE.map((c) => c.docs))
-
-  const postCall = (gap: Gap) => {
-    setPosting(gap.id)
-    window.setTimeout(() => {
-      void (async () => {
-      const chatId = createChat(gap.question)
-      await placeOrder({
-        question: gap.question,
-        unitPrice: gap.suggestedPrice,
-        target: 7,
-        mine: true,
-        chatId,
-        shelf: gap.category,
-        category: categoryFor(gap.category, gap.question),
-      })
-      navigate('/dashboard')
-      })()
-    }, 620)
-  }
 
   return (
     <div className="page-enter flex-1 overflow-y-auto">
-      <div className="space-y-8 p-4 sm:p-6">
-        <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
-          <h1 className="font-sans text-base font-medium">Coverage</h1>
-          <div className="flex items-center gap-5 font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
-            <span>
-              <span className="tabular-nums text-foreground">
-                {totals.docs.toLocaleString()}
-              </span>{' '}
-              docs
-            </span>
-            <span>
-              <span className="tabular-nums text-foreground">
-                {totals.shelves}
-              </span>{' '}
-              shelves
-            </span>
-            <span className="text-destructive">
-              <span className="tabular-nums">{totals.thin}</span> thin
-            </span>
-          </div>
-        </div>
-
-        <p className="max-w-2xl text-[15px] leading-7 text-muted-foreground">
-          What the shelves can answer right now. You cannot browse the documents
-          themselves — that is what opening one is for. What you can see is how
-          deep each area runs, and where a question would come back empty.
-        </p>
-
-        {/* density ------------------------------------------------------ */}
-        <div className="overflow-hidden rounded-[6px] border border-border">
-          <div className="grid grid-cols-[1fr_auto] items-center gap-4 border-b border-border bg-muted-2 px-4 py-2.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground sm:grid-cols-[190px_1fr_repeat(3,88px)]">
-            <span>Category</span>
-            <span className="hidden sm:block">Depth</span>
-            <span className="hidden text-right sm:block">Docs</span>
-            <span className="hidden text-right sm:block">Avg open</span>
-            <span className="text-right">Demand</span>
+      <div className="mx-auto max-w-[76rem] space-y-12 p-4 sm:p-6">
+        <section>
+          <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
+            Live human demand
+          </span>
+          <div className="mt-3 flex flex-wrap items-end justify-between gap-5">
+            <div>
+              <h1 className="font-display text-3xl font-medium">Coverage is decided per question</h1>
+              <p className="mt-3 max-w-2xl text-[15px] leading-7 text-muted-foreground">
+                OPENSHELF does not publish private shelf counts or passages as a
+                browseable catalogue. A query applies its own filters, ranking,
+                author diversity, requested count, and budget before deciding
+                whether human coverage is sufficient.
+              </p>
+            </div>
+            <Button asChild variant="mono" size="mono">
+              <Link to="/">Test a question</Link>
+            </Button>
           </div>
 
-          {COVERAGE.map((c) => {
-            const thin = c.docs < THIN_BELOW
-            return (
-              <div
-                key={c.category}
-                className="grid grid-cols-[1fr_auto] items-center gap-4 border-b border-border/60 px-4 py-3 text-sm last:border-0 sm:grid-cols-[190px_1fr_repeat(3,88px)]"
-              >
-                <span className="flex items-center gap-2 font-medium">
-                  <span
-                    className="size-2 shrink-0 rounded-[1px]"
-                    style={{ backgroundColor: c.accent }}
-                  />
-                  {c.category}
-                </span>
-
-                <span className="hidden items-center gap-3 sm:flex">
-                  <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-foreground/[0.07]">
-                    <span
-                      className="block h-full rounded-full transition-[width] duration-700"
-                      style={{
-                        width: `${Math.round((c.docs / max) * 100)}%`,
-                        backgroundColor: c.accent,
-                      }}
-                    />
-                  </span>
-                  {thin ? (
-                    <span className="inline-flex shrink-0 items-center gap-1 rounded-[2px] bg-destructive/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[1px] text-destructive">
-                      <AlertTriangle className="size-3" />
-                      thin
-                    </span>
-                  ) : null}
-                </span>
-
-                <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">
-                  {c.docs.toLocaleString()}
-                </span>
-                <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">
-                  ₩{c.avgPrice.toLocaleString()}
-                </span>
-                <span
-                  className={cn(
-                    'text-right font-mono text-xs tabular-nums',
-                    c.demand > c.docs
-                      ? 'text-foreground'
-                      : 'text-muted-foreground',
-                  )}
-                >
-                  {c.demand.toLocaleString()}
-                </span>
-              </div>
-            )
-          })}
-        </div>
-
-        <p className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-          <TrendingUp className="size-3" />
-          Demand above docs means the price per open is rising in that area
-        </p>
-
-        {/* gaps --------------------------------------------------------- */}
-        <div>
-          <div className="flex flex-wrap items-baseline justify-between gap-3">
-            <h2 className="font-display text-xl font-medium">
-              Asked, and nothing answered
-            </h2>
-            <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-              {GAPS.length} open gaps · last 30 days
-            </span>
-          </div>
-          <p className="mt-2 max-w-2xl text-[15px] leading-7 text-muted-foreground">
-            Real questions that came back empty. Posting one as an open call is
-            how the shelf fills — and whoever answers gets paid every time it is
-            quoted afterwards.
-          </p>
-
-          <div className="mt-6 grid grid-cols-1 gap-3 lg:grid-cols-2">
-            {GAPS.map((g) => (
-              <div
-                key={g.id}
-                className={cn(
-                  'flex flex-col rounded-[6px] border border-border bg-card p-5 transition-all duration-500',
-                  posting && posting !== g.id && 'scale-[0.99] opacity-30',
-                  posting === g.id && 'border-foreground/40 shadow-lg',
-                )}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <Badge className="px-1.5 py-0 uppercase tracking-[1px]">
-                    {g.category}
-                  </Badge>
-                  <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                    asked {g.askedBy}× · {g.lastAsked}
-                  </span>
-                </div>
-
-                <p className="mt-3 text-[15px] leading-relaxed text-foreground">
-                  {g.question}
-                </p>
-
-                <div className="mt-5 flex items-center gap-3 border-t border-border pt-4">
-                  <span className="font-mono text-xs text-muted-foreground">
-                    Suggested{' '}
-                    <span className="tabular-nums text-foreground">
-                      ₩{g.suggestedPrice.toLocaleString()}
-                    </span>{' '}
-                    per answer
-                  </span>
-                  <Button
-                    variant="monoMuted"
-                    size="mono"
-                    className="ml-auto"
-                    disabled={posting === g.id}
-                    onClick={() => postCall(g)}
-                  >
-                    {posting === g.id ? 'Posting…' : 'Post a call'}
-                    <ArrowUpRight className="size-3.5" />
-                  </Button>
-                </div>
-              </div>
+          <div className="mt-8 grid gap-4 sm:grid-cols-3">
+            {RANKING.map(({ Icon, title, body }) => (
+              <article key={title} className="rounded-[6px] border border-border bg-card p-5">
+                <Icon className="size-4 text-muted-foreground" />
+                <h2 className="mt-4 text-sm font-medium">{title}</h2>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">{body}</p>
+              </article>
             ))}
           </div>
-        </div>
+        </section>
 
-        <div className="rounded-[6px] border border-border bg-foreground/[0.03] p-5">
-          <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-            <span className="font-medium text-foreground">
-              This page is the honest version of the hardest problem.
-            </span>{' '}
-            An empty shelf leaves the librarian nothing to do. Everything above
-            the fold is what we can already answer; everything below it is what
-            we cannot, priced so somebody has a reason to fix it.
+        <section>
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
+                Open calls from the server
+              </span>
+              <h2 className="mt-2 font-display text-2xl font-medium">Where new answers are needed now</h2>
+            </div>
+            <div className="flex flex-wrap gap-x-5 gap-y-1 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+              <span><strong className="text-foreground">{totals.calls}</strong> calls</span>
+              <span><strong className="text-foreground">{totals.remaining}</strong> slots</span>
+              <span><strong className="text-foreground">₩{totals.budget.toLocaleString()}</strong> remaining</span>
+            </div>
+          </div>
+
+          <div className="mt-6 overflow-hidden rounded-[6px] border border-border bg-card">
+            <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-border bg-muted-2 px-4 py-2.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground sm:grid-cols-[1fr_repeat(4,110px)]">
+              <span>Field</span>
+              <span className="hidden text-right sm:block">Open calls</span>
+              <span className="hidden text-right sm:block">Slots left</span>
+              <span className="hidden text-right sm:block">Top rate</span>
+              <span className="text-right">Budget left</span>
+            </div>
+            {rows.map((row) => (
+              <Link
+                key={row.id}
+                to={`/dashboard?category=${row.id}`}
+                className="grid grid-cols-[1fr_auto] items-center gap-3 border-b border-border/70 px-4 py-3 text-sm transition-colors last:border-0 hover:bg-foreground/[0.025] sm:grid-cols-[1fr_repeat(4,110px)]"
+              >
+                <span className="flex items-center gap-2 font-medium">
+                  <span className="size-2 rounded-[1px]" style={{ backgroundColor: row.accent }} />
+                  {row.label}
+                  <ArrowUpRight className="size-3 text-muted-foreground" />
+                </span>
+                <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.calls}</span>
+                <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.remaining}</span>
+                <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.topRate ? `₩${row.topRate.toLocaleString()}` : '—'}</span>
+                <span className="text-right font-mono text-xs tabular-nums">{row.budget ? `₩${row.budget.toLocaleString()}` : '—'}</span>
+              </Link>
+            ))}
+          </div>
+          <p className="mt-4 text-sm leading-6 text-muted-foreground">
+            These totals come from the authenticated open-call state. AI baseline
+            output never appears here, never fills a slot, and never becomes paid inventory.
           </p>
-        </div>
+        </section>
       </div>
     </div>
   )

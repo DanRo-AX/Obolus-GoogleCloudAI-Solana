@@ -44,7 +44,7 @@ export const DEFINITION = 'Turn the internet into a database, and charge x402 fo
 export const LIFECYCLE = [
   { n: 1, step: 'Ask', what: 'A question goes into the chat box.', pivot: false },
   { n: 2, step: 'Search the shelves', what: 'People’s documents, not the web.', pivot: false },
-  { n: 3, step: 'Rank by similarity', what: 'The closest few, never the whole shelf.', pivot: false },
+  { n: 3, step: 'Rank the persona web', what: 'Relevance, trust, freshness, PageRank, and diversity.', pivot: false },
   { n: 4, step: 'Human coverage', what: 'A hit sells evidence. A miss gets an AI baseline and keeps the human gap open.', pivot: true },
   { n: 5, step: 'Open call', what: 'Price per answer, posted to the dashboard.', pivot: false },
   { n: 6, step: 'x402 settlement', what: 'Only the documents actually opened are billed.', pivot: false },
@@ -61,22 +61,22 @@ export const OPEN_PROBLEMS: OpenProblem[] = [
   {
     status: 'Critical',
     title: 'How the shelves get filled at launch',
-    body: 'An empty shelf now has a liquidity bridge, not fake inventory. Questioners receive a free general AI baseline while the human gap stays open; contributors can ask Gemini on Vertex AI for interview prompts with no fake buyer or bounty. The remaining problem is distribution: how the first hundred people arrive and which narrow market reaches density first.',
+    body: 'An empty shelf has a liquidity bridge: questioners receive a free general AI baseline while the human gap stays open, and contributors can request interview prompts without those prompts becoming buyer demand or paid inventory. The remaining problem is distribution: how the first hundred people arrive and which narrow market reaches density first.',
   },
   {
     status: 'Open',
     title: 'Voice or chat for collection',
-    body: 'Two hours of talking to an AI produces the unpolished detail we want and almost nobody will do it. Chat is easy and people self-edit. v1 collects through the open-call flow and leaves the question open.',
+    body: 'The current answer flow uses a main response plus short contextual interview turns. Voice collection and longer interviews remain future channels; their consent and retention boundaries still need product validation.',
   },
   {
     status: 'Open',
-    title: 'Who gets picked when too many match',
-    body: 'If twelve documents fit a call that needs seven, something has to choose. First come, thickest memory, and best prior rating all have obvious failure modes. Undecided.',
+    title: 'Calibrating authority against adversaries',
+    body: 'The implemented ranker combines relevance, trust, freshness, personalized PageRank, author diversity, and budget. Production still needs outcome calibration, identity-resistant evidence, and continuous Sybil and spam evaluation.',
   },
   {
     status: 'Next',
-    title: 'Low-effort answers',
-    body: 'Identity-verified accounts would fix it and would also stop people signing up. Out of scope for v1; the rating loop carries the weight until then.',
+    title: 'Identity without exposing the person',
+    body: 'Specificity checks, interviews, reports, strikes, locks, and disputes are implemented. Stronger personhood and independent outcome verification remain open without making real names part of the product.',
   },
 ]
 
@@ -111,7 +111,7 @@ export const SECTIONS: Section[] = [
     blocks: [
       {
         kind: 'p',
-        text: 'We did not invent a retrieval architecture. We copied the internet. Each person writes an MD — a plain document about what they have lived through — and that document behaves exactly like a URL. Similar ones rank higher. The agent opens a handful, not the index.',
+        text: 'We copied the useful boundaries of the internet. Each person builds a memory-backed document that behaves like a URL: it has an owner, public discovery metadata, a content hash, a version, a price, and a paid response body. The agent opens a handful, not the index.',
       },
       {
         kind: 'p',
@@ -127,8 +127,8 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'note',
-        label: 'Why not embed the whole shelf',
-        text: 'Google indexes everything and still fetches only what it shows you. Same reasoning, plus a bill attached to each fetch.',
+        label: 'How the persona web ranks',
+        text: 'Rust combines lexical and deterministic hash relevance, freshness, trust, and a query-specific personalized PageRank over independently verified evidence links. It then penalizes duplicate authors and redundant passages before any payment.',
       },
     ],
   },
@@ -222,18 +222,18 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'code',
-        caption: 'What the demo shows',
+        caption: 'The hosted request boundary',
         lines: [
-          'POST /api/open      { docs, question }',
-          '  ← 402 Payment Required',
-          '     { scheme, network, payTo, maxAmountRequired, asset, nonce }',
-          'POST /api/open      + X-PAYMENT',
-          '  ← 200 { citations, settlement: { count, total, txSig } }',
+          'SEARCH  → handles, prices, score components · passages closed',
+          'COMMIT  → query + document hashes + owners + atomic prices',
+          'RESERVE → verified prepaid balance · one SQLite transaction',
+          'PAY     → Cloud Run + Pay.sh/MPP + GCP KMS · one DB at a time',
+          'DELIVER → paid snapshots only · cited synthesis · replay safe',
         ],
       },
       {
         kind: 'p',
-        text: 'Settlement runs on Solana in USDC and is shown in KRW, because that is the currency the people on the shelves think in. The asker sees one line — how many documents opened and what it came to. The author sees a balance go up.',
+        text: 'Settlement runs on Solana Devnet in USDC and is shown in KRW. Phantom proves wallet ownership and refills only when prepaid credit is low; a non-exportable KMS service key pays each DB through Pay.sh. Failed opens return to prepaid credit instead of becoming owner earnings.',
       },
       {
         kind: 'quote',
@@ -252,15 +252,16 @@ export const SECTIONS: Section[] = [
     blocks: [
       {
         kind: 'p',
-        text: 'Nothing financial. No bank details, no card, no national ID. The first documents are living-level: where the day goes, what lunch costs, which errand is annoying enough to change your route.',
+        text: 'No bank details, card number, seed phrase, private key, or national ID. OPENSHELF does store account data, demographic bands, a public payout address, wallet proofs, and life-level records such as where the day goes, what lunch costs, and which errand changes a route.',
       },
       {
         kind: 'list',
         items: [
-          'Quotes reach a buyer as an anonymous handle and the passage they paid for — nothing else.',
+          'Free discovery exposes an anonymous handle and payment-safe metadata; a paid open releases only the committed passage and citation.',
+          'Short interview turns enrich private context but are not indexed or sold as separate passages.',
           'Individual passages can be locked so they are never quoted.',
-          'Deleting the account destroys the documents and the memory stream. Search drops them immediately.',
-          'Money arrives without asking. Once the memory is thick enough, auto-match quotes it without a call.',
+          'Deleting the account removes the profile, documents, and memory, revokes sessions, returns unused balances, and anonymizes retained accounting rows.',
+          'Auto-match can select an eligible passage without a new call; payment occurs only when that committed passage is opened.',
         ],
       },
       {

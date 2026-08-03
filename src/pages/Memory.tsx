@@ -204,7 +204,7 @@ export default function Memory() {
 
         {balance ? (
           <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-[6px] border border-border bg-card px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            <span>Sandbox available <strong className="text-foreground">₩{balance.availableKrw.toLocaleString()}</strong></span>
+            <span>Off-chain call credit <strong className="text-foreground">₩{balance.availableKrw.toLocaleString()}</strong></span>
             <span>Reserved <strong className="text-foreground">₩{balance.reservedKrw.toLocaleString()}</strong></span>
             <span>Held <strong className="text-foreground">₩{balance.heldKrw.toLocaleString()}</strong></span>
           </div>
@@ -275,7 +275,7 @@ export default function Memory() {
             <span className="text-sm leading-relaxed text-muted-foreground">
               {(profile?.strikes ?? 0) >= AUTO_MATCH_STRIKE_LIMIT
                 ? 'Paused by the two-strike restriction. New payouts are held for 14 days; a successful dispute lifts the matching strike.'
-                : 'Leave it on and your memory gets quoted the moment it fits a query — no open call, no waiting. You get paid per quote without answering anything new.'}
+                : 'Leave it on and an eligible passage can be selected when it fits a query — no open call, no waiting. You are paid only when that committed passage is opened.'}
             </span>
           </div>
         </div>

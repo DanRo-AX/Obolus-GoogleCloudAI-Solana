@@ -2,12 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 
 /**
  * Phantom, over the injected provider. No wallet-adapter dependency — the flow
- * only ever needs three things: connect, read the pubkey, and sign one
- * transaction. Anything heavier is weight the demo does not use.
- *
- * The visitor's wallet is the transfer *authority*. The fee payer is a separate
- * keypair on the server, because the x402 exact/SVM scheme forbids the fee payer
- * from also being the authority, source, or delegate of the transfer.
+ * only ever needs connect, public-key discovery, message signing, and explicit
+ * refill transaction signing. The user key never crosses the provider boundary.
  */
 
 export type PhantomProvider = {

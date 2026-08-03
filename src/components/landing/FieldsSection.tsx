@@ -39,7 +39,8 @@ export function FieldsSection() {
       <p className="mt-4 max-w-2xl text-[15px] leading-7 text-muted-foreground">
         These are the calls open right now, by field. Pick the one you have
         actually lived and the money is on the other side of one honest answer —
-        and once it is written down, it keeps earning every time it gets quoted.
+        and once it is written down, it can earn again whenever a matching buyer
+        pays to open it.
       </p>
 
       <div className="mt-5 flex flex-wrap items-center gap-x-8 gap-y-2 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">

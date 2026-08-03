@@ -15,7 +15,6 @@ import {
 } from 'lucide-react'
 import { Composer } from '@/components/Composer'
 import { Button } from '@/components/ui/button'
-import { SHELVES, type Shelf } from '@/data/shelf'
 import {
   getChatAnswers,
   generateAiBaseline,
@@ -55,16 +54,29 @@ type Phase =
   | 'answered' // 6·7
   | 'failed' // settlement did not go through
 
+type RankedShelf = {
+  id: string
+  name: string
+  accent: string
+}
+
 const KRW_PER_USDC = Number(import.meta.env.VITE_KRW_PER_USDC ?? 1350)
 
 const STEPS = [
   { n: 2, label: 'Search the shelves', blurb: 'People\u2019s documents, not the web' },
-  { n: 3, label: 'Rank by similarity', blurb: 'The closest few, not everything' },
+  { n: 3, label: 'Rank the persona web', blurb: 'Relevance, authority, trust, freshness, diversity' },
   { n: 4, label: 'Human coverage', blurb: 'AI bridges a miss; people fill it' },
 ]
 
 const COUNT_CHOICES = [3, 7, 12]
 const PRICE_CHOICES = [0, 300, 500, 800]
+const SHELF_ACCENTS = ['#C8552B', '#2F6F8F', '#3E7C59', '#7A5C9E', '#9A6B2F']
+
+function shelfAccent(id: string): string {
+  let hash = 0
+  for (const character of id) hash = (hash * 31 + character.charCodeAt(0)) >>> 0
+  return SHELF_ACCENTS[hash % SHELF_ACCENTS.length]
+}
 
 export default function Chat() {
   const { id } = useParams()
@@ -91,7 +103,7 @@ export default function Chat() {
         : 'confirm'
       : 'searching',
   )
-  const [hits, setHits] = useState<{ shelf: Shelf; score: number }[]>([])
+  const [hits, setHits] = useState<{ shelf: RankedShelf; score: number }[]>([])
   const [pending, setPending] = useState<Citation[]>(
     () => chat?.paymentSession?.docs ?? [],
   )
@@ -308,10 +320,15 @@ export default function Chat() {
         const seen = new Set<string>()
         const ranked = resolution.matches.flatMap((match) => {
           if (seen.has(match.shelfId)) return []
-          const shelf = SHELVES.find((item) => item.id === match.shelfId)
-          if (!shelf) return []
           seen.add(match.shelfId)
-          return [{ shelf, score: match.score }]
+          return [{
+            shelf: {
+              id: match.shelfId,
+              name: match.shelf,
+              accent: shelfAccent(match.shelfId),
+            },
+            score: match.score,
+          }]
         })
         setPhase('ranking')
         setHits(ranked.slice(0, 3))
@@ -392,7 +409,7 @@ export default function Chat() {
           content:
             existingOrder.escrowMode === 'x402_solana_escrow'
               ? 'A targeted open-call answer arrived. Its Devnet USDC share is now a durable payout claim for the contributor.'
-              : 'A targeted open-call answer arrived. The passage was paid from the reserved sandbox escrow.',
+              : 'A targeted zero-price answer arrived through the off-chain call ledger.',
           citations: [
             {
               handle: answer.handle,
@@ -522,15 +539,13 @@ export default function Chat() {
                     </span>
                     <span className="text-muted-foreground/60">
                       {m.settlement.network === 'demo'
-                        ? 'demo ledger · x402 gateway disabled'
+                        ? 'off-chain application ledger · token settlement disabled'
                         : m.settlement.network === 'sandbox-escrow'
-                          ? 'paid from reserved sandbox escrow'
-                        : m.settlement.network === 'offline'
-                          ? 'offline preview · no payment sent'
+                          ? 'zero-price call · no token transfer'
                         : m.settlement.mode === 'open_call_escrow'
                           ? 'Devnet escrow · contributor payout claim created'
                         : m.settlement.mode === 'bundle_escrow'
-                          ? 'one x402 bundle · contributor shares recorded as claimable'
+                          ? 'legacy x402 bundle · contributor shares recorded as claimable'
                         : m.settlement.mode === 'pay_sh_direct'
                           ? 'local Pay.sh · paid only the DBs opened by the agent'
                         : m.settlement.mode === 'pay_sh_orchestrated'
@@ -590,7 +605,7 @@ export default function Chat() {
                         )
                       }
                     >
-                      Pay once · agent opens DBs
+                      Open with prepaid balance
                     </Button>
                   ) : (
                     <Button
@@ -754,7 +769,7 @@ export default function Chat() {
               {phase === 'ordered' && placedOrder ? (
                 <Branch
                   title="Call posted."
-                  body={`${placedOrder.target} people · ₩${placedOrder.unitPrice.toLocaleString()} each. ₩${placedOrder.escrowRemainingKrw?.toLocaleString() ?? (placedOrder.target * placedOrder.unitPrice).toLocaleString()} is ${placedOrder.escrowMode === 'x402_solana_escrow' ? 'funded in Devnet USDC escrow with one wallet approval' : 'reserved in the sandbox ledger'}; accepted answers are paid from it and the unused amount is refundable.`}
+                  body={`${placedOrder.target} people · ₩${placedOrder.unitPrice.toLocaleString()} each. ₩${placedOrder.escrowRemainingKrw?.toLocaleString() ?? (placedOrder.target * placedOrder.unitPrice).toLocaleString()} is ${placedOrder.escrowMode === 'x402_solana_escrow' ? 'funded in Devnet USDC escrow with one wallet approval' : 'tracked as zero-price, off-chain call credit'}; accepted answers are paid from it and the unused amount is refundable.`}
                 >
                   <Button
                     variant="mono"
@@ -1013,7 +1028,7 @@ function TraceSteps({
   hits,
 }: {
   phase: Phase
-  hits: { shelf: Shelf; score: number }[]
+  hits: { shelf: RankedShelf; score: number }[]
 }) {
   // Search and ranking are the only long-running trace phases. Once ranking
   // resolves, step 4 has made its hit/miss decision; payment, open-call, and
