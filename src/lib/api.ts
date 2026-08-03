@@ -128,6 +128,7 @@ export type BalanceSummary = {
 export type AuthSession = {
   user: Account
   balance: BalanceSummary
+  wallet?: string | null
 }
 
 export type DisputeCase = {

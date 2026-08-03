@@ -1159,6 +1159,7 @@ pub struct BalanceSummary {
 pub struct AuthResponse {
     pub user: UserAccount,
     pub balance: BalanceSummary,
+    pub wallet: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

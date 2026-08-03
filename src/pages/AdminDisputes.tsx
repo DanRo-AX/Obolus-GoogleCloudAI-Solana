@@ -39,7 +39,7 @@ export default function AdminDisputes() {
         ),
       )
       .finally(() => setLoading(false))
-  }, [account?.role])
+  }, [account?.role, t])
 
   if (authReady && account?.role !== 'admin') {
     return <Navigate to="/dashboard" replace />

@@ -97,7 +97,7 @@ export default function Survey() {
         void releaseOpenCallReservation(orderId).catch(() => undefined)
       }
     }
-  }, [orderId, profile, suspended])
+  }, [orderId, profile, suspended, t])
 
   if (!authReady) {
     return (

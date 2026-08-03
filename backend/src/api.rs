@@ -646,7 +646,12 @@ async fn me(
 ) -> Result<Json<AuthResponse>, ApiError> {
     let user = authenticated(&state, &headers)?;
     let balance = state.store.balance(&user.id)?;
-    Ok(Json(AuthResponse { user, balance }))
+    let wallet = state.store.identity_wallet(&user.id)?;
+    Ok(Json(AuthResponse {
+        user,
+        balance,
+        wallet,
+    }))
 }
 
 async fn resolve_question(
@@ -1836,6 +1841,7 @@ fn session_response(
         now_ms().saturating_add(SESSION_TTL_MS),
     )?;
     let balance = state.store.balance(&user.id)?;
+    let wallet = state.store.identity_wallet(&user.id)?;
     let mut cookie = format!(
         "{SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}",
         SESSION_TTL_MS / 1_000
@@ -1849,7 +1855,15 @@ fn session_response(
         HeaderValue::from_str(&cookie).map_err(ApiError::internal)?,
     );
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    Ok((status, headers, Json(AuthResponse { user, balance })))
+    Ok((
+        status,
+        headers,
+        Json(AuthResponse {
+            user,
+            balance,
+            wallet,
+        }),
+    ))
 }
 
 fn expired_session_cookie(state: &AppState) -> Result<HeaderValue, ApiError> {
@@ -2257,6 +2271,7 @@ mod tests {
             serde_json::from_slice(&verified.into_body().collect().await.unwrap().to_bytes())
                 .unwrap();
         let user_id = created["user"]["id"].as_str().unwrap().to_owned();
+        assert_eq!(created["wallet"], wallet);
         assert!(
             created["user"]["email"]
                 .as_str()
@@ -2275,6 +2290,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(me.status(), StatusCode::OK);
+        let me_body: Value =
+            serde_json::from_slice(&me.into_body().collect().await.unwrap().to_bytes()).unwrap();
+        assert_eq!(me_body["wallet"], wallet);
 
         let replay = app
             .clone()

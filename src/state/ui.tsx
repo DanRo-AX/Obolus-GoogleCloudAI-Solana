@@ -217,6 +217,7 @@ type UiValue = {
   markNotificationsRead: (ids?: string[]) => Promise<void>
   balance: BalanceSummary | null
   account: Account | null
+  authWallet: string | null
   authReady: boolean
   /** null until an authenticated account completes onboarding. */
   profile: Profile | null
@@ -361,6 +362,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     BACKEND_ENABLED ? null : initial.profile,
   )
   const [account, setAccount] = useState<Account | null>(null)
+  const [authWallet, setAuthWallet] = useState<string | null>(null)
   const [balance, setBalance] = useState<BalanceSummary | null>(null)
   const [authReady, setAuthReady] = useState(!BACKEND_ENABLED)
 
@@ -387,12 +389,14 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
         const session = await getSession().catch(() => null)
         if (cancelled) return
         if (!session) {
+          setAccount(null)
           setChats((current) => current.filter((chat) => !chat.ownerId))
           setMemory([])
           setProfile(null)
           setEarnings(null)
           setNotifications([])
           setBalance(null)
+          setAuthWallet(null)
           return
         }
         const [remoteMemory, remoteProfile, remoteEarnings, remoteNotifications] = await Promise.all([
@@ -403,6 +407,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
         ])
         if (cancelled) return
         setAccount(session.user)
+        setAuthWallet(session.wallet ?? null)
         setChats((current) =>
           current.filter(
             (chat) => !chat.ownerId || chat.ownerId === session.user.id,
@@ -870,6 +875,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           listNotifications(),
         ])
       setAccount(session.user)
+      setAuthWallet(session.wallet ?? wallet)
       setBalance(session.balance)
       setOrders(remoteOrders)
       setMemory(remoteMemory)
@@ -891,6 +897,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
   const signOut = useCallback(async () => {
     if (BACKEND_ENABLED) await logout()
     setAccount(null)
+    setAuthWallet(null)
     setBalance(null)
     setProfile(null)
     setMemory([])
@@ -908,6 +915,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
   const deleteCurrentAccount = useCallback(async () => {
     if (BACKEND_ENABLED) await deleteAccount()
     setAccount(null)
+    setAuthWallet(null)
     setBalance(null)
     setProfile(null)
     setMemory([])
@@ -971,6 +979,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       markNotificationsRead,
       balance,
       account,
+      authWallet,
       authReady,
       profile,
       saveProfile,
@@ -1007,6 +1016,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       markNotificationsRead,
       balance,
       account,
+      authWallet,
       authReady,
       profile,
       saveProfile,

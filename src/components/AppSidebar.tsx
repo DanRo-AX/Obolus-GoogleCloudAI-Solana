@@ -161,7 +161,15 @@ function LangSwitch() {
 }
 
 export function AppSidebar() {
-  const { collapsed, setCollapsed, profile, account, signOut, balance } = useUi()
+  const {
+    collapsed,
+    setCollapsed,
+    profile,
+    account,
+    authWallet,
+    signOut,
+    balance,
+  } = useUi()
   const wallet = useWallet()
   const t = useT()
   const disconnect = async () => {
@@ -310,8 +318,8 @@ export function AppSidebar() {
                 ) : account ? (
                   <div className="space-y-2 rounded-[2px] border border-border bg-card p-2.5">
                     <p className="truncate font-mono text-[10px] text-muted-foreground">
-                      {wallet.pubkey
-                        ? `${t('Wallet')} · ${shortKey(wallet.pubkey)}`
+                      {authWallet
+                        ? `${t('Wallet')} · ${shortKey(authWallet)}`
                         : t('Wallet signed in')}
                     </p>
                     <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">

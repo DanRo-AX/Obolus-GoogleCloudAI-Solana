@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
-import { Outlet, useLocation } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Menu } from 'lucide-react'
 import { AppSidebar } from '@/components/AppSidebar'
 import { Composer } from '@/components/Composer'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
+import { useWallet } from '@/state/wallet'
 import { MobileSidebar } from '@/components/MobileSidebar'
 
 /**
@@ -13,7 +14,17 @@ import { MobileSidebar } from '@/components/MobileSidebar'
  * Below md the sidebar becomes a sheet and a floating pill nav takes over.
  */
 export function AppLayout() {
-  const { collapsed, setCollapsed, setMobileSidebar } = useUi()
+  const {
+    collapsed,
+    setCollapsed,
+    setMobileSidebar,
+    account,
+    authWallet,
+    signOut,
+  } = useUi()
+  const wallet = useWallet()
+  const navigate = useNavigate()
+  const changingWallet = useRef(false)
   const [composerOpen, setComposerOpen] = useState(false)
   const location = useLocation()
   const focusedTaskOwnsMobileNavigation =
@@ -24,6 +35,24 @@ export function AppLayout() {
     setComposerOpen(false)
     setMobileSidebar(false)
   }, [location.pathname, setMobileSidebar])
+
+  useEffect(() => {
+    if (
+      !account ||
+      !authWallet ||
+      !wallet.pubkey ||
+      wallet.pubkey === authWallet ||
+      changingWallet.current
+    ) {
+      return
+    }
+    changingWallet.current = true
+    void signOut()
+      .then(() => navigate('/login', { replace: true }))
+      .finally(() => {
+        changingWallet.current = false
+      })
+  }, [account, authWallet, navigate, signOut, wallet.pubkey])
 
   return (
     <div

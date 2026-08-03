@@ -4123,6 +4123,17 @@ impl Store {
             .optional()?)
     }
 
+    pub fn identity_wallet(&self, user_id: &str) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .connection()?
+            .query_row(
+                "SELECT wallet FROM wallet_identities WHERE user_id = ?1",
+                [user_id.trim()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?)
+    }
+
     pub fn verified_profile_owner(&self, wallet: &str) -> Result<Option<UserAccount>, StoreError> {
         Ok(self
             .connection()?
