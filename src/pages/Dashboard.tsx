@@ -506,8 +506,8 @@ export default function Dashboard() {
         {/* A vertical rail instead of a horizontal strip: eleven fields never
             fit across the top without truncating or scrolling sideways, and a
             field you cannot see is a field nobody filters by. */}
-        <div className="grid gap-5 lg:grid-cols-[164px_1fr] lg:gap-7">
-          <nav className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0 lg:pb-0">
+        <div className="-mx-4 grid gap-5 sm:-mx-6 lg:grid-cols-[184px_1fr] lg:gap-0">
+          <nav className="flex gap-1 overflow-x-auto px-4 pb-1 sm:px-6 lg:min-h-[70vh] lg:flex-col lg:overflow-visible lg:border-r lg:border-border lg:px-2 lg:pb-0">
             <CatTab
               active={category === 'all'}
               onClick={() => setCategory('all')}
@@ -526,7 +526,7 @@ export default function Dashboard() {
             ))}
           </nav>
 
-          <div className="min-w-0 space-y-5">
+          <div className="min-w-0 space-y-5 px-4 sm:px-6 lg:pl-6">
         {/* filters ------------------------------------------------------- */}
         <div className="flex flex-wrap items-center gap-2">
           {MIN_PAY.map((p) => (
@@ -608,7 +608,7 @@ export default function Dashboard() {
             </Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {list.map((order) => {
               const done = order.answered >= order.target
               const cancelled = order.status === 'cancelled'
