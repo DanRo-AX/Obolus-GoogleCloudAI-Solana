@@ -229,10 +229,7 @@ export default function Login() {
 
       <div className="relative hidden lg:block">
         <div className="absolute inset-0">
-          <Vortex
-            background="#08070F"
-            cometOptions={{ color: '#866FF2' }}
-          />
+          <Vortex background="#08070F" />
         </div>
         {/* The vortex flares widest at the bottom, which is exactly where the
             copy sits. A scrim buys the text its contrast back without dimming

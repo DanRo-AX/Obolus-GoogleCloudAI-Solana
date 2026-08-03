@@ -1,5 +1,5 @@
 // Tornado — Originkit
-// Originkit preset `variant-2` — props baked into the default export.
+// Originkit preset `custom-style-2` — props baked into the default export.
 //
 // Vendored as-is from Originkit. The only changes are the removal of the
 // "use client" directive (this is a Vite SPA, not Next) and typing the preset
