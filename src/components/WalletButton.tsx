@@ -67,7 +67,7 @@ export function WalletButton({ className }: { className?: string }) {
     const provider = getPhantom()
     if (!provider?.signMessage) {
       setVerifyError(
-        'This wallet does not expose signMessage. It can still pay, but cannot be used for payouts yet.',
+        'This wallet does not expose signMessage, so it cannot prove payout ownership or create a prepaid web-payment session.',
       )
       return
     }

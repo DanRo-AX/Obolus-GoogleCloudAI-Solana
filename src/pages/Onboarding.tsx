@@ -147,8 +147,9 @@ export default function Onboarding() {
             You are {handle.trim().toUpperCase()}
           </h1>
           <p className="text-sm leading-relaxed text-muted-foreground">
-            Calls in your fields will surface first on the dashboard. Nothing
-            beyond the bands you just set ever reaches a buyer.
+            Calls in your fields will surface first on the dashboard. Discovery
+            shows only your anonymous handle and selected bands; a buyer sees a
+            passage only after paying its committed quote.
           </p>
         </div>
       </div>
@@ -309,7 +310,7 @@ export default function Onboarding() {
           {step === 4 ? (
             <Screen
               title="Where the money lands"
-              note="Settlement is Devnet USDC over x402. You can save a browser-wallet address now and verify ownership after onboarding, or skip it. Phantom is supported first, but it is not a required provider."
+              note="Settlement is Devnet USDC over x402. You can save a payout address now and verify ownership after onboarding, or skip it. The hosted website currently uses Phantom; external agents may link a locally protected Pay account through SIWX."
             >
               {wallet.pubkey ? (
                 <div className="space-y-3 rounded-[6px] border border-border p-4">

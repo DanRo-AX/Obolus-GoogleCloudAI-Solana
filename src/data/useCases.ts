@@ -1,4 +1,4 @@
-// Eight categories for the landing carousel, three question samples each.
+// Eight categories for the landing carousel, with three query patterns each.
 // tools are the shelves SHELF-1 reaches for first in that category, and
 // prompts are questions a client would type into the chat exactly as written.
 // label has to match a USE_CASE_THEME key in sources.ts 1:1 for the palette to attach.

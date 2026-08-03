@@ -224,7 +224,7 @@ export function AppSidebar() {
                       {account.email}
                     </p>
                     <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                      ₩{(balance?.availableKrw ?? 0).toLocaleString()} sandbox available
+                      ₩{(balance?.availableKrw ?? 0).toLocaleString()} off-chain call credit
                     </p>
                     <div className="flex gap-2">
                       <Button asChild variant="mono" size="monoSm" className="flex-1">

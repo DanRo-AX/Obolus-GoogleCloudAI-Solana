@@ -142,7 +142,7 @@ export default function Dashboard() {
       const result = await generateShelfStarters()
       setStarters(result.starters)
       if (result.status === 'unavailable') {
-        setStarterError('Vertex AI interview prompts are unavailable. No fake buyer calls were created.')
+        setStarterError('Vertex AI interview prompts are unavailable. No buyer demand or paid call was created.')
       }
     } catch (error) {
       setStarterError(error instanceof Error ? error.message : 'Could not create shelf starters.')

@@ -75,7 +75,11 @@ export function explorerUrl(sig: string, network = 'devnet') {
 }
 
 export async function openDocuments(req: OpenRequest): Promise<OpenResult> {
-  if (!BACKEND_ENABLED) return openLocally(req)
+  if (!BACKEND_ENABLED) {
+    throw new PaymentError(
+      'Paid persona passages cannot be opened without the backend settlement service.',
+    )
+  }
   if (X402_ENABLED) return openOverX402(req)
 
   const url = new URL(`${API_BASE}${RESOURCE}`, window.location.origin)
@@ -542,26 +546,4 @@ function isPayloadRpcRateLimit(message: string): boolean {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
-}
-
-/** Offline-only fallback used when VITE_BACKEND_ENABLED=false. */
-async function openLocally(req: OpenRequest): Promise<OpenResult> {
-  const { SHELVES } = await import('@/data/shelf')
-  const citations: Citation[] = req.docs.map((document, index) => {
-    const shelf = SHELVES.find((candidate) => candidate.name === document.shelf)
-    return {
-      handle: document.handle,
-      shelf: document.shelf,
-      excerpt: shelf?.excerpts[index] ?? '',
-      price: document.price,
-    }
-  })
-  return {
-    citations,
-    settlement: {
-      count: citations.length,
-      total: citations.reduce((sum, citation) => sum + citation.price, 0),
-      network: 'offline',
-    },
-  }
 }

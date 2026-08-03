@@ -4,18 +4,18 @@ import { Button } from '@/components/ui/button'
 const PILLARS = [
   {
     n: '01',
-    title: 'Search',
-    body: 'SHELF-1 searches people’s documents instead of the web. One MD is one URL.',
+    title: 'Discover',
+    body: 'SHELF-1 searches payment-safe metadata. Private passages remain closed until their exact quote is settled.',
   },
   {
     n: '02',
-    title: 'Branch',
-    body: 'If human coverage is thin, free AI context bridges the wait without becoming a sellable MD.',
+    title: 'Rank',
+    body: 'Relevance, freshness, trust, and query-specific PageRank select a small, diverse set instead of opening every DB.',
   },
   {
     n: '03',
     title: 'Settlement',
-    body: 'Only the documents it actually opened are billed, over x402. Unopened MDs cost nothing.',
+    body: 'Prepaid credit is reserved atomically, then the KMS agent pays each selected DB through Pay.sh. Failed opens are restored.',
   },
 ]
 
@@ -41,8 +41,8 @@ export function ReliabilitySection() {
               SHELF-1
             </span>
             <h3 className="max-w-xl font-sans text-xl font-[450] leading-snug text-foreground sm:text-2xl">
-              We copied the structure of the internet. One thing is different:
-              opening a URL pays its author.
+              One persona DB behaves like one website: discoverable metadata,
+              ranked authority, a paid boundary, and an accountable owner.
             </h3>
           </div>
 
