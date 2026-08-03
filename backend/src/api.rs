@@ -866,6 +866,11 @@ async fn create_open_call(
     headers: HeaderMap,
     Json(request): Json<CreateOpenCallRequest>,
 ) -> Result<(StatusCode, Json<OpenCall>), ApiError> {
+    if !state.allow_demo_open {
+        return Err(ApiError::forbidden(
+            "demo open-call funding is disabled; fund the call through the x402 gateway",
+        ));
+    }
     let user = authenticated(&state, &headers)?;
     let call = state.store.create_open_call(&user.id, &request)?;
     AppState::dispatch_pending_emails(Arc::clone(&state));
@@ -2721,7 +2726,9 @@ mod tests {
     #[tokio::test]
     async fn deployment_can_disable_the_demo_payment_bypass() {
         let state = AppState::new(Store::in_memory().unwrap()).with_demo_open(false);
-        let response = router(Arc::new(state))
+        let app = router(Arc::new(state));
+        let response = app
+            .clone()
             .oneshot(
                 Request::get("/api/flash-research?queryId=q&docs=h")
                     .body(Body::empty())
@@ -2730,6 +2737,29 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let cookie = register(&app, "no-demo-open-call@example.com").await;
+        let open_call = app
+            .oneshot(
+                Request::post("/api/v1/open-calls")
+                    .header(header::COOKIE, cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "question": "Which winter boots work for field research in Svalbard?",
+                            "unitPrice": 700,
+                            "target": 3,
+                            "chatId": "no-bypass",
+                            "shelf": "Svalbard field researchers",
+                            "category": "travel"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(open_call.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
