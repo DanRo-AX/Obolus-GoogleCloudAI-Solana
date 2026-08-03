@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowUpRight } from 'lucide-react'
 import { CATEGORIES } from '@/data/categories'
+import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
 
@@ -14,6 +15,7 @@ import { useUi } from '@/state/ui'
  */
 export function FieldsSection() {
   const { orders } = useUi()
+  const t = useT()
 
   const rows = useMemo(() => {
     const open = orders.filter((o) => !o.mine && o.answered < o.target)
@@ -34,25 +36,24 @@ export function FieldsSection() {
   return (
     <div className="px-4 sm:px-6">
       <h2 className="max-w-3xl font-display text-[30px] leading-[1.15] font-medium sm:text-[38px]">
-        Somebody is already paying for what you know
+        {t('Somebody is already paying for what you know')}
       </h2>
       <p className="mt-4 max-w-2xl text-[15px] leading-7 text-muted-foreground">
-        These are the open calls right now, by field. Pick a field you have
-        actually lived and the money is on the other side of one honest answer.
-        The answer lands on your shelf and earns again every time an asker pays
-        to open it.
+        {t(
+          'These are the open calls right now, by field. Pick a field you have actually lived and the money is on the other side of one honest answer. The answer lands on your shelf and earns again every time an asker pays to open it.',
+        )}
       </p>
 
       <div className="mt-5 flex flex-wrap items-center gap-x-8 gap-y-2 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
         <span>
-          <span className="tabular-nums text-foreground">{totalOpen}</span> open
-          calls
+          <span className="tabular-nums text-foreground">{totalOpen}</span>
+          {t(' open calls')}
         </span>
         <span>
           <span className="tabular-nums text-foreground">
             ₩{totalPot.toLocaleString()}
-          </span>{' '}
-          unclaimed across all fields
+          </span>
+          {t(' unclaimed across all fields')}
         </span>
       </div>
 
@@ -77,13 +78,19 @@ export function FieldsSection() {
 
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-1.5 text-[15px] font-medium">
-                {r.label}
+                {t(r.label)}
                 <ArrowUpRight className="size-3.5 opacity-0 transition-opacity group-hover:opacity-60" />
               </span>
               <span className="mt-0.5 block font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                {r.count
-                  ? `${r.count} calls · up to ₩${r.top.toLocaleString()} each`
-                  : 'No calls open yet'}
+                {r.count ? (
+                  <>
+                    {r.count}
+                    {t(' calls · up to ')}₩{r.top.toLocaleString()}
+                    {t(' each')}
+                  </>
+                ) : (
+                  t('No calls open yet')
+                )}
               </span>
             </span>
 
@@ -101,8 +108,9 @@ export function FieldsSection() {
       </div>
 
       <p className="mt-6 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-        Amounts are what is still unclaimed on each call — price per answer ×
-        slots left
+        {t(
+          'Amounts are what is still unclaimed on each call — price per answer × slots left',
+        )}
       </p>
     </div>
   )

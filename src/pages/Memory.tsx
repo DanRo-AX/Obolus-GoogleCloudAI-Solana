@@ -22,6 +22,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/primitives'
 import { AUTO_MATCH_STRIKE_LIMIT, STRIKE_LIMIT } from '@/data/onboarding'
+import { useT } from '@/i18n'
 import { exportAccount, setMemoryLocked, withdrawPrepaidBalance } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
@@ -48,6 +49,7 @@ export default function Memory() {
     deleteCurrentAccount,
   } = useUi()
   const navigate = useNavigate()
+  const t = useT()
   const [disputingId, setDisputingId] = useState<string | null>(null)
   const [draftDisputeId, setDraftDisputeId] = useState<string | null>(null)
   const [disputeReason, setDisputeReason] = useState('')
@@ -66,7 +68,9 @@ export default function Memory() {
       await refreshLedger()
     } catch (error) {
       setMemoryActionError(
-        error instanceof Error ? error.message : 'The lock did not change. Try it again.',
+        error instanceof Error
+          ? error.message
+          : t('The lock did not change. Try it again.'),
       )
     } finally {
       setLockingId(null)
@@ -89,7 +93,9 @@ export default function Memory() {
       URL.revokeObjectURL(url)
     } catch (error) {
       setMemoryActionError(
-        error instanceof Error ? error.message : 'The export did not build. Try it again.',
+        error instanceof Error
+          ? error.message
+          : t('The export did not build. Try it again.'),
       )
     } finally {
       setExporting(false)
@@ -106,7 +112,9 @@ export default function Memory() {
       setDisputeReason('')
     } catch (error) {
       setDisputeError(
-        error instanceof Error ? error.message : 'The dispute did not send. Try it again.',
+        error instanceof Error
+          ? error.message
+          : t('The dispute did not send. Try it again.'),
       )
     } finally {
       setDisputingId(null)
@@ -127,7 +135,7 @@ export default function Memory() {
     if (!profile?.wallet || verifying) return
     const provider = getPhantom()
     if (!provider?.signMessage) {
-      setWalletError('Connect your wallet to sign the challenge.')
+      setWalletError(t('Connect your wallet to sign the challenge.'))
       return
     }
     setWalletError(null)
@@ -143,7 +151,7 @@ export default function Memory() {
       })
     } catch (e) {
       setWalletError(
-        e instanceof Error ? e.message : 'The signature was not accepted.',
+        e instanceof Error ? e.message : t('The signature was not accepted.'),
       )
     } finally {
       setVerifying(false)
@@ -164,7 +172,7 @@ export default function Memory() {
       await refreshLedger()
     } catch (e) {
       setWalletError(
-        e instanceof Error ? e.message : 'The withdrawal did not go through.',
+        e instanceof Error ? e.message : t('The withdrawal did not go through.'),
       )
     } finally {
       setWithdrawing(false)
@@ -214,7 +222,7 @@ export default function Memory() {
     <div className="page-enter flex-1 overflow-y-auto">
       <div className="space-y-6 p-4 sm:p-6">
         <div className="flex min-h-8 items-center justify-between gap-4">
-          <h1 className="font-sans text-base font-medium">My shelf</h1>
+          <h1 className="font-sans text-base font-medium">{t('My shelf')}</h1>
           <div className="flex items-center gap-2">
             <Button
               variant="monoGhost"
@@ -227,10 +235,10 @@ export default function Memory() {
               ) : (
                 <Download className="size-3" />
               )}
-              Export
+              {t('Export')}
             </Button>
             <Button asChild variant="monoGhost" size="monoSm">
-              <Link to="/dashboard">Browse open calls</Link>
+              <Link to="/dashboard">{t('Browse open calls')}</Link>
             </Button>
           </div>
         </div>
@@ -244,29 +252,29 @@ export default function Memory() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Stat
             icon={<Coins className="size-3.5" />}
-            label="Earned to date"
+            label={t('Earned to date')}
             value={`₩${total.toLocaleString()}`}
-            sub={`${earnings?.eventCount ?? settled.length} payouts${earnings?.heldKrw ? ` · ₩${earnings.heldKrw.toLocaleString()} held 14 days` : ''}`}
+            sub={`${earnings?.eventCount ?? settled.length}${t(' payouts')}${earnings?.heldKrw ? ` · ₩${earnings.heldKrw.toLocaleString()}${t(' held 14 days')}` : ''}`}
           />
           <Stat
             icon={<Sparkles className="size-3.5" />}
-            label="Earned via auto-match"
+            label={t('Earned via auto-match')}
             value={`₩${autoEarned.toLocaleString()}`}
-            sub={`${total ? Math.round((autoEarned / total) * 100) : 0}% of your earnings`}
+            sub={`${total ? Math.round((autoEarned / total) * 100) : 0}%${t(' of your earnings')}`}
           />
           <Stat
             icon={<Flame className="size-3.5" />}
-            label="Documents you wrote"
+            label={t('Documents you wrote')}
             value={`${settled.length}`}
-            sub={`across ${shelves.length} shelves`}
+            sub={`${t('across')} ${shelves.length}${t(' shelves')}`}
           />
         </div>
 
         {balance ? (
           <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-[6px] border border-border bg-card px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            <span>Off-chain call credit <strong className="text-foreground">₩{balance.availableKrw.toLocaleString()}</strong></span>
-            <span>Reserved <strong className="text-foreground">₩{balance.reservedKrw.toLocaleString()}</strong></span>
-            <span>Held 14 days <strong className="text-foreground">₩{balance.heldKrw.toLocaleString()}</strong></span>
+            <span>{t('Off-chain call credit')} <strong className="text-foreground">₩{balance.availableKrw.toLocaleString()}</strong></span>
+            <span>{t('Reserved')} <strong className="text-foreground">₩{balance.reservedKrw.toLocaleString()}</strong></span>
+            <span>{t('Held 14 days')} <strong className="text-foreground">₩{balance.heldKrw.toLocaleString()}</strong></span>
             {balance.availableKrw > 0 && profile?.walletVerified ? (
               <Button
                 variant="monoMuted"
@@ -275,7 +283,7 @@ export default function Memory() {
                 disabled={withdrawing}
                 onClick={() => void withdrawBalance()}
               >
-                {withdrawing ? 'Sending…' : 'Send to my wallet'}
+                {withdrawing ? t('Sending…') : t('Send to my wallet')}
               </Button>
             ) : null}
           </div>
@@ -283,8 +291,8 @@ export default function Memory() {
 
         {earnings?.claimableKrw ? (
           <div className="rounded-[6px] border border-[#0F766E]/30 bg-[#0F766E]/5 px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            Claimable escrow <strong className="text-foreground">₩{earnings.claimableKrw.toLocaleString()}</strong>
-            {' · '}claim it and USDC lands in the wallet recorded at each open. Not part of the sandbox balance.
+            {t('Claimable escrow')} <strong className="text-foreground">₩{earnings.claimableKrw.toLocaleString()}</strong>
+            {' · '}{t('claim it and USDC lands in the wallet recorded at each open. Not part of the sandbox balance.')}
           </div>
         ) : null}
 
@@ -292,10 +300,10 @@ export default function Memory() {
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-[6px] border border-border bg-card px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
             <span className="flex items-center gap-1.5">
               <Wallet className="size-3.5" />
-              Payouts to{' '}
+              {t('Payouts to')}{' '}
               {profile.wallet ? (
                 <span className="flex flex-wrap items-center gap-2 text-foreground">
-                  {shortKey(profile.wallet)} · {profile.walletVerified ? 'verified' : 'unverified'} · Devnet
+                  {shortKey(profile.wallet)} · {profile.walletVerified ? t('verified') : t('unverified')} · Devnet
                   {!profile.walletVerified ? (
                     <Button
                       variant="monoMuted"
@@ -303,7 +311,7 @@ export default function Memory() {
                       disabled={verifying || wallet.pubkey !== profile.wallet}
                       onClick={() => void verifyOwnership()}
                     >
-                      {verifying ? 'Signing…' : 'Prove it is yours'}
+                      {verifying ? t('Signing…') : t('Prove it is yours')}
                     </Button>
                   ) : null}
                 </span>
@@ -312,7 +320,7 @@ export default function Memory() {
                   to="/onboarding"
                   className="text-foreground underline decoration-dotted underline-offset-4"
                 >
-                  payout wallet not set
+                  {t('payout wallet not set')}
                 </Link>
               )}
             </span>
@@ -323,10 +331,10 @@ export default function Memory() {
               )}
             >
               <ShieldAlert className="size-3.5" />
-              {profile.strikes} of {STRIKE_LIMIT} strikes
+              {profile.strikes}{t(' of ')}{STRIKE_LIMIT}{t(' strikes')}
             </span>
             <span className="ml-auto">
-              {profile.disputeUsed ? 'Dispute used' : '1 dispute left'}
+              {profile.disputeUsed ? t('Dispute used') : t('1 dispute left')}
             </span>
           </div>
         ) : null}
@@ -339,10 +347,10 @@ export default function Memory() {
           <div className="rounded-[6px] border border-destructive/30 bg-destructive/[0.04] px-4 py-3">
             <p className="text-sm leading-relaxed text-muted-foreground">
               <span className="font-medium text-destructive">
-                {voided.length} answer{voided.length > 1 ? 's' : ''} voided.
+                {voided.length}
+                {voided.length > 1 ? t(' answers voided.') : t(' answer voided.')}
               </span>{' '}
-              They stay on your shelf so you can see what tripped. SHELF-1 will
-              not quote them, and they earn nothing.
+              {t('They stay on your shelf so you can see what tripped. SHELF-1 will not quote them, and they earn nothing.')}
             </p>
           </div>
         ) : null}
@@ -353,14 +361,14 @@ export default function Memory() {
             checked={autoMatch}
             onCheckedChange={setAutoMatch}
             disabled={(profile?.strikes ?? 0) >= AUTO_MATCH_STRIKE_LIMIT}
-            aria-label="Auto-match"
+            aria-label={t('Auto-match')}
           />
           <div className="flex min-w-0 flex-1 flex-col">
-            <span className="text-[15px] font-medium">Auto-match</span>
+            <span className="text-[15px] font-medium">{t('Auto-match')}</span>
             <span className="text-sm leading-relaxed text-muted-foreground">
               {(profile?.strikes ?? 0) >= AUTO_MATCH_STRIKE_LIMIT
-                ? `Strike ${AUTO_MATCH_STRIKE_LIMIT} of ${STRIKE_LIMIT} — auto-match is off. New payouts are held 14 days. Win the dispute and the strike lifts.`
-                : 'Leave it on and SHELF-1 quotes your documents the moment one fits a question — no open call, no waiting. USDC lands in your wallet each time someone opens one, with nothing new written.'}
+                ? `${t('Strike')} ${AUTO_MATCH_STRIKE_LIMIT}${t(' of ')}${STRIKE_LIMIT}${t(' — auto-match is off. New payouts are held 14 days. Win the dispute and the strike lifts.')}`
+                : t('Leave it on and SHELF-1 quotes your documents the moment one fits a question — no open call, no waiting. USDC lands in your wallet each time someone opens one, with nothing new written.')}
             </span>
           </div>
         </div>
@@ -384,10 +392,10 @@ export default function Memory() {
           <div>
             <div className="flex items-center justify-between gap-4">
               <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                Earnings ledger
+                {t('Earnings ledger')}
               </p>
               <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                append-only · accrued
+                {t('append-only · accrued')}
               </span>
             </div>
             <ol className="mt-3 overflow-hidden rounded-[6px] border border-border bg-card">
@@ -397,7 +405,7 @@ export default function Memory() {
                   className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border/70 px-3 py-2.5 last:border-0"
                 >
                   <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                    {event.source.replaceAll('_', ' ')}
+                    {t(event.source.replaceAll('_', ' '))}
                   </span>
                   {event.documentHandle ? (
                     <span className="font-mono text-[10px] text-muted-foreground">
@@ -406,22 +414,22 @@ export default function Memory() {
                   ) : null}
                   <span className="text-xs text-muted-foreground">
                     {event.recipientWallet
-                      ? `to ${shortKey(event.recipientWallet)}`
-                      : 'no wallet set at the time'}
+                      ? `${t('to')} ${shortKey(event.recipientWallet)}`
+                      : t('no wallet set at the time')}
                   </span>
                   {event.payoutStatus === 'held' ? (
                     <span className="rounded-[2px] bg-amber-500/10 px-1.5 font-mono text-[9px] uppercase tracking-[1px] text-amber-700">
-                      held 14d
+                      {t('held 14d')}
                     </span>
                   ) : null}
                   {event.payoutStatus === 'onchain' ? (
                     <span className="rounded-[2px] bg-emerald-500/10 px-1.5 font-mono text-[9px] uppercase tracking-[1px] text-emerald-700">
-                      paid onchain
+                      {t('paid onchain')}
                     </span>
                   ) : null}
                   {event.payoutStatus === 'claimable' ? (
                     <span className="rounded-[2px] bg-sky-500/10 px-1.5 font-mono text-[9px] uppercase tracking-[1px] text-sky-700">
-                      {event.payoutClaimStatus ?? 'payout pending'}
+                      {t(event.payoutClaimStatus ?? 'payout pending')}
                     </span>
                   ) : null}
                   {event.payoutStatus === 'paid' ? (
@@ -432,11 +440,11 @@ export default function Memory() {
                         rel="noreferrer"
                         className="rounded-[2px] bg-emerald-500/10 px-1.5 font-mono text-[9px] uppercase tracking-[1px] text-emerald-700 underline decoration-dotted underline-offset-2"
                       >
-                        payout confirmed
+                        {t('payout confirmed')}
                       </a>
                     ) : (
                       <span className="rounded-[2px] bg-emerald-500/10 px-1.5 font-mono text-[9px] uppercase tracking-[1px] text-emerald-700">
-                        payout confirmed
+                        {t('payout confirmed')}
                       </span>
                     )
                   ) : null}
@@ -452,19 +460,18 @@ export default function Memory() {
         {/* Memory stream ----------------------------------------------- */}
         <div>
           <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            On your shelf
+            {t('On your shelf')}
           </p>
           {memory.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 py-[18vh] text-center">
               <h2 className="font-sans text-lg font-medium">
-                Nothing on your shelf yet
+                {t('Nothing on your shelf yet')}
               </h2>
               <p className="max-w-[320px] text-sm leading-relaxed text-muted-foreground">
-                Answer one open call and it lands here as a document. Every open
-                after that pays you ₩5 to ₩20, and we never touch it.
+                {t('Answer one open call and it lands here as a document. Every open after that pays you ₩5 to ₩20, and we never touch it.')}
               </p>
               <Button asChild variant="mono" size="mono" className="mt-2">
-                <Link to="/dashboard">Browse open calls</Link>
+                <Link to="/dashboard">{t('Browse open calls')}</Link>
               </Button>
             </div>
           ) : (
@@ -482,8 +489,7 @@ export default function Memory() {
                           />
                         </TooltipTrigger>
                         <TooltipContent side="right">
-                          Weight {Math.round(w * 100)}% — recent documents count
-                          for more
+                          {t('Weight')} {Math.round(w * 100)}{t('% — recent documents count for more')}
                         </TooltipContent>
                       </Tooltip>
                       {i < memory.length - 1 ? (
@@ -503,7 +509,7 @@ export default function Memory() {
                               : 'bg-foreground/10 text-foreground',
                           )}
                         >
-                          {m.via}
+                          {t(m.via)}
                         </span>
                         {m.rating ? (
                           <span className="flex items-center gap-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
@@ -527,8 +533,8 @@ export default function Memory() {
                             disabled={lockingId === m.id}
                             onClick={() => void toggleMemoryLock(m.id, !m.locked)}
                             className="inline-flex size-6 cursor-pointer items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground disabled:cursor-wait"
-                            title={m.locked ? 'Unlock it so SHELF-1 can quote it' : 'Lock it so SHELF-1 stops quoting it'}
-                            aria-label={m.locked ? 'Unlock document' : 'Lock document'}
+                            title={m.locked ? t('Unlock it so SHELF-1 can quote it') : t('Lock it so SHELF-1 stops quoting it')}
+                            aria-label={m.locked ? t('Unlock document') : t('Lock document')}
                           >
                             {lockingId === m.id ? (
                               <Loader2 className="size-3 animate-spin" />
@@ -557,7 +563,7 @@ export default function Memory() {
                       {m.interviewResponses?.length ? (
                         <details className="mt-3 rounded-[4px] border border-border/70 bg-muted/25 px-3 py-2">
                           <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                            Interview context · {m.interviewResponses.length} turns · private
+                            {t('Interview context')} · {m.interviewResponses.length}{t(' turns · private')}
                           </summary>
                           <ol className="mt-3 space-y-3">
                             {m.interviewResponses.map((response) => (
@@ -578,14 +584,14 @@ export default function Memory() {
                         <div className="mt-3 rounded-[4px] border border-destructive/25 bg-destructive/[0.04] p-3">
                           <p className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[1px] text-destructive">
                             <ShieldAlert className="size-3" />
-                            Voided · {m.flags?.[0]?.rule ?? 'Low-effort answers'}
+                            {t('Voided')} · {t(m.flags?.[0]?.rule ?? 'Low-effort answers')}
                           </p>
                           {m.flags?.map((f) => (
                             <p
                               key={f.detail}
                               className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground"
                             >
-                              {f.detail}
+                              {t(f.detail)}
                             </p>
                           ))}
                           <div className="mt-3 flex items-center gap-3">
@@ -598,15 +604,15 @@ export default function Memory() {
                               {disputingId === m.id ? (
                                 <Loader2 className="size-3 animate-spin" />
                               ) : m.disputeStatus === 'pending' ? (
-                                'Review pending'
+                                t('Review pending')
                               ) : profile?.disputeUsed ? (
-                                'Dispute used'
+                                t('Dispute used')
                               ) : (
-                                'Dispute this'
+                                t('Dispute this')
                               )}
                             </Button>
                             <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                              One per wallet
+                              {t('One per wallet')}
                             </span>
                           </div>
                           {draftDisputeId === m.id ? (
@@ -616,7 +622,7 @@ export default function Memory() {
                                 onChange={(event) => setDisputeReason(event.target.value)}
                                 rows={3}
                                 maxLength={1000}
-                                placeholder="Say what the check got wrong. 20 characters minimum."
+                                placeholder={t('Say what the check got wrong. 20 characters minimum.')}
                                 className="w-full resize-y rounded-[3px] border border-border bg-background p-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-foreground/30"
                               />
                               <div className="flex gap-2">
@@ -626,14 +632,14 @@ export default function Memory() {
                                   disabled={disputeReason.trim().length < 20}
                                   onClick={() => void dispute(m.id)}
                                 >
-                                  Send for review
+                                  {t('Send for review')}
                                 </Button>
                                 <Button
                                   variant="monoGhost"
                                   size="monoSm"
                                   onClick={() => setDraftDisputeId(null)}
                                 >
-                                  Cancel
+                                  {t('Cancel')}
                                 </Button>
                               </div>
                             </div>
@@ -655,9 +661,7 @@ export default function Memory() {
 
         <div className="rounded-[6px] border border-border bg-foreground/[0.03] p-4">
           <p className="text-sm leading-relaxed text-muted-foreground">
-            Deleting refunds unused open-call escrow to your wallet, removes your
-            profile and every document, and signs out every session. The financial
-            audit rows stay, with your handle stripped.
+            {t('Deleting refunds unused open-call escrow to your wallet, removes your profile and every document, and signs out every session. The financial audit rows stay, with your handle stripped.')}
           </p>
           <div className="mt-3 flex items-center gap-2">
             {deleteConfirm ? (
@@ -673,15 +677,15 @@ export default function Memory() {
                       .finally(() => setDeleting(false))
                   }}
                 >
-                  {deleting ? <Loader2 className="size-3 animate-spin" /> : 'Permanently delete'}
+                  {deleting ? <Loader2 className="size-3 animate-spin" /> : t('Permanently delete')}
                 </Button>
                 <Button variant="monoGhost" size="monoSm" onClick={() => setDeleteConfirm(false)}>
-                  Keep it
+                  {t('Keep it')}
                 </Button>
               </>
             ) : (
               <Button variant="monoMuted" size="monoSm" onClick={() => setDeleteConfirm(true)}>
-                <Trash2 className="size-3" /> Delete everything
+                <Trash2 className="size-3" /> {t('Delete everything')}
               </Button>
             )}
           </div>

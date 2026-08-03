@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { ArrowUpRight, Database, GitBranch, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CATEGORIES } from '@/data/categories'
+import { useT } from '@/i18n'
 import { useUi } from '@/state/ui'
 
 const RANKING = [
@@ -24,6 +25,7 @@ const RANKING = [
 ] as const
 
 export default function Coverage() {
+  const t = useT()
   const { orders } = useUi()
   const rows = useMemo(() => {
     return CATEGORIES.map((category) => {
@@ -58,25 +60,24 @@ export default function Coverage() {
       <div className="space-y-8 p-4 sm:p-6">
         <section>
           <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
-            <h1 className="font-sans text-base font-medium">Thin shelves</h1>
+            <h1 className="font-sans text-base font-medium">{t('Thin shelves')}</h1>
             <Button asChild variant="mono" size="mono">
-              <Link to="/">Ask</Link>
+              <Link to="/">{t('Ask')}</Link>
             </Button>
           </div>
 
           <p className="mt-4 max-w-2xl text-[15px] leading-7 text-muted-foreground">
-            Under 300 documents a shelf cannot answer reliably. You cannot
-            browse the documents themselves — that is what opening one is for.
-            What you can see is where a question comes back empty, and what
-            someone has already offered to fill it.
+            {t(
+              'Under 300 documents a shelf cannot answer reliably. You cannot browse the documents themselves — that is what opening one is for. What you can see is where a question comes back empty, and what someone has already offered to fill it.',
+            )}
           </p>
 
           <div className="mt-6 grid gap-4 sm:grid-cols-3">
             {RANKING.map(({ Icon, title, body }) => (
               <article key={title} className="rounded-[6px] border border-border bg-card p-5">
                 <Icon className="size-4 text-muted-foreground" />
-                <h2 className="mt-4 text-sm font-medium">{title}</h2>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">{body}</p>
+                <h2 className="mt-4 text-sm font-medium">{t(title)}</h2>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">{t(body)}</p>
               </article>
             ))}
           </div>
@@ -86,28 +87,28 @@ export default function Coverage() {
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 className="font-sans text-lg font-medium">
-                Asked, and nothing answered
+                {t('Asked, and nothing answered')}
               </h2>
               <p className="mt-2 max-w-2xl text-[15px] leading-7 text-muted-foreground">
-                Nothing on the shelves has answered these yet. Every open call
-                here is live from the server: it goes to people who would know,
-                and the asker has already named what one answer is worth.
+                {t(
+                  'Nothing on the shelves has answered these yet. Every open call here is live from the server: it goes to people who would know, and the asker has already named what one answer is worth.',
+                )}
               </p>
             </div>
             <div className="flex flex-wrap gap-x-5 gap-y-1 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-              <span><strong className="text-foreground">{totals.calls}</strong> open calls</span>
-              <span><strong className="text-foreground">{totals.remaining}</strong> slots left</span>
-              <span><strong className="text-foreground">₩{totals.budget.toLocaleString()}</strong> waiting</span>
+              <span><strong className="text-foreground">{totals.calls}</strong> {t('open calls')}</span>
+              <span><strong className="text-foreground">{totals.remaining}</strong> {t('slots left')}</span>
+              <span><strong className="text-foreground">₩{totals.budget.toLocaleString()}</strong> {t('waiting')}</span>
             </div>
           </div>
 
           <div className="mt-6 overflow-hidden rounded-[6px] border border-border bg-card">
             <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-border bg-muted-2 px-4 py-2.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground sm:grid-cols-[1fr_repeat(4,110px)]">
-              <span>Area</span>
-              <span className="hidden text-right sm:block">Open calls</span>
-              <span className="hidden text-right sm:block">Slots left</span>
-              <span className="hidden text-right sm:block">Top per answer</span>
-              <span className="text-right">Budget left</span>
+              <span>{t('Area')}</span>
+              <span className="hidden text-right sm:block">{t('Open calls')}</span>
+              <span className="hidden text-right sm:block">{t('Slots left')}</span>
+              <span className="hidden text-right sm:block">{t('Top per answer')}</span>
+              <span className="text-right">{t('Budget left')}</span>
             </div>
             {rows.map((row) => (
               <Link
@@ -117,7 +118,7 @@ export default function Coverage() {
               >
                 <span className="flex items-center gap-2 font-medium">
                   <span className="size-2 rounded-[1px]" style={{ backgroundColor: row.accent }} />
-                  {row.label}
+                  {t(row.label)}
                   <ArrowUpRight className="size-3 text-muted-foreground" />
                 </span>
                 <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.calls}</span>
@@ -130,12 +131,11 @@ export default function Coverage() {
 
           <p className="mt-6 max-w-2xl rounded-[6px] border border-border bg-foreground/[0.03] p-5 text-sm leading-relaxed text-muted-foreground">
             <span className="font-medium text-foreground">
-              This page is the honest version of the hardest problem.
+              {t('This page is the honest version of the hardest problem.')}
             </span>{' '}
-            An empty shelf leaves SHELF-1 nothing to open. Every number here
-            comes from the authenticated open-call state — a baseline answer
-            written by a model never appears in it, never fills a slot, and is
-            never paid for.
+            {t(
+              'An empty shelf leaves SHELF-1 nothing to open. Every number here comes from the authenticated open-call state — a baseline answer written by a model never appears in it, never fills a slot, and is never paid for.',
+            )}
           </p>
         </section>
       </div>

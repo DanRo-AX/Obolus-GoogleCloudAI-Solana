@@ -82,6 +82,18 @@
   src: url("/fonts/b4e85636e2ca4056-s.p.9ecc21d7.woff2") format("woff2");
 }
 
+/* Hangul only. The unicode-range means an English session never fetches the
+   2 MB file at all — it lands the first time a Korean glyph is painted. */
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("/fonts/PretendardVariable.woff2") format("woff2-variations");
+  unicode-range: U+1100-11FF, U+3130-318F, U+A960-A97F, U+AC00-D7A3,
+    U+D7B0-D7FF, U+3000-303F, U+FF00-FFEF;
+}
+
 @font-face {
   font-family: "Instrument Sans";
   font-style: normal;
@@ -143,8 +155,8 @@
   --font-host-grotesk: "Host Grotesk", "Host Grotesk Fallback";
   --font-inter-family: "Inter", "Inter Fallback";
   --font-noto-serif: "Noto Serif", serif;
-  --font-instrument: "Instrument Sans", "GeistSans", "GeistSans Fallback",
-    system-ui, sans-serif;
+  --font-instrument: "Instrument Sans", "Pretendard", "GeistSans",
+    "GeistSans Fallback", system-ui, sans-serif;
 }
 
 @theme inline {
@@ -352,4 +364,27 @@
 .font-display {
   letter-spacing: -0.021em;
   font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+   Korean typography. Hangul is a denser, squarer glyph than Latin: the tight
+   tracking that keeps a 44px English headline from falling apart makes Hangul
+   look cramped, and the same line-height reads tighter because the characters
+   fill more of their box.
+--------------------------------------------------------------------------- */
+:root[data-lang="ko"] .font-display {
+  letter-spacing: -0.012em;
+  font-weight: 700;
+  line-height: 1.32;
+}
+
+:root[data-lang="ko"] body,
+:root[data-lang="ko"] p {
+  letter-spacing: -0.003em;
+}
+
+/* Uppercase and wide tracking do nothing for Hangul — it has no case, and the
+   extra space just breaks words apart. */
+:root[data-lang="ko"] .uppercase:lang(ko) {
+  text-transform: none;
 }

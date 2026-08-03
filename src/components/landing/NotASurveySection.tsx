@@ -1,3 +1,5 @@
+import { useT } from '@/i18n'
+
 /**
  * The survey comparison, because that is the category people will file this
  * under whether we like it or not — better to name it and say what is different.
@@ -40,21 +42,22 @@ const ROWS: { axis: string; old: string; ours: string }[] = [
 ]
 
 export function NotASurveySection() {
+  const t = useT()
   return (
     <section className="border-t border-border bg-muted-2/40 px-4 py-20 sm:px-8 sm:py-28">
       <div className="mx-auto max-w-[92rem]">
         <p className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-          A survey panel, side by side
+          {t('A survey panel, side by side')}
         </p>
 
         <h2 className="mt-5 max-w-3xl font-display text-[32px] leading-[1.1] sm:text-[44px]">
-          Sold by the cigarette, not by the pack.
+          {t('Sold by the cigarette, not by the pack.')}
         </h2>
 
         <p className="mt-6 max-w-2xl text-[15px] leading-7 text-muted-foreground">
-          What people know has only ever traded whole — a panel study, an annual
-          licence, three hundred lives flattened into one report. Here the unit
-          is one document, one open, one answer.
+          {t(
+            'What people know has only ever traded whole — a panel study, an annual licence, three hundred lives flattened into one report. Here the unit is one document, one open, one answer.',
+          )}
         </p>
 
         <div className="mt-12 overflow-x-auto">
@@ -63,7 +66,7 @@ export function NotASurveySection() {
               <tr className="border-b border-border">
                 <th className="w-[9rem] py-3 pr-6 font-mono text-[10px] font-normal uppercase tracking-[1.5px] text-muted-foreground" />
                 <th className="py-3 pr-8 font-mono text-[10px] font-normal uppercase tracking-[1.5px] text-muted-foreground">
-                  A survey panel
+                  {t('A survey panel')}
                 </th>
                 <th className="py-3 font-mono text-[10px] font-normal uppercase tracking-[1.5px] text-foreground">
                   Obolus
@@ -74,13 +77,13 @@ export function NotASurveySection() {
               {ROWS.map((r) => (
                 <tr key={r.axis} className="border-b border-border/60">
                   <td className="py-4 pr-6 align-top font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                    {r.axis}
+                    {t(r.axis)}
                   </td>
                   <td className="py-4 pr-8 align-top text-[15px] leading-relaxed text-muted-foreground">
-                    {r.old}
+                    {t(r.old)}
                   </td>
                   <td className="py-4 align-top text-[15px] leading-relaxed">
-                    {r.ours}
+                    {t(r.ours)}
                   </td>
                 </tr>
               ))}

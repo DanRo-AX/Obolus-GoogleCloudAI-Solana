@@ -13,6 +13,7 @@ import {
   type Block,
   type OpenProblem,
 } from '@/data/shelf1'
+import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 
 /**
@@ -22,6 +23,7 @@ import { cn } from '@/lib/utils'
  * status cards instead of being buried in a paragraph.
  */
 export default function Shelf1() {
+  const t = useT()
   const [shared, setShared] = useState(false)
   const [active, setActive] = useState(SECTIONS[0].n)
 
@@ -46,7 +48,7 @@ export default function Shelf1() {
     const url = window.location.href
     if (navigator.share) {
       try {
-        await navigator.share({ title: HERO.title, url })
+        await navigator.share({ title: t(HERO.title), url })
         return
       } catch {
         /* dismissed — fall through to clipboard */
@@ -64,7 +66,7 @@ export default function Shelf1() {
         <div className="relative mx-auto w-full max-w-5xl px-5 pb-14 pt-24 sm:px-8 sm:pb-20 sm:pt-32">
           <div className="flex items-center gap-3">
             <span className="font-mono text-[10px] uppercase tracking-[2px] text-muted-foreground">
-              {HERO.eyebrow}
+              {t(HERO.eyebrow)}
             </span>
             <span className="h-px flex-1 bg-border" />
             <Button
@@ -73,22 +75,22 @@ export default function Shelf1() {
               size="monoSm"
               onClick={share}
             >
-              {shared ? 'Link copied' : 'Share'}
+              {shared ? t('Link copied') : t('Share')}
             </Button>
           </div>
 
           <h1 className="mt-6 max-w-3xl font-display text-[32px] font-semibold leading-[1.14] tracking-tight sm:text-[44px]">
-            {HERO.title}
+            {t(HERO.title)}
           </h1>
           <p className="mt-5 max-w-2xl text-[17px] leading-8 text-muted-foreground">
-            {HERO.standfirst}
+            {t(HERO.standfirst)}
           </p>
 
           <dl className="mt-10 flex flex-wrap gap-x-10 gap-y-3 border-t border-border pt-5 font-mono text-[11px] uppercase tracking-[1px]">
             {HERO.meta.map((m) => (
               <div key={m.label} className="flex items-baseline gap-2">
-                <dt className="text-muted-foreground">{m.label}</dt>
-                <dd className="text-foreground">{m.value}</dd>
+                <dt className="text-muted-foreground">{t(m.label)}</dt>
+                <dd className="text-foreground">{t(m.value)}</dd>
               </div>
             ))}
           </dl>
@@ -99,10 +101,10 @@ export default function Shelf1() {
       <div className="border-b border-border bg-foreground text-background">
         <div className="mx-auto w-full max-w-5xl px-5 py-9 sm:px-8">
           <span className="font-mono text-[10px] uppercase tracking-[2px] opacity-60">
-            In one line
+            {t('In one line')}
           </span>
           <p className="mt-3 font-display text-2xl font-medium leading-snug sm:text-[29px]">
-            {DEFINITION}
+            {t(DEFINITION)}
           </p>
         </div>
       </div>
@@ -113,7 +115,7 @@ export default function Shelf1() {
           <nav className="hidden lg:block">
             <div className="sticky top-10 flex flex-col gap-1">
               <span className="mb-3 font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-                Sections
+                {t('Sections')}
               </span>
               {SECTIONS.map((s) => (
                 <a
@@ -129,7 +131,7 @@ export default function Shelf1() {
                   <span className="font-mono text-[10px] tabular-nums opacity-60">
                     {s.n}
                   </span>
-                  {s.eyebrow}
+                  {t(s.eyebrow)}
                 </a>
               ))}
             </div>
@@ -147,11 +149,11 @@ export default function Shelf1() {
                     {section.n}
                   </span>
                   <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-                    {section.eyebrow}
+                    {t(section.eyebrow)}
                   </span>
                 </div>
                 <h2 className="mt-4 max-w-2xl font-display text-[25px] font-medium leading-[1.28] tracking-tight sm:text-[29px]">
-                  {section.title}
+                  {t(section.title)}
                 </h2>
 
                 <div className="mt-7 flex flex-col gap-6">
@@ -174,15 +176,16 @@ export default function Shelf1() {
 
             <div className="border-t border-border pt-10">
               <p className="text-[15px] leading-8 text-muted-foreground">
-                The shelves are being filled now. Ask something. If nothing on
-                them fits, post an open call and name what one answer is worth.
+                {t(
+                  'The shelves are being filled now. Ask something. If nothing on them fits, post an open call and name what one answer is worth.',
+                )}
               </p>
               <div className="mt-6 max-w-xl">
                 <Composer variant="flat" />
               </div>
               <div className="mt-6 flex flex-wrap gap-2">
                 <Button asChild variant="mono" size="mono">
-                  <Link to="/coverage">See the thin shelves</Link>
+                  <Link to="/coverage">{t('See the thin shelves')}</Link>
                 </Button>
               </div>
             </div>
@@ -196,24 +199,28 @@ export default function Shelf1() {
 /* ---------------------------------------------------------------- blocks */
 
 function BlockView({ block }: { block: Block }) {
+  const t = useT()
+
   switch (block.kind) {
     case 'lead':
       return (
-        <p className="text-[19px] leading-9 text-foreground">{block.text}</p>
+        <p className="text-[19px] leading-9 text-foreground">{t(block.text)}</p>
       )
     case 'p':
       return (
-        <p className="text-[16px] leading-8 text-foreground/90">{block.text}</p>
+        <p className="text-[16px] leading-8 text-foreground/90">
+          {t(block.text)}
+        </p>
       )
     case 'quote':
       return (
         <blockquote className="my-2 border-l-2 border-[#866FF2] pl-5">
           <p className="font-display text-xl font-medium leading-8 text-foreground sm:text-[22px]">
-            {block.text}
+            {t(block.text)}
           </p>
           {block.attribution ? (
             <cite className="mt-2 block font-mono text-[10px] uppercase not-italic tracking-[1px] text-muted-foreground">
-              {block.attribution}
+              {t(block.attribution)}
             </cite>
           ) : null}
         </blockquote>
@@ -240,7 +247,7 @@ function BlockView({ block }: { block: Block }) {
                   <span className="block size-1 rounded-full bg-muted-foreground/50" />
                 )}
               </span>
-              <span>{item}</span>
+              <span>{t(item)}</span>
             </li>
           ))}
         </ol>
@@ -249,10 +256,10 @@ function BlockView({ block }: { block: Block }) {
       return (
         <aside className="rounded-[6px] border border-border bg-foreground/[0.03] p-5">
           <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-            {block.label}
+            {t(block.label)}
           </span>
           <p className="mt-2 text-[15px] leading-7 text-foreground/90">
-            {block.text}
+            {t(block.text)}
           </p>
         </aside>
       )
@@ -260,7 +267,7 @@ function BlockView({ block }: { block: Block }) {
       return (
         <figure className="overflow-hidden rounded-[6px] border border-border">
           <figcaption className="border-b border-border bg-muted-2 px-4 py-2 font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-            {block.caption}
+            {t(block.caption)}
           </figcaption>
           <pre className="overflow-x-auto bg-card px-4 py-4 font-mono text-[13px] leading-[1.85] text-foreground">
             {block.lines.join('\n')}
@@ -281,9 +288,11 @@ function BlockView({ block }: { block: Block }) {
               )}
             >
               <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-                {side.label}
+                {t(side.label)}
               </span>
-              <span className="mt-2 text-[15px] font-medium">{side.title}</span>
+              <span className="mt-2 text-[15px] font-medium">
+                {t(side.title)}
+              </span>
               <ul className="mt-3 flex flex-col gap-2">
                 {side.lines.map((l) => (
                   <li
@@ -291,7 +300,7 @@ function BlockView({ block }: { block: Block }) {
                     className="flex gap-2.5 text-[13px] leading-relaxed text-foreground/80"
                   >
                     <span className="mt-2 size-1 shrink-0 rounded-full bg-muted-foreground/50" />
-                    <span>{l}</span>
+                    <span>{t(l)}</span>
                   </li>
                 ))}
               </ul>
@@ -305,10 +314,12 @@ function BlockView({ block }: { block: Block }) {
 /* ------------------------------------------------------------- fragments */
 
 function Lifecycle() {
+  const t = useT()
+
   return (
     <div className="mt-10 overflow-hidden rounded-[6px] border border-border">
       <div className="border-b border-border bg-muted-2 px-4 py-2 font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-        One question, end to end
+        {t('One question, end to end')}
       </div>
       <table className="w-full border-collapse text-left text-sm">
         <tbody>
@@ -324,10 +335,10 @@ function Lifecycle() {
                 {String(s.n).padStart(2, '0')}
               </td>
               <td className="w-[190px] px-2 py-3 align-top font-medium">
-                {s.step}
+                {t(s.step)}
               </td>
               <td className="px-4 py-3 align-top text-foreground/80">
-                {s.what}
+                {t(s.what)}
               </td>
             </tr>
           ))}
@@ -344,6 +355,8 @@ const STATUS_TONE: Record<OpenProblem['status'], string> = {
 }
 
 function OpenProblems() {
+  const t = useT()
+
   return (
     <div className="mt-8 flex flex-col gap-3">
       {OPEN_PROBLEMS.map((p) => (
@@ -358,17 +371,17 @@ function OpenProblems() {
                 STATUS_TONE[p.status],
               )}
             >
-              {p.status}
+              {t(p.status)}
             </span>
-            <span className="text-[15px] font-medium">{p.title}</span>
+            <span className="text-[15px] font-medium">{t(p.title)}</span>
           </div>
           <p className="mt-2.5 text-[15px] leading-7 text-foreground/85">
-            {p.body}
+            {t(p.body)}
           </p>
         </div>
       ))}
       <p className="mt-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-        Written down, not smoothed over
+        {t('Written down, not smoothed over')}
         <ArrowUpRight className="size-3" />
       </p>
     </div>

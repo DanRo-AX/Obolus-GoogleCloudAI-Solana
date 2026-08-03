@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/primitives'
+import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useUi, type Chat } from '@/state/ui'
 
@@ -51,6 +52,7 @@ function summarise(chat: Chat): Row {
 
 export default function Archive() {
   const { chats } = useUi()
+  const t = useT()
   const [q, setQ] = useState('')
   const [paidOnly, setPaidOnly] = useState(false)
 
@@ -84,35 +86,34 @@ export default function Archive() {
     <div className="page-enter flex-1 overflow-y-auto">
       <div className="space-y-6 p-4 sm:p-6">
         <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
-          <h1 className="font-sans text-base font-medium">Receipts</h1>
+          <h1 className="font-sans text-base font-medium">{t('Receipts')}</h1>
           <div className="flex items-center gap-5 font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
             <span className="flex items-center gap-1.5">
               <MessageSquare className="size-3.5" />
               <span className="tabular-nums text-foreground">
                 {chats.length}
-              </span>{' '}
-              asked
+              </span>
+              {t(' asked')}
             </span>
             <span className="flex items-center gap-1.5">
               <Receipt className="size-3.5" />
               <span className="tabular-nums text-foreground">
                 {totals.docs}
-              </span>{' '}
-              opened
+              </span>
+              {t(' opened')}
             </span>
             <span className="flex items-center gap-1.5">
               <Coins className="size-3.5" />
               <span className="tabular-nums text-foreground">
                 ₩{totals.spent.toLocaleString()}
-              </span>{' '}
-              spent
+              </span>
+              {t(' spent')}
             </span>
           </div>
         </div>
 
         <p className="max-w-2xl text-[15px] leading-7 text-muted-foreground">
-          Every question you have asked, and the passages it paid for. You pay
-          for an open once — the document stays readable here after that.
+          {t('Every question you have asked, and the passages it paid for. You pay for an open once — the document stays readable here after that.')}
         </p>
 
         {/* controls ----------------------------------------------------- */}
@@ -122,7 +123,7 @@ export default function Archive() {
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search questions and shelves"
+              placeholder={t('Search questions and shelves')}
               className="h-9 w-full rounded-[2px] border border-border bg-transparent pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-foreground/40"
             />
           </div>
@@ -136,26 +137,28 @@ export default function Archive() {
                 : 'border-border text-muted-foreground hover:border-foreground/25 hover:text-foreground',
             )}
           >
-            With opens
+            {t('With opens')}
           </button>
           <span className="ml-auto font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            {rows.length} {rows.length === 1 ? 'question' : 'questions'}
+            {rows.length}{rows.length === 1 ? t(' question') : t(' questions')}
           </span>
         </div>
 
         {rows.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 py-[18vh] text-center">
             <h2 className="font-sans text-lg font-medium">
-              {chats.length === 0 ? 'Nothing asked yet' : 'No question matches'}
+              {chats.length === 0
+                ? t('Nothing asked yet')
+                : t('No question matches')}
             </h2>
             <p className="max-w-[340px] text-sm leading-relaxed text-muted-foreground">
               {chats.length === 0
-                ? 'Ask something and it lands here with whatever it opened, so you can come back to the passages you paid for.'
-                : 'Try a different word, or turn off the opens filter.'}
+                ? t('Ask something and it lands here with whatever it opened, so you can come back to the passages you paid for.')
+                : t('Try a different word, or turn off the opens filter.')}
             </p>
             {chats.length === 0 ? (
               <Button asChild variant="mono" size="mono" className="mt-2">
-                <Link to="/">Ask something</Link>
+                <Link to="/">{t('Ask something')}</Link>
               </Button>
             ) : null}
           </div>
@@ -173,6 +176,7 @@ export default function Archive() {
 
 function ThreadCard({ row }: { row: Row }) {
   const { chat, docs, spent, txSig, network } = row
+  const t = useT()
   const [open, setOpen] = useState(false)
 
   return (
@@ -180,7 +184,7 @@ function ThreadCard({ row }: { row: Row }) {
       <div className="flex flex-wrap items-start gap-3 p-5">
         <div className="min-w-0 flex-1">
           <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            {relative(chat.createdAt)} · {chat.messages.length} messages
+            {relative(chat.createdAt)} · {chat.messages.length}{t(' messages')}
           </p>
           <p className="mt-1.5 text-[15px] leading-relaxed">{chat.title}</p>
         </div>
@@ -188,19 +192,19 @@ function ThreadCard({ row }: { row: Row }) {
         <div className="flex shrink-0 items-center gap-4">
           {docs.length ? (
             <span className="font-mono text-xs tabular-nums text-muted-foreground">
-              {docs.length} opened ·{' '}
+              {docs.length}{t(' opened')} ·{' '}
               <span className="text-foreground">
                 ₩{spent.toLocaleString()}
               </span>
             </span>
           ) : (
             <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-              Nothing opened
+              {t('Nothing opened')}
             </span>
           )}
           <Button asChild variant="monoGhost" size="monoSm">
             <Link to={`/chat/${chat.id}`}>
-              Back to it
+              {t('Back to it')}
               <ArrowUpRight className="size-3.5" />
             </Link>
           </Button>
@@ -215,7 +219,7 @@ function ThreadCard({ row }: { row: Row }) {
             className="flex w-full cursor-pointer items-center gap-2 border-t border-border px-5 py-2.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-foreground/[0.02] hover:text-foreground"
           >
             <Receipt className="size-3" />
-            {open ? 'Hide receipt' : 'Show receipt'}
+            {open ? t('Hide receipt') : t('Show receipt')}
           </button>
 
           {open ? (
@@ -239,7 +243,7 @@ function ThreadCard({ row }: { row: Row }) {
               {txSig ? (
                 <div className="flex flex-wrap items-center gap-2 bg-muted-2/50 px-5 py-2.5">
                   <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                    Settled
+                    {t('Settled')}
                   </span>
                   <a
                     href={`https://explorer.solana.com/tx/${txSig}?cluster=${network ?? 'devnet'}`}

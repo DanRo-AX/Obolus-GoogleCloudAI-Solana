@@ -1,8 +1,11 @@
+import { useT } from '@/i18n'
+
 /** Footer: the Obolus wordmark, and nothing else to click. */
 export function SiteFooter() {
+  const t = useT()
   return (
     <section
-      aria-label="Footer"
+      aria-label={t('Footer')}
       className="px-4 pb-28 pt-2 sm:px-6 md:pb-8 lg:px-6"
     >
       <div className="flex items-end justify-center pb-6 pt-16 sm:pb-10 sm:pt-24">

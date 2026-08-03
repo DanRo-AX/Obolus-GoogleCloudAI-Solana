@@ -1,3 +1,5 @@
+import { useT } from '@/i18n'
+
 /**
  * How the money actually moves, kept to one screen.
  *
@@ -6,23 +8,27 @@
  * nobody would finish.
  */
 export function SettlementSection() {
+  const t = useT()
   return (
     <section className="border-t border-border px-4 py-20 sm:px-8 sm:py-28">
       <div className="mx-auto grid max-w-[92rem] grid-cols-1 gap-14 lg:grid-cols-[1.1fr_1fr] lg:gap-20">
         <div>
           <p className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-            Where the money goes
+            {t('Where the money goes')}
           </p>
 
           <h2 className="mt-5 font-display text-[32px] leading-[1.1] sm:text-[44px]">
-            Nobody approves a ₩12 payment.
+            {t('Nobody approves a ₩12 payment.')}
           </h2>
 
           <p className="mt-6 max-w-xl text-[15px] leading-7 text-muted-foreground">
-            So nobody is asked to. HTTP has a status code for this: the server
-            answers <strong className="font-medium text-foreground">402</strong> with
-            a price, the wallet pays it, the document opens. Machines settle
-            with machines.
+            {t(
+              'So nobody is asked to. HTTP has a status code for this: the server answers',
+            )}{' '}
+            <strong className="font-medium text-foreground">402</strong>{' '}
+            {t(
+              'with a price, the wallet pays it, the document opens. Machines settle with machines.',
+            )}
           </p>
 
           <div className="mt-9 flex flex-col gap-5">
@@ -30,9 +36,9 @@ export function SettlementSection() {
               <div key={p.head} className="flex gap-4 border-t border-border pt-5">
                 <span className="mt-1 size-1.5 shrink-0 rounded-full bg-foreground" />
                 <div>
-                  <p className="text-[15px] font-medium">{p.head}</p>
+                  <p className="text-[15px] font-medium">{t(p.head)}</p>
                   <p className="mt-1 max-w-lg text-sm leading-relaxed text-muted-foreground">
-                    {p.body}
+                    {t(p.body)}
                   </p>
                 </div>
               </div>
@@ -45,10 +51,10 @@ export function SettlementSection() {
           <div className="overflow-hidden rounded-lg border border-border bg-card">
             <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
               <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-                Settlement receipt
+                {t('Settlement receipt')}
               </span>
               <span className="font-mono text-[10px] uppercase tracking-[1px] text-[#0F766E]">
-                Confirmed
+                {t('Confirmed')}
               </span>
             </div>
 
@@ -62,7 +68,7 @@ export function SettlementSection() {
                     {l.handle}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">
-                    {l.shelf}
+                    {t(l.shelf)}
                   </span>
                   <span className="font-mono text-[12px] tabular-nums">
                     ₩{l.price}
@@ -73,7 +79,7 @@ export function SettlementSection() {
 
             <div className="flex items-baseline justify-between gap-4 border-t border-border bg-muted-2/60 px-5 py-3.5">
               <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-                4 documents opened
+                {t('4 documents opened')}
               </span>
               <span className="font-mono text-[15px] font-medium tabular-nums">
                 ₩38
@@ -82,7 +88,7 @@ export function SettlementSection() {
 
             <div className="border-t border-border px-5 py-3.5">
               <p className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-                Transaction
+                {t('Transaction')}
               </p>
               <p className="mt-1 truncate font-mono text-[11px] text-foreground">
                 5xQ7…kL2f · solana devnet · usdc
@@ -91,8 +97,9 @@ export function SettlementSection() {
           </div>
 
           <p className="mt-4 font-mono text-[10px] uppercase leading-relaxed tracking-[1px] text-muted-foreground">
-            Every line is a person. Every amount left your wallet and arrived in
-            theirs — we are not in the middle of it.
+            {t(
+              'Every line is a person. Every amount left your wallet and arrived in theirs — we are not in the middle of it.',
+            )}
           </p>
         </div>
       </div>

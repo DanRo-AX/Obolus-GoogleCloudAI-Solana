@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { ArrowUp } from 'lucide-react'
 import { CATEGORIES, type CategoryId } from '@/data/categories'
 import { AGE_BANDS, HOUSEHOLDS, REGIONS } from '@/data/onboarding'
+import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import type { TargetFilters } from '@/lib/api'
 import { useUi } from '@/state/ui'
@@ -38,6 +39,7 @@ export function Composer({
   const ref = useRef<HTMLTextAreaElement>(null)
   const navigate = useNavigate()
   const { createChat } = useUi()
+  const t = useT()
   const dark = tone === 'dark'
 
   useEffect(() => {
@@ -90,7 +92,7 @@ export function Composer({
             submit()
           }
         }}
-        placeholder="What do you want to know?"
+        placeholder={t('What do you want to know?')}
         className={cn(
           'flex w-full py-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 max-h-80 min-h-[88px] resize-none overflow-y-hidden rounded-none border-0 bg-transparent px-4 pb-0 pt-3 text-base shadow-none focus-visible:ring-0 md:text-base',
           dark
@@ -102,7 +104,7 @@ export function Composer({
         <div className="flex items-center gap-1">
           <Link
             to="/whitepaper"
-            aria-label="How SHELF-1 works"
+            aria-label={t('How SHELF-1 works')}
             className={cn(
               'group flex h-8 items-center rounded-[2px] px-2 transition-colors',
               dark ? 'hover:bg-white/10' : 'hover:bg-muted-foreground/10',
@@ -127,11 +129,11 @@ export function Composer({
                   : 'text-muted-foreground hover:bg-muted',
               )}
             >
-              Who answers{[ageBand, region, household, field].filter(Boolean).length ? ` · ${[ageBand, region, household, field].filter(Boolean).length}` : ''}
+              {t('Who answers')}{[ageBand, region, household, field].filter(Boolean).length ? ` · ${[ageBand, region, household, field].filter(Boolean).length}` : ''}
             </summary>
             <div className="absolute bottom-10 left-0 z-30 grid w-[280px] gap-3 rounded-[6px] border border-border bg-card p-3 text-foreground shadow-xl">
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Optional. A document must match every band you pick.
+                {t('Optional. A document must match every band you pick.')}
               </p>
               <TargetSelect label="Age" value={ageBand} onChange={setAgeBand} options={AGE_BANDS} />
               <TargetSelect label="Region" value={region} onChange={setRegion} options={REGIONS} />
@@ -149,7 +151,7 @@ export function Composer({
           data-slot="button"
           type="submit"
           disabled={!value.trim()}
-          aria-label="Send"
+          aria-label={t('Send')}
           className={cn(
             'inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm font-medium transition-all cursor-pointer disabled:pointer-events-none disabled:opacity-50 shrink-0 outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px] size-8 rounded-md',
             dark
@@ -166,8 +168,9 @@ export function Composer({
           dark ? 'text-white/40' : 'text-muted-foreground',
         )}
       >
-        If human coverage is thin, this question alone may be sent to Gemini on
-        Vertex AI for a free general baseline. Private shelf passages are never sent.
+        {t(
+          'If human coverage is thin, this question alone may be sent to Gemini on Vertex AI for a free general baseline. Private shelf passages are never sent.',
+        )}
       </p>
     </form>
   )
@@ -184,18 +187,19 @@ function TargetSelect({
   onChange: (value: string) => void
   options: Array<{ value: string; label: string }>
 }) {
+  const t = useT()
   return (
     <label className="grid gap-1 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-      {label}
+      {t(label)}
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className="h-9 rounded-[3px] border border-border bg-background px-2 text-xs normal-case tracking-normal text-foreground"
       >
-        <option value="">Any</option>
+        <option value="">{t('Any')}</option>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
-            {option.label}
+            {t(option.label)}
           </option>
         ))}
       </select>

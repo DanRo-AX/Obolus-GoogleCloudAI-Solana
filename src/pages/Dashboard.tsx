@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/primitives'
 import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from '@/data/categories'
 import { STRIKE_LIMIT } from '@/data/onboarding'
+import { useT } from '@/i18n'
 import {
   ApiError,
   generateShelfStarters,
@@ -94,6 +95,7 @@ export default function Dashboard() {
     setBrowserAlerts,
     setEmailAlerts,
   } = useUi()
+  const t = useT()
   const navigate = useNavigate()
   const [params] = useSearchParams()
 
@@ -142,10 +144,10 @@ export default function Dashboard() {
       const result = await generateShelfStarters()
       setStarters(result.starters)
       if (result.status === 'unavailable') {
-        setStarterError('Vertex AI interview prompts are unavailable. No buyer demand or paid call was created.')
+        setStarterError(t('Vertex AI interview prompts are unavailable. No buyer demand or paid call was created.'))
       }
     } catch (error) {
-      setStarterError(error instanceof Error ? error.message : 'Could not create shelf starters.')
+      setStarterError(error instanceof Error ? error.message : t('Could not create shelf starters.'))
     } finally {
       setStartersLoading(false)
     }
@@ -154,7 +156,7 @@ export default function Dashboard() {
   async function publishStarter(starter: ShelfStarter) {
     const answer = starterAnswers[starter.id]?.trim() ?? ''
     if (!answer) {
-      setStarterError('Write a firsthand answer before publishing it to your shelf.')
+      setStarterError(t('Write a firsthand answer before publishing it to your shelf.'))
       return
     }
     setSubmittingStarter(starter.id)
@@ -173,7 +175,7 @@ export default function Dashboard() {
       })
       await refreshLedger()
     } catch (error) {
-      setStarterError(error instanceof Error ? error.message : 'Could not publish this answer.')
+      setStarterError(error instanceof Error ? error.message : t('Could not publish this answer.'))
     } finally {
       setSubmittingStarter(null)
     }
@@ -202,7 +204,7 @@ export default function Dashboard() {
         [order.id]:
           error instanceof ApiError
             ? error.message
-            : 'The answers did not load. Try that button again.',
+            : t('The answers did not load. Try that button again.'),
       }))
     } finally {
       setAnswersLoading((current) => (current === order.id ? null : current))
@@ -284,15 +286,15 @@ export default function Dashboard() {
     <div className="page-enter flex-1 overflow-y-auto">
       <div className="space-y-5 p-4 sm:p-6">
         <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
-          <h1 className="font-sans text-base font-medium">Open calls</h1>
+          <h1 className="font-sans text-base font-medium">{t('Open calls')}</h1>
           <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
             <Coins className="size-3.5" />
-            Earned today{' '}
+            {t('Earned today')}{' '}
             <span className="tabular-nums text-foreground">
               ₩{earnedToday.toLocaleString()}
             </span>
             {balance ? (
-              <span className="text-muted-foreground">· ₩{balance.availableKrw.toLocaleString()} available</span>
+              <span className="text-muted-foreground">· ₩{balance.availableKrw.toLocaleString()} {t('available')}</span>
             ) : null}
           </div>
         </div>
@@ -301,8 +303,8 @@ export default function Dashboard() {
           <div className="grid gap-3 rounded-[6px] border border-border bg-card p-4 lg:grid-cols-3">
             <AlertPreference
               icon={Bell}
-              label="Browser alerts"
-              detail="Alerts this browser when an open call in your fields is posted."
+              label={t('Browser alerts')}
+              detail={t('Alerts this browser when an open call in your fields is posted.')}
               checked={
                 profile.browserAlerts === true &&
                 typeof Notification !== 'undefined' &&
@@ -311,26 +313,26 @@ export default function Dashboard() {
               onChange={(value) => {
                 setAlertError(null)
                 void setBrowserAlerts(value).catch((error) =>
-                  setAlertError(error instanceof Error ? error.message : 'The switch did not move. Try it again.'),
+                  setAlertError(error instanceof Error ? error.message : t('The switch did not move. Try it again.')),
                 )
               }}
             />
             <AlertPreference
               icon={Mail}
-              label="Email alerts"
-              detail="Emails you the open calls that match your fields."
+              label={t('Email alerts')}
+              detail={t('Emails you the open calls that match your fields.')}
               checked={profile.emailAlerts === true}
               onChange={(value) => {
                 setAlertError(null)
                 void setEmailAlerts(value).catch((error) =>
-                  setAlertError(error instanceof Error ? error.message : 'The switch did not move. Try it again.'),
+                  setAlertError(error instanceof Error ? error.message : t('The switch did not move. Try it again.')),
                 )
               }}
             />
             <AlertPreference
               icon={Bot}
-              label="Reuse from my shelf"
-              detail="Reuses an answer you already wrote, only when a call matches it 82% or more."
+              label={t('Reuse from my shelf')}
+              detail={t('Reuses an answer you already wrote, only when a call matches it 82% or more.')}
               checked={agents}
               onChange={setAgents}
             />
@@ -344,13 +346,15 @@ export default function Dashboard() {
           <div className="rounded-[6px] border border-[#0F766E]/25 bg-[#0F766E]/[0.04] p-4">
             <div className="flex items-center gap-2">
               <Bell className="size-4 text-[#0F766E]" />
-              <span className="text-sm font-medium">{unread.length} new update{unread.length > 1 ? 's' : ''}</span>
+              <span className="text-sm font-medium">
+                {unread.length} {unread.length > 1 ? t('new updates') : t('new update')}
+              </span>
               <button
                 type="button"
                 className="ml-auto cursor-pointer font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground hover:text-foreground"
                 onClick={() => void markNotificationsRead()}
               >
-                Mark all read
+                {t('Mark all read')}
               </button>
             </div>
             <div className="mt-3 grid gap-2 lg:grid-cols-3">
@@ -376,9 +380,9 @@ export default function Dashboard() {
             <div className="flex flex-wrap items-start gap-3">
               <Sparkles className="mt-0.5 size-4 text-[#5540BE]" />
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">Build human supply before a buyer arrives</p>
+                <p className="text-sm font-medium">{t('Build human supply before a buyer arrives')}</p>
                 <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
-                  Gemini on Vertex AI receives only your broad field and opted-in categories and creates interview prompts only. There is no buyer waiting and no guaranteed upfront reward. Your firsthand answer—not the AI prompt—becomes a priced human document that can earn when opened later.
+                  {t('Gemini on Vertex AI receives only your broad field and opted-in categories and creates interview prompts only. There is no buyer waiting and no guaranteed upfront reward. Your firsthand answer—not the AI prompt—becomes a priced human document that can earn when opened later.')}
                 </p>
               </div>
               <Button
@@ -388,8 +392,8 @@ export default function Dashboard() {
                 disabled={startersLoading || starters.length > 0}
               >
                 {startersLoading ? (
-                  <><Loader2 className="size-3 animate-spin" /> Interviewing…</>
-                ) : starters.length ? '3 prompts ready' : 'Create 3 shelf starters'}
+                  <><Loader2 className="size-3 animate-spin" /> {t('Interviewing…')}</>
+                ) : starters.length ? t('3 prompts ready') : t('Create 3 shelf starters')}
               </Button>
             </div>
 
@@ -398,7 +402,7 @@ export default function Dashboard() {
                 {starters.map((starter) => (
                   <div key={starter.id} className="flex flex-col rounded-[5px] border border-border bg-card p-4">
                     <div className="font-mono text-[9px] uppercase tracking-[1px] text-[#5540BE]">
-                      AI interview prompt · {CATEGORY_BY_ID[starter.category]?.label ?? starter.category}
+                      {t('AI interview prompt')} · {t(CATEGORY_BY_ID[starter.category]?.label ?? starter.category)}
                     </div>
                     <p className="mt-2 text-sm leading-6 text-foreground">{starter.prompt}</p>
                     <p className="mt-2 text-xs leading-5 text-muted-foreground">{starter.rationale}</p>
@@ -408,7 +412,7 @@ export default function Dashboard() {
                         ...current,
                         [starter.id]: event.target.value,
                       }))}
-                      placeholder="Write what actually happened. Include a place, time, number, or concrete outcome."
+                      placeholder={t('Write what actually happened. Include a place, time, number, or concrete outcome.')}
                       className="mt-3 min-h-28 resize-y rounded-[4px] border border-border bg-background p-3 text-sm leading-6 outline-none focus:border-foreground/35"
                       maxLength={10000}
                     />
@@ -428,7 +432,7 @@ export default function Dashboard() {
                             [starter.id]: price,
                           }))}
                         >
-                          ₩{price} future open
+                          ₩{price} {t('future open')}
                         </button>
                       ))}
                     </div>
@@ -439,7 +443,7 @@ export default function Dashboard() {
                       disabled={submittingStarter === starter.id}
                       onClick={() => void publishStarter(starter)}
                     >
-                      {submittingStarter === starter.id ? 'Publishing…' : 'Publish my human answer'}
+                      {submittingStarter === starter.id ? t('Publishing…') : t('Publish my human answer')}
                     </Button>
                   </div>
                 ))}
@@ -456,13 +460,13 @@ export default function Dashboard() {
           <SegTab
             active={tab === 'open'}
             onClick={() => setTab('open')}
-            label="Open to answer"
+            label={t('Open to answer')}
             count={openCount}
           />
           <SegTab
             active={tab === 'mine'}
             onClick={() => setTab('mine')}
-            label="Posted by me"
+            label={t('Posted by me')}
             count={mineCount}
           />
 
@@ -472,8 +476,8 @@ export default function Dashboard() {
                 type="button"
                 className="ml-auto flex h-9 cursor-pointer items-center gap-2 rounded-[2px] border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
-                Sort
-                <span className="text-foreground">{activeSort.label}</span>
+                {t('Sort')}
+                <span className="text-foreground">{t(activeSort.label)}</span>
                 <ChevronDown className="size-3.5" />
               </button>
             </DropdownMenuTrigger>
@@ -485,13 +489,13 @@ export default function Dashboard() {
                   className="flex-col items-start gap-0.5"
                 >
                   <span className="flex w-full items-center gap-2 text-sm">
-                    {s.label}
+                    {t(s.label)}
                     {sort === s.id ? (
                       <Check className="ml-auto size-3.5" />
                     ) : null}
                   </span>
                   <span className="text-xs text-muted-foreground">
-                    {s.hint}
+                    {t(s.hint)}
                   </span>
                 </DropdownMenuItem>
               ))}
@@ -505,7 +509,7 @@ export default function Dashboard() {
             <CatTab
               active={category === 'all'}
               onClick={() => setCategory('all')}
-              label="All"
+              label={t('All')}
               count={preCategory.length}
             />
             {CATEGORIES.map((c) => (
@@ -513,7 +517,7 @@ export default function Dashboard() {
                 key={c.id}
                 active={category === c.id}
                 onClick={() => setCategory(c.id)}
-                label={c.label}
+                label={t(c.label)}
                 count={counts.get(c.id) ?? 0}
                 accent={c.accent}
               />
@@ -528,14 +532,14 @@ export default function Dashboard() {
               key={p.value}
               active={minPay === p.value}
               onClick={() => setMinPay(p.value)}
-              label={p.label}
+              label={t(p.label)}
             />
           ))}
           <span className="mx-1 h-4 w-px bg-border" />
           <FilterChip
             active={hideFilled}
             onClick={() => setHideFilled((v) => !v)}
-            label="Hide filled"
+            label={t('Hide filled')}
           />
           <FilterChip
             active={fitsMe}
@@ -543,11 +547,11 @@ export default function Dashboard() {
               if (!profile) navigate('/onboarding')
               else setFitsMe((v) => !v)
             }}
-            label="Fits me"
+            label={t('Fits me')}
             muted={!profile}
           />
           <span className="ml-auto font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            {list.length} {list.length === 1 ? 'call' : 'calls'}
+            {list.length} {list.length === 1 ? t('call') : t('calls')}
           </span>
         </div>
 
@@ -556,13 +560,12 @@ export default function Dashboard() {
             <ShieldAlert className="size-4 shrink-0 text-destructive" />
             <p className="text-sm leading-relaxed text-muted-foreground">
               <span className="font-medium text-destructive">
-                Account suspended — {STRIKE_LIMIT} strikes.
+                {t('Account suspended —')} {STRIKE_LIMIT} {t('strikes.')}
               </span>{' '}
-              You cannot pick up calls, and SHELF-1 has stopped quoting your
-              documents. USDC that already settled stays in your wallet.
+              {t('You cannot pick up calls, and SHELF-1 has stopped quoting your documents. USDC that already settled stays in your wallet.')}
             </p>
             <Button asChild variant="monoMuted" size="monoSm" className="ml-auto">
-              <Link to="/memory">Review the strikes</Link>
+              <Link to="/memory">{t('Review the strikes')}</Link>
             </Button>
           </div>
         ) : null}
@@ -571,8 +574,7 @@ export default function Dashboard() {
           <div className="flex flex-wrap items-center gap-3 rounded-[6px] border border-border bg-foreground/[0.03] px-4 py-3">
             <UserRound className="size-4 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
-              You are reading signed out. Connect a wallet, name your fields, and
-              calls in them sort to the top.
+              {t('You are reading signed out. Connect a wallet, name your fields, and calls in them sort to the top.')}
             </p>
             <Button
               asChild
@@ -580,7 +582,7 @@ export default function Dashboard() {
               size="monoSm"
               className="ml-auto"
             >
-              <Link to="/login">Connect wallet</Link>
+              <Link to="/login">{t('Connect wallet')}</Link>
             </Button>
           </div>
         ) : null}
@@ -589,17 +591,17 @@ export default function Dashboard() {
           <div className="flex flex-col items-center justify-center gap-3 py-[16vh] text-center">
             <h2 className="font-sans text-lg font-medium">
               {tab === 'open'
-                ? 'Nothing open here right now'
-                : 'You have not posted anything'}
+                ? t('Nothing open here right now')
+                : t('You have not posted anything')}
             </h2>
             <p className="max-w-[340px] text-sm leading-relaxed text-muted-foreground">
               {tab === 'open'
-                ? 'No call matches these filters. Widen the category, or look at where the shelves are thin.'
-                : 'Ask something in chat, and if the shelves come up empty you can post a call right there.'}
+                ? t('No call matches these filters. Widen the category, or look at where the shelves are thin.')
+                : t('Ask something in chat, and if the shelves come up empty you can post a call right there.')}
             </p>
             <Button asChild variant="mono" size="mono" className="mt-2">
               <Link to={tab === 'open' ? '/coverage' : '/'}>
-                {tab === 'open' ? 'See thin shelves' : 'Ask something'}
+                {tab === 'open' ? t('See thin shelves') : t('Ask something')}
               </Link>
             </Button>
           </div>
@@ -633,14 +635,14 @@ export default function Dashboard() {
                         style={{ backgroundColor: cat?.accent }}
                       />
                       <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                        {cat?.label}
+                        {cat?.label ? t(cat.label) : null}
                       </span>
                       <Badge className="truncate px-1.5 py-0 uppercase tracking-[1px]">
                         {order.shelf}
                       </Badge>
                     </span>
                     <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                      Per answer{' '}
+                      {t('Per answer')}{' '}
                       <span className="text-foreground">
                         {order.unitPrice === 0
                           ? '₩0'
@@ -654,7 +656,7 @@ export default function Dashboard() {
                   </p>
                   {order.filters && Object.values(order.filters).some(Boolean) ? (
                     <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                      Who answers · {Object.entries(order.filters)
+                      {t('Who answers')} · {Object.entries(order.filters)
                         .filter(([, value]) => Boolean(value))
                         .map(([key, value]) => `${key.replace(/([A-Z])/g, ' $1')} ${value}`)
                         .join(' · ')}
@@ -662,7 +664,7 @@ export default function Dashboard() {
                   ) : null}
                   {profile && fits && (order.recommendationScore ?? 0) > 0 ? (
                     <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-[#0F766E]">
-                      Recommended · {Math.round((order.recommendationScore ?? 0) * 100)}% fit
+                      {t('Recommended')} · {Math.round((order.recommendationScore ?? 0) * 100)}% {t('fit')}
                       {order.recommendationReason?.[1]
                         ? ` · ${order.recommendationReason[1]}`
                         : ''}
@@ -680,23 +682,25 @@ export default function Dashboard() {
                     </div>
                     <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
                       {order.answered}/{order.target}
-                      {reservedByOthers > 0 ? ` · ${reservedByOthers} held` : ''}
+                      {reservedByOthers > 0 ? (
+                        <> · {reservedByOthers} {t('slots held')}</>
+                      ) : null}
                     </span>
                   </div>
 
                   <div className="mt-3 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
                     <Clock className="size-3" />
-                    {relative(order.createdAt)}
+                    {relative(order.createdAt, t)}
                     {order.escrowMode === 'x402_solana_escrow' && !cancelled ? (
-                      <span className="text-[#0F766E]">Devnet USDC escrow</span>
+                      <span className="text-[#0F766E]">{t('Devnet USDC escrow')}</span>
                     ) : null}
                     {cancelled ? (
                       <span className="ml-auto text-muted-foreground">
-                        Cancelled · refund in your wallet
+                        {t('Cancelled · refund in your wallet')}
                       </span>
                     ) : done ? (
                       <span className="ml-auto inline-flex items-center gap-1 text-[#0F766E]">
-                        <Check className="size-3" /> Filled
+                        <Check className="size-3" /> {t('Filled')}
                       </span>
                     ) : profile && tab === 'open' ? (
                       <span
@@ -705,7 +709,7 @@ export default function Dashboard() {
                           fits ? 'text-[#0F766E]' : 'text-muted-foreground/70',
                         )}
                       >
-                        {fits ? 'Fits you' : 'Outside your fields'}
+                        {fits ? t('Fits you') : t('Outside your fields')}
                       </span>
                     ) : null}
                   </div>
@@ -734,14 +738,14 @@ export default function Dashboard() {
                       }
                     >
                       {opening === order.id
-                        ? 'Picking it up…'
+                        ? t('Picking it up…')
                         : profile
                           ? fullyReserved
-                            ? 'All remaining slots held'
+                            ? t('All remaining slots held')
                             : fits
-                            ? 'Answer'
-                            : 'Outside your fields'
-                          : 'Set up profile'}
+                            ? t('Answer')
+                            : t('Outside your fields')
+                          : t('Set up profile')}
                     </Button>
                   ) : null}
 
@@ -757,15 +761,15 @@ export default function Dashboard() {
                           >
                             <MessageSquareText className="size-3.5" />
                             {answersLoading === order.id
-                              ? 'Loading answers…'
+                              ? t('Loading answers…')
                               : answerPanels[order.id]
-                                ? 'Hide the answers'
-                                : `Read the answers · ${order.answered}`}
+                                ? t('Hide the answers')
+                                : <>{t('Read the answers')} · {order.answered}</>}
                           </Button>
                         ) : null}
                         {order.chatId && chats.some((chat) => chat.id === order.chatId) ? (
                           <Button asChild variant="monoGhost" size="monoSm">
-                            <Link to={`/chat/${order.chatId}`}>Back to the question</Link>
+                            <Link to={`/chat/${order.chatId}`}>{t('Back to the question')}</Link>
                           </Button>
                         ) : null}
                         {order.status !== 'filled' && order.status !== 'cancelled' ? (
@@ -774,7 +778,7 @@ export default function Dashboard() {
                             size="monoSm"
                             onClick={() => void cancelOrder(order.id)}
                           >
-                            Cancel · ₩{(order.escrowRemainingKrw ?? 0).toLocaleString()} back to your wallet
+                            {t('Cancel')} · ₩{(order.escrowRemainingKrw ?? 0).toLocaleString()} {t('back to your wallet')}
                           </Button>
                         ) : null}
                       </div>
@@ -802,7 +806,7 @@ export default function Dashboard() {
                                     </span>
                                   ) : null}
                                   <span className="ml-auto tabular-nums">
-                                    ₩{answer.price.toLocaleString()} settled
+                                    ₩{answer.price.toLocaleString()} {t('settled')}
                                   </span>
                                 </div>
                                 <p className="mt-2 text-sm leading-relaxed text-foreground">
@@ -813,7 +817,7 @@ export default function Dashboard() {
                           </div>
                         ) : (
                           <p className="border-t border-border pt-3 text-xs leading-relaxed text-muted-foreground">
-                            No answers in yet. The call stays open, and it is here on any device you sign in from.
+                            {t('No answers in yet. The call stays open, and it is here on any device you sign in from.')}
                           </p>
                         )
                       ) : null}
@@ -952,10 +956,11 @@ function AlertPreference({
   )
 }
 
-function relative(ts: number) {
+/** Not a component, so the translator arrives as an argument, not a hook. */
+function relative(ts: number, t: (en: string) => string) {
   const min = Math.round((Date.now() - ts) / 60000)
-  if (min < 60) return `${Math.max(1, min)}m ago`
+  if (min < 60) return `${Math.max(1, min)}${t('m ago')}`
   const hr = Math.round(min / 60)
-  if (hr < 24) return `${hr}h ago`
-  return `${Math.round(hr / 24)}d ago`
+  if (hr < 24) return `${hr}${t('h ago')}`
+  return `${Math.round(hr / 24)}${t('d ago')}`
 }

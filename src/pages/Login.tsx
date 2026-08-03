@@ -83,22 +83,22 @@ export default function Login() {
     <div className="grid min-h-svh lg:grid-cols-2">
       <div className="flex flex-col gap-4 p-6 md:p-10">
         <Link to="/" className="flex w-fit items-center gap-2">
-          <span className="flex size-7 items-center justify-center rounded-[8px] bg-foreground">
+          <span className="flex size-8 items-center justify-center rounded-[9px] bg-foreground">
             <img
               className="invert"
               src="/OBOLUS-MARK-SM.svg"
               alt=""
-              width={16}
-              height={16}
+              width={20}
+              height={20}
             />
           </span>
-          <span className="font-mono text-xs font-semibold uppercase tracking-[1.5px]">
+          <span className="text-[15px] font-semibold tracking-[-0.02em]">
             Obolus
           </span>
         </Link>
 
         <div className="flex flex-1 items-center justify-center">
-          <div className="w-full max-w-sm">
+          <div className="w-full max-w-[26rem]">
             <p className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
               {t('Sign in')}
             </p>
@@ -112,7 +112,7 @@ export default function Login() {
                 </p>
               </div>
             ) : null}
-            <h1 className="mt-4 font-display text-[30px] leading-tight">
+            <h1 className="mt-3 font-display text-[34px] leading-[1.12]">
               {t('Your wallet is the account')}
             </h1>
             <p className="mt-3 text-[15px] leading-7 text-muted-foreground">
@@ -231,12 +231,23 @@ export default function Login() {
         <div className="absolute inset-0 bg-[#08070F]">
           <GlitterWrap style={{ backgroundColor: '#08070F' }} />
         </div>
-        <div className="absolute inset-x-0 bottom-0 p-10 mix-blend-difference">
-          <p className="max-w-md font-display text-[22px] leading-snug text-white">
+        <div className="absolute inset-x-0 bottom-0 flex flex-col gap-6 p-10">
+          <p className="max-w-md font-display text-[24px] leading-[1.3] text-white mix-blend-difference">
             {t(
-              'The wallet is the account. We never hold a key, and there is nothing to reset.',
+              'Money here moves between two people. We are the thing that introduced them, not the thing holding it.',
             )}
           </p>
+          <div className="flex flex-wrap gap-x-8 gap-y-2 border-t border-white/15 pt-5 font-mono text-[10px] uppercase tracking-[1.4px] text-white/45">
+            <span>
+              {t('Settles on')} <span className="text-white/80">Solana</span>
+            </span>
+            <span>
+              {t('Paid in')} <span className="text-white/80">USDC</span>
+            </span>
+            <span>
+              {t('Per open')} <span className="text-white/80">₩5–₩20</span>
+            </span>
+          </div>
         </div>
       </div>
     </div>
