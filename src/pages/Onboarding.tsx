@@ -26,6 +26,7 @@ import {
   suggestHandle,
   type Option,
 } from '@/data/onboarding'
+import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
 import {
@@ -48,6 +49,7 @@ export default function Onboarding() {
   const navigate = useNavigate()
   const { saveProfile, profile, account, authReady } = useUi()
   const wallet = useWallet()
+  const t = useT()
 
   const [step, setStep] = useState(0)
   const [handle, setHandle] = useState(() => profile?.handle ?? suggestHandle())
@@ -106,7 +108,9 @@ export default function Onboarding() {
       window.setTimeout(() => navigate('/dashboard'), 1400)
     } catch (error) {
       setSaveError(
-        error instanceof Error ? error.message : 'The profile could not be saved.',
+        error instanceof Error
+          ? error.message
+          : t('The profile did not save. Try again.'),
       )
     } finally {
       setSaving(false)
@@ -134,7 +138,7 @@ export default function Onboarding() {
   if (!authReady) {
     return <div className="flex flex-1 items-center justify-center"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
   }
-  if (!account) return <Navigate to="/login?mode=signup" replace />
+  if (!account) return <Navigate to="/login" replace />
 
   if (done) {
     return (
@@ -144,12 +148,12 @@ export default function Onboarding() {
             <Check className="size-5 text-[#0F766E]" />
           </span>
           <h1 className="font-display text-2xl font-medium">
-            You are {handle.trim().toUpperCase()}
+            {t('You are')} {handle.trim().toUpperCase()}
           </h1>
           <p className="text-sm leading-relaxed text-muted-foreground">
-            Calls in your fields will surface first on the dashboard. Discovery
-            shows only your anonymous handle and selected bands; a buyer sees a
-            passage only after paying its committed quote.
+            {t(
+              'Open calls in your fields show up first. An asker sees your handle and these bands, nothing else — the passage only after they pay to open it.',
+            )}
           </p>
         </div>
       </div>
@@ -167,7 +171,7 @@ export default function Onboarding() {
           />
         </div>
         <div className="flex items-center justify-between px-4 py-2.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground sm:px-6">
-          <span>Setting up your account</span>
+          <span>{t('Before you answer')}</span>
           <span className="tabular-nums">
             {step + 1} / {TOTAL}
           </span>
@@ -182,8 +186,10 @@ export default function Onboarding() {
 
           {step === 0 ? (
             <Screen
-              title="Pick a handle"
-              note="This is the entire identity a buyer sees next to your passage. No name, no email, no photo — ever."
+              title={t('Pick a handle')}
+              note={t(
+                'This is the whole identity an asker sees beside your passage. No name, no email, no photo — ever.',
+              )}
             >
               <div className="flex items-center gap-2">
                 <input
@@ -199,7 +205,7 @@ export default function Onboarding() {
                   type="button"
                 >
                   <Dice5 className="size-3.5" />
-                  Shuffle
+                  {t('Shuffle')}
                 </Button>
               </div>
             </Screen>
@@ -207,16 +213,18 @@ export default function Onboarding() {
 
           {step === 1 ? (
             <Screen
-              title="A little about you"
-              note="Bands, not values. Enough for a buyer to judge whether an answer came from someone in that situation."
+              title={t('Three bands about you')}
+              note={t(
+                'Bands, not exact numbers. Enough for an asker to tell whether an answer came from someone in that situation.',
+              )}
             >
-              <Group label="Age">
+              <Group label={t('Age')}>
                 <Chips options={AGE_BANDS} value={ageBand} onPick={setAgeBand} />
               </Group>
-              <Group label="Where you live">
+              <Group label={t('Where you live')}>
                 <Chips options={REGIONS} value={region} onPick={setRegion} />
               </Group>
-              <Group label="Household">
+              <Group label={t('Household')}>
                 <Chips
                   options={HOUSEHOLDS}
                   value={household}
@@ -228,8 +236,10 @@ export default function Onboarding() {
 
           {step === 2 ? (
             <Screen
-              title="What do you do?"
-              note="Your own line of work. It carries the most weight when a call in that field goes looking for people."
+              title={t('What do you do?')}
+              note={t(
+                'Your own line of work. Open calls in this field reach you first.',
+              )}
             >
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {CATEGORIES.map((c) => (
@@ -248,11 +258,11 @@ export default function Onboarding() {
                       className="size-4 shrink-0"
                       style={{ color: c.accent }}
                     />
-                    {c.label}
+                    {t(c.label)}
                   </button>
                 ))}
               </div>
-              <Group label="How long">
+              <Group label={t('How long')}>
                 <Chips options={YEAR_BANDS} value={years} onPick={setYears} />
               </Group>
             </Screen>
@@ -260,8 +270,10 @@ export default function Onboarding() {
 
           {step === 3 ? (
             <Screen
-              title="What can you answer?"
-              note="Pick anything you have actually lived through, not only your job. These decide which open calls reach you first."
+              title={t('What can you answer?')}
+              note={t(
+                'Pick anything you have actually lived through, not only your job. These decide which open calls reach you first.',
+              )}
             >
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {CATEGORIES.map((c) => {
@@ -299,10 +311,10 @@ export default function Onboarding() {
                             className="size-3.5"
                             style={{ color: c.accent }}
                           />
-                          {c.label}
+                          {t(c.label)}
                         </span>
                         <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
-                          {c.blurb}
+                          {t(c.blurb)}
                         </span>
                       </span>
                     </button>
@@ -314,24 +326,26 @@ export default function Onboarding() {
 
           {step === 4 ? (
             <Screen
-              title="Where the money lands"
-              note="Settlement is Devnet USDC over x402. You can save a payout address now and verify ownership after onboarding, or skip it. The hosted website currently uses Phantom; external agents may link a locally protected Pay account through SIWX."
+              title={t('Where the money lands')}
+              note={t(
+                'USDC lands in the wallet you name here, over x402 on Solana devnet. Save one now, verify ownership later, or skip this screen. This site connects Phantom; an outside agent can link its own locally held Pay account over SIWX.',
+              )}
             >
               {wallet.pubkey ? (
                 <div className="space-y-3 rounded-[6px] border border-border p-4">
                   <div className="flex flex-wrap items-center gap-3">
                     <span className="size-2 shrink-0 rounded-full bg-[#0F766E]" />
                     <span className="font-mono text-sm">
-                      Browser wallet · {shortKey(wallet.pubkey)}
+                      {t('Browser wallet')} · {shortKey(wallet.pubkey)}
                     </span>
                     <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
                       devnet
                     </span>
                   </div>
                   <p className="text-[13px] leading-relaxed text-muted-foreground">
-                    Connecting the extension does not change your OPENSHELF payout
-                    profile. Choose explicitly whether this address should receive
-                    earnings for this account.
+                    {t(
+                      'Connecting the extension does not set a payout address. Tell us whether your earnings should land in this wallet.',
+                    )}
                   </p>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
@@ -357,7 +371,11 @@ export default function Onboarding() {
                             : 'block',
                         )}
                       />
-                      <span>Use this as payout address</span>
+                      <span>
+                        {payoutWallet === wallet.pubkey
+                          ? t('Payouts land here')
+                          : t('Use for payouts')}
+                      </span>
                     </Button>
                     <Button
                       variant="monoGhost"
@@ -365,12 +383,13 @@ export default function Onboarding() {
                       onClick={() => setPayoutWallet('')}
                       type="button"
                     >
-                      Skip for now
+                      {t('Skip for now')}
                     </Button>
                   </div>
                   {payoutWallet && payoutWallet !== wallet.pubkey ? (
                     <p className="font-mono text-[11px] text-muted-foreground">
-                      Existing payout address kept · {shortKey(payoutWallet)}
+                      {t('Existing payout address kept')} ·{' '}
+                      {shortKey(payoutWallet)}
                     </p>
                   ) : null}
                 </div>
@@ -385,17 +404,17 @@ export default function Onboarding() {
                       type="button"
                     >
                       <Wallet className="size-3.5" />
-                      {wallet.connecting ? 'Connecting…' : 'Connect browser wallet'}
+                      {wallet.connecting ? t('Connecting…') : t('Connect wallet')}
                     </Button>
                   ) : (
                     <a
                       href={PHANTOM_INSTALL_URL}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex h-9 items-center gap-2 rounded-[2px] bg-foreground px-3 font-mono text-xs uppercase tracking-[1px] text-background transition-colors hover:bg-foreground/85"
+                      className="inline-flex h-9 items-center gap-2 rounded-[2px] bg-foreground px-3.5 text-sm font-medium text-background transition-colors hover:bg-foreground/85"
                     >
                       <Wallet className="size-3.5" />
-                      Install Phantom
+                      {t('Install Phantom')}
                       <ExternalLink className="size-3" />
                     </a>
                   )}
@@ -405,17 +424,16 @@ export default function Onboarding() {
                     </p>
                   ) : null}
                   <p className="mt-3 text-[13px] leading-relaxed text-muted-foreground">
-                    Nothing is signed on this screen — only the public key is read.
-                    Payout ownership is verified separately with signMessage. A fresh
-                    devnet wallet has neither the SOL for fees nor the USDC to
-                    settle with:{' '}
+                    {t(
+                      'Nothing is signed here — only the public key is read. You verify ownership later with one signMessage. A fresh devnet wallet has no SOL for fees and no USDC to settle with:',
+                    )}{' '}
                     <a
                       href={DEVNET_FAUCETS.sol}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="underline decoration-dotted underline-offset-4 hover:text-foreground"
                     >
-                      SOL faucet
+                      {t('SOL faucet')}
                     </a>
                     ,{' '}
                     <a
@@ -424,7 +442,7 @@ export default function Onboarding() {
                       rel="noopener noreferrer"
                       className="underline decoration-dotted underline-offset-4 hover:text-foreground"
                     >
-                      USDC faucet
+                      {t('USDC faucet')}
                     </a>
                     .
                   </p>
@@ -435,22 +453,22 @@ export default function Onboarding() {
 
           {step === 5 ? (
             <Screen
-              title="Three strikes and the account stops"
-              note={CONDUCT_SUMMARY}
+              title={t('Three strikes and the account stops')}
+              note={t(CONDUCT_SUMMARY)}
             >
               <div className="rounded-[6px] border border-destructive/25 bg-destructive/[0.04] p-5">
                 <p className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[1px] text-destructive">
                   <ShieldAlert className="size-3.5" />
-                  What earns a strike
+                  {t('What earns a strike')}
                 </p>
                 <ul className="mt-4 space-y-4">
                   {STRIKE_RULES.map((r) => (
                     <li key={r.title} className="flex gap-3">
                       <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
                       <div>
-                        <p className="text-sm font-medium">{r.title}</p>
+                        <p className="text-sm font-medium">{t(r.title)}</p>
                         <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                          {r.body}
+                          {t(r.body)}
                         </p>
                       </div>
                     </li>
@@ -483,10 +501,10 @@ export default function Onboarding() {
                             : 'text-foreground',
                         )}
                       >
-                        {s.title}
+                        {t(s.title)}
                       </p>
                       <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                        {s.body}
+                        {t(s.body)}
                       </p>
                     </div>
                   </div>
@@ -514,9 +532,9 @@ export default function Onboarding() {
                   />
                 </span>
                 <span className="text-sm leading-relaxed">
-                  I have read the three rules above. I will only answer about
-                  things I have actually lived, and I accept that three confirmed
-                  strikes suspends the account.
+                  {t(
+                    'I have read the three rules above. I will only answer about things I have actually lived, and I accept that three confirmed strikes suspends the account.',
+                  )}
                 </span>
               </button>
             </Screen>
@@ -533,7 +551,7 @@ export default function Onboarding() {
               type="button"
             >
               <ArrowLeft className="size-3.5" />
-              Back
+              {t('Back')}
             </Button>
           ) : null}
           <Button
@@ -553,7 +571,13 @@ export default function Onboarding() {
             <ArrowRight
               className={cn('size-3.5', saving ? 'hidden' : 'block')}
             />
-            <span>{step === TOTAL - 1 ? 'Agree and finish' : 'Continue'}</span>
+            <span>
+              {saving
+                ? t('Saving…')
+                : step === TOTAL - 1
+                  ? t('Agree and finish')
+                  : t('Continue')}
+            </span>
           </Button>
           <span className="hidden items-center gap-1 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground sm:flex">
             <CornerDownLeft className="size-3" />
@@ -616,6 +640,7 @@ function Chips({
   value: string
   onPick: (v: string) => void
 }) {
+  const t = useT()
   return (
     <div className="flex flex-wrap gap-2">
       {options.map((o) => (
@@ -630,7 +655,7 @@ function Chips({
               : 'border-border text-muted-foreground hover:border-foreground/20 hover:text-foreground',
           )}
         >
-          {o.label}
+          {t(o.label)}
         </button>
       ))}
     </div>

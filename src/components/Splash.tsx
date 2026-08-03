@@ -45,7 +45,7 @@ export function Splash() {
         }}
       >
         <span className="font-display text-[34px] font-semibold tracking-tight text-white sm:text-[44px]">
-          OPENSHELF
+          Obolus
         </span>
         <span className="mb-1 block h-1.5 w-1.5 animate-pulse rounded-full bg-[#866FF2]" />
       </div>

@@ -10,8 +10,8 @@ import { AppLayout } from '@/components/AppLayout'
 import { Splash } from '@/components/Splash'
 import { TooltipProvider } from '@/components/ui/primitives'
 import { UiProvider } from '@/state/ui'
-
 const AdminDisputes = lazy(() => import('@/pages/AdminDisputes'))
+const Archive = lazy(() => import('@/pages/Archive'))
 const Chat = lazy(() => import('@/pages/Chat'))
 const Coverage = lazy(() => import('@/pages/Coverage'))
 const Dashboard = lazy(() => import('@/pages/Dashboard'))
@@ -22,27 +22,26 @@ const LegalPage = lazy(() =>
 const Login = lazy(() => import('@/pages/Login'))
 const Memory = lazy(() => import('@/pages/Memory'))
 const Onboarding = lazy(() => import('@/pages/Onboarding'))
-const Pricing = lazy(() => import('@/pages/Pricing'))
 const Shelf1 = lazy(() => import('@/pages/Shelf1'))
 const Survey = lazy(() => import('@/pages/Survey'))
 
 const TITLES: Record<string, string> = {
-  '/': 'OPENSHELF — The internet, as a database',
-  '/dashboard': 'Dashboard · OPENSHELF',
-  '/memory': 'My memory · OPENSHELF',
-  '/onboarding': 'Set up your account · OPENSHELF',
-  '/coverage': 'Coverage · OPENSHELF',
-  '/pricing': 'Pricing · OPENSHELF',
-  '/whitepaper': 'Whitepaper · OPENSHELF',
-  '/terms': 'Terms · OPENSHELF',
-  '/privacy': 'Privacy · OPENSHELF',
-  '/login': 'OPENSHELF',
+  '/': 'Obolus — The internet, as a database',
+  '/dashboard': 'Dashboard · Obolus',
+  '/archive': 'Archive · Obolus',
+  '/memory': 'My memory · Obolus',
+  '/onboarding': 'Set up your account · Obolus',
+  '/coverage': 'Coverage · Obolus',
+  '/whitepaper': 'Whitepaper · Obolus',
+  '/terms': 'Terms · Obolus',
+  '/privacy': 'Privacy · Obolus',
+  '/login': 'Obolus',
 }
 
 function DocumentTitle() {
   const { pathname } = useLocation()
   useEffect(() => {
-    document.title = TITLES[pathname] ?? 'OPENSHELF — The internet, as a database'
+    document.title = TITLES[pathname] ?? 'Obolus — The internet, as a database'
   }, [pathname])
   return null
 }
@@ -61,6 +60,7 @@ export default function App() {
                 <Route path="/" element={<Home />} />
                 <Route path="/chat/:id" element={<Chat />} />
                 <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/archive" element={<Archive />} />
                 <Route path="/memory" element={<Memory />} />
                 <Route path="/onboarding" element={<Onboarding />} />
                 <Route path="/answer/:orderId" element={<Survey />} />
@@ -70,7 +70,6 @@ export default function App() {
                   path="/shelf"
                   element={<Navigate to="/coverage" replace />}
                 />
-                <Route path="/pricing" element={<Pricing />} />
                 <Route path="/whitepaper" element={<Shelf1 />} />
                 <Route
                   path="/shelf-1"

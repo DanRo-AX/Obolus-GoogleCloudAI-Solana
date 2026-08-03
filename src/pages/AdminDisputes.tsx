@@ -12,8 +12,10 @@ import {
 } from '@/lib/api'
 import { useUi } from '@/state/ui'
 import { shortKey } from '@/state/wallet'
+import { useT } from '@/i18n'
 
 export default function AdminDisputes() {
+  const t = useT()
   const { account, authReady, refreshLedger } = useUi()
   const [cases, setCases] = useState<DisputeCase[]>([])
   const [feedback, setFeedback] = useState<DocumentFeedback[]>([])
@@ -30,7 +32,11 @@ export default function AdminDisputes() {
         setFeedback(reports)
       })
       .catch((cause) =>
-        setError(cause instanceof Error ? cause.message : 'Could not load the review queue.'),
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : t('Could not load the review queue.'),
+        ),
       )
       .finally(() => setLoading(false))
   }, [account?.role])
@@ -54,7 +60,9 @@ export default function AdminDisputes() {
       )
       void refreshLedger().catch(() => undefined)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Dispute review failed.')
+      setError(
+        cause instanceof Error ? cause.message : t('Dispute review failed.'),
+      )
     } finally {
       setReviewing(null)
     }
@@ -74,7 +82,9 @@ export default function AdminDisputes() {
         current.map((item) => (item.id === feedbackId ? reviewed : item)),
       )
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Report review failed.')
+      setError(
+        cause instanceof Error ? cause.message : t('Report review failed.'),
+      )
     } finally {
       setReviewing(null)
     }
@@ -86,7 +96,9 @@ export default function AdminDisputes() {
         <div>
           <div className="flex items-center gap-2">
             <ShieldCheck className="size-4" />
-            <h1 className="font-sans text-base font-medium">Admin review queue</h1>
+            <h1 className="font-sans text-base font-medium">
+              {t('Admin review queue')}
+            </h1>
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
             Answer disputes can restore escrow. Paid-buyer reports can reduce a

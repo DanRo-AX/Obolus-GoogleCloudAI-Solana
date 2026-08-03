@@ -91,7 +91,7 @@ export async function openDocuments(req: OpenRequest): Promise<OpenResult> {
   try {
     response = await fetch(url)
   } catch {
-    throw new PaymentError('OPENSHELF settlement service is not reachable.')
+    throw new PaymentError('Obolus settlement service is not reachable.')
   }
   if (response.status === 402) {
     throw new PaymentError(
@@ -417,7 +417,7 @@ function researchResult(job: ResearchJobStatus): OpenResult {
   if (job.status === 'balance_refunded' && job.citations.length === 0) {
     window.localStorage.removeItem(PENDING_RESEARCH_KEY)
     throw new PaymentError(
-      `Pay.sh could not complete the job. ${Number(job.refundableAtomic) / 1_000_000} USDC was restored to your OPENSHELF prepaid balance.${job.failureReason ? ` ${job.failureReason}` : ''}`,
+      `Pay.sh could not complete the job. ${Number(job.refundableAtomic) / 1_000_000} USDC was restored to your Obolus prepaid balance.${job.failureReason ? ` ${job.failureReason}` : ''}`,
     )
   }
   if (job.status === 'refund_pending' && job.citations.length === 0) {

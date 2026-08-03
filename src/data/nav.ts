@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   Radar,
   MessageSquarePlus,
+  Archive,
   Notebook,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -19,9 +20,10 @@ export type NavItem = {
  * them. Anything outside this list was explicitly ruled out of scope.
  */
 export const NAV_ITEMS: NavItem[] = [
-  { to: '/', label: 'New question', Icon: MessageSquarePlus, end: true },
-  { to: '/dashboard', label: 'Dashboard', Icon: LayoutDashboard },
-  { to: '/memory', label: 'My memory', Icon: Notebook },
-  { to: '/coverage', label: 'Coverage', Icon: Radar },
-  { to: '/whitepaper', label: 'Whitepaper', Icon: FileText },
+  { to: '/', label: 'Ask', Icon: MessageSquarePlus, end: true },
+  { to: '/archive', label: 'Receipts', Icon: Archive },
+  { to: '/dashboard', label: 'Open calls', Icon: LayoutDashboard },
+  { to: '/memory', label: 'My shelf', Icon: Notebook },
+  { to: '/coverage', label: 'Thin shelves', Icon: Radar },
+  { to: '/whitepaper', label: 'The argument', Icon: FileText },
 ]

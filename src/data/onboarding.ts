@@ -68,11 +68,11 @@ export type Rule = { title: string; body: string }
 export const STRIKE_RULES: Rule[] = [
   {
     title: 'Made-up facts',
-    body: 'Answering about something you have not lived — a place you have not been, a job you have not done, a price you did not pay. The passage is kept and the buyer rates it, so this is checkable long after the payment cleared.',
+    body: 'Answering about something you have not lived — a place you have not been, a job you never did, a price you never paid. The passage stays up and the asker rates it, so this is checkable long after the payout landed.',
   },
   {
     title: 'Low-effort answers',
-    body: 'One line, the question restated, or anything a general model could have written without you. The whole product is the part only you know; an average answer is worth less than no answer.',
+    body: 'One line, the question restated, or anything any agent could have written without you. Only the part you lived gets opened, and opens are what pay you.',
   },
   {
     title: 'Copied text',
@@ -85,7 +85,7 @@ export const STRIKE_LADDER: Array<{ n: number; title: string; body: string }> = 
   {
     n: 1,
     title: 'Warning',
-    body: 'The answer is voided and the payment for it is reversed. You are told which rule it hit and you can dispute it once.',
+    body: 'The answer is voided and its payout reversed. You are told which rule it hit. You can dispute it once.',
   },
   {
     n: 2,
@@ -95,7 +95,7 @@ export const STRIKE_LADDER: Array<{ n: number; title: string; body: string }> = 
   {
     n: 3,
     title: 'Suspended',
-    body: 'The account is suspended. Your documents stop being quoted and stop earning. Any settled balance is still paid out.',
+    body: 'The account is suspended. Your documents stop being quoted and stop earning. Anything already settled still lands in your wallet.',
   },
 ]
 
@@ -103,4 +103,4 @@ export const STRIKE_LIMIT = 3
 export const AUTO_MATCH_STRIKE_LIMIT = 2
 
 export const CONDUCT_SUMMARY =
-  'Buyers rate every passage they open. A rating below the floor goes to review, and a confirmed one becomes a strike. Three strikes suspends the account.'
+  'Askers rate every passage they open. A rating below the floor goes to review, and a confirmed one becomes a strike. Three strikes suspends the account.'

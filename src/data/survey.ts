@@ -173,5 +173,5 @@ export const MAIN_GUIDANCE = {
     'Say what you did, not what people generally do.',
     'Leave it rough. Polishing it makes it worth less.',
   ],
-  dont: 'Skip the summary. Nobody is buying a summary.',
+  dont: 'Skip the summary. Nobody pays to open a summary.',
 }

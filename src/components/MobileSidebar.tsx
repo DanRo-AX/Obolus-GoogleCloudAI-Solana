@@ -3,11 +3,13 @@ import { LogIn, LogOut, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { NAV_ITEMS } from '@/data/nav'
 import { cn } from '@/lib/utils'
+import { useT } from '@/i18n'
 import { useUi } from '@/state/ui'
 
 /** Sheet version of the sidebar for viewports below md. */
 export function MobileSidebar() {
   const { mobileSidebar, setMobileSidebar, account, profile, signOut } = useUi()
+  const t = useT()
 
   return (
     <div
@@ -35,16 +37,16 @@ export function MobileSidebar() {
               to="/"
               className="flex h-11 w-full items-center gap-2 rounded-sm bg-white p-2.5 text-sm font-medium shadow-lg shadow-black/5"
             >
-              <span className="flex size-6 items-center justify-center rounded-[2px] bg-foreground">
+              <span className="flex size-6 items-center justify-center rounded-[7px] bg-foreground">
                 <img
                   className="invert"
-                  src="/SHELF-SYMBOL.svg"
-                  alt="OPENSHELF"
+                  src="/OBOLUS-MARK-SM.svg"
+                  alt="Obolus"
                   width={14}
                   height={14}
                 />
               </span>
-              <span className="truncate text-xs font-semibold">OPENSHELF</span>
+              <span className="truncate text-xs font-semibold">Obolus</span>
             </Link>
           </div>
         </div>
@@ -65,7 +67,7 @@ export function MobileSidebar() {
                     }
                   >
                     <Icon className="text-muted-foreground/60" />
-                    <span>{label}</span>
+                    <span>{t(label)}</span>
                   </NavLink>
                 </li>
               ))}
@@ -82,7 +84,7 @@ export function MobileSidebar() {
                     }
                   >
                     <ShieldCheck className="text-muted-foreground/60" />
-                    <span>Review queue</span>
+                    <span>{t('Disputes')}</span>
                   </NavLink>
                 </li>
               ) : null}
@@ -94,13 +96,13 @@ export function MobileSidebar() {
             <div className="flex gap-2">
               <Button asChild variant="mono" size="mono" className="flex-1">
                 <Link to={profile ? '/memory' : '/onboarding'}>
-                  {profile?.handle ?? 'Set up profile'}
+                  {profile?.handle ?? t('Set up your shelf')}
                 </Link>
               </Button>
               <Button
                 variant="monoMuted"
                 size="mono"
-                aria-label="Sign out"
+                aria-label={t('Disconnect Phantom')}
                 onClick={() => void signOut()}
               >
                 <LogOut className="size-4" />
@@ -109,13 +111,13 @@ export function MobileSidebar() {
           ) : <div className="flex gap-2">
             <Button
               asChild
-              className="h-11 flex-1 rounded-[2px] border border-foreground/80 bg-foreground/85 px-4 font-mono text-xs uppercase tracking-[1px] text-background hover:bg-foreground/75"
+              className="h-11 flex-1 rounded-[2px] border border-foreground/80 bg-foreground/85 px-4 text-xs text-background hover:bg-foreground/75"
             >
-              <Link to="/login?mode=signup">Start free</Link>
+              <Link to="/login">{t('Connect wallet')}</Link>
             </Button>
             <Button
               asChild
-              aria-label="Sign in"
+              aria-label={t('Connect a Phantom wallet you already have')}
               className="size-11 rounded-[2px] border border-foreground/5 bg-muted p-0 font-mono uppercase text-foreground hover:bg-muted/90"
             >
               <Link to="/login">
@@ -123,12 +125,6 @@ export function MobileSidebar() {
               </Link>
             </Button>
           </div>}
-          <Button
-            asChild
-            className="h-11 w-full rounded-[2px] border border-foreground/5 bg-muted px-4 font-mono text-xs uppercase tracking-[1px] text-foreground hover:bg-muted/90"
-          >
-            <Link to="/pricing">Pricing</Link>
-          </Button>
         </div>
       </div>
     </div>

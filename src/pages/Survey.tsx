@@ -14,6 +14,7 @@ import { CATEGORY_BY_ID } from '@/data/categories'
 import { AGE_BANDS, HOUSEHOLDS, REGIONS } from '@/data/onboarding'
 import { AUTO_MATCH_STRIKE_LIMIT, STRIKE_LIMIT } from '@/data/onboarding'
 import { MAIN_GUIDANCE, warmupsFor, type Warmup } from '@/data/survey'
+import { useT } from '@/i18n'
 import { assess, type Issue } from '@/lib/quality'
 import {
   BACKEND_ENABLED,
@@ -35,6 +36,7 @@ export default function Survey() {
   const { orderId } = useParams()
   const navigate = useNavigate()
   const { orders, answerOrder, profile, suspended, authReady } = useUi()
+  const t = useT()
   const order = orders.find((o) => o.id === orderId)
 
   const warmups = useMemo(() => warmupsFor(order?.shelf ?? ''), [order?.shelf])
@@ -74,7 +76,9 @@ export default function Survey() {
       } catch (error) {
         if (!cancelled) {
           setReservationError(
-            error instanceof Error ? error.message : 'A slot could not be reserved.',
+            error instanceof Error
+              ? error.message
+              : t('This call had no slot left to hold.'),
           )
         }
       }
@@ -99,7 +103,7 @@ export default function Survey() {
     return (
       <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
         <Loader2 className="mr-2 size-4 animate-spin" />
-        Loading your call…
+        {t('Opening the call…')}
       </div>
     )
   }
@@ -145,7 +149,9 @@ export default function Survey() {
       setDone(true)
     } catch (error) {
       setSubmitError(
-        error instanceof Error ? error.message : 'The answer could not be saved.',
+        error instanceof Error
+          ? error.message
+          : t('The answer did not save. Send it again.'),
       )
     } finally {
       setSubmitting(false)
@@ -160,23 +166,28 @@ export default function Survey() {
             <ShieldAlert className="size-5 text-destructive" />
           </span>
           <h1 className="font-display text-2xl font-medium">
-            Strike issued — the answer was voided
+            {t('Strike issued — the answer was voided')}
           </h1>
           <p className="text-[15px] leading-7 text-muted-foreground">
-            The ₩{order.unitPrice.toLocaleString()} was reversed and the slot
-            stayed open. It is in your memory marked voided, and you can spend
-            your one dispute on it there.
+            {t('The')} ₩{order.unitPrice.toLocaleString()}
+            {t(
+              ' was reversed and the slot stayed open. It sits on your shelf marked voided —',
+            )}{' '}
+            {STRIKE_LIMIT}
+            {t(
+              ' strikes suspends the account. You can dispute this once, from there.',
+            )}
           </p>
           <div className="mt-2 flex gap-2">
             <Button variant="mono" size="mono" onClick={() => navigate('/memory')}>
-              See the strike
+              {t('See the strike')}
             </Button>
             <Button
               variant="monoMuted"
               size="mono"
               onClick={() => navigate('/dashboard')}
             >
-              Back to calls
+              {t('Back to calls')}
             </Button>
           </div>
         </div>
@@ -193,25 +204,28 @@ export default function Survey() {
             <Check className="size-5 text-[#0F766E]" />
           </span>
           <h1 className="font-display text-2xl font-medium">
-            {held
-              ? `₩${order.unitPrice.toLocaleString()} accrued · held 14 days`
-              : `₩${order.unitPrice.toLocaleString()} is yours`}
+            ₩{order.unitPrice.toLocaleString()}
+            {held ? t(' accrued · held 14 days') : t(' is yours')}
           </h1>
           <p className="text-[15px] leading-7 text-muted-foreground">
             {held
-              ? 'The answer is in your memory, but the two-strike restriction pauses auto-match and holds this new payout for 14 days.'
-              : 'It is in your memory now. From here it can be quoted without you answering anything again — that is where the rest of the money comes from.'}
+              ? t(
+                  'The answer is on your shelf. At strike 2 of 3 auto-match pauses, so this payout is held 14 days before it moves.',
+                )
+              : t(
+                  'It sits on your shelf now. SHELF-1 can quote it without you writing anything again — each open lands USDC in your wallet.',
+                )}
           </p>
           <div className="mt-2 flex gap-2">
             <Button variant="mono" size="mono" onClick={() => navigate('/memory')}>
-              See my memory
+              {t('See my shelf')}
             </Button>
             <Button
               variant="monoMuted"
               size="mono"
               onClick={() => navigate('/dashboard')}
             >
-              Next open call
+              {t('Next open call')}
             </Button>
           </div>
         </div>
@@ -248,11 +262,11 @@ export default function Survey() {
         </div>
         <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
           {step + 1}/{total}
-          {reservationExpiresAt ? ' · slot held 10 min' : ''}
+          {reservationExpiresAt ? t(' · slot held 10 min') : ''}
         </span>
         <button
           type="button"
-          aria-label="Leave"
+          aria-label={t('Leave')}
           onClick={() => navigate('/dashboard')}
           className="cursor-pointer text-muted-foreground transition-colors hover:text-foreground"
         >
@@ -264,7 +278,8 @@ export default function Survey() {
         <div key={step} className="animate-fade-in-up w-full max-w-xl">
           {reservationError ? (
             <div className="mb-6 rounded-[6px] border border-destructive/30 bg-destructive/[0.04] p-4 text-sm text-destructive">
-              {reservationError} Return to the dashboard and choose another call.
+              {reservationError}{' '}
+              {t('Go back to open calls and take a different one.')}
             </div>
           ) : null}
           {onLast ? (
@@ -291,7 +306,7 @@ export default function Survey() {
             <div className="mt-6 rounded-[6px] border border-destructive/30 bg-destructive/[0.04] p-4">
               <p className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[1px] text-destructive">
                 <ShieldAlert className="size-3.5" />
-                This would be flagged · {flags[0].rule}
+                {t('This would be flagged')} · {t(flags[0].rule)}
               </p>
               <ul className="mt-3 space-y-2">
                 {flags.map((f) => (
@@ -299,14 +314,15 @@ export default function Survey() {
                     key={f.detail}
                     className="text-[13px] leading-relaxed text-muted-foreground"
                   >
-                    {f.detail}
+                    {t(f.detail)}
                   </li>
                 ))}
               </ul>
               <p className="mt-3 text-[13px] leading-relaxed text-foreground/85">
-                Send it as it stands and the answer is voided, the payment is
-                reversed, and it counts as one of your {STRIKE_LIMIT} strikes.
-                Editing it clears this.
+                {t('Send it as it stands and the answer is voided, the')}{' '}
+                ₩{order.unitPrice.toLocaleString()}
+                {t(' reversed, and it counts as one of your')} {STRIKE_LIMIT}
+                {t(' strikes. Editing it clears this.')}
               </p>
             </div>
           ) : null}
@@ -319,7 +335,7 @@ export default function Survey() {
             {step > 0 ? (
               <Button variant="monoGhost" size="mono" onClick={back}>
                 <ArrowLeft className="size-3.5" />
-                Back
+                {t('Back')}
               </Button>
             ) : null}
 
@@ -334,17 +350,19 @@ export default function Survey() {
                 {submitting ? (
                   <>
                     <Loader2 className="size-3.5 animate-spin" />
-                    Saving…
+                    {t('Sending…')}
                   </>
                 ) : flags ? (
-                  'Send it anyway'
+                  t('Send it anyway')
                 ) : (
-                  `Submit and take ₩${order.unitPrice.toLocaleString()}`
+                  <>
+                    {t('Send and take')} ₩{order.unitPrice.toLocaleString()}
+                  </>
                 )}
               </Button>
             ) : (
               <Button variant="monoMuted" size="mono" onClick={advance}>
-                {answers[current.id] ? 'Next' : 'Skip'}
+                {answers[current.id] ? t('Next') : t('Skip')}
                 <ArrowRight className="size-3.5" />
               </Button>
             )}
@@ -377,16 +395,17 @@ function WarmupQuestion({
   onChange: (v: string) => void
   onPick: () => void
 }) {
+  const t = useT()
   return (
     <div>
       <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-        Warm-up {n} · one second each
+        {t('Warm-up')} {n} {t('· one second each')}
       </span>
       <h1 className="mt-3 font-display text-[25px] font-medium leading-snug sm:text-[29px]">
-        {warmup.prompt}
+        {t(warmup.prompt)}
       </h1>
       {warmup.hint ? (
-        <p className="mt-2 text-sm text-muted-foreground">{warmup.hint}</p>
+        <p className="mt-2 text-sm text-muted-foreground">{t(warmup.hint)}</p>
       ) : null}
 
       <div className="mt-7">
@@ -410,7 +429,7 @@ function WarmupQuestion({
                 <span className="flex size-5 shrink-0 items-center justify-center rounded-[3px] bg-foreground/[0.07] font-mono text-[10px]">
                   {String.fromCharCode(65 + i)}
                 </span>
-                {opt}
+                {t(opt)}
               </button>
             ))}
           </div>
@@ -439,8 +458,8 @@ function WarmupQuestion({
               ))}
             </div>
             <div className="mt-2 flex justify-between text-xs text-muted-foreground">
-              <span>{warmup.low}</span>
-              <span>{warmup.high}</span>
+              <span>{t(warmup.low)}</span>
+              <span>{t(warmup.high)}</span>
             </div>
           </div>
         ) : null}
@@ -450,7 +469,7 @@ function WarmupQuestion({
             autoFocus
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            placeholder={warmup.placeholder}
+            placeholder={t(warmup.placeholder)}
             className="w-full border-b border-border bg-transparent pb-2 text-[19px] outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-foreground"
           />
         ) : null}
@@ -470,14 +489,15 @@ function MainQuestion({
   onChange: (v: string) => void
   inputRef: React.RefObject<HTMLTextAreaElement | null>
 }) {
+  const t = useT()
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded-[2px] bg-[#866FF2]/12 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[1px] text-[#5B44C7]">
-          {MAIN_GUIDANCE.eyebrow}
+          {t(MAIN_GUIDANCE.eyebrow)}
         </span>
         <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-          {order.shelf} · ₩{order.unitPrice.toLocaleString()}
+          {t(order.shelf)} · ₩{order.unitPrice.toLocaleString()}
         </span>
       </div>
 
@@ -492,7 +512,7 @@ function MainQuestion({
         rows={6}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="Write it the way it happened."
+        placeholder={t('Write it the way it happened.')}
         className="mt-6 w-full resize-none rounded-[4px] border border-border bg-card p-4 text-[15px] leading-relaxed outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-foreground/40"
       />
 
@@ -504,12 +524,12 @@ function MainQuestion({
               className="flex gap-2.5 text-[13px] leading-relaxed text-foreground/85"
             >
               <Check className="mt-0.5 size-3.5 shrink-0 text-[#0F766E]" />
-              {d}
+              {t(d)}
             </li>
           ))}
           <li className="flex gap-2.5 text-[13px] leading-relaxed text-muted-foreground">
             <X className="mt-0.5 size-3.5 shrink-0" />
-            {MAIN_GUIDANCE.dont}
+            {t(MAIN_GUIDANCE.dont)}
           </li>
         </ul>
       </div>
@@ -525,14 +545,15 @@ function MainQuestion({
  */
 function Identity() {
   const { profile } = useUi()
+  const t = useT()
   if (!profile) {
     return (
       <p className="mt-3 flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-        Answering anonymously —{' '}
+        {t('Answering anonymously —')}{' '}
         <Link to="/onboarding" className="underline underline-offset-2">
-          set up a profile
+          {t('set up a profile')}
         </Link>{' '}
-        so buyers can tell this came from someone who was there
+        {t('so the asker can tell you were there')}
       </p>
     )
   }
@@ -540,11 +561,12 @@ function Identity() {
     list.find((o) => o.value === v)?.label ?? v
   return (
     <p className="mt-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-      Answering as{' '}
+      {t('Answering as')}{' '}
       <span className="text-foreground">{profile.handle}</span> ·{' '}
-      {label(AGE_BANDS, profile.ageBand)} · {label(REGIONS, profile.region)} ·{' '}
-      {label(HOUSEHOLDS, profile.household)} ·{' '}
-      {CATEGORY_BY_ID[profile.field]?.label}
+      {t(label(AGE_BANDS, profile.ageBand))} ·{' '}
+      {t(label(REGIONS, profile.region))} ·{' '}
+      {t(label(HOUSEHOLDS, profile.household))} ·{' '}
+      {t(CATEGORY_BY_ID[profile.field]?.label ?? '')}
     </p>
   )
 }

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { Composer } from '@/components/Composer'
 import { Button } from '@/components/ui/button'
+import { useT } from '@/i18n'
 import {
   getChatAnswers,
   generateAiBaseline,
@@ -94,6 +95,7 @@ export default function Chat() {
     setMobileSidebar,
   } = useUi()
   const wallet = useWallet()
+  const t = useT()
   const chat = chats.find((c) => c.id === id)
 
   const [phase, setPhase] = useState<Phase>(() =>
@@ -178,7 +180,7 @@ export default function Chat() {
       if (!chatId || !resolvedQueryId) return
       const session = chat?.paymentSession
       if (!session) {
-        setPayError('The payment recovery session is missing. Start a new query.')
+        setPayError('The payment session is gone. Ask the question again.')
         setPhase('failed')
         return
       }
@@ -193,7 +195,7 @@ export default function Chat() {
       }
       if (session.payer && session.payer !== wallet.pubkey) {
         setPayError(
-          `This query belongs to ${shortKey(session.payer)}. The connected wallet is ${shortKey(wallet.pubkey)}. Switch back to recover settled documents without paying twice.`,
+          `${t('This question was started from')} ${shortKey(session.payer)}. ${t('The connected wallet is')} ${shortKey(wallet.pubkey)}. ${t('Switch back to open what you already paid for.')}`,
         )
         setPhase('failed')
         return
@@ -224,7 +226,7 @@ export default function Chat() {
         const remaining = citations.filter(
           (citation) => !openedHandles.has(citation.handle),
         )
-        let answer = `Opened ${result.citations.length} matching documents from the ${shelfName} shelf. Each passage below is quoted as written.${result.settlement.partial ? ' Payment stopped before the remaining documents, so they stayed closed.' : ''}`
+        let answer = `${t('Opened')} ${result.citations.length} ${t('documents from the')} ${shelfName} ${t('shelf. Each passage below is quoted as written.')}${result.settlement.partial ? ` ${t('Payment stopped before the rest, so those stayed closed and cost nothing.')}` : ''}`
         if (result.citations.length > 0) {
           try {
             const synthesis = await synthesizeAnswer(
@@ -263,7 +265,7 @@ export default function Chat() {
           patchChat(chatId, { paymentSession: nextSession })
           setPending(remaining)
           setPayError(
-            `${result.citations.length} document${result.citations.length === 1 ? '' : 's'} settled and were recovered. ${remaining.length} remain unpaid.`,
+            `${result.citations.length} ${result.citations.length === 1 ? t('document opened and paid.') : t('documents opened and paid.')} ${remaining.length} ${t('stayed closed and cost nothing.')}`,
           )
           setPhase('failed')
         } else {
@@ -273,7 +275,7 @@ export default function Chat() {
         }
       } catch (e) {
         setPayError(
-          e instanceof PaymentError ? e.message : 'Settlement did not go through.',
+          e instanceof PaymentError ? e.message : 'The payment did not go through.',
         )
         setPhase('failed')
       }
@@ -285,6 +287,7 @@ export default function Chat() {
       patchChat,
       prompt,
       refreshLedger,
+      t,
       wallet,
     ],
   )
@@ -380,7 +383,7 @@ export default function Chat() {
         setPhase('confirm')
       } catch (error) {
         if (cancelled) return
-        setPayError(error instanceof Error ? error.message : 'Search failed.')
+        setPayError(error instanceof Error ? error.message : 'The search did not finish. Ask again.')
         setPhase('failed')
       }
     }
@@ -408,8 +411,8 @@ export default function Chat() {
           role: 'assistant',
           content:
             existingOrder.escrowMode === 'x402_solana_escrow'
-              ? 'A targeted open-call answer arrived. Its Devnet USDC share is now a durable payout claim for the contributor.'
-              : 'A targeted zero-price answer arrived through the off-chain call ledger.',
+              ? 'An answer to your open call arrived. Your reserved escrow holds its Devnet USDC share as a payout claim for the author.'
+              : 'An answer to your open call arrived at ₩0, through the off-chain call ledger.',
           citations: [
             {
               handle: answer.handle,
@@ -459,7 +462,7 @@ export default function Chat() {
         <div className="flex min-w-0 items-center gap-2">
           <button
             type="button"
-            aria-label="Open sidebar"
+            aria-label={t('Open sidebar')}
             onClick={() => setMobileSidebar(true)}
             className="flex size-7 shrink-0 items-center justify-center text-muted-foreground md:hidden"
           >
@@ -473,7 +476,7 @@ export default function Chat() {
           to="/dashboard"
           className="shrink-0 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground"
         >
-          Dashboard
+          {t('Open calls')}
         </Link>
       </div>
 
@@ -490,7 +493,7 @@ export default function Chat() {
               <div key={m.id} className="flex flex-col gap-3">
                 <AgentLabel />
                 <p className="text-[15px] leading-7 text-foreground">
-                  {m.content}
+                  {t(m.content)}
                 </p>
 
                 {m.citations?.length ? (
@@ -532,25 +535,27 @@ export default function Chat() {
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[4px] bg-foreground/[0.04] px-3 py-2 font-mono text-xs text-muted-foreground">
                     <Coins className="size-3.5" />
                     <span>
-                      {m.settlement.count} opens ·{' '}
+                      {m.settlement.count} {t('opens')} ·{' '}
                       <span className="tabular-nums text-foreground">
                         ₩{m.settlement.total.toLocaleString()}
                       </span>
                     </span>
                     <span className="text-muted-foreground/60">
                       {m.settlement.network === 'demo'
-                        ? 'off-chain application ledger · token settlement disabled'
+                        ? t('off-chain application ledger · token settlement disabled')
                         : m.settlement.network === 'sandbox-escrow'
-                          ? 'zero-price call · no token transfer'
+                          ? t('zero-price call · no token transfer')
+                        : m.settlement.network === 'offline'
+                          ? t('offline preview · no payment sent')
                         : m.settlement.mode === 'open_call_escrow'
-                          ? 'Devnet escrow · contributor payout claim created'
+                          ? t('Devnet escrow · payout claim created for the author')
                         : m.settlement.mode === 'bundle_escrow'
-                          ? 'legacy x402 bundle · contributor shares recorded as claimable'
+                          ? t('legacy x402 bundle · each author’s share is claimable')
                         : m.settlement.mode === 'pay_sh_direct'
-                          ? 'local Pay.sh · paid only the DBs opened by the agent'
+                          ? t('local Pay.sh · paid only the documents SHELF-1 opened')
                         : m.settlement.mode === 'pay_sh_orchestrated'
-                          ? 'prepaid balance · server agent paid each DB through Pay.sh'
-                          : 'settled through x402 · unopened documents cost nothing'}
+                          ? t('prepaid balance · SHELF-1 paid each author through Pay.sh')
+                          : t('settled through x402 · unopened documents cost nothing')}
                     </span>
                     {(m.settlement.txSigs?.length
                       ? m.settlement.txSigs
@@ -584,11 +589,11 @@ export default function Chat() {
 
               {phase === 'confirm' ? (
                 <Branch
-                  title={`${pending.length} people already match.`}
-                  body={`No open call needed. ${pending.length} documents cost ₩${total.toLocaleString()} total (about ${estimatedUsdc.toFixed(6)} USDC). ${paymentUsesLegacyPaySh ? 'This old local Pay.sh session cannot continue; start a new query.' : 'The amount is reserved from your prepaid USDC balance. Phantom appears only for the first refill or when the balance is low; the server agent pays each selected DB through Pay.sh.'}`}
+                  title={`${pending.length} ${t('documents already answer this.')}`}
+                  body={`${t('No open call needed. Opening all')} ${pending.length} ${t('costs')} ₩${total.toLocaleString()}${t(', which settles as')} ${estimatedUsdc.toFixed(6)} ${t('USDC on Solana.')} ${paymentUsesLegacyPaySh ? t('This old local Pay.sh session cannot continue. Ask again to start a new one.') : t('That amount is reserved from your prepaid USDC balance. Phantom appears only for the first refill, or when the balance runs low; SHELF-1 then pays each author through Pay.sh.')}`}
                 >
                   <div className="w-full rounded-[4px] bg-foreground/[0.04] px-3 py-2 font-mono text-[10px] uppercase leading-relaxed tracking-[0.8px] text-muted-foreground">
-                    One-time wallet proof · refill only when low · no delegate permission or browser helper key. Verify Devnet USDC mint{' '}
+                    {t('One-time wallet proof · refill only when low · no delegate permission or browser helper key. Verify Devnet USDC mint')}{' '}
                     <span className="text-foreground" title={DEVNET_USDC}>
                       {shortKey(DEVNET_USDC)}
                     </span>.
@@ -605,7 +610,7 @@ export default function Chat() {
                         )
                       }
                     >
-                      Open with prepaid balance
+                      {t('Open with prepaid balance')}
                     </Button>
                   ) : (
                     <Button
@@ -621,10 +626,10 @@ export default function Chat() {
                       }}
                     >
                       {paymentUsesLegacyPaySh
-                          ? 'Start a new query'
+                        ? t('Ask again to start a new one')
                         : paymentPayerMismatch
-                          ? 'Switch to the original wallet'
-                          : 'Connect wallet to pay'}
+                          ? t('Switch to the original wallet')
+                          : t('Connect a wallet to pay')}
                     </Button>
                   )}
                   <Button
@@ -632,7 +637,7 @@ export default function Chat() {
                     size="mono"
                     onClick={() => setPhase('ask-order')}
                   >
-                    Post a call instead
+                    {t('Post a call instead')}
                   </Button>
                 </Branch>
               ) : null}
@@ -641,34 +646,34 @@ export default function Chat() {
                 <Branch
                   title={
                     resolutionReason === 'insufficient_coverage'
-                      ? 'Human coverage is still thin.'
+                      ? t('The shelves are thin here.')
                       : resolutionReason === 'budget_too_low'
-                        ? 'Human knowledge exists outside this budget.'
-                        : 'Nobody has covered this yet.'
+                        ? t('People have written this, above your price.')
+                        : t('Nothing on the shelves has lived this yet.')
                   }
                   body={
                     resolutionReason === 'insufficient_coverage'
-                      ? 'Some relevant documents exist, but not enough for the requested coverage. Want me to fill the gap?'
+                      ? t('Documents exist here, but too few to answer the way you asked. Post an open call for the rest?')
                       : resolutionReason === 'budget_too_low'
-                        ? 'Relevant documents exist, but they do not fit the current budget. Want me to ask at a new price?'
-                        : 'Nothing on the shelves matches. Want me to ask people?'
+                        ? t('Documents exist here, but they cost more than your budget. Post an open call at a price you name?')
+                        : t('An open call goes to people who would know. You name what one answer is worth.')
                   }
                 >
                   {aiBaselineStatus === 'loading' ? (
                     <div className="w-full rounded-[5px] border border-[#6D5BD0]/20 bg-[#6D5BD0]/[0.04] p-4">
                       <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[1px] text-[#5540BE]">
                         <Loader2 className="size-3 animate-spin" />
-                        AI liquidity · preparing general context
+                        {t('AI liquidity · preparing general context')}
                       </div>
                       <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                        This will not count as human coverage or become a sellable document.
+                        {t('This will not count as human coverage or become a sellable document.')}
                       </p>
                     </div>
                   ) : null}
                   {aiBaseline ? <AiBaselineCard baseline={aiBaseline} /> : null}
                   {aiBaselineStatus === 'unavailable' ? (
                     <div className="w-full rounded-[4px] border border-border px-3 py-2 text-xs leading-5 text-muted-foreground">
-                      The general AI baseline is unavailable. The human call remains available and unchanged.
+                      {t('The general AI baseline is unavailable. The human call remains available and unchanged.')}
                     </div>
                   ) : null}
                   <Button
@@ -676,14 +681,14 @@ export default function Chat() {
                     size="mono"
                     onClick={() => setPhase('ask-count')}
                   >
-                    Ask them
+                    {t('Ask them')}
                   </Button>
                   <Button
                     variant="monoMuted"
                     size="mono"
                     onClick={() => setPhase('declined')}
                   >
-                    No thanks
+                    {t('No thanks')}
                   </Button>
                 </Branch>
               ) : null}
@@ -692,13 +697,13 @@ export default function Chat() {
                 <Branch
                   title={
                     openCallDraft?.existingMatches
-                      ? 'How many more people?'
-                      : 'How many people?'
+                      ? t('How many more people?')
+                      : t('How many people?')
                   }
                   body={
                     openCallDraft?.existingMatches
-                      ? `${openCallDraft.existingMatches} relevant documents already exist. ${openCallDraft.answersNeeded} more fills the original ${openCallDraft.targetAnswers}-person request.`
-                      : 'More answers means you see where they start to disagree.'
+                      ? `${openCallDraft.existingMatches} ${t('documents already answer part of this.')} ${openCallDraft.answersNeeded} ${t('more fills the')} ${openCallDraft.targetAnswers} ${t('you asked for.')}`
+                      : t('More answers means you see where they start to disagree.')
                   }
                 >
                   {countChoices.map((n) => (
@@ -719,8 +724,8 @@ export default function Chat() {
 
               {phase === 'ask-price' ? (
                 <Branch
-                  title="What do you want to pay per answer?"
-                  body="₩0 still gets answers. People read the demand and write it up in advance because they expect it to sell later."
+                  title={t('What do you want to pay per answer?')}
+                  body={t('₩0 still gets answers, slower. You pay what you name here once per answer you accept.')}
                 >
                   {priceChoices.map((p) => (
                     <Button
@@ -733,7 +738,7 @@ export default function Chat() {
                       size="mono"
                       onClick={() => {
                         if (!account) {
-                          navigate('/login?mode=signup')
+                          navigate('/login')
                           return
                         }
                         void placeOrder({
@@ -753,7 +758,7 @@ export default function Chat() {
                             setPayError(
                               error instanceof Error
                                 ? error.message
-                                : 'The call could not be posted.',
+                                : 'The call was not posted and nothing left your wallet.',
                             )
                             setPhase('failed')
                           },
@@ -768,15 +773,15 @@ export default function Chat() {
 
               {phase === 'ordered' && placedOrder ? (
                 <Branch
-                  title="Call posted."
-                  body={`${placedOrder.target} people · ₩${placedOrder.unitPrice.toLocaleString()} each. ₩${placedOrder.escrowRemainingKrw?.toLocaleString() ?? (placedOrder.target * placedOrder.unitPrice).toLocaleString()} is ${placedOrder.escrowMode === 'x402_solana_escrow' ? 'funded in Devnet USDC escrow with one wallet approval' : 'tracked as zero-price, off-chain call credit'}; accepted answers are paid from it and the unused amount is refundable.`}
+                  title={t('Call posted.')}
+                  body={`${placedOrder.target} ${t('answers ·')} ₩${placedOrder.unitPrice.toLocaleString()} ${t('each.')} ₩${placedOrder.escrowRemainingKrw?.toLocaleString() ?? (placedOrder.target * placedOrder.unitPrice).toLocaleString()} ${t('is')} ${placedOrder.escrowMode === 'x402_solana_escrow' ? t('held in Devnet USDC escrow on one Phantom approval') : t('tracked as zero-price, off-chain call credit')}. ${t('Each answer you accept pays its author from that, and whatever is left comes back.')}`}
                 >
                   <Button
                     variant="mono"
                     size="mono"
                     onClick={() => navigate('/dashboard')}
                   >
-                    View on dashboard
+                    {t('See my open call')}
                   </Button>
                   <Button
                     variant="monoMuted"
@@ -785,25 +790,25 @@ export default function Chat() {
                       void cancelOrder(placedOrder.id).then(() => setPhase('declined'))
                     }
                   >
-                    Cancel and refund
+                    {t('Cancel and refund')}
                   </Button>
                 </Branch>
               ) : null}
 
               {phase === 'settling' ? (
                 <Branch
-                  title="The Pay.sh agent is opening the selected DBs…"
-                  body="The server reserves this question from your prepaid balance, checks each 402 price and recipient, pays the DB owner, and returns only successfully paid passages. Phantom appears only if a refill is needed. You may close this tab; the job is durable."
+                  title={t('SHELF-1 is opening the documents…')}
+                  body={t('The question is reserved against your prepaid balance. SHELF-1 checks each 402 price and recipient, pays the author, and returns only the passages it paid for. Phantom appears only if the balance needs a refill. You can close this tab — the job keeps running.')}
                 />
               ) : null}
 
               {phase === 'failed' ? (
                 <Branch
-                  title={queryId ? 'Settlement did not go through.' : 'SHELF-1 could not reach the backend.'}
-                  body={
+                  title={queryId ? t('The payment did not go through.') : t('SHELF-1 could not reach the shelves.')}
+                  body={t(
                     payError ??
-                    'The documents stayed closed. Retry recovers the same durable job and prepaid reservation without paying twice.'
-                  }
+                      'The documents stayed closed. Retry picks up the same job and the same reservation, so nothing is paid twice.',
+                  )}
                 >
                   {queryId && pending.length && !paymentPayerMismatch ? (
                     <Button
@@ -817,7 +822,7 @@ export default function Chat() {
                         )
                       }
                     >
-                      Check ledger and retry {pending.length} remaining
+                      {t('Retry the')} {pending.length} {t('that stayed closed')}
                     </Button>
                   ) : null}
                   {paymentPayerMismatch ? (
@@ -829,7 +834,7 @@ export default function Chat() {
                         navigate(`/chat/${next}`)
                       }}
                     >
-                      Start a separate query with this wallet
+                      {t('Ask again with this wallet')}
                     </Button>
                   ) : null}
                 </Branch>
@@ -837,8 +842,8 @@ export default function Chat() {
 
               {phase === 'declined' ? (
                 <Branch
-                  title="Understood."
-                  body="No call was posted, so nothing was charged. Try again with different conditions any time."
+                  title={t('Understood.')}
+                  body={t('No call was posted and nothing left your wallet. Ask again at a different price any time.')}
                 />
               ) : null}
             </div>
@@ -846,7 +851,7 @@ export default function Chat() {
 
           {hasAnswer && !paymentIncomplete ? (
             <p className="text-center font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
-              Each author was paid onchain · these documents can auto-match again
+              {t('Each author was paid onchain · these documents can auto-match again')}
             </p>
           ) : null}
         </div>
@@ -862,15 +867,16 @@ export default function Chat() {
 }
 
 function AiBaselineCard({ baseline }: { baseline: AiBaseline }) {
+  const t = useT()
   return (
     <section className="w-full rounded-[6px] border border-[#6D5BD0]/25 bg-[#6D5BD0]/[0.045] p-4 text-left">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[1px] text-[#5540BE]">
           <Sparkles className="size-3" />
-          AI general baseline
+          {t('AI general baseline')}
         </div>
         <span className="rounded-full border border-[#6D5BD0]/20 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.7px] text-[#6D5BD0]">
-          Free · not human evidence
+          {t('Free · not human evidence')}
         </span>
       </div>
       <p className="mt-3 text-sm leading-6 text-foreground/85">
@@ -886,7 +892,7 @@ function AiBaselineCard({ baseline }: { baseline: AiBaseline }) {
       </ul>
       <div className="mt-4 border-t border-[#6D5BD0]/15 pt-3">
         <p className="font-mono text-[9px] font-medium uppercase tracking-[1px] text-muted-foreground">
-          Still needs people
+          {t('Still needs people')}
         </p>
         <ul className="mt-2 space-y-1.5 text-[13px] leading-5 text-foreground/75">
           {baseline.humanGaps.map((gap) => (
@@ -898,7 +904,7 @@ function AiBaselineCard({ baseline }: { baseline: AiBaseline }) {
         </ul>
       </div>
       <p className="mt-3 font-mono text-[9px] uppercase leading-4 tracking-[0.7px] text-muted-foreground">
-        ₩0 · question sent to Gemini on Vertex AI without private shelf passages · cannot be bought or resold · never enters Shelf ranking
+        {t('₩0 · question sent to Gemini on Vertex AI without private shelf passages · cannot be bought or resold · never enters Shelf ranking')}
       </p>
     </section>
   )
@@ -908,7 +914,7 @@ function AgentLabel() {
   return (
     <div className="flex items-center gap-2">
       <span className="flex size-6 items-center justify-center rounded-[2px] bg-foreground">
-        <img className="size-3.5 invert" src="/SHELF-SYMBOL.svg" alt="" />
+        <img className="size-3.5 invert" src="/OBOLUS-MARK-SM.svg" alt="" />
       </span>
       <span className="font-mono text-xs font-medium uppercase tracking-[1px] text-muted-foreground">
         SHELF-1
@@ -924,6 +930,7 @@ function FeedbackActions({
   citation: Citation
   context: PaymentContext
 }) {
+  const t = useT()
   const [recorded, setRecorded] = useState<DocumentFeedback | null>(null)
   const [reporting, setReporting] = useState(false)
   const [reason, setReason] = useState('')
@@ -949,7 +956,7 @@ function FeedbackActions({
       setRecorded(feedback)
       setReporting(false)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Feedback could not be saved.')
+      setError(cause instanceof Error ? cause.message : 'That did not save. Press it again.')
     } finally {
       setSubmitting(false)
     }
@@ -959,8 +966,8 @@ function FeedbackActions({
     return (
       <p className="mt-3 border-t border-border/70 pt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
         {recorded.outcome === 'report'
-          ? 'Report submitted · admin review pending'
-          : `${recorded.outcome.replace('_', ' ')} · recorded`}
+          ? t('Report sent · under review')
+          : `${t(recorded.outcome.replace('_', ' '))} · ${t('recorded')}`}
       </p>
     )
   }
@@ -969,7 +976,7 @@ function FeedbackActions({
     <div className="mt-3 border-t border-border/70 pt-2">
       <div className="flex flex-wrap items-center gap-2">
         <span className="mr-1 font-mono text-[9px] uppercase tracking-[1px] text-muted-foreground">
-          Paid buyer feedback
+          {t('You paid for this passage')}
         </span>
         <Button
           variant="monoGhost"
@@ -977,7 +984,7 @@ function FeedbackActions({
           disabled={submitting}
           onClick={() => void send('helpful')}
         >
-          <ThumbsUp className="size-3" /> Helpful
+          <ThumbsUp className="size-3" /> {t('Helpful')}
         </Button>
         <Button
           variant="monoGhost"
@@ -985,7 +992,7 @@ function FeedbackActions({
           disabled={submitting}
           onClick={() => void send('not_helpful')}
         >
-          <ThumbsDown className="size-3" /> Not helpful
+          <ThumbsDown className="size-3" /> {t('Not helpful')}
         </Button>
         <Button
           variant="monoGhost"
@@ -993,7 +1000,7 @@ function FeedbackActions({
           disabled={submitting}
           onClick={() => setReporting((value) => !value)}
         >
-          <Flag className="size-3" /> Report
+          <Flag className="size-3" /> {t('Report')}
         </Button>
       </div>
       {reporting ? (
@@ -1003,7 +1010,7 @@ function FeedbackActions({
             maxLength={1000}
             value={reason}
             onChange={(event) => setReason(event.target.value)}
-            placeholder="Describe the specific safety, authenticity, or abuse issue (20–1000 characters)."
+            placeholder={t('Name what is wrong — made-up facts, copied text, low effort, abuse. 20 to 1000 characters.')}
             className="w-full resize-y rounded-[3px] border border-border bg-background p-2 text-sm outline-none focus:ring-1 focus:ring-foreground/30"
           />
           <Button
@@ -1014,11 +1021,11 @@ function FeedbackActions({
             onClick={() => void send('report')}
           >
             {submitting ? <Loader2 className="size-3 animate-spin" /> : null}
-            Submit report
+            {t('Send report')}
           </Button>
         </div>
       ) : null}
-      {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
+      {error ? <p className="mt-2 text-xs text-destructive">{t(error)}</p> : null}
     </div>
   )
 }
@@ -1035,6 +1042,7 @@ function TraceSteps({
   // failure states are downstream outcomes and must not leave step 4 spinning.
   const reached = phase === 'searching' ? 0 : phase === 'ranking' ? 1 : STEPS.length
   const icons = [Search, SlidersHorizontal, Coins]
+  const t = useT()
 
   return (
     <div className="flex flex-col gap-2">
@@ -1061,10 +1069,10 @@ function TraceSteps({
                     : 'text-foreground',
                 )}
               >
-                STEP {s.n} · {s.label}
+                {t('STEP')} {s.n} · {t(s.label)}
               </span>
               <span className="text-sm leading-snug text-muted-foreground">
-                {s.blurb}
+                {t(s.blurb)}
               </span>
               {i === 1 && hits.length ? (
                 <span className="mt-1 flex flex-wrap gap-1.5">

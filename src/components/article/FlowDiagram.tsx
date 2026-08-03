@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
+import { useT } from '@/i18n'
 
 /**
  * The whole product in one picture: three lanes (who asks, the agent, who
@@ -32,6 +33,7 @@ const RELATED: Record<NodeId, NodeId[]> = {
 }
 
 export function FlowDiagram({ className }: { className?: string }) {
+  const t = useT()
   const [hot, setHot] = useState<NodeId | null>(null)
   const lit = (id: NodeId) => !hot || RELATED[hot].includes(id)
 
@@ -169,7 +171,7 @@ export function FlowDiagram({ className }: { className?: string }) {
           viewBox="0 0 1000 730"
           className="h-auto w-full min-w-[720px]"
           role="img"
-          aria-label="How one question moves through OPENSHELF"
+          aria-label={t('How one question moves through Obolus')}
         >
           <defs>
             {[
@@ -192,34 +194,40 @@ export function FlowDiagram({ className }: { className?: string }) {
             ))}
           </defs>
 
-          <Lane y={68} label="ASKER" />
+          <Lane y={68} label={t('ASKER')} />
           <Lane y={172} label="SHELF-1" />
-          <Lane y={456} label="ANSWERER" />
+          <Lane y={456} label={t('ANSWERER')} />
 
           {/* main spine ------------------------------------------------ */}
-          <Node id="ask" x={110} y={36} step="STEP 1" title="Ask a question" />
+          <Node
+            id="ask"
+            x={110}
+            y={36}
+            step={`${t('STEP')} 1`}
+            title={t('Ask a question')}
+          />
           <Node
             id="search"
             x={380}
             y={140}
-            step="STEP 2"
-            title="Search the shelves"
+            step={`${t('STEP')} 2`}
+            title={t('Search the shelves')}
           />
           <Node
             id="shelves"
             x={720}
             y={140}
             w={240}
-            step="PERSONA WEB"
-            title="Discoverable DBs"
-            sub="metadata, not passages"
+            step={t('PERSONA WEB')}
+            title={t('Discoverable DBs')}
+            sub={t('metadata, not passages')}
           />
           <Node
             id="rank"
             x={380}
             y={228}
-            step="STEP 3"
-            title="Rank relevance + authority"
+            step={`${t('STEP')} 3`}
+            title={t('Rank relevance + authority')}
           />
 
           {/* step 4 — the branch --------------------------------------- */}
@@ -243,7 +251,7 @@ export function FlowDiagram({ className }: { className?: string }) {
               letterSpacing={1.4}
               fontFamily="var(--font-geist-mono)"
             >
-              STEP 4
+              {`${t('STEP')} 4`}
             </text>
             <text
               x={500}
@@ -254,7 +262,7 @@ export function FlowDiagram({ className }: { className?: string }) {
               fontWeight={500}
               fontFamily="var(--font-geist-sans)"
             >
-              Hit or miss
+              {t('Hit or miss')}
             </text>
           </g>
 
@@ -262,30 +270,30 @@ export function FlowDiagram({ className }: { className?: string }) {
             id="call"
             x={720}
             y={424}
-            step="STEP 5"
-            title="Open call"
-            sub="₩ per answer"
+            step={`${t('STEP')} 5`}
+            title={t('Open call')}
+            sub={t('₩ per answer')}
           />
           <Node
             id="settle"
             x={380}
             y={528}
-            step="STEP 6"
-            title="Pay each DB via Pay.sh"
+            step={`${t('STEP')} 6`}
+            title={t('Pay each DB via Pay.sh')}
           />
           <Node
             id="receipt"
             x={110}
             y={632}
-            step="STEP 7"
-            title="Paid citations + receipt"
+            step={`${t('STEP')} 7`}
+            title={t('Paid citations + receipt')}
           />
           <Node
             id="memory"
             x={720}
             y={632}
-            step="STEP 7"
-            title="Memory accrues"
+            step={`${t('STEP')} 7`}
+            title={t('Memory accrues')}
           />
 
           {/* edges ----------------------------------------------------- */}
@@ -304,7 +312,7 @@ export function FlowDiagram({ className }: { className?: string }) {
             d="M500 398 L500 526"
             on={['branch', 'settle']}
             color={BRANCH}
-            label="HIT · answer exists"
+            label={t('HIT · answer exists')}
             lx={512}
             ly={468}
           />
@@ -312,21 +320,21 @@ export function FlowDiagram({ className }: { className?: string }) {
             d="M586 352 L840 352 L840 422"
             on={['branch', 'call']}
             color={BRANCH}
-            label="MISS · commission it"
+            label={t('MISS · commission it')}
             lx={620}
             ly={342}
           />
           <Edge
             d="M840 484 L840 556 L622 556"
             on={['call', 'settle']}
-            label="answers return"
+            label={t('answers return')}
             lx={666}
             ly={546}
           />
           <Edge
             d="M440 588 L440 612 L230 612 L230 630"
             on={['settle', 'receipt']}
-            label="passages"
+            label={t('passages')}
             lx={286}
             ly={604}
           />
@@ -334,7 +342,7 @@ export function FlowDiagram({ className }: { className?: string }) {
             d="M560 588 L560 612 L840 612 L840 630"
             on={['settle', 'memory']}
             color={ACCENT}
-            label="₩ to each author"
+            label={t('₩ to each author')}
             lx={620}
             ly={604}
           />
@@ -342,7 +350,7 @@ export function FlowDiagram({ className }: { className?: string }) {
             d="M960 632 L980 632 L980 200 L962 200"
             on={['memory', 'shelves']}
             dash
-            label="thickens the shelf"
+            label={t('thickens the shelf')}
             lx={848}
             ly={676}
           />
@@ -352,13 +360,15 @@ export function FlowDiagram({ className }: { className?: string }) {
       <figcaption className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
         <span className="flex items-center gap-2">
           <span className="h-px w-5" style={{ background: BRANCH }} />
-          the branch everything hangs off
+          {t('the branch everything hangs off')}
         </span>
         <span className="flex items-center gap-2">
           <span className="h-px w-5" style={{ background: ACCENT }} />
-          money, always the other way
+          {t('money, always the other way')}
         </span>
-        <span className="ml-auto hidden sm:block">hover a box to isolate it</span>
+        <span className="ml-auto hidden sm:block">
+          {t('hover a box to isolate it')}
+        </span>
       </figcaption>
     </figure>
   )

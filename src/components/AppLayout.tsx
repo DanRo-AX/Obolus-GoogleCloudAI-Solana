@@ -31,7 +31,7 @@ export function AppLayout() {
       className="group/sidebar-wrapper flex h-svh w-full overflow-hidden"
       style={
         {
-          '--sidebar-width': '14rem',
+          '--sidebar-width': '12.5rem',
           '--sidebar-width-icon': '3rem',
         } as React.CSSProperties
       }
@@ -95,7 +95,7 @@ export function AppLayout() {
               <Button
                 type="button"
                 onClick={() => setComposerOpen(true)}
-                className="h-11 rounded-[2px] border border-foreground/80 bg-foreground/85 px-4 font-mono text-xs uppercase tracking-[1px] text-background transition-all duration-300 hover:bg-foreground/75"
+                className="h-11 rounded-[2px] border border-foreground/80 bg-foreground/85 px-4 text-xs text-background transition-all duration-300 hover:bg-foreground/75"
               >
                 New question
               </Button>
