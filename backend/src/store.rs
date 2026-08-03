@@ -10168,7 +10168,8 @@ mod tests {
             SearchFilters, ShelfStarterDraft, SiwxPayload, SubmitAnswerResponse,
             SubmitDocumentFeedbackRequest, UpdatePreferencesRequest, UpsertProfileRequest,
         },
-        params, search::Resolver,
+        params,
+        search::Resolver,
     };
 
     use super::{
