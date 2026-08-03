@@ -195,7 +195,7 @@ export function FlowDiagram({ className }: { className?: string }) {
           </defs>
 
           <Lane y={68} label={t('ASKER')} />
-          <Lane y={172} label="SHELF-1" />
+          <Lane y={172} label="SHELF" />
           <Lane y={456} label={t('ANSWERER')} />
 
           {/* main spine ------------------------------------------------ */}

@@ -18,7 +18,7 @@ export function TwoSidesSection() {
             <p className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
               {t('Two sides, one shelf')}
             </p>
-            <h2 className="mt-5 max-w-3xl font-display text-[32px] leading-[1.1] sm:text-[44px]">
+            <h2 className="mt-5 max-w-3xl text-balance font-display text-[32px] leading-[1.1] sm:text-[44px]">
               {t('One of you is searching. One of you has lived it.')}
             </h2>
           </div>
@@ -78,7 +78,7 @@ function Side({
         </span>
       </div>
 
-      <h3 className="mt-4 font-display text-[24px] leading-tight sm:text-[28px]">
+      <h3 className="mt-4 text-balance font-display text-[24px] leading-tight sm:text-[28px]">
         {t(title)}
       </h3>
 
@@ -93,7 +93,7 @@ function Side({
             </span>
             <div className="flex flex-col gap-1.5">
               <span className="text-[15px] font-medium">{t(s.head)}</span>
-              <span className="text-sm leading-relaxed text-muted-foreground">
+              <span className="text-pretty text-sm leading-relaxed text-muted-foreground">
                 {t(s.body)}
               </span>
             </div>
@@ -117,7 +117,7 @@ const ASKING = [
     body: 'Searching and ranking cost nothing. You only ever pay to open a document.',
   },
   {
-    head: 'SHELF-1 opens a handful, not the index',
+    head: 'SHELF opens a handful, not the index',
     body: 'Five documents that lived it beat the average of everything. Blend it all and you are back to a generic answer.',
   },
   {
@@ -141,7 +141,7 @@ const ANSWERING = [
   },
   {
     head: 'It stays yours and keeps working',
-    body: 'Your answer lands on your shelf as a document. SHELF-1 can quote it later with no open call at all.',
+    body: 'Your answer lands on your shelf as a document. SHELF can quote it later with no open call at all.',
   },
   {
     head: 'Money arrives without asking',

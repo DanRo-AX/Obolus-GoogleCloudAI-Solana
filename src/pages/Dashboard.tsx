@@ -573,7 +573,7 @@ export default function Dashboard() {
               <span className="font-medium text-destructive">
                 {t('Account suspended —')} {STRIKE_LIMIT} {t('strikes.')}
               </span>{' '}
-              {t('You cannot pick up calls, and SHELF-1 has stopped quoting your documents. USDC that already settled stays in your wallet.')}
+              {t('You cannot pick up calls, and SHELF has stopped quoting your documents. USDC that already settled stays in your wallet.')}
             </p>
             <Button asChild variant="monoMuted" size="monoSm" className="ml-auto">
               <Link to="/memory">{t('Review the strikes')}</Link>

@@ -26,6 +26,21 @@ export type Lang = 'en' | 'ko'
 
 const STORAGE_KEY = 'obolus:lang:v1'
 
+/**
+ * Phrases that must never be split across a line.
+ *
+ * A price range is read as one token — "₩5 to ₩20" wrapping after "to" makes
+ * the reader parse two numbers before realising they were a range. Applied
+ * after lookup, not to the source strings, so the English keys the Korean
+ * dictionary is keyed on stay plain ASCII spaces.
+ */
+const NBSP = '\u00A0'
+function tighten(s: string) {
+  return s
+    .replace(/(₩[\d,]+)\s+to\s+(₩[\d,]+)/g, `$1${NBSP}to${NBSP}$2`)
+    .replace(/(₩[\d,]+)\s*~\s*(₩[\d,]+)/g, `$1~$2`)
+}
+
 type LangValue = {
   lang: Lang
   setLang: (l: Lang) => void
@@ -60,7 +75,7 @@ export function LangProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const t = useCallback(
-    (en: string) => (lang === 'ko' ? (KO[en] ?? en) : en),
+    (en: string) => tighten(lang === 'ko' ? (KO[en] ?? en) : en),
     [lang],
   )
 

@@ -32,7 +32,7 @@ export function TrustSection() {
           {t('The deal, in full')}
         </p>
 
-        <h2 className="mt-5 max-w-3xl font-display text-[32px] leading-[1.1] sm:text-[44px]">
+        <h2 className="mt-5 max-w-3xl text-balance font-display text-[32px] leading-[1.1] sm:text-[44px]">
           {t(
             'You are writing down your life. Here is exactly what happens to it.',
           )}
@@ -73,7 +73,7 @@ export function TrustSection() {
         </div>
 
         <div className="mt-14 flex flex-wrap items-center gap-x-10 gap-y-4 border-t border-border pt-8">
-          <p className="max-w-xl text-[15px] leading-7">
+          <p className="max-w-xl text-pretty text-[15px] leading-7">
             <span className="font-medium">
               {t('Delete your shelf and it burns.')}
             </span>{' '}

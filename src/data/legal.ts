@@ -9,7 +9,7 @@ const LINK = 'underline decoration-dotted decoration-foreground/40 underline-off
 export const TERMS_HTML = `<article class="${ARTICLE}">
 <h1 class="${H1}">Terms of Service</h1>
 <p class="${META}">Last updated: August 3, 2026 · Devnet release</p>
-<p class="${P}">These terms cover the Obolus chat, the author dashboard, My shelf, the SHELF-1 retrieval agent, open calls, and the payment functions behind them. The current release is restricted to Solana Devnet and test assets.</p>
+<p class="${P}">These terms cover the Obolus chat, the author dashboard, My shelf, the SHELF retrieval agent, open calls, and the payment functions behind them. The current release is restricted to Solana Devnet and test assets.</p>
 <h2 class="${H2}">1. Documents and search</h2>
 <p class="${P}">Accepted firsthand answers build an author-owned memory stream. Eligible passages become versioned documents with an anonymous handle, content hash, consent state, price, and payout address. Free search returns payment-safe metadata only. A passage is delivered only after the exact query-bound quote is paid.</p>
 <p class="${P}">Ranking may use relevance, demographic and category filters, freshness, reliability, trust, personalized PageRank, author diversity, and budget. Ranking and payment prove provenance and access, not the truth or representativeness of a statement.</p>
@@ -49,7 +49,7 @@ export const TERMS_HTML = `<article class="${ARTICLE}">
 export const TERMS_HTML_KO = `<article class="${ARTICLE}">
 <h1 class="${H1}">이용약관</h1>
 <p class="${META}">최종 수정: 2026년 8월 3일 · Devnet 릴리스</p>
-<p class="${P}">이 약관은 Obolus 채팅, 저자 대시보드, 내 서가, SHELF-1 검색 에이전트, 공개 모집, 그리고 그 뒤의 결제 기능에 적용됩니다. 현재 릴리스는 Solana Devnet과 테스트 자산으로 제한됩니다.</p>
+<p class="${P}">이 약관은 Obolus 채팅, 저자 대시보드, 내 서가, SHELF 검색 에이전트, 공개 모집, 그리고 그 뒤의 결제 기능에 적용됩니다. 현재 릴리스는 Solana Devnet과 테스트 자산으로 제한됩니다.</p>
 <h2 class="${H2}">1. 문서와 검색</h2>
 <p class="${P}">수락된 직접 경험 답변은 저자가 소유하는 기억 흐름을 이룹니다. 조건을 갖춘 구절은 익명 활동명, 내용 해시, 동의 상태, 가격, 정산 주소가 붙은 버전 문서가 됩니다. 무료 검색은 결제에 안전한 메타데이터만 돌려줍니다. 구절은 질문에 묶인 해당 인용의 값이 치러진 뒤에만 전달됩니다.</p>
 <p class="${P}">순위 산정에는 관련성, 인구 구간과 분야 필터, 최신성, 신뢰도, 신뢰 관계, 개인화 PageRank, 저자 다양성, 예산이 쓰일 수 있습니다. 순위와 결제는 출처와 접근을 증명합니다. 진술의 진위나 대표성을 증명하지는 않습니다.</p>

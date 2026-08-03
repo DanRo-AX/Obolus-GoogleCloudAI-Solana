@@ -213,7 +213,7 @@ export default function Survey() {
                   'The answer is on your shelf. At strike 2 of 3 auto-match pauses, so this payout is held 14 days before it moves.',
                 )
               : t(
-                  'It sits on your shelf now. SHELF-1 can quote it without you writing anything again — each open lands USDC in your wallet.',
+                  'It sits on your shelf now. SHELF can quote it without you writing anything again — each open lands USDC in your wallet.',
                 )}
           </p>
           <div className="mt-2 flex gap-2">

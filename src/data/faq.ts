@@ -3,23 +3,23 @@ export type Faq = { q: string; a: string }
 export const HOME_FAQ: Faq[] = [
   {
     q: 'What is Obolus?',
-    a: 'People write short documents about things they have lived through. SHELF-1 searches those documents instead of the web, opens a handful, and quotes them. Every open pays its author, over x402.\n\nThe shape is a library. One document is one book, the shelves are the stacks, and SHELF-1 is the librarian. A question comes in, it pulls the few books that fit, and hands back the passages that matter.\n\nWe copied the shape of the internet almost exactly. One document is one URL, the closest matches rise to the top, and SHELF-1 opens a handful of them. One thing is different: opening that URL pays the author.'
+    a: 'People write short documents about things they have lived through. SHELF searches those documents instead of the web, opens a handful, and quotes them. Every open pays its author, over x402.\n\nThe shape is a library. One document is one book, the shelves are the stacks, and SHELF is the librarian. A question comes in, it pulls the few books that fit, and hands back the passages that matter.\n\nWe copied the shape of the internet almost exactly. One document is one URL, the closest matches rise to the top, and SHELF opens a handful of them. One thing is different: opening that URL pays the author.'
   },
   {
     q: 'Is this a search engine?',
-    a: 'No. What makes it onto the web is the tip of the iceberg. Where someone who has lived in Seongsu for three years goes for lunch was never posted anywhere.\n\nThe web an agent reads has no way to charge either. A crawler reads everything it wants and nothing goes back to whoever wrote it. Obolus puts what people wrote into that gap, with a price on it.\n\nSearch is the first step, not the whole thing. SHELF-1 checks the shelves first, and posts an open call only when the answer is not there.'
+    a: 'No. What makes it onto the web is the tip of the iceberg. Where someone who has lived in Seongsu for three years goes for lunch was never posted anywhere.\n\nThe web an agent reads has no way to charge either. A crawler reads everything it wants and nothing goes back to whoever wrote it. Obolus puts what people wrote into that gap, with a price on it.\n\nSearch is the first step, not the whole thing. SHELF checks the shelves first, and posts an open call only when the answer is not there.'
   },
   {
-    q: 'How does SHELF-1 decide which documents to open?',
+    q: 'How does SHELF decide which documents to open?',
     a: 'Filtering runs before any money moves. Category, demographic band, price, consent, lock state and conduct rules cut the field first. What survives is scored on word and hash match, how recent the document is, how reliable the author has been, and how much independently verified evidence links to it.\n\nStanding cannot be bought. Paid, sponsored, inferred, self-owned, disputed and lineage links add nothing to a document’s authority.\n\nThe last pass penalises the same author twice over and near-identical passages, so an asker does not pay twenty times for one viewpoint.'
   },
   {
     q: 'Why not ask a general model?',
-    a: 'A general model fills the blank with conditional probability. Ask it “what do people in Paris like?” and it assembles the most plausible sentence out of what it read about the city. Cafes, bakeries, the Seine — not wrong, and nothing you could not have guessed.\n\nSHELF-1 opens only the documents of people who live in Paris, and pays each of them for the open. If nothing on the shelves has lived it, SHELF-1 posts an open call to people in Paris.\n\nWhen the shelves are thin, SHELF-1 can hand back a free general-model baseline that spells out which questions only a person can answer. It expires, it is never sold, it earns nobody anything, and it does not count as human coverage.\n\nThat is why documents are left rough on purpose. The more the sentences get polished, the closer they drift back to what a general model would have said. Rough and specific is what sells.'
+    a: 'A general model fills the blank with conditional probability. Ask it “what do people in Paris like?” and it assembles the most plausible sentence out of what it read about the city. Cafes, bakeries, the Seine — not wrong, and nothing you could not have guessed.\n\nSHELF opens only the documents of people who live in Paris, and pays each of them for the open. If nothing on the shelves has lived it, SHELF posts an open call to people in Paris.\n\nWhen the shelves are thin, SHELF can hand back a free general-model baseline that spells out which questions only a person can answer. It expires, it is never sold, it earns nobody anything, and it does not count as human coverage.\n\nThat is why documents are left rough on purpose. The more the sentences get polished, the closer they drift back to what a general model would have said. Rough and specific is what sells.'
   },
   {
     q: 'How is this different from a survey panel?',
-    a: 'A panel trades whole: 300 people, two weeks, one report. Here the unit is one question, one answer, one open. Sold by the cigarette, not by the pack.\n\nThe order is reversed too. Search comes first — if documents already on the shelves fit, SHELF-1 opens them and no open call goes out. The call fires only when the shelves come up empty.\n\nAn answer written once does not disappear. A panel study ends and the report goes in a drawer; a document stays on your shelf and matches the next question. The same answer earns more than once.'
+    a: 'A panel trades whole: 300 people, two weeks, one report. Here the unit is one question, one answer, one open. Sold by the cigarette, not by the pack.\n\nThe order is reversed too. Search comes first — if documents already on the shelves fit, SHELF opens them and no open call goes out. The call fires only when the shelves come up empty.\n\nAn answer written once does not disappear. A panel study ends and the report goes in a drawer; a document stays on your shelf and matches the next question. The same answer earns more than once.'
   },
   {
     q: 'How does a shelf grow?',
@@ -27,7 +27,7 @@ export const HOME_FAQ: Faq[] = [
   },
   {
     q: 'Why should I hand over my personal information?',
-    a: 'We never ask for bank or card details. What you write down is life-level: a day in Seongsu, what lunch cost, which app you deleted and why. The thing you wanted to buy and did not.\n\nLeave, and your documents burn. Not pulled off the shelf — deleted. The settlement lines stay for accounting; the writing does not.\n\nThe money arrives on its own. When a document fits, SHELF-1 opens it without you pressing approve, and USDC lands in your wallet on the spot.'
+    a: 'We never ask for bank or card details. What you write down is life-level: a day in Seongsu, what lunch cost, which app you deleted and why. The thing you wanted to buy and did not.\n\nLeave, and your documents burn. Not pulled off the shelf — deleted. The settlement lines stay for accounting; the writing does not.\n\nThe money arrives on its own. When a document fits, SHELF opens it without you pressing approve, and USDC lands in your wallet on the spot.'
   },
   {
     q: 'What can an asker see about me?',
@@ -46,7 +46,7 @@ export const HOME_FAQ: Faq[] = [
 export const PRICING_FAQ: Faq[] = [
   {
     q: 'Who sets the price per answer?',
-    a: 'The asker does. When nothing on the shelves answers, SHELF-1 asks in order. “Nobody has lived this yet — post an open call?” → “How many answers?” → “What is one answer worth?”\n\nThe amount named there is the price for one answer. Some calls are ₩300, some are ₩5,000. It shows up as-is on the board, and people pick by looking at it.\n\nThe higher the price, the faster a call fills. You read ₩; the transfer settles in USDC on Solana.'
+    a: 'The asker does. When nothing on the shelves answers, SHELF asks in order. “Nobody has lived this yet — post an open call?” → “How many answers?” → “What is one answer worth?”\n\nThe amount named there is the price for one answer. Some calls are ₩300, some are ₩5,000. It shows up as-is on the board, and people pick by looking at it.\n\nThe higher the price, the faster a call fills. You read ₩; the transfer settles in USDC on Solana.'
   },
   {
     q: 'Can I post a call at ₩0?',
@@ -58,7 +58,7 @@ export const PRICING_FAQ: Faq[] = [
   },
   {
     q: 'If the answer already exists, does it charge without an open call?',
-    a: 'Yes, and the order flips. When documents already on the shelves fit, SHELF-1 skips the open call and says it straight: “People who have lived this are already here. This is the price. Do you want to pay?”\n\nThe price here is the open price, not the price per answer. Even if 40 documents match, SHELF-1 opens only the top 5 by similarity. At ₩10 an open, that is ₩50.\n\nNothing to wait for is the point of this path. The thicker the shelves get, the larger the share of questions that land on it.'
+    a: 'Yes, and the order flips. When documents already on the shelves fit, SHELF skips the open call and says it straight: “People who have lived this are already here. This is the price. Do you want to pay?”\n\nThe price here is the open price, not the price per answer. Even if 40 documents match, SHELF opens only the top 5 by similarity. At ₩10 an open, that is ₩50.\n\nNothing to wait for is the point of this path. The thicker the shelves get, the larger the share of questions that land on it.'
   },
   {
     q: 'What does a quote lock in?',
@@ -90,11 +90,11 @@ export const PRICING_FAQ: Faq[] = [
   },
   {
     q: 'Am I charged for documents nobody opened?',
-    a: 'No. You pay for what was opened.\n\nSHELF-1 lines candidates up by similarity and opens only a few of them. If 40 match and 5 get opened, you are billed for 5. Lining them up costs nothing.\n\nIt works like web search: the list is free, the click is not. Search, filtering, ranking, handles, prices, score components and the general-model baseline are all free; passage text is the one thing behind the price. Before anything opens, we show you how many will open and what the total will be.'
+    a: 'No. You pay for what was opened.\n\nSHELF lines candidates up by similarity and opens only a few of them. If 40 match and 5 get opened, you are billed for 5. Lining them up costs nothing.\n\nIt works like web search: the list is free, the click is not. Search, filtering, ranking, handles, prices, score components and the general-model baseline are all free; passage text is the one thing behind the price. Before anything opens, we show you how many will open and what the total will be.'
   },
   {
     q: 'How does automatic matching work?',
-    a: 'Every answer you write lands on your shelf as a document. That document is the fishing line. When a question fits it, SHELF-1 opens it and pays you without you answering again.\n\nRecent documents weigh more. Something written last month ranks above a neighborhood note from three years ago. Old ones are not deleted, they fade.\n\nSo the thicker your shelf, the more often SHELF-1 picks it up on its own. That is why the open count climbs — 42 opens, say — in a week you never touched the board.'
+    a: 'Every answer you write lands on your shelf as a document. That document is the fishing line. When a question fits it, SHELF opens it and pays you without you answering again.\n\nRecent documents weigh more. Something written last month ranks above a neighborhood note from three years ago. Old ones are not deleted, they fade.\n\nSo the thicker your shelf, the more often SHELF picks it up on its own. That is why the open count climbs — 42 opens, say — in a week you never touched the board.'
   },
   {
     q: 'If more people match than the call needs, is it first come, first served?',
