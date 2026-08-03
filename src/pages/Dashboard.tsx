@@ -81,6 +81,7 @@ export default function Dashboard() {
     orders,
     memory,
     earnings,
+    account,
     profile,
     suspended,
     cancelOrder,
@@ -292,7 +293,9 @@ export default function Dashboard() {
               ₩{earnedToday.toLocaleString()}
             </span>
             {balance ? (
-              <span className="text-muted-foreground">· ₩{balance.availableKrw.toLocaleString()} available</span>
+              <span className="text-muted-foreground">
+                · Off-chain credit ₩{balance.availableKrw.toLocaleString()}
+              </span>
             ) : null}
           </div>
         </div>
@@ -470,7 +473,7 @@ export default function Dashboard() {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="ml-auto flex h-9 cursor-pointer items-center gap-2 rounded-[2px] border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className="ml-auto flex h-11 cursor-pointer items-center gap-2 rounded-[2px] border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9"
               >
                 Sort
                 <span className="text-foreground">{activeSort.label}</span>
@@ -500,6 +503,9 @@ export default function Dashboard() {
         </div>
 
         {/* category tabs ------------------------------------------------- */}
+        <p className="-mb-3 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground sm:hidden">
+          Swipe to browse fields →
+        </p>
         <div className="-mx-4 overflow-x-auto px-4 sm:-mx-6 sm:px-6">
           <div className="flex w-max items-center gap-1 border-b border-border pb-px">
             <CatTab
@@ -546,7 +552,7 @@ export default function Dashboard() {
             label="Fits me"
             muted={!profile}
           />
-          <span className="ml-auto font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+          <span className="ml-auto font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
             {list.length} {list.length === 1 ? 'call' : 'calls'}
           </span>
         </div>
@@ -571,8 +577,9 @@ export default function Dashboard() {
           <div className="flex flex-wrap items-center gap-3 rounded-[6px] border border-border bg-foreground/[0.03] px-4 py-3">
             <UserRound className="size-4 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
-              You are browsing signed out. Set up a profile and calls in your
-              fields sort to the top.
+              {account
+                ? 'Your account is ready. Finish your profile so matching paid calls sort to the top.'
+                : 'You are browsing signed out. Create an account to answer paid calls and build your shelf.'}
             </p>
             <Button
               asChild
@@ -580,7 +587,9 @@ export default function Dashboard() {
               size="monoSm"
               className="ml-auto"
             >
-              <Link to="/login?mode=signup">Create account</Link>
+              <Link to={account ? '/onboarding' : '/login?mode=signup'}>
+                {account ? 'Finish profile' : 'Create account'}
+              </Link>
             </Button>
           </div>
         ) : null}
@@ -845,7 +854,7 @@ function SegTab({
       type="button"
       onClick={onClick}
       className={cn(
-        'flex h-9 cursor-pointer items-center gap-2 rounded-[2px] px-3 font-mono text-xs font-medium uppercase tracking-[1px] transition-colors',
+        'flex h-11 cursor-pointer items-center gap-2 rounded-[2px] px-3 font-mono text-xs font-medium uppercase tracking-[1px] transition-colors sm:h-9',
         active
           ? 'border border-foreground/80 bg-foreground/85 text-background'
           : 'border border-transparent text-muted-foreground hover:bg-muted hover:text-foreground',
@@ -875,7 +884,7 @@ function CatTab({
       type="button"
       onClick={onClick}
       className={cn(
-        'relative flex cursor-pointer items-center gap-1.5 whitespace-nowrap px-3 pb-2.5 pt-1 text-sm transition-colors',
+        'relative flex min-h-11 cursor-pointer items-center gap-1.5 whitespace-nowrap px-3 pb-2.5 pt-1 text-sm transition-colors',
         active
           ? 'font-medium text-foreground'
           : 'text-muted-foreground hover:text-foreground',
@@ -889,7 +898,7 @@ function CatTab({
         />
       ) : null}
       {label}
-      <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+      <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
         {count}
       </span>
       {active ? (
@@ -915,7 +924,7 @@ function FilterChip({
       type="button"
       onClick={onClick}
       className={cn(
-        'h-7 cursor-pointer rounded-full border px-3 font-mono text-[11px] uppercase tracking-[1px] transition-colors',
+        'h-10 cursor-pointer rounded-full border px-3 font-mono text-[11px] uppercase tracking-[1px] transition-colors sm:h-7',
         active
           ? 'border-foreground/70 bg-foreground/[0.06] text-foreground'
           : 'border-border text-muted-foreground hover:border-foreground/25 hover:text-foreground',

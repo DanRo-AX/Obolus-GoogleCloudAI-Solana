@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { Loader2 } from 'lucide-react'
+import { ArrowDown, Database, Loader2, Search, WalletCards } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { forgotPassword, resetPassword } from '@/lib/api'
 import { useUi } from '@/state/ui'
 
 /**
- * Split sign-in screen: form on the left, point-cloud art on the right.
+ * Split sign-in screen: form on the left, product story on the right.
  * Signup mode is driven by ?mode=signup.
  */
 export default function Login() {
@@ -104,7 +104,7 @@ export default function Login() {
                 placeholder="m@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="h-9 w-full rounded-md border bg-transparent px-3 text-sm outline-none transition-[box-shadow] placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                className="h-11 w-full rounded-md border bg-transparent px-3 text-sm outline-none transition-[box-shadow] placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 sm:h-9"
               />
             </div> : null}
 
@@ -121,7 +121,7 @@ export default function Login() {
                 autoComplete={signup ? 'new-password' : 'current-password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="h-9 w-full rounded-md border bg-transparent px-3 text-sm outline-none transition-[box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                className="h-11 w-full rounded-md border bg-transparent px-3 text-sm outline-none transition-[box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50 sm:h-9"
               />
             </div> : null}
 
@@ -147,7 +147,7 @@ export default function Login() {
               type="submit"
               disabled={submitting}
               className={cn(
-                'mt-5 h-9 w-full cursor-pointer rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90',
+                'mt-5 h-11 w-full cursor-pointer rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 sm:h-9',
               )}
             >
               {submitting ? (
@@ -187,8 +187,80 @@ export default function Login() {
         </div>
       </div>
 
-      <div className="relative hidden lg:block">
-        <div className="absolute inset-0 bg-[#0e0b16]" />
+      <aside className="relative hidden overflow-hidden bg-[#0a0910] text-white lg:flex lg:flex-col lg:justify-between">
+        <div className="absolute inset-0 opacity-50 [background-image:radial-gradient(circle_at_20%_10%,rgba(134,111,242,0.35),transparent_32%),radial-gradient(circle_at_85%_80%,rgba(15,118,110,0.28),transparent_30%)]" />
+        <div className="absolute inset-0 opacity-25 [background-image:radial-gradient(rgba(255,255,255,0.8)_0.7px,transparent_0.7px)] [background-size:28px_28px]" />
+
+        <div className="relative z-10 p-10 xl:p-14">
+          <div className="flex items-center gap-3 font-mono text-[11px] uppercase tracking-[1.5px] text-white/55">
+            <span className="flex size-8 items-center justify-center rounded-[3px] bg-white">
+              <img src="/SHELF-SYMBOL.svg" alt="" width={18} height={18} />
+            </span>
+            Human evidence network
+          </div>
+          <h2 className="mt-12 max-w-xl font-display text-4xl font-medium leading-tight xl:text-5xl">
+            Ask people, not an average persona.
+          </h2>
+          <p className="mt-5 max-w-lg text-base leading-7 text-white/65">
+            OPENSHELF ranks firsthand human databases, opens only the evidence
+            a question needs, and settles every paid access with its owner.
+          </p>
+
+          <div className="mt-10 grid max-w-xl gap-2">
+            <ProductStep
+              icon={Search}
+              number="01"
+              title="Ask a domain-specific question"
+              detail="The agent turns intent into explicit audience and evidence requirements."
+            />
+            <ArrowDown className="ml-6 size-4 text-white/30" />
+            <ProductStep
+              icon={Database}
+              number="02"
+              title="Rank trusted human shelves"
+              detail="Coverage, relevance, freshness, quality, and provenance decide what opens first."
+            />
+            <ArrowDown className="ml-6 size-4 text-white/30" />
+            <ProductStep
+              icon={WalletCards}
+              number="03"
+              title="Pay only for evidence opened"
+              detail="x402 and Pay.sh route Devnet USDC to each database owner with a recoverable ledger."
+            />
+          </div>
+        </div>
+
+        <div className="relative z-10 flex items-center justify-between border-t border-white/10 px-10 py-6 font-mono text-[11px] uppercase tracking-[1.2px] text-white/45 xl:px-14">
+          <span>Social world model infrastructure</span>
+          <span>Solana · x402 · Pay.sh</span>
+        </div>
+      </aside>
+    </div>
+  )
+}
+
+function ProductStep({
+  icon: Icon,
+  number,
+  title,
+  detail,
+}: {
+  icon: typeof Search
+  number: string
+  title: string
+  detail: string
+}) {
+  return (
+    <div className="flex items-start gap-4 rounded-[6px] border border-white/10 bg-white/[0.055] p-4 backdrop-blur-sm">
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-[3px] bg-white/10">
+        <Icon className="size-4 text-white/80" />
+      </span>
+      <div className="min-w-0">
+        <p className="font-mono text-[11px] uppercase tracking-[1px] text-[#aa9cf6]">
+          {number}
+        </p>
+        <p className="mt-1 text-sm font-medium text-white">{title}</p>
+        <p className="mt-1 text-xs leading-5 text-white/55">{detail}</p>
       </div>
     </div>
   )

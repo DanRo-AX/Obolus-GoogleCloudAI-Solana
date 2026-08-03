@@ -599,7 +599,7 @@ function Group({
 }) {
   return (
     <div>
-      <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+      <p className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
         {label}
       </p>
       <div className="mt-2">{children}</div>
@@ -624,7 +624,7 @@ function Chips({
           type="button"
           onClick={() => onPick(o.value)}
           className={cn(
-            'h-9 cursor-pointer rounded-[2px] border px-3 text-sm transition-all',
+            'h-11 cursor-pointer rounded-[2px] border px-3 text-sm transition-all sm:h-9',
             value === o.value
               ? 'border-foreground/40 bg-foreground/[0.06] font-medium'
               : 'border-border text-muted-foreground hover:border-foreground/20 hover:text-foreground',

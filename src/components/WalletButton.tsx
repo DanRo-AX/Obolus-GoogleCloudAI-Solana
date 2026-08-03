@@ -262,6 +262,27 @@ export function WalletButton({ className }: { className?: string }) {
           {error}
         </span>
       ) : null}
+      <p className="px-1 text-xs leading-relaxed text-muted-foreground">
+        Connect first, then add free Devnet SOL for fees and Devnet USDC for paid evidence.
+      </p>
+      <div className="flex flex-wrap gap-x-3 gap-y-1 px-1 text-xs">
+        <a
+          href={DEVNET_FAUCETS.sol}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline decoration-dotted underline-offset-4 hover:text-foreground"
+        >
+          Get Devnet SOL
+        </a>
+        <a
+          href={DEVNET_FAUCETS.usdc}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline decoration-dotted underline-offset-4 hover:text-foreground"
+        >
+          Get Devnet USDC
+        </a>
+      </div>
       {!available ? (
         <a
           href={PHANTOM_INSTALL_URL}
