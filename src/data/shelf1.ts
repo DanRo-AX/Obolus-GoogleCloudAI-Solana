@@ -61,7 +61,7 @@ export const OPEN_PROBLEMS: OpenProblem[] = [
   {
     status: 'Critical',
     title: 'How the shelves get filled at launch',
-    body: 'An empty shelf now has a liquidity bridge, not fake inventory. Questioners receive a free general AI baseline while the human gap stays open; contributors can ask Gemini for interview prompts with no fake buyer or bounty. The remaining problem is distribution: how the first hundred people arrive and which narrow market reaches density first.',
+    body: 'An empty shelf now has a liquidity bridge, not fake inventory. Questioners receive a free general AI baseline while the human gap stays open; contributors can ask Gemini on Vertex AI for interview prompts with no fake buyer or bounty. The remaining problem is distribution: how the first hundred people arrive and which narrow market reaches density first.',
   },
   {
     status: 'Open',

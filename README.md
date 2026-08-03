@@ -14,6 +14,8 @@ x402/Solana payment gateway.
 npm ci
 npm --prefix payment-gateway ci
 cp .env.example .env  # set the direct and bundle receiver Devnet wallets
+gcloud auth application-default login  # local Vertex AI ADC; no API key
+# set GOOGLE_CLOUD_PROJECT in .env; Vertex AI API must be enabled for it
 npm run dev:stack     # frontend :4319, Rust :8787, x402 gateway :1402
 npm run x402:devnet:smoke # optional funded-wallet settlement verification
 ```
@@ -43,7 +45,7 @@ explicitly want the old sandbox-ledger path, or
 5. The public Devnet facilitator verifies and settles it, the gateway releases
    the purchase-time content snapshot, and Rust records the signature
    idempotently.
-6. Rust reloads only server-proven opened passages, then Gemini/Vertex produces
+6. Rust reloads only server-proven opened passages, then Gemini on Vertex AI produces
    a cited synthesis. Without a provider, the UI shows an explicit evidence-only
    result instead of inventing an answer.
 7. Direct-to-author payments are marked `onchain`. Bundle shares are marked
@@ -107,7 +109,7 @@ response contains handles and prices but never paid passages.
 
 ## AI supplies liquidity; people create the asset
 
-When human coverage is empty or thin, Gemini may provide a free **AI general
+When human coverage is empty or thin, Gemini on Vertex AI may provide a free **AI general
 baseline** so a questioner does not hit a blank screen. That baseline lives in
 `ai_baselines`, never `documents`: it has zero price, expires, cannot be resold,
 earns no authority, cannot satisfy an open-call slot, and is never used by the
@@ -116,12 +118,12 @@ orientation and decision criteria, then explicitly lists the current,
 firsthand gaps that still require people. If enough human documents exist—even
 when the buyer's budget is too low—the server refuses to generate a baseline.
 
-The opposite cold start is explicit too. A contributor can ask Gemini for
+The opposite cold start is explicit too. A contributor can ask Gemini on Vertex AI for
 three **Shelf starter** interview prompts based only on broad fields they
 agreed to answer in. The UI states that no buyer is waiting and no upfront
 reward is guaranteed. A prompt has no price or evidence status; only the
 contributor's quality-checked firsthand answer becomes a sellable human
-document. Gemini supplies demand-side context, supply-side interviewing, and
+document. Gemini on Vertex AI supplies demand-side context, supply-side interviewing, and
 post-purchase synthesis without ever becoming a marketplace author.
 
 ## Canvases

@@ -834,7 +834,7 @@ function AiBaselineCard({ baseline }: { baseline: AiBaseline }) {
         </ul>
       </div>
       <p className="mt-3 font-mono text-[9px] uppercase leading-4 tracking-[0.7px] text-muted-foreground">
-        ₩0 · question sent to Gemini without private shelf passages · cannot be bought or resold · never enters Shelf ranking
+        ₩0 · question sent to Gemini on Vertex AI without private shelf passages · cannot be bought or resold · never enters Shelf ranking
       </p>
     </section>
   )

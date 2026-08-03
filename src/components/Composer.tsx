@@ -166,8 +166,8 @@ export function Composer({
           dark ? 'text-white/40' : 'text-muted-foreground',
         )}
       >
-        If human coverage is thin, this question alone may be sent to Gemini for
-        a free general baseline. Private shelf passages are never sent.
+        If human coverage is thin, this question alone may be sent to Gemini on
+        Vertex AI for a free general baseline. Private shelf passages are never sent.
       </p>
     </form>
   )

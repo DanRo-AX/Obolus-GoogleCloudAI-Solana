@@ -17,7 +17,7 @@ quoted handles -> direct quote (1) or exact bundle quote (2–100)
                \-> progress/recovery token -> immutable chain receipt + beneficiary claims
 author wallet -> signed Ed25519 challenge -> verified payout destination
 paid passage -> buyer feedback/report -> admin review -> ranking reliability
-opened passages -> server-canonical evidence -> Gemini/Vertex cited synthesis
+opened passages -> server-canonical evidence -> Gemini on Vertex AI cited synthesis
 memory -> hash/version/lock/correction -> public manifest + private export log
 ```
 
@@ -58,11 +58,10 @@ directory. Configuration:
 | `OPENSHELF_KRW_PER_USDC` | `1350` | Deterministic quote conversion rate |
 | `OPENSHELF_QUOTE_TTL_MS` | `300000` | Quote lifetime |
 | `OPENSHELF_ALLOW_DEMO_OPEN` | development-dependent | Enable the non-x402 demo opener; keep false publicly |
-| `OPENSHELF_GEMINI_MODEL` | `gemini-2.5-flash` | Evidence synthesis model |
+| `GOOGLE_CLOUD_PROJECT` | none | Vertex AI billing/resource project; required for model calls |
+| `GOOGLE_CLOUD_LOCATION` | `global` | Vertex AI location; regional endpoints are derived safely |
+| `OPENSHELF_VERTEX_MODEL` | `gemini-2.5-flash` | Gemini model hosted by Vertex AI |
 | `OPENSHELF_AI_BASELINE_TTL_MS` | `21600000` | Lifetime of a zero-price general AI baseline; never a human document |
-| `OPENSHELF_VERTEX_ENDPOINT` | none | Vertex generate-content endpoint |
-| `OPENSHELF_GOOGLE_ACCESS_TOKEN` | none | Vertex bearer token |
-| `GEMINI_API_KEY` | none | Local Gemini API fallback |
 | `OPENSHELF_EMAIL_ENDPOINT` | none | Optional Resend-compatible contributor-alert endpoint |
 | `OPENSHELF_EMAIL_API_KEY` | none | Bearer token for the email endpoint |
 | `OPENSHELF_EMAIL_FROM` | none | Verified sender used for contributor alerts |
@@ -70,6 +69,12 @@ directory. Configuration:
 Production also refuses to start against a database that already contains the
 demo corpus. Use a clean production database rather than relabelling a populated
 development volume.
+
+Vertex authentication uses Application Default Credentials. For local
+development, run `gcloud auth application-default login`; for production,
+attach a least-privilege runtime service account with `roles/aiplatform.user`
+through the hosting platform or Workload Identity. Do not create or commit a
+service-account key, and do not manage expiring bearer tokens in `.env`.
 
 Docker persists SQLite in `/data`:
 
@@ -165,7 +170,7 @@ rejects first-person or direct recommendation language. The result lives in
 `ai_baselines`, expires, costs zero, and has no path into documents, authority,
 memory, matching, or settlement.
 
-Shelf starters cover the inverse cold start. Gemini receives only the
+Shelf starters cover the inverse cold start. Gemini on Vertex AI receives only the
 contributor's broad field and opted-in categories and returns prompts, not
 answers. They live in `shelf_starters` with `buyerWaiting=false` and
 `guaranteedRewardKrw=0`. A human may answer one and choose a future per-open

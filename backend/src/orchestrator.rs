@@ -1,8 +1,10 @@
 use std::{collections::HashSet, sync::LazyLock, time::Duration};
 
+use google_cloud_auth::credentials::{AccessTokenCredentials, Builder as CredentialsBuilder};
 use reqwest::Client;
 use serde_json::{Value, json};
 use thiserror::Error;
+use tracing::warn;
 
 use crate::domain::{
     AiBaselineDraft, CATEGORY_IDS, EvidenceContribution, ShelfStarterDraft,
@@ -19,6 +21,104 @@ static HTTP_CLIENT: LazyLock<Client> = LazyLock::new(|| {
         .build()
         .expect("orchestrator HTTP client configuration is valid")
 });
+static VERTEX_CREDENTIALS: LazyLock<Result<AccessTokenCredentials, String>> = LazyLock::new(|| {
+    CredentialsBuilder::default()
+        .with_scopes(["https://www.googleapis.com/auth/cloud-platform"])
+        .build_access_token_credentials()
+        .map_err(|error| error.to_string())
+});
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VertexConfig {
+    endpoint: String,
+    model: String,
+}
+
+impl VertexConfig {
+    fn from_env() -> Option<Self> {
+        Self::new(
+            &std::env::var("GOOGLE_CLOUD_PROJECT").ok()?,
+            &std::env::var("GOOGLE_CLOUD_LOCATION").unwrap_or_else(|_| "global".to_owned()),
+            &std::env::var("OPENSHELF_VERTEX_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_owned()),
+        )
+    }
+
+    fn new(project: &str, location: &str, model: &str) -> Option<Self> {
+        let project = project.trim();
+        let location = location.trim();
+        let model = model.trim();
+        if ![project, location, model]
+            .iter()
+            .all(|value| valid_vertex_identifier(value))
+        {
+            return None;
+        }
+        let api_origin = if location == "global" {
+            "https://aiplatform.googleapis.com".to_owned()
+        } else {
+            format!("https://{location}-aiplatform.googleapis.com")
+        };
+        Some(Self {
+            endpoint: format!(
+                "{api_origin}/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent"
+            ),
+            model: model.to_owned(),
+        })
+    }
+}
+
+fn valid_vertex_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+}
+
+async fn vertex_generate(body: &Value) -> Option<(Value, String)> {
+    let config = VertexConfig::from_env()?;
+    let credentials = match VERTEX_CREDENTIALS.as_ref() {
+        Ok(credentials) => credentials,
+        Err(error) => {
+            warn!(error = %error, "Vertex ADC credentials are unavailable");
+            return None;
+        }
+    };
+    let token = match credentials.access_token().await {
+        Ok(token) => token,
+        Err(error) => {
+            warn!(error = %error, "Vertex ADC access token could not be issued");
+            return None;
+        }
+    };
+    let response = match HTTP_CLIENT
+        .post(&config.endpoint)
+        .bearer_auth(token.token)
+        .json(body)
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            warn!(error = %error, "Vertex generateContent request failed");
+            return None;
+        }
+    };
+    let response = match response.error_for_status() {
+        Ok(response) => response,
+        Err(error) => {
+            warn!(status = ?error.status(), "Vertex generateContent returned an error");
+            return None;
+        }
+    };
+    match response.json::<Value>().await {
+        Ok(payload) => Some((payload, config.model)),
+        Err(error) => {
+            warn!(error = %error, "Vertex generateContent returned malformed JSON");
+            None
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum OrchestratorError {
@@ -60,53 +160,17 @@ pub async fn generate_ai_baseline(
     if question.chars().count() > 1_000 {
         return Err(OrchestratorError::QuestionTooLong);
     }
-    let model =
-        std::env::var("OPENSHELF_GEMINI_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_owned());
     let body = baseline_generation_body(question);
 
-    if let Ok(endpoint) = std::env::var("OPENSHELF_VERTEX_ENDPOINT")
-        && let Ok(token) = std::env::var("OPENSHELF_GOOGLE_ACCESS_TOKEN")
-        && !endpoint.trim().is_empty()
-        && !token.trim().is_empty()
-        && let Ok(response) = HTTP_CLIENT
-            .post(endpoint)
-            .bearer_auth(token)
-            .json(&body)
-            .send()
-            .await
-        && let Ok(response) = response.error_for_status()
-        && let Ok(payload) = response.json::<Value>().await
-        && let Some(draft) = parse_baseline_response(&payload)
-    {
-        return Ok(Some(GeneratedAiBaseline {
-            draft,
-            model,
-            mode: "vertex".to_owned(),
-        }));
-    }
-
-    if let Ok(api_key) = std::env::var("GEMINI_API_KEY")
-        && !api_key.trim().is_empty()
-    {
-        let endpoint = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        );
-        if let Ok(response) = HTTP_CLIENT
-            .post(endpoint)
-            .query(&[("key", api_key)])
-            .json(&body)
-            .send()
-            .await
-            && let Ok(response) = response.error_for_status()
-            && let Ok(payload) = response.json::<Value>().await
-            && let Some(draft) = parse_baseline_response(&payload)
-        {
+    if let Some((payload, model)) = vertex_generate(&body).await {
+        if let Some(draft) = parse_baseline_response(&payload) {
             return Ok(Some(GeneratedAiBaseline {
                 draft,
                 model,
-                mode: "gemini_api".to_owned(),
+                mode: "vertex".to_owned(),
             }));
         }
+        warn!("Vertex AI baseline was rejected by the general-liquidity output policy");
     }
 
     Ok(None)
@@ -127,53 +191,17 @@ pub async fn generate_shelf_starters(
     if field.trim().is_empty() || allowed.is_empty() {
         return Ok(None);
     }
-    let model =
-        std::env::var("OPENSHELF_GEMINI_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_owned());
     let body = shelf_starter_generation_body(field, &allowed);
 
-    if let Ok(endpoint) = std::env::var("OPENSHELF_VERTEX_ENDPOINT")
-        && let Ok(token) = std::env::var("OPENSHELF_GOOGLE_ACCESS_TOKEN")
-        && !endpoint.trim().is_empty()
-        && !token.trim().is_empty()
-        && let Ok(response) = HTTP_CLIENT
-            .post(endpoint)
-            .bearer_auth(token)
-            .json(&body)
-            .send()
-            .await
-        && let Ok(response) = response.error_for_status()
-        && let Ok(payload) = response.json::<Value>().await
-        && let Some(starters) = parse_shelf_starters(&payload, &allowed)
-    {
-        return Ok(Some(GeneratedShelfStarters {
-            starters,
-            model,
-            mode: "vertex".to_owned(),
-        }));
-    }
-
-    if let Ok(api_key) = std::env::var("GEMINI_API_KEY")
-        && !api_key.trim().is_empty()
-    {
-        let endpoint = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        );
-        if let Ok(response) = HTTP_CLIENT
-            .post(endpoint)
-            .query(&[("key", api_key)])
-            .json(&body)
-            .send()
-            .await
-            && let Ok(response) = response.error_for_status()
-            && let Ok(payload) = response.json::<Value>().await
-            && let Some(starters) = parse_shelf_starters(&payload, &allowed)
-        {
+    if let Some((payload, model)) = vertex_generate(&body).await {
+        if let Some(starters) = parse_shelf_starters(&payload, &allowed) {
             return Ok(Some(GeneratedShelfStarters {
                 starters,
                 model,
-                mode: "gemini_api".to_owned(),
+                mode: "vertex".to_owned(),
             }));
         }
+        warn!("Vertex AI shelf starters were rejected by the prompt output policy");
     }
 
     Ok(None)
@@ -183,48 +211,12 @@ pub async fn synthesize(
     request: &SynthesizeAnswerRequest,
 ) -> Result<SynthesizeAnswerResponse, OrchestratorError> {
     validate(request)?;
-    let model =
-        std::env::var("OPENSHELF_GEMINI_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_owned());
-
-    if let Ok(endpoint) = std::env::var("OPENSHELF_VERTEX_ENDPOINT")
-        && let Ok(token) = std::env::var("OPENSHELF_GOOGLE_ACCESS_TOKEN")
-        && !endpoint.trim().is_empty()
-        && !token.trim().is_empty()
-    {
-        let body = generation_body(request);
-        if let Ok(response) = HTTP_CLIENT
-            .post(endpoint)
-            .bearer_auth(token)
-            .json(&body)
-            .send()
-            .await
-            && let Ok(response) = response.error_for_status()
-            && let Ok(payload) = response.json::<Value>().await
-            && let Some(parsed) = parse_provider_response(&payload, request, &model, "vertex")
-        {
+    let body = generation_body(request);
+    if let Some((payload, model)) = vertex_generate(&body).await {
+        if let Some(parsed) = parse_provider_response(&payload, request, &model, "vertex") {
             return Ok(parsed);
         }
-    }
-
-    if let Ok(api_key) = std::env::var("GEMINI_API_KEY")
-        && !api_key.trim().is_empty()
-    {
-        let endpoint = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        );
-        let body = generation_body(request);
-        if let Ok(response) = HTTP_CLIENT
-            .post(endpoint)
-            .query(&[("key", api_key)])
-            .json(&body)
-            .send()
-            .await
-            && let Ok(response) = response.error_for_status()
-            && let Ok(payload) = response.json::<Value>().await
-            && let Some(parsed) = parse_provider_response(&payload, request, &model, "gemini_api")
-        {
-            return Ok(parsed);
-        }
+        warn!("Vertex AI synthesis was rejected by the paid-evidence output policy");
     }
 
     Ok(fallback(request))
@@ -314,9 +306,9 @@ fn baseline_generation_body(question: &str) -> Value {
                 "required": ["orientation", "generalPoints", "humanGaps", "questionsForPeople"],
                 "properties": {
                     "orientation": {"type": "STRING"},
-                    "generalPoints": {"type": "ARRAY", "items": {"type": "STRING"}},
-                    "humanGaps": {"type": "ARRAY", "items": {"type": "STRING"}},
-                    "questionsForPeople": {"type": "ARRAY", "items": {"type": "STRING"}}
+                    "generalPoints": {"type": "ARRAY", "minItems": 1, "maxItems": 5, "items": {"type": "STRING"}},
+                    "humanGaps": {"type": "ARRAY", "minItems": 1, "maxItems": 6, "items": {"type": "STRING"}},
+                    "questionsForPeople": {"type": "ARRAY", "minItems": 1, "maxItems": 6, "items": {"type": "STRING"}}
                 }
             }
         }
@@ -344,6 +336,8 @@ fn shelf_starter_generation_body(field: &str, categories: &[String]) -> Value {
                 "properties": {
                     "starters": {
                         "type": "ARRAY",
+                        "minItems": 3,
+                        "maxItems": 3,
                         "items": {
                             "type": "OBJECT",
                             "required": ["prompt", "rationale", "category"],
@@ -511,12 +505,12 @@ fn fallback(request: &SynthesizeAnswerRequest) -> SynthesizeAnswerResponse {
         .join("\n\n");
     SynthesizeAnswerResponse {
         answer: format!(
-            "Gemini is not configured, so OPENSHELF is showing the paid evidence without inventing a synthesis.\n\n{evidence_list}"
+            "Vertex AI is not configured, so OPENSHELF is showing the paid evidence without inventing a synthesis.\n\n{evidence_list}"
         ),
         confidence: 0.0,
         consensus: Vec::new(),
         disagreements: vec![
-            "No model-based agreement analysis was run in this local fallback.".to_owned(),
+            "No Vertex AI agreement analysis was run in this local fallback.".to_owned(),
         ],
         contributions: request
             .citations
@@ -524,7 +518,7 @@ fn fallback(request: &SynthesizeAnswerRequest) -> SynthesizeAnswerResponse {
             .map(|citation| EvidenceContribution {
                 handle: citation.handle.clone(),
                 score: 0.0,
-                reason: "Opened evidence; contribution was not evaluated without Gemini."
+                reason: "Opened evidence; contribution was not evaluated without Vertex AI."
                     .to_owned(),
             })
             .collect(),
@@ -541,7 +535,8 @@ mod tests {
     use crate::domain::{Citation, SynthesizeAnswerRequest};
 
     use super::{
-        fallback, parse_baseline_response, parse_provider_response, parse_shelf_starters, validate,
+        VertexConfig, fallback, parse_baseline_response, parse_provider_response,
+        parse_shelf_starters, validate,
     };
 
     fn request() -> SynthesizeAnswerRequest {
@@ -565,6 +560,23 @@ mod tests {
         assert_eq!(response.mode, "evidence_only_fallback");
         assert_eq!(response.confidence, 0.0);
         assert!(response.answer.contains("[PARISR_12]"));
+    }
+
+    #[test]
+    fn vertex_endpoint_is_constructed_from_validated_resource_names() {
+        let global = VertexConfig::new("openshelf-prod", "global", "gemini-2.5-flash").unwrap();
+        assert_eq!(
+            global.endpoint,
+            "https://aiplatform.googleapis.com/v1/projects/openshelf-prod/locations/global/publishers/google/models/gemini-2.5-flash:generateContent"
+        );
+        let regional =
+            VertexConfig::new("openshelf-prod", "asia-northeast3", "gemini-2.5-flash").unwrap();
+        assert!(
+            regional
+                .endpoint
+                .starts_with("https://asia-northeast3-aiplatform.googleapis.com/")
+        );
+        assert!(VertexConfig::new("openshelf-prod/../../other", "global", "model").is_none());
     }
 
     #[test]

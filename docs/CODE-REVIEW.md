@@ -24,7 +24,7 @@ port only useful PR #9-only contracts and documentation.
 | --- | --- |
 | Versioned memory, correction, locking, reflection, access log | Present and extended |
 | Topic-personalized PageRank and evidence provenance | Present in `authority.rs` and `search.rs` |
-| Paid-evidence Gemini/Vertex orchestration | Present; now guarded by the query capability |
+| Paid-evidence Gemini on Vertex AI orchestration | Present; now guarded by the query capability |
 | Dynamic x402 quote and settlement mirror | Present and extended with recovery and stable SVM requirements |
 | Persona public manifest URLs | Preserved as compatibility aliases; contributor URLs remain canonical |
 | Devnet smoke path and Pay.sh note | Present in newer form |
@@ -98,7 +98,7 @@ mistaken for production configuration.
    deletion grace period, 90-day backup erasure, every-access logging, named
    processor controls, TLS, and an in-service contact channel that the product
    does not yet implement. It also needs to disclose that demographic bands are
-   free matching metadata and that paid passages may be sent to Gemini/Vertex
+   free matching metadata and that paid passages may be sent to Gemini on Vertex AI
    for synthesis.
 7. **Abuse controls.** Login has email-keyed throttling and the RPC proxy has a
    local safety limit, but registration, resolve, gateway quotes, model calls,

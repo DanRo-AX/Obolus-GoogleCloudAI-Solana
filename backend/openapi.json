@@ -82,7 +82,7 @@
         }
       },
       "post": {
-        "summary": "Explicitly ask Gemini to create three contributor interview prompts",
+        "summary": "Explicitly ask Gemini on Vertex AI to create three contributor interview prompts",
         "security": [{ "sessionCookie": [] }],
         "responses": {
           "200": {
@@ -330,7 +330,7 @@
         },
         "responses": {
           "200": {
-            "description": "Cited Gemini/Vertex synthesis or an explicit evidence-only fallback",
+            "description": "Cited Gemini-on-Vertex-AI synthesis or an explicit evidence-only fallback",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/EvidenceSynthesis" }

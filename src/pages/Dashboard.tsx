@@ -142,7 +142,7 @@ export default function Dashboard() {
       const result = await generateShelfStarters()
       setStarters(result.starters)
       if (result.status === 'unavailable') {
-        setStarterError('Gemini interview prompts are unavailable. No fake buyer calls were created.')
+        setStarterError('Vertex AI interview prompts are unavailable. No fake buyer calls were created.')
       }
     } catch (error) {
       setStarterError(error instanceof Error ? error.message : 'Could not create shelf starters.')
@@ -378,7 +378,7 @@ export default function Dashboard() {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">Build human supply before a buyer arrives</p>
                 <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
-                  Gemini receives only your broad field and opted-in categories and creates interview prompts only. There is no buyer waiting and no guaranteed upfront reward. Your firsthand answer—not the AI prompt—becomes a priced human document that can earn when opened later.
+                  Gemini on Vertex AI receives only your broad field and opted-in categories and creates interview prompts only. There is no buyer waiting and no guaranteed upfront reward. Your firsthand answer—not the AI prompt—becomes a priced human document that can earn when opened later.
                 </p>
               </div>
               <Button
