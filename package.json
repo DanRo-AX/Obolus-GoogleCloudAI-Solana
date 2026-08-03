@@ -8,6 +8,7 @@
     "dev:stack": "bash scripts/dev-stack.sh",
     "demo:mock": "node scripts/mock-backend.mjs",
     "demo:record": "node scripts/record-e2e.mjs",
+    "demo:record:hq": "HQ=1 node scripts/record-e2e.mjs",
     "pay:gateway:sandbox": "OPENSHELF_BACKEND_URL=${OPENSHELF_BACKEND_URL:-http://127.0.0.1:8787} npx --yes @solana/pay@1.0.26 --sandbox gate api backend/paywall.yml --bind 127.0.0.1:3402 --openapi openapi.json --no-register",
     "pay:smoke": "node scripts/pay-sh-smoke.ts",
     "pay:image:gcloud": "docker build -f pay/Dockerfile -t openshelf-pay:gcp-kms .",

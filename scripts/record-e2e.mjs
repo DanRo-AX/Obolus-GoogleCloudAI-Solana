@@ -23,8 +23,27 @@ const ROOT = new URL('..', import.meta.url).pathname
 const OUT = `${ROOT}scripts/.e2e-video/`
 const PUBKEY = '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU'
 
-rmSync(OUT, { recursive: true, force: true })
+/**
+ * `HQ=1` records the same pass at 2x device pixels and encodes it harder.
+ * Roughly four times the file for text that survives being scaled down into a
+ * deck. The output is named separately so both takes can live side by side.
+ */
+const HQ = process.env.HQ === '1'
+const WIDTH = 1440
+const HEIGHT = 900
+const SCALE = HQ ? 2 : 1
+const CRF = HQ ? '17' : '20'
+const PRESET = HQ ? 'slower' : 'slow'
+const NAME = HQ ? 'obolus-e2e-hq' : 'obolus-e2e'
+
+// Clear only what this take will rewrite. A previous take at the other quality
+// keeps its file, and a stale webm never gets picked up as this run's source.
 mkdirSync(OUT, { recursive: true })
+for (const file of readdirSync(OUT)) {
+  if (file.endsWith('.webm') || file === `${NAME}.mp4`) {
+    rmSync(`${OUT}${file}`, { force: true })
+  }
+}
 
 const children = []
 
@@ -242,12 +261,18 @@ async function warmups(page) {
 
 const run = async () => {
   const browser = await chromium.launch({
-    args: ['--force-device-scale-factor=1', '--hide-scrollbars'],
+    args: [`--force-device-scale-factor=${SCALE}`, '--hide-scrollbars'],
   })
   const context = await browser.newContext({
-    viewport: { width: 1440, height: 900 },
-    recordVideo: { dir: OUT, size: { width: 1440, height: 900 } },
-    deviceScaleFactor: 1,
+    // The layout stays a 1440×900 desktop either way. HQ raises the device
+    // pixel ratio instead of the CSS viewport, so text and the vortex are
+    // rendered at 2x and the composition is unchanged.
+    viewport: { width: WIDTH, height: HEIGHT },
+    recordVideo: {
+      dir: OUT,
+      size: { width: WIDTH * SCALE, height: HEIGHT * SCALE },
+    },
+    deviceScaleFactor: SCALE,
     reducedMotion: 'no-preference',
   })
   await context.addInitScript(PHANTOM_STUB, PUBKEY)
@@ -477,12 +502,13 @@ stopAll()
 // either way so a missing ffmpeg never costs a take.
 const webm = readdirSync(OUT).find((f) => f.endsWith('.webm'))
 if (webm && spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0) {
-  const mp4 = `${OUT}obolus-e2e.mp4`
+  const mp4 = `${OUT}${NAME}.mp4`
   spawnSync(
     'ffmpeg',
-    ['-y', '-i', `${OUT}${webm}`, '-vf', 'fps=30,format=yuv420p',
-     '-c:v', 'libx264', '-preset', 'slow', '-crf', '20',
-     '-movflags', '+faststart', mp4],
+    ['-y', '-i', `${OUT}${webm}`,
+     '-vf', `fps=30,scale=${WIDTH * SCALE}:${HEIGHT * SCALE}:flags=lanczos,format=yuv420p`,
+     '-c:v', 'libx264', '-preset', PRESET, '-crf', CRF,
+     '-profile:v', 'high', '-movflags', '+faststart', mp4],
     { stdio: 'ignore' },
   )
   console.log(`\n  ${mp4}`)
