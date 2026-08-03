@@ -127,13 +127,13 @@
   --chart-4: #fcbb00;
   --chart-5: #f99c00;
   /* A shade off the page so the rail reads as a separate plane. */
-  --sidebar: #f2f3f4;
+  --sidebar: #eaecee;
   --sidebar-foreground: #0a0a0a;
   --sidebar-primary: #171717;
   --sidebar-primary-foreground: #fafafa;
   --sidebar-accent: #f5f5f5;
   --sidebar-accent-foreground: #171717;
-  --sidebar-border: #e2e4e5;
+  --sidebar-border: #dcdfe1;
   --sidebar-ring: #a1a1a1;
 
   --font-geist-sans: "GeistSans", "GeistSans Fallback";

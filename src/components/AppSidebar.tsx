@@ -86,11 +86,11 @@ function ProfileChip() {
  */
 function LiveStrip() {
   const { earnings, orders, profile } = useUi()
-  if (!profile) return null
 
-  const fits = orders.filter(
-    (o) => !o.mine && o.answered < o.target && profile.speaksTo.includes(o.category),
-  ).length
+  const open = orders.filter((o) => !o.mine && o.answered < o.target)
+  const fits = profile
+    ? open.filter((o) => profile.speaksTo.includes(o.category)).length
+    : open.length
   const earned = earnings?.accruedKrw ?? 0
   const held = earnings?.heldKrw ?? 0
 
@@ -100,7 +100,7 @@ function LiveStrip() {
         to="/memory"
         className="flex items-baseline justify-between gap-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground"
       >
-        <span>Earned</span>
+        <span>{profile ? 'Earned' : 'Paid out'}</span>
         <span className="tabular-nums text-foreground">
           ₩{earned.toLocaleString()}
           {held ? (
@@ -115,7 +115,7 @@ function LiveStrip() {
         to="/dashboard"
         className="flex items-baseline justify-between gap-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground"
       >
-        <span>Fit you</span>
+        <span>{profile ? 'Fit you' : 'Open now'}</span>
         <span
           className={cn(
             'tabular-nums',
@@ -172,13 +172,13 @@ export function AppSidebar() {
                     data-slot="sidebar-menu-button"
                     className={cn(
                       MENU_BUTTON,
-                      'text-sm h-9 cursor-pointer rounded-sm bg-white p-2.5 shadow-lg shadow-black/5 hover:bg-white hover:shadow-lg',
+                      'text-sm h-9 cursor-pointer rounded-[3px] px-1.5 py-2 hover:bg-foreground/[0.04]',
                     )}
                   >
                     <div className="flex aspect-square size-6 items-center justify-center">
                       <WorkspaceMark />
                     </div>
-                    <span className="truncate text-xs font-semibold">
+                    <span className="truncate text-[13px] font-semibold tracking-[-0.01em]">
                       Obolus
                     </span>
                   </Link>
@@ -264,11 +264,9 @@ export function AppSidebar() {
                 data-slot="sidebar-menu-item"
                 className="group/menu-item relative flex flex-col gap-2"
               >
+                <LiveStrip />
                 {profile ? (
-                  <>
-                    <LiveStrip />
-                    <ProfileChip />
-                  </>
+                  <ProfileChip />
                 ) : account ? (
                   <div className="space-y-2 rounded-[2px] border border-border bg-card p-2.5">
                     <p className="truncate font-mono text-[10px] text-muted-foreground">
