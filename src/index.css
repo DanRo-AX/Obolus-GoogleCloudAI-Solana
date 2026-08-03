@@ -373,9 +373,13 @@
    fill more of their box.
 --------------------------------------------------------------------------- */
 :root[data-lang="ko"] .font-display {
-  letter-spacing: -0.012em;
-  font-weight: 700;
-  line-height: 1.32;
+  /* 700 plus tight leading is what makes a large Hangul headline look like a
+     wall. The glyphs already fill their box, so weight reads heavier than the
+     same number does in Latin, and three stacked lines need real air between
+     them before the strokes stop colliding. */
+  font-weight: 600;
+  letter-spacing: -0.018em;
+  line-height: 1.46;
 }
 
 :root[data-lang="ko"] body,

@@ -17,13 +17,12 @@ export function ThesisSection() {
           {t('Why nobody wrote it down')}
         </p>
 
-        <h2 className="mt-5 max-w-4xl font-display text-[32px] leading-[1.1] sm:text-[48px]">
+        <h2 className="mt-5 max-w-[38rem] font-display text-[30px] leading-[1.12] sm:max-w-[46rem] sm:text-[44px]">
           {t('Every agent on the internet reads for free.')}
-          <span className="text-muted-foreground">
-            {' '}
-            {t('So nobody bothered writing down the part worth reading.')}
-          </span>
         </h2>
+        <p className="mt-4 max-w-[34rem] font-display text-[22px] leading-snug text-muted-foreground sm:text-[28px]">
+          {t('So nobody bothered writing down the part worth reading.')}
+        </p>
 
         <p className="mt-6 max-w-2xl text-[15px] leading-7 text-muted-foreground">
           {t(
