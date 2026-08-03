@@ -1479,6 +1479,10 @@ function OriginkitBaseVortex(props: VortexProps) {
   )
 }
 
+// The Originkit export only bakes the sliders it considers "props"; the line,
+// dot and comet groups are left to DEFAULTS, which is why a straight paste
+// renders white strands, visible dots and orange comets rather than what the
+// panel shows. These are the panel's own values, written out.
 const presetProps: VortexProps = {
   background: '#000000',
   topRadius: 235,
@@ -1489,7 +1493,17 @@ const presetProps: VortexProps = {
   zoom: 85,
   speed: 6,
   direction: 'right',
+  lineOptions: { count: 240, color: '#646464', glow: 10 },
+  dots: false,
   comets: true,
+  cometOptions: {
+    count: 19,
+    speed: 2,
+    color: '#8266FF',
+    glow: 4,
+    tail: 53,
+    delay: 0,
+  },
 }
 
 export default function Vortex(props: VortexProps) {
