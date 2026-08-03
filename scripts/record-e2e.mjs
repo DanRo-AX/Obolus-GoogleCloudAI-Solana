@@ -111,14 +111,14 @@ const CAPTION = () => {
   el.id = '__cap'
   el.style.cssText = [
     'position:fixed', 'left:0', 'right:0', 'bottom:0', 'z-index:2147483647',
-    'font:500 15px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
-    'background:rgba(9,9,11,.94)', 'color:#fafafa', 'padding:12px 20px',
-    'display:flex', 'gap:14px', 'align-items:baseline',
+    'font:500 20px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
+    'background:rgba(9,9,11,.94)', 'color:#fafafa', 'padding:16px 26px',
+    'display:flex', 'gap:18px', 'align-items:baseline',
     'border-top:1px solid rgba(255,255,255,.14)', 'pointer-events:none',
     'transition:opacity .2s',
   ].join(';')
   el.innerHTML =
-    '<span id="__capn" style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:1.5px;color:#8266FF;flex:0 0 auto"></span>' +
+    '<span id="__capn" style="font:600 14px/1 ui-monospace,Menlo,monospace;letter-spacing:1.5px;color:#8266FF;flex:0 0 auto"></span>' +
     '<span id="__capt"></span>'
   document.body.appendChild(el)
     const kept = sessionStorage.getItem('__cap')
