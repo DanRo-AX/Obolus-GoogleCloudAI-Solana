@@ -1,288 +1,377 @@
-# OPENSHELF
+<h1 align="center">
+  <img src="public/OBOLUS-MARK.svg" alt="Obolus" width="56" valign="middle" /> Obolus
+</h1>
 
-Implementation diagrams: [system architecture and ERD](./architecture.html)
+<p align="center">
+  <a href="https://github.com/DanRo-AX/Obolus-GoogleCloudAI-Solana"><img src="https://img.shields.io/github/stars/DanRo-AX/Obolus-GoogleCloudAI-Solana?style=flat&amp;label=%E2%98%85&amp;color=08C" alt="GitHub stars" /></a>
+  <a href="https://github.com/DanRo-AX/Obolus-GoogleCloudAI-Solana/actions/workflows/ci.yml"><img src="https://github.com/DanRo-AX/Obolus-GoogleCloudAI-Solana/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/Solana-Devnet-9945FF?style=flat" alt="Settles on Solana Devnet" />
+  <img src="https://img.shields.io/badge/x402-v2%20exact%2FSVM-08C?style=flat" alt="x402 v2, exact scheme, SVM" />
+  <img src="https://img.shields.io/badge/React%2019%20%C2%B7%20Rust%201.89%20%C2%B7%20Node%2024-4493F8?style=flat" alt="React 19, Rust 1.89, Node 24" />
+</p>
 
-An agent that searches what people wrote instead of the web, and pays each
-human database owner through Pay.sh for every document it opens.
+<p align="center">
+  <sub><a href="docs/readme/README.ko.md">한국어</a></sub>
+</p>
 
-> Turn the internet into a database, and charge x402 for access.
+<p align="center">
+  <strong>The internet, as a database — priced by the document.</strong><br/>
+  SHELF searches what people wrote instead of the web. ₩5–₩20 opens one document,<br/>
+  and it lands in the wallet of whoever wrote it. No approval dialog, no subscription.
+</p>
 
-React 19 + TypeScript + Vite + Tailwind v4, a Rust/Axum API, SQLite, Phantom
-x402 deposits, and a GCP KMS-backed Pay.sh/MPP agent that pays each selected DB.
+<h3 align="center"><a href="#run-it-locally"><ins>Run it locally</ins></a></h3>
+
+<p align="center">
+  <img src="docs/assets/hero.png" alt="Obolus asking a question, with the shelf search box on the landing page" width="960" />
+</p>
+
+## Features
+
+<table>
+<tr>
+<td width="50%" valign="middle">
+
+### Search people, not the web
+
+A general model fills the blank with the likeliest sentence. Obolus goes to four people who actually live there and pays each of them for the paragraph they wrote.
+
+Searching and ranking are free. You are billed only for the documents that end up quoted.
+
+</td>
+<td width="50%">
+  <img src="docs/assets/feature-thesis.png" alt="A free general model's generic answer beside four paid passages from people who live in Paris" width="100%" />
+</td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
+### A miss becomes an open call
+
+If nothing on the shelves fits, the answer is not “no results”. Name what one answer is worth, and the question goes out as a paid call to people who would know.
+
+Eleven fields, a vertical rail, and filters by pay, fit, and remaining slots.
+
+</td>
+<td width="50%">
+  <img src="docs/assets/feature-board.png" alt="The open-calls board with a field rail and pay filters" width="100%" />
+</td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
+### Machines settle with machines
+
+HTTP already had a status code for this. The server answers `402` with a price, the wallet pays it, the document opens. Nobody is asked to approve ₩12.
+
+Prices read in won because that is what the people on the shelves think in; USDC is what moves on Solana.
+
+</td>
+<td width="50%">
+  <img src="docs/assets/feature-settlement.png" alt="An example settlement receipt: four documents opened for a total of ₩38" width="100%" />
+</td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
+### Your wallet is the account
+
+No email, no password, no name. Connecting reads your public address and nothing else; an asker only ever sees a handle.
+
+Devnet SOL and USDC faucet links are on the sign-in page, before you connect.
+
+</td>
+<td width="50%">
+  <img src="docs/assets/feature-login.png" alt="The wallet-only sign-in page with the question lifecycle beside it" width="100%" />
+</td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
+### Sold by the cigarette, not by the pack
+
+What people know has only ever traded whole — a panel study, an annual licence, three hundred lives flattened into one report.
+
+Here the unit is one document, one open, one answer. It stays yours and keeps earning.
+
+</td>
+<td width="50%">
+  <img src="docs/assets/feature-panel.png" alt="A row-by-row comparison between a survey panel and Obolus" width="100%" />
+</td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
+### The deal is stated, not buried
+
+What you hand over and what is never taken, side by side on the landing page rather than in a policy nobody opens.
+
+Delete your shelf and it burns: every document drops out of search immediately and is destroyed.
+
+</td>
+<td width="50%">
+  <img src="docs/assets/feature-deal.png" alt="What you hand over, and what Obolus never takes" width="100%" />
+</td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
+### Thin shelves are public
+
+Under 300 documents a shelf cannot answer reliably, and the index says so. You cannot browse the documents themselves — that is what opening one is for.
+
+What is public: where questions come back empty, and what somebody has already offered to fill it.
+
+</td>
+<td width="50%">
+  <img src="docs/assets/feature-coverage.png" alt="The thin-shelves page explaining free discovery, query-specific authority, and the paid boundary" width="100%" />
+</td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
+### English and Korean, both first-class
+
+Not a translation layer bolted on. Korean gets its own typeface stack, weight, tracking, and `word-break: keep-all`, and the copy is rewritten per surface rather than translated sentence by sentence.
+
+Switch in the sidebar footer; the choice survives a reload.
+
+</td>
+<td width="50%">
+  <img src="docs/assets/feature-korean.png" alt="The same landing page rendered in Korean" width="100%" />
+</td>
+</tr>
+</table>
+
+**Also in the box:**
+
+- **[Antigravity plugin](integrations/antigravity/openshelf/README.md)** — the whole asker and contributor lifecycle as 23 `openshelf` MCP tools, plus the official Pay.sh MCP wallet behind a narrow handshake adapter.
+- **Prepaid credit with recovery** — prove wallet ownership once, top up when low. A browser that loses the response reconciles against the server and retries only the handles that were never paid.
+- **Open-call escrow** — a paid call reserves its full budget up front; accepted answers release one unit each, and cancellation or account deletion returns the exact unused remainder as a payout claim.
+- **A conduct ladder that is stated before signup** — false claims or low-quality answers earn a warning; three warnings suspend the account. It is on the onboarding screen, not in the terms.
+- **AI as liquidity, never as an author** — when human coverage is thin, Gemini on Vertex AI may give a free general baseline. It lives in `ai_baselines`, has no price, cannot be resold, earns no authority, and can never fill an open-call slot.
+- **The contributor memory agent is deliberately narrow** — it reuses an existing paid answer only for an opted-in call that is 82%+ near-identical and still passes targeting, pricing, lock, and conduct rules. Everything else needs the person.
+- **Receipts** — every chat, every purchased document, every transaction link, in one place.
+
+---
+
+## How a question moves
+
+```text
+ask → search the shelves → rank by similarity → HIT or MISS
+  HIT  → reserve prepaid credit → pay N owners → cited answer + receipt
+  MISS → "Nobody has covered this yet. Want me to ask people?"
+       → "How many people?"  → "What do you want to pay per answer?"
+       → call posted → open-calls board
+```
+
+That branch is the only thing this project had to invent, so `src/pages/Chat.tsx`
+implements it as a state machine that speaks exactly that dialogue. When enough
+matching documents already exist the order inverts — no call is posted, and the
+question goes straight to “here is the price, settle now?”
+
+Matching, ranking, budget filtering, author deduplication, and the hit/miss
+decision all run in the Rust service: 768-dimensional hash embeddings, word and
+character n-grams, entity anchors, trust, freshness, and topic-personalized
+PageRank over curator-verified evidence edges. Paid, self-owned, inferred, and
+raw UGC edges cannot buy authority. The search response carries handles and
+prices — never a passage.
+
+<details>
+<summary><strong>The two settlement paths, in full</strong></summary>
+
+**Agent path — the official Pay.sh gateway.** This is the default for autonomous agents.
+
+1. Free search returns payment-safe handles and a query-scoped recovery token.
+2. The agent checks the free recovery URL, then prepares one query-bound Pay.sh resource per unopened handle.
+3. `pay curl` handles the HTTP 402/MPP exchange. Pay.sh splits all but one USDC atomic unit directly to the verified contributor wallet.
+4. Rust re-validates the immutable quote, price band, asset, network, query, handle, and runtime recipient before returning the snapshot.
+5. A lost response is recovered for free; retries do not accrue twice.
+
+**Browser path — Phantom and prepaid credit.** No companion process, no separate install.
+
+1. Rust searches private documents and returns only safe handles and KRW prices.
+2. It commits the exact handles, content hashes, beneficiary wallets, per-document atomic prices, total, mint, network, and expiry into one job.
+3. It atomically reserves the job cost from verified prepaid credit. If credit is low, an unpaid refill resource returns x402 v2 `402 Payment Required` and Phantom tops up once.
+4. A confirmed refill credits the ledger and funds the job. It does not reveal passages or accrue earnings.
+5. The server agent runs Pay.sh/MPP per document; Rust releases only that exact paid snapshot, idempotently.
+6. Rust reloads only server-proven opened passages, then Gemini on Vertex AI writes a cited synthesis. With no provider configured the UI shows an evidence-only result rather than inventing an answer.
+7. A permanent partial failure restores the exact unpaid atomic remainder to prepaid credit.
+
+No user private key, browser helper key, or SPL delegate ever reaches Rust, the
+gateway, or Cloud Run. The service wallet signs through GCP KMS. See
+[`docs/agent-payment-threat-model.md`](docs/agent-payment-threat-model.md).
+
+</details>
+
+Implementation diagrams: **[system architecture and ERD](architecture.html)**.
+
+---
+
+## Stack
+
+<p>
+  <kbd>React&nbsp;19</kbd> &nbsp; <kbd>TypeScript&nbsp;5.9</kbd> &nbsp; <kbd>Vite&nbsp;8</kbd> &nbsp; <kbd>Tailwind&nbsp;v4</kbd> &nbsp; <kbd>React&nbsp;Router&nbsp;7</kbd> &nbsp; <kbd>three.js</kbd> &nbsp;
+  <kbd>Rust&nbsp;1.89&nbsp;/&nbsp;Axum</kbd> &nbsp; <kbd>SQLite</kbd> &nbsp;
+  <kbd>x402&nbsp;v2&nbsp;—&nbsp;exact&nbsp;/&nbsp;SVM</kbd> &nbsp; <kbd>Solana&nbsp;Devnet</kbd> &nbsp; <kbd>USDC</kbd> &nbsp; <kbd>Phantom</kbd> &nbsp;
+  <kbd>Pay.sh&nbsp;+&nbsp;MPP</kbd> &nbsp; <kbd>GCP&nbsp;KMS</kbd> &nbsp; <kbd>Cloud&nbsp;Run</kbd> &nbsp; <kbd>Gemini&nbsp;on&nbsp;Vertex&nbsp;AI</kbd>
+</p>
+
+---
+
+## Run it locally
 
 ```bash
 npm ci
 npm --prefix payment-gateway ci
 npm --prefix agent-orchestrator ci
-cp .env.example .env  # set the KMS service-wallet public key and Devnet RPC
-gcloud auth application-default login  # local Vertex AI ADC; no API key
-# set GOOGLE_CLOUD_PROJECT in .env; Vertex AI API must be enabled for it
-npm run dev:stack     # frontend :4319, Rust :8787, x402 gateway :1402
-npm run pay:gateway:sandbox # official Pay.sh gateway :3402
-npm run x402:devnet:smoke # optional funded-wallet settlement verification
+
+cp .env.example .env             # set the KMS service-wallet public key and a Devnet RPC
+gcloud auth application-default login   # local Vertex AI ADC — no API key
+                                 # set GOOGLE_CLOUD_PROJECT in .env; enable the Vertex AI API for it
+
+npm run dev:stack                # frontend, Rust API, and the x402 gateway together
 ```
 
-Verification:
+| Process | Port | Started by |
+| --- | --- | --- |
+| Frontend (Vite) | `4319` | `npm run dev:stack` |
+| Rust API (Axum) | `8787` | `npm run dev:stack` |
+| x402 gateway | `1402` | `npm run dev:stack` |
+| Pay.sh gateway (sandbox) | `3402` | `npm run pay:gateway:sandbox` |
+
+Optional:
 
 ```bash
-npm run check:all
-npm run build
+npm run pay:gateway:sandbox      # the official Pay.sh gateway, local sandbox
+npm run x402:devnet:smoke        # funded-wallet settlement verification
 ```
 
-## Antigravity CLI
+The paid path is live by default. Set `VITE_X402_ENABLED=false` only when you
+explicitly want the old sandbox-ledger path, or `VITE_BACKEND_ENABLED=false` for
+the fully static fallback.
 
-The repository includes an Antigravity plugin that exposes the complete asker
-and contributor lifecycles as 23 `openshelf` MCP tools, plus the official
-Pay.sh MCP wallet behind a narrow Antigravity 1.1.10 handshake adapter.
+### Agents — Antigravity and plain MCP
 
 ```bash
 agy plugin install ./integrations/antigravity/openshelf
 npm run agent:doctor
-node integrations/antigravity/openshelf/runtime/server.mjs auth login \
-  --email YOU@example.com
+node integrations/antigravity/openshelf/runtime/server.mjs auth login --email YOU@example.com
 agy
 ```
 
 Use `/mcp` to confirm both `openshelf` and `pay` are connected. Free search and
-AI baselines do not require a Pay account. Before the first paid action, create
-or select a locally protected named Pay account; set
-`OPENSHELF_PAY_ACCOUNT=NAME` when it should differ from the Pay default. The
-plugin requires explicit approval for the exact aggregate Devnet amount before
-it invokes Pay. See
-[`integrations/antigravity/openshelf/README.md`](./integrations/antigravity/openshelf/README.md)
-and [`docs/ACCOUNT-LINKING.md`](./docs/ACCOUNT-LINKING.md).
+AI baselines need no Pay account. Before the first paid action, create or select
+a locally protected named Pay account; set `OPENSHELF_PAY_ACCOUNT=NAME` when it
+should differ from the Pay default. **The plugin requires explicit approval for
+the exact aggregate Devnet amount before it invokes Pay.**
 
-The same service can be used without Antigravity. List all 23 commands, inspect
-one exact input schema, or call a free tool directly:
+The same service runs without Antigravity:
 
 ```bash
-npm run agent:tools
-npm run agent:tools -- ask_people
+npm run agent:tools                          # list all 23 commands
+npm run agent:tools -- ask_people            # one exact input schema
 npm run agent:call -- ask_people --json \
   '{"question":"What do people living in Paris actually eat on weeknights?","requestedDocuments":3}'
 ```
 
-Authenticated contributor commands use the same local session created by
-`server.mjs auth login`; paid commands return an exact URL and amount for the
-separate Pay MCP instead of receiving a private key.
+Authenticated contributor commands reuse the local session from `auth login`.
+Paid commands return an exact URL and amount for the separate Pay MCP — they
+never receive a private key.
 
-The paid path is live by default. Set `VITE_X402_ENABLED=false` only when you
-explicitly want the old sandbox-ledger path, or
-`VITE_BACKEND_ENABLED=false` for the fully static fallback.
+See [`integrations/antigravity/openshelf/README.md`](integrations/antigravity/openshelf/README.md),
+[`docs/ACCOUNT-LINKING.md`](docs/ACCOUNT-LINKING.md), [`pay/PAY.md`](pay/PAY.md),
+and [`docs/PAY-SH.md`](docs/PAY-SH.md) for Cloud Run + GCP KMS deployment.
 
-## Actual payment path
+---
 
-For autonomous agents, the official Pay.sh gateway is the default path:
+## Verify
 
-1. Free search returns payment-safe handles and a query-scoped recovery token.
-2. The agent checks the free recovery URL, then prepares one query-bound Pay.sh
-   resource per unopened handle.
-3. `pay curl` handles the HTTP 402/MPP exchange. Pay.sh dynamically splits all
-   but one USDC atomic unit directly to the verified contributor wallet.
-4. Rust validates the immutable quote, price band, asset, network, query,
-   handle, and runtime recipient again before returning the quoted snapshot.
-5. A lost response is recovered for free; retries do not accrue twice.
+```bash
+npm run build                    # tsc -b && vite build
+npm run lint                     # oxlint
+npm run check:all                # every workspace: build, lint, typecheck, tests, clippy
+```
 
-See [`pay/PAY.md`](./pay/PAY.md) for the agent contract and
-[`docs/PAY-SH.md`](./docs/PAY-SH.md) for Cloud Run + GCP KMS deployment.
+`check:all` needs a Rust toolchain (`rust-toolchain.toml` pins 1.89.0) because it
+runs `cargo test` and `cargo clippy -D warnings` against `backend/`. CI runs the
+frontend, agent-orchestrator, payment-gateway, and backend jobs separately —
+see [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
-The hosted web UI requires no companion process or separate installation. The
-user proves Phantom ownership once and refills a prepaid Devnet USDC balance
-only when it is low. Questions then reserve credit automatically without a new
-wallet popup. No delegate or withdrawal authority is granted, and the browser
-can close while the Cloud Run agent pays each DB's Pay.sh challenge.
+---
 
-The browser settlement path is:
-
-1. Rust searches private documents and returns only safe handles and KRW prices.
-2. Rust commits the exact handles, content hashes, beneficiary wallets,
-   per-document atomic prices, total, mint, network, and expiry into one job.
-3. Rust atomically reserves the exact job cost from verified prepaid credit.
-   If credit is low, an unpaid refill resource returns x402 v2 `402 Payment
-   Required` and Phantom tops up once.
-4. A confirmed refill credits the ledger and funds the job; it does not reveal
-   passages or accrue earnings.
-5. The server agent uses Pay.sh/MPP for each DB. Pay.sh splits the document
-   amount directly to the verified owner; Rust releases only that exact paid
-   snapshot and records it idempotently.
-6. Rust reloads only server-proven opened passages, then Gemini on Vertex AI produces
-   a cited synthesis. Without a provider, the UI shows an explicit evidence-only
-   result instead of inventing an answer.
-7. A permanent partial failure restores the exact unpaid atomic remainder to
-   prepaid credit. Failed chain-settlement mirrors remain in the gateway outbox.
-
-Paid MISS/open-call commissions use the same one-approval model. Rust commits
-the question, target, display budget, exact Devnet USDC amount, mint, escrow
-receiver, and expiry. Phantom approves one transfer for the whole target; only
-the confirmed settlement creates the call. Every accepted answer receives a
-deterministic atomic share, and cancellation or account deletion returns the
-exact unused remainder to the original payer through a payout claim. A
-zero-price call keeps the explicitly labelled sandbox path because there is no
-token transfer to settle.
-
-The seeded corpus has no real author wallets, so
-`OPENSHELF_DEFAULT_RECEIVER` is its demo beneficiary. User-authored documents
-snapshot the verified wallet saved on that author's profile. Question deposits
-land in `OPENSHELF_BUNDLE_RECEIVER`, which must be the KMS public key;
-individual Pay.sh settlements still go directly to DB owners.
-
-If a browser loses the response after settlement, the client reconciles the
-query with Rust, recovers passages that are already proven paid, and retries
-only unpaid handles. The query recovery token is scoped to the original query,
-expires after 24 hours,
-and payer-sensitive recovery APIs; it is also required for paid-evidence
-synthesis and is never a general document-access credential.
-
-## The three screens the meeting locked
+## Screens
 
 | Route | Screen | What it does |
 | --- | --- | --- |
-| `/` | **Chat** (01) | The front door. Ask, and SHELF-1 searches the shelves. If nothing matches it offers to commission the answer. |
-| `/dashboard` | **Dashboard** (02) | The answerer's side. Open calls arrive with a price per answer; pick one, answer, get paid. |
-| `/memory` | **My memory** (03) | Everything you have answered. The thicker it gets, the better auto-match sticks. |
-| `/shelf` | Shelves | Browsable catalogue of the database — 24 shelves, 10 categories. |
-| `/pricing` `/shelf-1` `/terms` `/privacy` `/login` | | Per-open pricing, the agent launch post, legal, auth. |
+| `/` | **Ask** | The front door. Ask, and SHELF searches the shelves; a miss becomes an open call. |
+| `/chat/:id` | Chat | One question's thread, including the hit/miss dialogue and the settlement preview. |
+| `/dashboard` | **Open calls** | The answerer's board. Calls arrive with a price per answer; pick one, answer, get paid. |
+| `/memory` | **My shelf** | Everything you have answered. The thicker it gets, the better auto-match sticks. |
+| `/archive` | Receipts | Chats, purchased documents, and transaction links. |
+| `/coverage` | Thin shelves | Where questions come back empty, and what has been offered to fill them. |
+| `/answer/:orderId` | Answer | One screen, one question, a few warm-ups first. |
+| `/onboarding` | Set-up | Handle, bands, fields, payout wallet, and the three-strike conduct ladder. |
+| `/whitepaper` | The argument | The long-form case for the thing. |
+| `/login` `/terms` `/privacy` `/admin/disputes` | | Wallet sign-in, legal, admin dispute review. |
 
-## The one thing that had to be built new
+---
 
-Step 4 of the question lifecycle — the hit/miss branch — is the project's only
-invention, so `src/pages/Chat.tsx` implements it as a state machine that speaks
-the exact dialogue the meeting settled on:
+## Repo map
 
-```
-ask → search the shelves → rank by similarity → HIT or MISS
-  HIT  → reserve prepaid credit → Pay.sh pays N owners → cited answer
-  MISS → "Nobody has covered this yet. Want me to ask people?"
-       → "How many people?"  → "What do you want to pay per answer?"
-       → call posted → dashboard
-```
+| Path | What lives there |
+| --- | --- |
+| `src/` | The React app — pages, components, `i18n/`, and the `data/` fixtures the landing page labels as illustrations. |
+| `backend/` | The Rust/Axum service: search, ranking, ledger, escrow, disputes, sessions. [`backend/README.md`](backend/README.md) states the exact boundary. |
+| `payment-gateway/` | The x402 v2 gateway — quotes, verify/settle delegation, payout and escrow workers. |
+| `agent-orchestrator/` | The Cloud Run agent that pays each document's Pay.sh challenge. |
+| `pay/` | Pay.sh paywall definitions, Dockerfile, and the Cloud Build + GCP KMS deployment. |
+| `integrations/antigravity/openshelf/` | The plugin: 23 MCP tools, skills, and the Pay handshake adapter. |
+| `docs/` | Threat model, account linking, Pay.sh deployment, code review, ranking notes. |
+| `architecture.html` | System architecture and ERD, as one openable file. |
 
-The browser-wallet path proves ownership once, refills only when needed, and
-never installs a reusable token allowance. The preview shows KRW, estimated
-Devnet USDC, network, and token mint. A question that already
-has enough matching documents skips the call entirely and offers to settle on
-the spot — the inverted order the meeting called out. Seeded opens cost ₩5–₩25;
-the five-document Seongsu example currently resolves to ₩50 (about 0.03704
-Devnet USDC at the default conversion rate).
+---
 
-Matching, ranking, budget filtering, author deduplication, and the hit/miss
-decision now run in the Rust service. It combines deterministic 768-dimensional
-hash embeddings, word/character n-grams, entity anchors, trust, freshness, and
-topic-personalized PageRank over curator-verified independent evidence edges.
-Paid, self-owned, inferred, and raw UGC edges cannot buy authority. The search
-response contains handles and prices but never paid passages.
+## What is real, and what is not
 
-## AI supplies liquidity; people create the asset
+Stated here rather than smoothed over, because the distinction matters for anyone reading the code.
 
-When human coverage is empty or thin, Gemini on Vertex AI may provide a free **AI general
-baseline** so a questioner does not hit a blank screen. That baseline lives in
-`ai_baselines`, never `documents`: it has zero price, expires, cannot be resold,
-earns no authority, cannot satisfy an open-call slot, and is never used by the
-contributor Memory agent. Its structured output is limited to stable
-orientation and decision criteria, then explicitly lists the current,
-firsthand gaps that still require people. If enough human documents exist—even
-when the buyer's budget is too low—the server refuses to generate a baseline.
+**Real.** Paid document opens and paid open-call budgets use actual x402
+exact/SVM settlement on Solana Devnet. Server-issued HttpOnly sessions;
+client-supplied `userId` values are rejected. Escrow reservation, deterministic
+per-answer payout, and exact refund on cancellation or account deletion. Account
+deletion revokes every session, destroys profile, memory, and document text, and
+anonymizes the append-only financial audit rows. Content hashes, immutable
+versions, corrections that lock the superseded passage, private export logs, and
+public manifests that expose only matching metadata. The server enforces both
+the two-strike auto-match/payout hold and the three-strike suspension.
 
-The opposite cold start is explicit too. A contributor can ask Gemini on Vertex AI for
-three **Shelf starter** interview prompts based only on broad fields they
-agreed to answer in. The UI states that no buyer is waiting and no upfront
-reward is guaranteed. A prompt has no price or evidence status; only the
-contributor's quality-checked firsthand answer becomes a sellable human
-document. Gemini on Vertex AI supplies demand-side context, supply-side interviewing, and
-post-purchase synthesis without ever becoming a marketplace author.
+**Labelled sandbox.** The ₩100,000 signup balance and zero-price calls are a
+clearly labelled ledger, not fiat. The local Pay.sh sandbox proves the full
+402/delivery/recovery contract — not a Devnet transfer. A funded Devnet receipt
+still needs the team's external Pay account, KMS IAM principal, and Devnet USDC.
 
-## Canvases
+**Out of scope.** Mainnet. A public Devnet service would still need a managed
+RPC, a durable multi-instance queue and database, distributed rate limits, email
+verification, KMS secret management, and an external identity provider for
+social login.
 
-`src/components/GlitterWrap.tsx` — the hero starfield, ported from the
-Originkit/Framer component. Algorithm kept verbatim (framerate-independent trail
-decay, cached colour strings, per-star speed jitter); the Framer plumbing was
-stripped and the preset baked in as defaults. Stars composite additively, so the
-hero panel carries a deep base colour for them to read against.
+**Still open.** Carried over from the founding meeting and answered honestly in
+the product FAQ rather than hidden:
 
-`src/components/PointField.tsx` — every other point field (shelf ticker, the MD
-lattice, the use-case carousel, the footer wordmark), on the 2D canvas. Two
-distributions: `nebula` (filament random walks) and `mask` (a lattice sampled
-through an SVG or rasterised text). Both pause off-screen and honour
-`prefers-reduced-motion`.
-
-## Implemented product boundary
-
-The frontend now uses server-issued, HttpOnly session cookies; client-supplied
-`userId` values are not accepted. Registration creates ₩100,000 of explicitly
-labelled sandbox credit and requires explicit confirmation that the user is at
-least 14. A paid open call reserves its full maximum budget in a
-SQLite ledger, accepted answers release one unit to the contributor, and
-cancellation refunds every unused unit. Open-call answers are readable only by
-the owner of the originating `chatId`. They are delivered back into that chat
-and can also be reloaded from “Posted by me” after a browser or device change.
-
-Age, region, household, and field bands can be selected in the composer. The
-same filters are enforced during document search and when an answerer tries to
-pick up a call; accepted documents snapshot the contributor's bands for the
-buyer. Low-quality answers remain voided when a dispute is submitted. Only an
-authenticated admin review can approve or reject the case; approval restores
-the document, slot, and escrow payment in one transaction.
-
-Authenticated account deletion refunds unused reservations, revokes all
-sessions, deletes profile, memory, and document text, and anonymizes the minimal
-append-only financial audit rows.
-
-Accepted memories carry a SHA-256 content hash, immutable version, reliability
-and importance scores, lock state, and access count. Corrections create a new
-version and lock the superseded passage. Contributors can export their private
-memory/access log, while public contributor and document manifests expose only
-matching metadata (including profile demographic bands), hashes, versions,
-prices, and x402 links. Those bands therefore require an explicit disclosure
-and consent treatment before a public launch.
-
-## Honest gaps
-
-Carried over from the meeting, and stated in the FAQ rather than smoothed over:
-
-1. **How the shelves get filled at launch.** The biggest open problem. An empty
-   shelf leaves the librarian nothing to do. The dashboard ships with seeded
-   open calls so a demo has something to show.
-2. **Voice vs chat collection.** Undecided; v1 uses the open-call answer flow.
-3. **Cold-start authority.** Relevance exploration works, but production
-   calibration and Sybil-resistant identity are still required before graph
-   authority can be treated as mature.
+1. **How the shelves get filled at launch.** The biggest unsolved problem — an empty shelf leaves the librarian nothing to do.
+2. **Voice versus chat collection.** Undecided; v1 uses the open-call answer flow.
+3. **Cold-start authority.** Relevance exploration works, but production calibration and Sybil-resistant identity are needed before graph authority is mature.
 4. **Low-effort answers.** ID-verified identity is out of scope for v1.
 
-Profiles, payout wallets, auto-match preferences, open calls, answers, memory,
-query quotes, disputes, and append-only settlement/accrual events persist in
-SQLite. The server also enforces the two-strike auto-match/payout hold and the
-three-strike suspension. Chat transcripts remain tab-session local in backend
-mode (durable local storage is reserved for the offline demo); authenticated
-account, money, memory, and authorization state are server-owned.
+Further reading: [`SCENARIO-AUDIT.md`](SCENARIO-AUDIT.md) for Chrome-verified
+scenarios and prioritized gaps, [`docs/CODE-REVIEW.md`](docs/CODE-REVIEW.md) for
+the production audit, and [`BRIEF.md`](BRIEF.md) — the source-of-truth product
+brief every line of copy was written against.
 
-The KRW signup balance and zero-price calls remain a clearly labelled sandbox
-ledger; they are not fiat. Paid document opens and paid open-call budgets use
-actual x402 exact/SVM settlement on Solana Devnet.
-The official Pay.sh YAML is now the primary agent API and has both a reproducible
-local sandbox and a Devnet Cloud Run/GCP KMS deployment definition. A local
-sandbox proves the full 402/delivery/recovery contract, not a Devnet transfer;
-the final funded Devnet receipt still requires the team's external Pay account,
-KMS IAM principal, and Devnet USDC. See [`docs/PAY-SH.md`](./docs/PAY-SH.md).
-Mainnet operation is intentionally out of scope. A public Devnet service still
-needs a managed RPC, durable multi-instance queue/database, distributed rate
-limits, email verification, KMS secret management, and an external identity
-provider if social login is desired. Password reset/recovery is implemented via
-the email outbox and revokes all sessions. The service wallet signs through GCP
-KMS; no user private key, browser helper key, or SPL delegate reaches Rust, the
-gateway, or Cloud Run. See
-[`docs/agent-payment-threat-model.md`](./docs/agent-payment-threat-model.md).
-Browser settlement reconciliation is implemented;
-paid handles are recovered before any retry.
+---
 
-Contributor question delivery now includes server-ranked recommendations, a
-durable in-app inbox, five-second browser refresh with optional system alerts,
-opt-in email outbox delivery, and ten-minute answer-slot reservations. The
-contributor memory agent is deliberately narrower than a generative responder:
-it reuses the exact original paid answer only for an opted-in, 82%+
-near-identical call that still meets targeting, pricing, lock, and conduct
-rules. Every other call still requires the person to answer.
-See `SCENARIO-AUDIT.md` for the Chrome-verified scenarios and prioritized gaps,
-[`docs/CODE-REVIEW.md`](./docs/CODE-REVIEW.md) for the PR #2/#9 consolidation
-and production audit, and `backend/README.md` for the exact backend boundary.
+## License
 
-`BRIEF.md` holds the source-of-truth product brief the copy was written against.
+No `LICENSE` file is committed yet, so default copyright applies: all rights
+reserved. Open an issue if you need terms for a specific use.
