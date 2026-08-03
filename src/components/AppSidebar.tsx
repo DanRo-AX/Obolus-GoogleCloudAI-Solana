@@ -1,7 +1,7 @@
 import { NavLink, Link } from 'react-router-dom'
 import { LogIn, LogOut, PanelLeft, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { WalletButton } from '@/components/WalletButton'
+import { Switch } from '@/components/ui/primitives'
 import { CATEGORY_BY_ID } from '@/data/categories'
 import { NAV_ITEMS } from '@/data/nav'
 import { STRIKE_LIMIT } from '@/data/onboarding'
@@ -52,7 +52,7 @@ function ProfileChip() {
         <button
           type="button"
           onClick={signOut}
-          aria-label="Sign out"
+          aria-label="Disconnect Phantom"
           className="ml-auto cursor-pointer text-muted-foreground/60 transition-colors hover:text-foreground"
         >
           <LogOut className="size-3.5" />
@@ -60,7 +60,7 @@ function ProfileChip() {
       </div>
       <div className="mt-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
         <span className="truncate">
-          {suspended ? 'Suspended' : `${profile.speaksTo.length} fields`}
+          {suspended ? 'Suspended' : `${profile.speaksTo.length} shelves`}
         </span>
         <span
           className={cn(
@@ -68,13 +68,13 @@ function ProfileChip() {
             profile.strikes > 0 && 'text-destructive',
           )}
         >
-          {profile.strikes}/{STRIKE_LIMIT} strikes
+          strike {profile.strikes} of {STRIKE_LIMIT}
         </span>
       </div>
       <div className="mt-2 border-t border-border/70 pt-2 font-mono text-[9px] leading-relaxed text-muted-foreground">
-        <p className="truncate normal-case tracking-normal">Account · {account?.email}</p>
+        <p className="truncate normal-case tracking-normal">Signed in · {account?.email}</p>
         <p className="mt-0.5 truncate uppercase tracking-[0.7px]">
-          Payout · {profile.wallet ? `${profile.wallet.slice(0, 4)}…${profile.wallet.slice(-4)} · ${profile.walletVerified ? 'verified' : 'unverified'}` : 'not set'}
+          Wallet · {profile.wallet ? `${profile.wallet.slice(0, 4)}…${profile.wallet.slice(-4)} · ${profile.walletVerified ? 'verified' : 'unverified'}` : 'not connected'}
         </p>
       </div>
     </div>
@@ -198,7 +198,7 @@ export function AppSidebar() {
                     }
                   >
                     <ShieldCheck className="text-muted-foreground/60" />
-                    <span>Review queue</span>
+                    <span>Disputes</span>
                   </NavLink>
                 </li>
               ) : null}
@@ -224,16 +224,16 @@ export function AppSidebar() {
                       {account.email}
                     </p>
                     <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                      ₩{(balance?.availableKrw ?? 0).toLocaleString()} off-chain call credit
+                      ₩{(balance?.availableKrw ?? 0).toLocaleString()} sandbox for opens
                     </p>
                     <div className="flex gap-2">
                       <Button asChild variant="mono" size="monoSm" className="flex-1">
-                        <Link to="/onboarding">Set up profile</Link>
+                        <Link to="/onboarding">Set up your shelf</Link>
                       </Button>
                       <Button
                         variant="monoMuted"
                         size="monoSm"
-                        aria-label="Sign out"
+                        aria-label="Disconnect Phantom"
                         onClick={() => void signOut()}
                       >
                         <LogOut className="size-3.5" />
@@ -245,14 +245,14 @@ export function AppSidebar() {
                     <div className="flex gap-2">
                       <Button
                         asChild
-                        className="font-mono tracking-[1px] uppercase rounded-[2px] transition-all duration-300 bg-foreground/85 text-background border border-foreground/80 hover:bg-foreground/75 px-4 py-2 h-9 flex-1 text-xs"
+                        className="rounded-[2px] transition-all duration-300 bg-foreground/85 text-background border border-foreground/80 hover:bg-foreground/75 px-4 py-2 h-9 flex-1 text-xs"
                       >
-                        <Link to="/login?mode=signup">Start free</Link>
+                        <Link to="/login">Connect Phantom</Link>
                       </Button>
                       <Button
                         asChild
-                        aria-label="Sign in"
-                        className="font-mono tracking-[1px] uppercase rounded-[2px] transition-all duration-300 bg-muted text-foreground hover:bg-muted/90 border border-foreground/5 h-9 w-9 p-0 text-xs"
+                        aria-label="Connect a Phantom wallet you already have"
+                        className="rounded-[2px] transition-all duration-300 bg-muted text-foreground hover:bg-muted/90 border border-foreground/5 h-9 w-9 p-0 text-xs"
                       >
                         <Link to="/login">
                           <LogIn className="size-4" />
@@ -261,15 +261,20 @@ export function AppSidebar() {
                     </div>
                   </>
                 )}
-                <Button
-                  asChild
-                  className="font-mono tracking-[1px] uppercase rounded-[2px] transition-all duration-300 bg-muted text-foreground hover:bg-muted/90 border border-foreground/5 px-4 py-2 h-9 w-full text-xs"
-                >
-                  <Link to="/pricing">Pricing</Link>
-                </Button>
-                <WalletButton />
               </li>
             </ul>
+            <div className="-mx-2 -mb-2 flex items-center gap-2 px-3 pb-2.5 pt-1">
+              <Switch
+                checked={false}
+                disabled
+                aria-label="Asker-agent payments, not available yet"
+              />
+              <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground/70">
+                Asker-agent payments · later
+              </span>
+              {/* The original's theme toggle sits here. This build is light-mode
+                  only, so the control is omitted rather than shipped dead. */}
+            </div>
           </div>
         </div>
       </div>

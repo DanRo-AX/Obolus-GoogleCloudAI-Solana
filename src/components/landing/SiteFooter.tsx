@@ -1,7 +1,4 @@
-import { Link } from 'react-router-dom'
-import { Button } from '@/components/ui/button'
-
-/** Footer: the OPENSHELF wordmark rasterised into a scanned point field. */
+/** Footer: the OPENSHELF wordmark, and nothing else to click. */
 export function SiteFooter() {
   return (
     <section
@@ -15,49 +12,6 @@ export function SiteFooter() {
         >
           OPENSHELF
         </span>
-      </div>
-      <div className="mx-auto mt-2 flex w-full max-w-[595px] items-center justify-center gap-4 sm:max-w-[744px] sm:justify-between lg:max-w-[843px]">
-        <span className="hidden font-mono text-xs font-medium tracking-[0.5px] text-muted-foreground sm:block">
-          THE INTERNET, AS A DATABASE
-        </span>
-        <div className="flex items-center gap-1">
-          <Button asChild variant="monoGhost" size="monoSm">
-            <a
-              href="https://t.me/openshelf"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Support
-            </a>
-          </Button>
-          <Button asChild variant="monoGhost" size="monoSm">
-            <Link to="/terms">Terms</Link>
-          </Button>
-          <Button asChild variant="monoGhost" size="monoSm">
-            <Link to="/privacy">Privacy</Link>
-          </Button>
-          <Button
-            asChild
-            variant="monoGhost"
-            size="monoSm"
-            aria-label="X"
-          >
-            <a
-              href="https://x.com/openshelf"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <svg
-                className="size-3.5"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                aria-hidden="true"
-              >
-                <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-              </svg>
-            </a>
-          </Button>
-        </div>
       </div>
     </section>
   )

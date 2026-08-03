@@ -37,16 +37,16 @@ export function FieldsSection() {
         Somebody is already paying for what you know
       </h2>
       <p className="mt-4 max-w-2xl text-[15px] leading-7 text-muted-foreground">
-        These are the calls open right now, by field. Pick the one you have
-        actually lived and the money is on the other side of one honest answer —
-        and once it is written down, it can earn again whenever a matching buyer
-        pays to open it.
+        These are the open calls right now, by field. Pick a field you have
+        actually lived and the money is on the other side of one honest answer.
+        The answer lands on your shelf and earns again every time an asker pays
+        to open it.
       </p>
 
       <div className="mt-5 flex flex-wrap items-center gap-x-8 gap-y-2 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
         <span>
-          <span className="tabular-nums text-foreground">{totalOpen}</span> calls
-          open
+          <span className="tabular-nums text-foreground">{totalOpen}</span> open
+          calls
         </span>
         <span>
           <span className="tabular-nums text-foreground">
@@ -82,8 +82,8 @@ export function FieldsSection() {
               </span>
               <span className="mt-0.5 block font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
                 {r.count
-                  ? `${r.count} open · up to ₩${r.top.toLocaleString()} each`
-                  : 'Nothing open yet'}
+                  ? `${r.count} calls · up to ₩${r.top.toLocaleString()} each`
+                  : 'No calls open yet'}
               </span>
             </span>
 

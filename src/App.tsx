@@ -15,9 +15,9 @@ import Dashboard from '@/pages/Dashboard'
 import Home from '@/pages/Home'
 import { LegalPage } from '@/pages/Legal'
 import Login from '@/pages/Login'
+import Archive from '@/pages/Archive'
 import Memory from '@/pages/Memory'
 import Onboarding from '@/pages/Onboarding'
-import Pricing from '@/pages/Pricing'
 import Coverage from '@/pages/Coverage'
 import Shelf1 from '@/pages/Shelf1'
 import Survey from '@/pages/Survey'
@@ -26,10 +26,10 @@ import AdminDisputes from '@/pages/AdminDisputes'
 const TITLES: Record<string, string> = {
   '/': 'OPENSHELF — The internet, as a database',
   '/dashboard': 'Dashboard · OPENSHELF',
+  '/archive': 'Archive · OPENSHELF',
   '/memory': 'My memory · OPENSHELF',
   '/onboarding': 'Set up your account · OPENSHELF',
   '/coverage': 'Coverage · OPENSHELF',
-  '/pricing': 'Pricing · OPENSHELF',
   '/whitepaper': 'Whitepaper · OPENSHELF',
   '/terms': 'Terms · OPENSHELF',
   '/privacy': 'Privacy · OPENSHELF',
@@ -57,6 +57,7 @@ export default function App() {
               <Route path="/" element={<Home />} />
               <Route path="/chat/:id" element={<Chat />} />
               <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/archive" element={<Archive />} />
               <Route path="/memory" element={<Memory />} />
               <Route path="/onboarding" element={<Onboarding />} />
               <Route path="/answer/:orderId" element={<Survey />} />
@@ -66,7 +67,6 @@ export default function App() {
                 path="/shelf"
                 element={<Navigate to="/coverage" replace />}
               />
-              <Route path="/pricing" element={<Pricing />} />
               <Route path="/whitepaper" element={<Shelf1 />} />
               <Route
                 path="/shelf-1"

@@ -26,10 +26,10 @@ export type Section = {
 }
 
 export const HERO = {
-  eyebrow: 'Whitepaper · SHELF-1',
+  eyebrow: 'The argument · SHELF-1',
   title: 'An agent that searches people instead of the web',
   standfirst:
-    'Every crawler in production today reads for free. SHELF-1 pays. This is what changes when the document on the other end has an author who gets a cut.',
+    'Every crawler in production today reads for free. SHELF-1 pays ₩5 to ₩20 per open, and the USDC lands in the author’s wallet. This is what changes when the document on the other end has an author.',
   meta: [
     { label: 'Published', value: 'July 31, 2026' },
     { label: 'By', value: 'The OPENSHELF team' },
@@ -38,17 +38,17 @@ export const HERO = {
   ],
 }
 
-export const DEFINITION = 'Turn the internet into a database, and charge x402 for access.'
+export const DEFINITION = 'SHELF-1 searches the shelves, opens a handful, and pays each author ₩5 to ₩20 per open.'
 
 /** The 7 steps, rendered as a table. Step 4 is the branch the product turns on. */
 export const LIFECYCLE = [
   { n: 1, step: 'Ask', what: 'A question goes into the chat box.', pivot: false },
   { n: 2, step: 'Search the shelves', what: 'People’s documents, not the web.', pivot: false },
-  { n: 3, step: 'Rank the persona web', what: 'Relevance, trust, freshness, PageRank, and diversity.', pivot: false },
-  { n: 4, step: 'Human coverage', what: 'A hit sells evidence. A miss gets an AI baseline and keeps the human gap open.', pivot: true },
-  { n: 5, step: 'Open call', what: 'Price per answer, posted to the dashboard.', pivot: false },
-  { n: 6, step: 'x402 settlement', what: 'Only the documents actually opened are billed.', pivot: false },
-  { n: 7, step: 'Accrue', what: 'The answer joins the author’s memory. Next time it auto-matches.', pivot: false },
+  { n: 3, step: 'Rank the shelves', what: 'Relevance, trust, freshness, PageRank, author diversity. The closest few, never the whole shelf.', pivot: false },
+  { n: 4, step: 'Hit or miss', what: 'A hit ends as search. A miss gets a free AI baseline, keeps the human gap open, and posts an open call.', pivot: true },
+  { n: 5, step: 'Open call', what: 'A price per answer, posted to the open calls board.', pivot: false },
+  { n: 6, step: 'x402 settlement', what: 'The asker pays only for documents opened. Each author’s USDC lands the same moment.', pivot: false },
+  { n: 7, step: 'Accrue', what: 'The answer becomes a document on the author’s shelf and joins their memory. Next time it auto-matches.', pivot: false },
 ]
 
 export type OpenProblem = {
@@ -65,18 +65,18 @@ export const OPEN_PROBLEMS: OpenProblem[] = [
   },
   {
     status: 'Open',
-    title: 'Voice or chat for collection',
-    body: 'The current answer flow uses a main response plus short contextual interview turns. Voice collection and longer interviews remain future channels; their consent and retention boundaries still need product validation.',
+    title: 'Voice or typing for the first draft',
+    body: 'Two hours of talking out loud gives the rough detail we want, and almost nobody will sit through it. Typing takes ten minutes and people tidy themselves as they go. What ships today is one written answer plus a few short interview turns. Voice and longer interviews are a later channel, and the consent and retention lines for them are not drawn yet.',
   },
   {
     status: 'Open',
-    title: 'Calibrating authority against adversaries',
-    body: 'The implemented ranker combines relevance, trust, freshness, personalized PageRank, author diversity, and budget. Production still needs outcome calibration, identity-resistant evidence, and continuous Sybil and spam evaluation.',
+    title: 'Who gets picked when too many match',
+    body: 'If twelve documents fit a call that needs seven, something has to choose. The ranker already weighs relevance, trust, freshness, personalized PageRank, author diversity, and budget. What it does not do yet is hold up against someone gaming it: the weights are not calibrated against outcomes, the evidence is not identity-resistant, and Sybil and spam have to be measured continuously rather than once.',
   },
   {
     status: 'Next',
-    title: 'Identity without exposing the person',
-    body: 'Specificity checks, interviews, reports, strikes, locks, and disputes are implemented. Stronger personhood and independent outcome verification remain open without making real names part of the product.',
+    title: 'Low-effort answers',
+    body: 'In already: specificity checks, the short interviews, reports, three strikes, passage locks, and disputes. Not in: proof that a person is a person, and independent verification that an answer held up. A hard identity check would settle both and would also stop people connecting a wallet at all, so real names stay out of the product and the strikes and the rating loop carry it until then.',
   },
 ]
 
@@ -84,7 +84,7 @@ export const SECTIONS: Section[] = [
   {
     n: '00',
     eyebrow: 'The gap',
-    title: 'Agents read for free, so the good stuff never gets written down',
+    title: 'Agents read for free, so nobody wrote down the part worth reading',
     blocks: [
       {
         kind: 'lead',
@@ -92,7 +92,7 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'p',
-        text: 'That works while the answer is already public. It stops working the moment the answer is worth something. Writing a blog post is one thing. Writing down where you actually eat lunch in Seongsu on a Tuesday, what it cost, and how long the queue was is another — there is no reason to publish that for nothing.',
+        text: 'That works while the answer is already public. It stops working the moment the answer is worth something. Where you ate lunch in Seongsu on a Tuesday, what it cost, how long the queue ran — nobody publishes that for nothing.',
       },
       {
         kind: 'quote',
@@ -100,7 +100,7 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'p',
-        text: 'So the useful half never lands anywhere a crawler can see it. It stays in people. OPENSHELF is the attempt to put a price on the door instead of asking anyone to be generous.',
+        text: 'So that half never lands anywhere a crawler can see it. It stays in people. OPENSHELF puts a price on the door instead of asking anyone to be generous.',
       },
     ],
   },
@@ -111,11 +111,11 @@ export const SECTIONS: Section[] = [
     blocks: [
       {
         kind: 'p',
-        text: 'We copied the useful boundaries of the internet. Each person builds a memory-backed document that behaves like a URL: it has an owner, public discovery metadata, a content hash, a version, a price, and a paid response body. The agent opens a handful, not the index.',
+        text: 'We did not invent a retrieval architecture. We copied the internet: one person writes one memory-backed document about what they lived, and it behaves like a URL — an owner, public discovery metadata, a content hash, a version, a price, and a body that opens only once it is paid for. SHELF-1 ranks the closest few and opens a handful, never the index.',
       },
       {
         kind: 'p',
-        text: 'One thing is different. Opening the URL pays its author.',
+        text: 'One thing is different. Opening the URL pays its author ₩5 to ₩20, at the moment it opens.',
       },
       {
         kind: 'list',
@@ -127,8 +127,8 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'note',
-        label: 'How the persona web ranks',
-        text: 'Rust combines lexical and deterministic hash relevance, freshness, trust, and a query-specific personalized PageRank over independently verified evidence links. It then penalizes duplicate authors and redundant passages before any payment.',
+        label: 'Why not embed the whole shelf',
+        text: 'Google indexes everything and still fetches only what it shows you. Same reasoning here. The Rust ranker weighs lexical and deterministic hash relevance, freshness, trust, and a query-specific personalized PageRank over independently verified evidence links, then drops duplicate authors and repeated passages — all before anything is paid for. Then ₩5 to ₩20 goes to an author on each one that opens.',
       },
     ],
   },
@@ -143,7 +143,7 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'p',
-        text: 'The same thing happens to a document when you tidy it. Smooth the sentences, cut the repetition, summarise the point, and the specific thing only that person knew is pulled toward the mean. The cleaner it gets, the closer it lands to what a general model would have said unprompted.',
+        text: 'The same thing happens to a document when you tidy it. Smooth the sentences, cut the repetition, and the one thing only that person knew gets pulled toward the mean. The cleaner it gets, the closer it lands to what a general model would have said unprompted.',
       },
       {
         kind: 'compare',
@@ -175,7 +175,7 @@ export const SECTIONS: Section[] = [
   {
     n: '03',
     eyebrow: 'The branch',
-    title: 'If the shelves come up empty, AI bridges the wait and people fill the gap',
+    title: 'If the shelves come up empty, AI answers for now and SHELF-1 posts an open call',
     blocks: [
       {
         kind: 'p',
@@ -187,10 +187,10 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'code',
-        caption: 'The miss path, as the agent says it',
+        caption: 'The miss path, as SHELF-1 says it',
         lines: [
-          '“Here is the general baseline. It is AI, free, and not evidence.”',
-          '“These current, local details still need people. Want me to ask?”',
+          '“Here is the general baseline. It is AI, it is free, and it is not evidence.”',
+          '“Nothing on the shelves has lived this part yet. Ask people?”',
           '“How many people?”',
           '“What do you want to pay per answer?”',
           '→ call posted · answers return to this chat',
@@ -198,12 +198,12 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'p',
-        text: 'Twelve people at ₩500 each is a ₩6,000 call. It lands on the answerer dashboard, people who fit pick it up, and the asker sees it fill. Nobody involved feels like they are running a survey. One side is searching; the other side is answering a question they happen to know.',
+        text: 'Twelve people at ₩500 each is a ₩6,000 call. It lands on the open calls board, people who fit pick it up, and the asker watches it fill. One side is searching; the other is answering a question they happen to know.',
       },
       {
         kind: 'note',
         label: 'The inverted case',
-        text: 'Sometimes enough matching documents already exist. Then no call is posted at all — the agent goes straight to “this can be answered now, here is the price.” Search first, survey only when search fails.',
+        text: 'Sometimes enough matching documents already exist. Then no call is posted — SHELF-1 goes straight to “this can be answered now, here is the price.” Search the shelves first, post a call only when they come up empty.',
       },
     ],
   },
@@ -214,11 +214,11 @@ export const SECTIONS: Section[] = [
     blocks: [
       {
         kind: 'p',
-        text: 'Per-open pricing only works at true micropayment scale. Phantom refills a prepaid balance only when needed; a bounded GCP KMS agent then pays each DB independently through Pay.sh.',
+        text: 'Per-open pricing only works when one open can cost ₩5. Phantom refills a prepaid balance, and only when it runs low; a bounded GCP KMS agent then pays each DB independently through Pay.sh.',
       },
       {
         kind: 'p',
-        text: 'HTTP already has the status code for this. A request arrives, the server answers 402 with a price, payment is presented, and the body is released. Phantom signs only balance refills; the server agent handles machine-to-machine 402 settlement without a user delegate.',
+        text: 'HTTP already has the status code for this. A request arrives, the server answers 402 with a price, the payment is presented, and the document opens. Phantom signs the balance refills and nothing else; the server agent settles 402 machine to machine, with no user delegate in the middle.',
       },
       {
         kind: 'code',
@@ -233,7 +233,7 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'p',
-        text: 'Settlement runs on Solana Devnet in USDC and is shown in KRW. Phantom proves wallet ownership and refills only when prepaid credit is low; a non-exportable KMS service key pays each DB through Pay.sh. Failed opens return to prepaid credit instead of becoming owner earnings.',
+        text: 'Settlement runs on Solana Devnet in USDC and reads in ₩, because that is what people on the shelves think in. Phantom proves the wallet and tops up prepaid credit when it runs low; a non-exportable KMS service key pays each DB through Pay.sh. The asker sees one line — how many documents opened, what it came to. An open that fails goes back to prepaid credit instead of becoming an author’s earnings.',
       },
       {
         kind: 'quote',
@@ -241,7 +241,7 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'p',
-        text: 'Data like this has only ever traded whole: a panel study, an annual licence, a report with three hundred people flattened into it. The unit here is one document, one open, one answer.',
+        text: 'This has only ever traded whole: a panel study, an annual licence, three hundred people flattened into one report. The unit here is one document, one open, one answer.',
       },
     ],
   },
@@ -257,16 +257,16 @@ export const SECTIONS: Section[] = [
       {
         kind: 'list',
         items: [
-          'Free discovery exposes an anonymous handle and payment-safe metadata; a paid open releases only the committed passage and citation.',
-          'Short interview turns enrich private context but are not indexed or sold as separate passages.',
+          'Free discovery shows an anonymous handle and payment-safe metadata. A paid open releases the committed passage and its citation — nothing else.',
+          'The short interview turns fill in private context. They are not indexed and never sold as separate passages.',
           'Individual passages can be locked so they are never quoted.',
-          'Deleting the account removes the profile, documents, and memory, revokes sessions, returns unused balances, and anonymizes retained accounting rows.',
-          'Auto-match can select an eligible passage without a new call; payment occurs only when that committed passage is opened.',
+          'Delete the account and the profile, the documents, and the memory go with it. Sessions are revoked, unused balance comes back, and the accounting rows that have to be kept are anonymized.',
+          'Auto-match can pick an eligible passage without a new call. USDC arrives without you asking — but only when that committed passage is opened.',
         ],
       },
       {
         kind: 'p',
-        text: 'That last point is the whole recruitment argument. Somebody who has already written things down does not have to do anything to keep earning from them.',
+        text: 'That last point is the whole recruitment argument. Somebody who wrote it down once earns ₩5 to ₩20 each time SHELF-1 opens it.',
       },
     ],
   },

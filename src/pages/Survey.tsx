@@ -74,7 +74,7 @@ export default function Survey() {
       } catch (error) {
         if (!cancelled) {
           setReservationError(
-            error instanceof Error ? error.message : 'A slot could not be reserved.',
+            error instanceof Error ? error.message : 'This call had no slot left to hold.',
           )
         }
       }
@@ -99,7 +99,7 @@ export default function Survey() {
     return (
       <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
         <Loader2 className="mr-2 size-4 animate-spin" />
-        Loading your call…
+        Opening the call…
       </div>
     )
   }
@@ -145,7 +145,7 @@ export default function Survey() {
       setDone(true)
     } catch (error) {
       setSubmitError(
-        error instanceof Error ? error.message : 'The answer could not be saved.',
+        error instanceof Error ? error.message : 'The answer did not save. Send it again.',
       )
     } finally {
       setSubmitting(false)
@@ -164,8 +164,8 @@ export default function Survey() {
           </h1>
           <p className="text-[15px] leading-7 text-muted-foreground">
             The ₩{order.unitPrice.toLocaleString()} was reversed and the slot
-            stayed open. It is in your memory marked voided, and you can spend
-            your one dispute on it there.
+            stayed open. It sits on your shelf marked voided — {STRIKE_LIMIT}{' '}
+            strikes suspends the account. You can dispute this once, from there.
           </p>
           <div className="mt-2 flex gap-2">
             <Button variant="mono" size="mono" onClick={() => navigate('/memory')}>
@@ -199,12 +199,12 @@ export default function Survey() {
           </h1>
           <p className="text-[15px] leading-7 text-muted-foreground">
             {held
-              ? 'The answer is in your memory, but the two-strike restriction pauses auto-match and holds this new payout for 14 days.'
-              : 'It is in your memory now. From here it can be quoted without you answering anything again — that is where the rest of the money comes from.'}
+              ? 'The answer is on your shelf. At strike 2 of 3 auto-match pauses, so this payout is held 14 days before it moves.'
+              : 'It sits on your shelf now. SHELF-1 can quote it without you writing anything again — each open lands USDC in your wallet.'}
           </p>
           <div className="mt-2 flex gap-2">
             <Button variant="mono" size="mono" onClick={() => navigate('/memory')}>
-              See my memory
+              See my shelf
             </Button>
             <Button
               variant="monoMuted"
@@ -264,7 +264,7 @@ export default function Survey() {
         <div key={step} className="animate-fade-in-up w-full max-w-xl">
           {reservationError ? (
             <div className="mb-6 rounded-[6px] border border-destructive/30 bg-destructive/[0.04] p-4 text-sm text-destructive">
-              {reservationError} Return to the dashboard and choose another call.
+              {reservationError} Go back to open calls and take a different one.
             </div>
           ) : null}
           {onLast ? (
@@ -304,9 +304,9 @@ export default function Survey() {
                 ))}
               </ul>
               <p className="mt-3 text-[13px] leading-relaxed text-foreground/85">
-                Send it as it stands and the answer is voided, the payment is
-                reversed, and it counts as one of your {STRIKE_LIMIT} strikes.
-                Editing it clears this.
+                Send it as it stands and the answer is voided, the{' '}
+                ₩{order.unitPrice.toLocaleString()} reversed, and it counts as
+                one of your {STRIKE_LIMIT} strikes. Editing it clears this.
               </p>
             </div>
           ) : null}
@@ -334,12 +334,12 @@ export default function Survey() {
                 {submitting ? (
                   <>
                     <Loader2 className="size-3.5 animate-spin" />
-                    Saving…
+                    Sending…
                   </>
                 ) : flags ? (
                   'Send it anyway'
                 ) : (
-                  `Submit and take ₩${order.unitPrice.toLocaleString()}`
+                  `Send and take ₩${order.unitPrice.toLocaleString()}`
                 )}
               </Button>
             ) : (
@@ -532,7 +532,7 @@ function Identity() {
         <Link to="/onboarding" className="underline underline-offset-2">
           set up a profile
         </Link>{' '}
-        so buyers can tell this came from someone who was there
+        so the asker can tell you were there
       </p>
     )
   }

@@ -102,7 +102,7 @@ export function Composer({
         <div className="flex items-center gap-1">
           <Link
             to="/whitepaper"
-            aria-label="SHELF-1 model"
+            aria-label="How SHELF-1 works"
             className={cn(
               'group flex h-8 items-center rounded-[2px] px-2 transition-colors',
               dark ? 'hover:bg-white/10' : 'hover:bg-muted-foreground/10',
@@ -127,11 +127,11 @@ export function Composer({
                   : 'text-muted-foreground hover:bg-muted',
               )}
             >
-              Target{[ageBand, region, household, field].filter(Boolean).length ? ` · ${[ageBand, region, household, field].filter(Boolean).length}` : ''}
+              Who answers{[ageBand, region, household, field].filter(Boolean).length ? ` · ${[ageBand, region, household, field].filter(Boolean).length}` : ''}
             </summary>
             <div className="absolute bottom-10 left-0 z-30 grid w-[280px] gap-3 rounded-[6px] border border-border bg-card p-3 text-foreground shadow-xl">
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Optional bands. A response must match every selected band.
+                Optional. A document must match every band you pick.
               </p>
               <TargetSelect label="Age" value={ageBand} onChange={setAgeBand} options={AGE_BANDS} />
               <TargetSelect label="Region" value={region} onChange={setRegion} options={REGIONS} />

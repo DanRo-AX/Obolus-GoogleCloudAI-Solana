@@ -106,7 +106,7 @@ export default function Onboarding() {
       window.setTimeout(() => navigate('/dashboard'), 1400)
     } catch (error) {
       setSaveError(
-        error instanceof Error ? error.message : 'The profile could not be saved.',
+        error instanceof Error ? error.message : 'The profile did not save. Try again.',
       )
     } finally {
       setSaving(false)
@@ -134,7 +134,7 @@ export default function Onboarding() {
   if (!authReady) {
     return <div className="flex flex-1 items-center justify-center"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
   }
-  if (!account) return <Navigate to="/login?mode=signup" replace />
+  if (!account) return <Navigate to="/login" replace />
 
   if (done) {
     return (
@@ -147,9 +147,9 @@ export default function Onboarding() {
             You are {handle.trim().toUpperCase()}
           </h1>
           <p className="text-sm leading-relaxed text-muted-foreground">
-            Calls in your fields will surface first on the dashboard. Discovery
-            shows only your anonymous handle and selected bands; a buyer sees a
-            passage only after paying its committed quote.
+            Open calls in your fields show up first. An asker sees your handle
+            and these bands, nothing else — the passage only after they pay to
+            open it.
           </p>
         </div>
       </div>
@@ -167,7 +167,7 @@ export default function Onboarding() {
           />
         </div>
         <div className="flex items-center justify-between px-4 py-2.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground sm:px-6">
-          <span>Setting up your account</span>
+          <span>Before you answer</span>
           <span className="tabular-nums">
             {step + 1} / {TOTAL}
           </span>
@@ -183,7 +183,7 @@ export default function Onboarding() {
           {step === 0 ? (
             <Screen
               title="Pick a handle"
-              note="This is the entire identity a buyer sees next to your passage. No name, no email, no photo — ever."
+              note="This is the whole identity an asker sees beside your passage. No name, no email, no photo — ever."
             >
               <div className="flex items-center gap-2">
                 <input
@@ -207,8 +207,8 @@ export default function Onboarding() {
 
           {step === 1 ? (
             <Screen
-              title="A little about you"
-              note="Bands, not values. Enough for a buyer to judge whether an answer came from someone in that situation."
+              title="Three bands about you"
+              note="Bands, not exact numbers. Enough for an asker to tell whether an answer came from someone in that situation."
             >
               <Group label="Age">
                 <Chips options={AGE_BANDS} value={ageBand} onPick={setAgeBand} />
@@ -229,7 +229,7 @@ export default function Onboarding() {
           {step === 2 ? (
             <Screen
               title="What do you do?"
-              note="Your own line of work. It carries the most weight when a call in that field goes looking for people."
+              note="Your own line of work. Open calls in this field reach you first."
             >
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {CATEGORIES.map((c) => (
@@ -310,7 +310,7 @@ export default function Onboarding() {
           {step === 4 ? (
             <Screen
               title="Where the money lands"
-              note="Settlement is Devnet USDC over x402. You can save a payout address now and verify ownership after onboarding, or skip it. The hosted website currently uses Phantom; external agents may link a locally protected Pay account through SIWX."
+              note="USDC lands in the wallet you name here, over x402 on Solana devnet. Save one now, verify ownership later, or skip this screen. This site connects Phantom; an outside agent can link its own locally held Pay account over SIWX."
             >
               {wallet.pubkey ? (
                 <div className="space-y-3 rounded-[6px] border border-border p-4">
@@ -324,9 +324,8 @@ export default function Onboarding() {
                     </span>
                   </div>
                   <p className="text-[13px] leading-relaxed text-muted-foreground">
-                    Connecting the extension does not change your OPENSHELF payout
-                    profile. Choose explicitly whether this address should receive
-                    earnings for this account.
+                    Connecting the extension does not set a payout address. Tell us
+                    whether your earnings should land in this wallet.
                   </p>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
@@ -341,8 +340,8 @@ export default function Onboarding() {
                         <Wallet className="size-3.5" />
                       )}
                       {payoutWallet === wallet.pubkey
-                        ? 'Selected as payout address'
-                        : 'Use this as payout address'}
+                        ? 'Payouts land here'
+                        : 'Use for payouts'}
                     </Button>
                     <Button
                       variant="monoGhost"
@@ -390,10 +389,9 @@ export default function Onboarding() {
                     </p>
                   ) : null}
                   <p className="mt-3 text-[13px] leading-relaxed text-muted-foreground">
-                    Nothing is signed on this screen — only the public key is read.
-                    Payout ownership is verified separately with signMessage. A fresh
-                    devnet wallet has neither the SOL for fees nor the USDC to
-                    settle with:{' '}
+                    Nothing is signed here — only the public key is read. You verify
+                    ownership later with one signMessage. A fresh devnet wallet has no
+                    SOL for fees and no USDC to settle with:{' '}
                     <a
                       href={DEVNET_FAUCETS.sol}
                       target="_blank"

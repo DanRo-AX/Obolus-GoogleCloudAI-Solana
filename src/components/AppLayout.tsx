@@ -89,7 +89,7 @@ export function AppLayout() {
               <Button
                 type="button"
                 onClick={() => setComposerOpen(true)}
-                className="font-mono tracking-[1px] uppercase rounded-[2px] transition-all duration-300 bg-foreground/85 text-background border border-foreground/80 hover:bg-foreground/75 h-9 px-4 text-xs"
+                className="rounded-[2px] transition-all duration-300 bg-foreground/85 text-background border border-foreground/80 hover:bg-foreground/75 h-9 px-4 text-xs"
               >
                 New question
               </Button>

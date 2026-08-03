@@ -22,10 +22,10 @@ import {
   TooltipTrigger,
 } from '@/components/ui/primitives'
 import { AUTO_MATCH_STRIKE_LIMIT, STRIKE_LIMIT } from '@/data/onboarding'
-import { exportAccount, setMemoryLocked } from '@/lib/api'
+import { exportAccount, setMemoryLocked, withdrawPrepaidBalance } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
-import { shortKey } from '@/state/wallet'
+import { getPhantom, shortKey, useWallet } from '@/state/wallet'
 
 /**
  * Screen 03 — My memory. Everything you have answered piles up here.
@@ -44,6 +44,7 @@ export default function Memory() {
     account,
     authReady,
     balance,
+    verifyPayoutWallet,
     deleteCurrentAccount,
   } = useUi()
   const navigate = useNavigate()
@@ -65,7 +66,7 @@ export default function Memory() {
       await refreshLedger()
     } catch (error) {
       setMemoryActionError(
-        error instanceof Error ? error.message : 'The memory setting could not be updated.',
+        error instanceof Error ? error.message : 'The lock did not change. Try it again.',
       )
     } finally {
       setLockingId(null)
@@ -88,7 +89,7 @@ export default function Memory() {
       URL.revokeObjectURL(url)
     } catch (error) {
       setMemoryActionError(
-        error instanceof Error ? error.message : 'The account export could not be created.',
+        error instanceof Error ? error.message : 'The export did not build. Try it again.',
       )
     } finally {
       setExporting(false)
@@ -105,10 +106,68 @@ export default function Memory() {
       setDisputeReason('')
     } catch (error) {
       setDisputeError(
-        error instanceof Error ? error.message : 'The dispute could not be submitted.',
+        error instanceof Error ? error.message : 'The dispute did not send. Try it again.',
       )
     } finally {
       setDisputingId(null)
+    }
+  }
+
+  const wallet = useWallet()
+  const [verifying, setVerifying] = useState(false)
+  const [withdrawing, setWithdrawing] = useState(false)
+  const [walletError, setWalletError] = useState<string | null>(null)
+
+  /**
+   * Saving a payout address only records a string. Proving the address is
+   * yours means signing a challenge with it — otherwise anyone could point
+   * earnings at somebody else's wallet.
+   */
+  const verifyOwnership = async () => {
+    if (!profile?.wallet || verifying) return
+    const provider = getPhantom()
+    if (!provider?.signMessage) {
+      setWalletError('Connect Phantom to sign the challenge.')
+      return
+    }
+    setWalletError(null)
+    setVerifying(true)
+    try {
+      await verifyPayoutWallet(profile.wallet, async (message: string) => {
+        const signed = await provider.signMessage!(
+          new TextEncoder().encode(message),
+          'utf8',
+        )
+        const bytes = signed instanceof Uint8Array ? signed : signed.signature
+        return btoa(String.fromCharCode(...bytes))
+      })
+    } catch (e) {
+      setWalletError(
+        e instanceof Error ? e.message : 'The signature was not accepted.',
+      )
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  /**
+   * Sending the sandbox balance back out to the payout wallet. This used to
+   * hang off the sidebar wallet control; it belongs next to the balance it
+   * moves, which is here.
+   */
+  const withdrawBalance = async () => {
+    if (withdrawing) return
+    setWalletError(null)
+    setWithdrawing(true)
+    try {
+      await withdrawPrepaidBalance()
+      await refreshLedger()
+    } catch (e) {
+      setWalletError(
+        e instanceof Error ? e.message : 'The withdrawal did not go through.',
+      )
+    } finally {
+      setWithdrawing(false)
     }
   }
 
@@ -154,7 +213,7 @@ export default function Memory() {
     <div className="page-enter flex-1 overflow-y-auto">
       <div className="space-y-6 p-4 sm:p-6">
         <div className="flex min-h-8 items-center justify-between gap-4">
-          <h1 className="font-sans text-base font-medium">My memory</h1>
+          <h1 className="font-sans text-base font-medium">My shelf</h1>
           <div className="flex items-center gap-2">
             <Button
               variant="monoGhost"
@@ -184,19 +243,19 @@ export default function Memory() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Stat
             icon={<Coins className="size-3.5" />}
-            label="Accrued to date"
+            label="Earned to date"
             value={`₩${total.toLocaleString()}`}
-            sub={`${earnings?.eventCount ?? settled.length} earning events${earnings?.heldKrw ? ` · ₩${earnings.heldKrw.toLocaleString()} held` : ''}`}
+            sub={`${earnings?.eventCount ?? settled.length} payouts${earnings?.heldKrw ? ` · ₩${earnings.heldKrw.toLocaleString()} held 14 days` : ''}`}
           />
           <Stat
             icon={<Sparkles className="size-3.5" />}
             label="Earned via auto-match"
             value={`₩${autoEarned.toLocaleString()}`}
-            sub={`${total ? Math.round((autoEarned / total) * 100) : 0}% of everything`}
+            sub={`${total ? Math.round((autoEarned / total) * 100) : 0}% of your earnings`}
           />
           <Stat
             icon={<Flame className="size-3.5" />}
-            label="Memory entries"
+            label="Documents you wrote"
             value={`${settled.length}`}
             sub={`across ${shelves.length} shelves`}
           />
@@ -206,14 +265,25 @@ export default function Memory() {
           <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-[6px] border border-border bg-card px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
             <span>Off-chain call credit <strong className="text-foreground">₩{balance.availableKrw.toLocaleString()}</strong></span>
             <span>Reserved <strong className="text-foreground">₩{balance.reservedKrw.toLocaleString()}</strong></span>
-            <span>Held <strong className="text-foreground">₩{balance.heldKrw.toLocaleString()}</strong></span>
+            <span>Held 14 days <strong className="text-foreground">₩{balance.heldKrw.toLocaleString()}</strong></span>
+            {balance.availableKrw > 0 && profile?.walletVerified ? (
+              <Button
+                variant="monoMuted"
+                size="monoSm"
+                className="ml-auto"
+                disabled={withdrawing}
+                onClick={() => void withdrawBalance()}
+              >
+                {withdrawing ? 'Sending…' : 'Send to my wallet'}
+              </Button>
+            ) : null}
           </div>
         ) : null}
 
         {earnings?.claimableKrw ? (
           <div className="rounded-[6px] border border-[#0F766E]/30 bg-[#0F766E]/5 px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            Devnet escrow awaiting payout <strong className="text-foreground">₩{earnings.claimableKrw.toLocaleString()}</strong>
-            {' · '}the payout worker replays one durable signed transaction per beneficiary without double-paying
+            Claimable escrow <strong className="text-foreground">₩{earnings.claimableKrw.toLocaleString()}</strong>
+            {' · '}claim it and USDC lands in the wallet recorded at each open. Not part of the sandbox balance.
           </div>
         ) : null}
 
@@ -223,8 +293,18 @@ export default function Memory() {
               <Wallet className="size-3.5" />
               Payouts to{' '}
               {profile.wallet ? (
-                <span className="text-foreground">
+                <span className="flex flex-wrap items-center gap-2 text-foreground">
                   {shortKey(profile.wallet)} · {profile.walletVerified ? 'verified' : 'unverified'} · Devnet
+                  {!profile.walletVerified ? (
+                    <Button
+                      variant="monoMuted"
+                      size="monoSm"
+                      disabled={verifying || wallet.pubkey !== profile.wallet}
+                      onClick={() => void verifyOwnership()}
+                    >
+                      {verifying ? 'Signing…' : 'Prove it is yours'}
+                    </Button>
+                  ) : null}
                 </span>
               ) : (
                 <Link
@@ -242,12 +322,16 @@ export default function Memory() {
               )}
             >
               <ShieldAlert className="size-3.5" />
-              {profile.strikes}/{STRIKE_LIMIT} strikes
+              {profile.strikes} of {STRIKE_LIMIT} strikes
             </span>
             <span className="ml-auto">
-              {profile.disputeUsed ? 'Dispute spent' : '1 dispute available'}
+              {profile.disputeUsed ? 'Dispute used' : '1 dispute left'}
             </span>
           </div>
+        ) : null}
+
+        {walletError ? (
+          <p className="text-sm text-destructive">{walletError}</p>
         ) : null}
 
         {voided.length ? (
@@ -256,8 +340,8 @@ export default function Memory() {
               <span className="font-medium text-destructive">
                 {voided.length} answer{voided.length > 1 ? 's' : ''} voided.
               </span>{' '}
-              Voided entries stay in the stream so you can see what tripped, but
-              they are not quoted and they do not count toward the balance.
+              They stay on your shelf so you can see what tripped. SHELF-1 will
+              not quote them, and they earn nothing.
             </p>
           </div>
         ) : null}
@@ -274,8 +358,8 @@ export default function Memory() {
             <span className="text-[15px] font-medium">Auto-match</span>
             <span className="text-sm leading-relaxed text-muted-foreground">
               {(profile?.strikes ?? 0) >= AUTO_MATCH_STRIKE_LIMIT
-                ? 'Paused by the two-strike restriction. New payouts are held for 14 days; a successful dispute lifts the matching strike.'
-                : 'Leave it on and an eligible passage can be selected when it fits a query — no open call, no waiting. You are paid only when that committed passage is opened.'}
+                ? `Strike ${AUTO_MATCH_STRIKE_LIMIT} of ${STRIKE_LIMIT} — auto-match is off. New payouts are held 14 days. Win the dispute and the strike lifts.`
+                : 'Leave it on and SHELF-1 quotes your documents the moment one fits a question — no open call, no waiting. USDC lands in your wallet each time someone opens one, with nothing new written.'}
             </span>
           </div>
         </div>
@@ -322,7 +406,7 @@ export default function Memory() {
                   <span className="text-xs text-muted-foreground">
                     {event.recipientWallet
                       ? `to ${shortKey(event.recipientWallet)}`
-                      : 'wallet not set at accrual'}
+                      : 'no wallet set at the time'}
                   </span>
                   {event.payoutStatus === 'held' ? (
                     <span className="rounded-[2px] bg-amber-500/10 px-1.5 font-mono text-[9px] uppercase tracking-[1px] text-amber-700">
@@ -367,15 +451,16 @@ export default function Memory() {
         {/* Memory stream ----------------------------------------------- */}
         <div>
           <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            Memory stream
+            On your shelf
           </p>
           {memory.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 py-[18vh] text-center">
-              <h2 className="font-sans text-lg font-medium">Nothing here yet</h2>
+              <h2 className="font-sans text-lg font-medium">
+                Nothing on your shelf yet
+              </h2>
               <p className="max-w-[320px] text-sm leading-relaxed text-muted-foreground">
-                Answer one open call and it starts here. The more it holds, the
-                better auto-match sticks — eventually money arrives without you
-                answering anything.
+                Answer one open call and it lands here as a document. Every open
+                after that pays you ₩5 to ₩20, and we never touch it.
               </p>
               <Button asChild variant="mono" size="mono" className="mt-2">
                 <Link to="/dashboard">Browse open calls</Link>
@@ -396,7 +481,7 @@ export default function Memory() {
                           />
                         </TooltipTrigger>
                         <TooltipContent side="right">
-                          Weight {Math.round(w * 100)}% — recent entries count
+                          Weight {Math.round(w * 100)}% — recent documents count
                           for more
                         </TooltipContent>
                       </Tooltip>
@@ -441,8 +526,8 @@ export default function Memory() {
                             disabled={lockingId === m.id}
                             onClick={() => void toggleMemoryLock(m.id, !m.locked)}
                             className="inline-flex size-6 cursor-pointer items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground disabled:cursor-wait"
-                            title={m.locked ? 'Unlock for matching' : 'Lock and remove from matching'}
-                            aria-label={m.locked ? 'Unlock memory' : 'Lock memory'}
+                            title={m.locked ? 'Unlock it so SHELF-1 can quote it' : 'Lock it so SHELF-1 stops quoting it'}
+                            aria-label={m.locked ? 'Unlock document' : 'Lock document'}
                           >
                             {lockingId === m.id ? (
                               <Loader2 className="size-3 animate-spin" />
@@ -514,13 +599,13 @@ export default function Memory() {
                               ) : m.disputeStatus === 'pending' ? (
                                 'Review pending'
                               ) : profile?.disputeUsed ? (
-                                'Dispute spent'
+                                'Dispute used'
                               ) : (
                                 'Dispute this'
                               )}
                             </Button>
                             <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                              One per account
+                              One per wallet
                             </span>
                           </div>
                           {draftDisputeId === m.id ? (
@@ -530,7 +615,7 @@ export default function Memory() {
                                 onChange={(event) => setDisputeReason(event.target.value)}
                                 rows={3}
                                 maxLength={1000}
-                                placeholder="Explain what specific evidence the automatic check missed (20+ characters)."
+                                placeholder="Say what the check got wrong. 20 characters minimum."
                                 className="w-full resize-y rounded-[3px] border border-border bg-background p-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-foreground/30"
                               />
                               <div className="flex gap-2">
@@ -540,7 +625,7 @@ export default function Memory() {
                                   disabled={disputeReason.trim().length < 20}
                                   onClick={() => void dispute(m.id)}
                                 >
-                                  Submit for review
+                                  Send for review
                                 </Button>
                                 <Button
                                   variant="monoGhost"
@@ -569,9 +654,9 @@ export default function Memory() {
 
         <div className="rounded-[6px] border border-border bg-foreground/[0.03] p-4">
           <p className="text-sm leading-relaxed text-muted-foreground">
-            Deleting the account refunds unused open-call escrow, removes profile,
-            memory and documents, revokes every session, and anonymizes the
-            append-only financial audit rows.
+            Deleting refunds unused open-call escrow to your wallet, removes your
+            profile and every document, and signs out every session. The financial
+            audit rows stay, with your handle stripped.
           </p>
           <div className="mt-3 flex items-center gap-2">
             {deleteConfirm ? (
@@ -590,12 +675,12 @@ export default function Memory() {
                   {deleting ? <Loader2 className="size-3 animate-spin" /> : 'Permanently delete'}
                 </Button>
                 <Button variant="monoGhost" size="monoSm" onClick={() => setDeleteConfirm(false)}>
-                  Keep account
+                  Keep it
                 </Button>
               </>
             ) : (
               <Button variant="monoMuted" size="monoSm" onClick={() => setDeleteConfirm(true)}>
-                <Trash2 className="size-3" /> Delete account
+                <Trash2 className="size-3" /> Delete everything
               </Button>
             )}
           </div>

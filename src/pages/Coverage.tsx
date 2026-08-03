@@ -55,27 +55,23 @@ export default function Coverage() {
 
   return (
     <div className="page-enter flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-[76rem] space-y-12 p-4 sm:p-6">
+      <div className="space-y-8 p-4 sm:p-6">
         <section>
-          <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-            Live human demand
-          </span>
-          <div className="mt-3 flex flex-wrap items-end justify-between gap-5">
-            <div>
-              <h1 className="font-display text-3xl font-medium">Coverage is decided per question</h1>
-              <p className="mt-3 max-w-2xl text-[15px] leading-7 text-muted-foreground">
-                OPENSHELF does not publish private shelf counts or passages as a
-                browseable catalogue. A query applies its own filters, ranking,
-                author diversity, requested count, and budget before deciding
-                whether human coverage is sufficient.
-              </p>
-            </div>
+          <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
+            <h1 className="font-sans text-base font-medium">Thin shelves</h1>
             <Button asChild variant="mono" size="mono">
-              <Link to="/">Test a question</Link>
+              <Link to="/">Ask</Link>
             </Button>
           </div>
 
-          <div className="mt-8 grid gap-4 sm:grid-cols-3">
+          <p className="mt-4 max-w-2xl text-[15px] leading-7 text-muted-foreground">
+            Under 300 documents a shelf cannot answer reliably. You cannot
+            browse the documents themselves — that is what opening one is for.
+            What you can see is where a question comes back empty, and what
+            someone has already offered to fill it.
+          </p>
+
+          <div className="mt-6 grid gap-4 sm:grid-cols-3">
             {RANKING.map(({ Icon, title, body }) => (
               <article key={title} className="rounded-[6px] border border-border bg-card p-5">
                 <Icon className="size-4 text-muted-foreground" />
@@ -87,26 +83,30 @@ export default function Coverage() {
         </section>
 
         <section>
-          <div className="flex flex-wrap items-end justify-between gap-4">
+          <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-                Open calls from the server
-              </span>
-              <h2 className="mt-2 font-display text-2xl font-medium">Where new answers are needed now</h2>
+              <h2 className="font-sans text-lg font-medium">
+                Asked, and nothing answered
+              </h2>
+              <p className="mt-2 max-w-2xl text-[15px] leading-7 text-muted-foreground">
+                Nothing on the shelves has answered these yet. Every open call
+                here is live from the server: it goes to people who would know,
+                and the asker has already named what one answer is worth.
+              </p>
             </div>
             <div className="flex flex-wrap gap-x-5 gap-y-1 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-              <span><strong className="text-foreground">{totals.calls}</strong> calls</span>
-              <span><strong className="text-foreground">{totals.remaining}</strong> slots</span>
-              <span><strong className="text-foreground">₩{totals.budget.toLocaleString()}</strong> remaining</span>
+              <span><strong className="text-foreground">{totals.calls}</strong> open calls</span>
+              <span><strong className="text-foreground">{totals.remaining}</strong> slots left</span>
+              <span><strong className="text-foreground">₩{totals.budget.toLocaleString()}</strong> waiting</span>
             </div>
           </div>
 
           <div className="mt-6 overflow-hidden rounded-[6px] border border-border bg-card">
             <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-border bg-muted-2 px-4 py-2.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground sm:grid-cols-[1fr_repeat(4,110px)]">
-              <span>Field</span>
+              <span>Area</span>
               <span className="hidden text-right sm:block">Open calls</span>
               <span className="hidden text-right sm:block">Slots left</span>
-              <span className="hidden text-right sm:block">Top rate</span>
+              <span className="hidden text-right sm:block">Top per answer</span>
               <span className="text-right">Budget left</span>
             </div>
             {rows.map((row) => (
@@ -127,9 +127,15 @@ export default function Coverage() {
               </Link>
             ))}
           </div>
-          <p className="mt-4 text-sm leading-6 text-muted-foreground">
-            These totals come from the authenticated open-call state. AI baseline
-            output never appears here, never fills a slot, and never becomes paid inventory.
+
+          <p className="mt-6 max-w-2xl rounded-[6px] border border-border bg-foreground/[0.03] p-5 text-sm leading-relaxed text-muted-foreground">
+            <span className="font-medium text-foreground">
+              This page is the honest version of the hardest problem.
+            </span>{' '}
+            An empty shelf leaves SHELF-1 nothing to open. Every number here
+            comes from the authenticated open-call state — a baseline answer
+            written by a model never appears in it, never fills a slot, and is
+            never paid for.
           </p>
         </section>
       </div>

@@ -82,7 +82,7 @@ export function MobileSidebar() {
                     }
                   >
                     <ShieldCheck className="text-muted-foreground/60" />
-                    <span>Review queue</span>
+                    <span>Disputes</span>
                   </NavLink>
                 </li>
               ) : null}
@@ -94,13 +94,13 @@ export function MobileSidebar() {
             <div className="flex gap-2">
               <Button asChild variant="mono" size="mono" className="flex-1">
                 <Link to={profile ? '/memory' : '/onboarding'}>
-                  {profile?.handle ?? 'Set up profile'}
+                  {profile?.handle ?? 'Set up your shelf'}
                 </Link>
               </Button>
               <Button
                 variant="monoMuted"
                 size="mono"
-                aria-label="Sign out"
+                aria-label="Disconnect Phantom"
                 onClick={() => void signOut()}
               >
                 <LogOut className="size-4" />
@@ -109,13 +109,13 @@ export function MobileSidebar() {
           ) : <div className="flex gap-2">
             <Button
               asChild
-              className="font-mono tracking-[1px] uppercase rounded-[2px] bg-foreground/85 text-background border border-foreground/80 hover:bg-foreground/75 h-9 flex-1 px-4 text-xs"
+              className="rounded-[2px] bg-foreground/85 text-background border border-foreground/80 hover:bg-foreground/75 h-9 flex-1 px-4 text-xs"
             >
-              <Link to="/login?mode=signup">Start free</Link>
+              <Link to="/login">Connect Phantom</Link>
             </Button>
             <Button
               asChild
-              aria-label="Sign in"
+              aria-label="Connect a Phantom wallet you already have"
               className="font-mono uppercase rounded-[2px] bg-muted text-foreground hover:bg-muted/90 border border-foreground/5 h-9 w-9 p-0"
             >
               <Link to="/login">
@@ -123,12 +123,6 @@ export function MobileSidebar() {
               </Link>
             </Button>
           </div>}
-          <Button
-            asChild
-            className="font-mono tracking-[1px] uppercase rounded-[2px] bg-muted text-foreground hover:bg-muted/90 border border-foreground/5 h-9 w-full px-4 text-xs"
-          >
-            <Link to="/pricing">Pricing</Link>
-          </Button>
         </div>
       </div>
     </div>

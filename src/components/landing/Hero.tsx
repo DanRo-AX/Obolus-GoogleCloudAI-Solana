@@ -24,8 +24,8 @@ export function Hero() {
             Turn the internet into a database
           </h1>
           <p className="mx-auto mt-2 max-w-lg text-[17px] font-medium text-white/80">
-            SHELF-1 searches what people wrote instead of the web, and pays
-            them over x402 for every document it opens.
+            SHELF-1 searches what people wrote instead of the web. ₩5 to ₩20 to
+            open one document, and it lands in the wallet of whoever wrote it.
           </p>
         </div>
 

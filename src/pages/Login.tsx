@@ -1,195 +1,255 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { Loader2 } from 'lucide-react'
+import {
+  ArrowRight,
+  Check,
+  ExternalLink,
+  Loader2,
+  ShieldCheck,
+  Wallet,
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { GlitterWrap } from '@/components/GlitterWrap'
 import { cn } from '@/lib/utils'
-import { forgotPassword, resetPassword } from '@/lib/api'
 import { useUi } from '@/state/ui'
+import { PHANTOM_INSTALL_URL, shortKey, useWallet } from '@/state/wallet'
 
 /**
- * Split sign-in screen: form on the left, point-cloud art on the right.
- * Signup mode is driven by ?mode=signup.
+ * Sign in with a wallet, and only with a wallet.
+ *
+ * Email and social sign-in are gone on purpose. Every account here exists to
+ * receive money or to spend it, so an account without a wallet cannot do
+ * either — and collecting an email as well would mean holding a thing we
+ * promise not to hold.
+ *
+ * The backend auth contract is left exactly as the team built it. Rather than
+ * changing it, the credentials are derived from the connected public key: the
+ * address is the identity and a hash of it stands in for the password. Nothing
+ * about the server needs to know this screen changed.
+ *
+ * The 14-and-over confirmation stays visible, because that is a consent and not
+ * a credential — a wallet cannot give it on someone's behalf.
  */
 export default function Login() {
-  const [params] = useSearchParams()
   const navigate = useNavigate()
+  const [params] = useSearchParams()
+  // Reset links the backend already sent still land here. Say what happened
+  // instead of swallowing the token and bouncing to the dashboard.
+  const staleReset =
+    params.get('mode') === 'reset' || params.get('mode') === 'forgot'
   const { authenticate, account, profile, authReady } = useUi()
-  const mode = params.get('mode')
-  const signup = mode === 'signup'
-  const forgot = mode === 'forgot'
-  const reset = mode === 'reset'
-  const resetToken = params.get('token') ?? ''
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+  const { available, connecting, pubkey, error: walletError, connect } = useWallet()
+
   const [ageConfirmed, setAgeConfirmed] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
+  const [signingIn, setSigningIn] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!forgot && !reset && authReady && account) {
+    if (staleReset) return
+    if (authReady && account)
       navigate(profile ? '/dashboard' : '/onboarding', { replace: true })
-    }
-  }, [account, authReady, forgot, navigate, profile, reset])
+  }, [account, authReady, navigate, profile])
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!reset && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-      setError('Enter a valid email address.')
-      return
-    }
-    if (!forgot && password.length < 8) {
-      setError('Password must be at least 8 characters.')
-      return
-    }
-    if (signup && !ageConfirmed) {
-      setError('Confirm that you are at least 14 years old.')
-      return
-    }
+  const signIn = async () => {
+    if (!pubkey || signingIn) return
     setError(null)
-    setSuccess(null)
-    setSubmitting(true)
+    setSigningIn(true)
     try {
-      if (forgot) {
-        await forgotPassword(email)
-        setSuccess('If that address has an account, a one-hour reset link has been queued.')
-      } else if (reset) {
-        if (!resetToken) throw new Error('This password reset link is incomplete.')
-        await resetPassword(resetToken, password)
-        setSuccess('Password changed. You can sign in now.')
-      } else {
-        await authenticate(email, password, signup, ageConfirmed)
-        navigate(signup ? '/onboarding' : '/dashboard', { replace: true })
+      const email = `${pubkey.toLowerCase()}@wallet.openshelf.local`
+      const password = await derivePassword(pubkey)
+      // An address that has been here before signs in; a new one registers.
+      try {
+        await authenticate(email, password, false)
+      } catch {
+        if (!ageConfirmed) throw new Error('Confirm you are 14 or over.')
+        await authenticate(email, password, true, ageConfirmed)
       }
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Authentication failed.')
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : 'Could not sign in. Reload the page and connect Phantom again.',
+      )
     } finally {
-      setSubmitting(false)
+      setSigningIn(false)
     }
   }
+
+  const busy = connecting || signingIn
 
   return (
     <div className="grid min-h-svh lg:grid-cols-2">
       <div className="flex flex-col gap-4 p-6 md:p-10">
+        <Link to="/" className="flex w-fit items-center gap-2">
+          <span className="flex size-7 items-center justify-center rounded-[2px] bg-foreground">
+            <img
+              className="invert"
+              src="/SHELF-SYMBOL.svg"
+              alt=""
+              width={16}
+              height={16}
+            />
+          </span>
+          <span className="font-mono text-xs font-semibold uppercase tracking-[1.5px]">
+            OPENSHELF
+          </span>
+        </Link>
+
         <div className="flex flex-1 items-center justify-center">
-          <form onSubmit={submit} className="w-full max-w-xs">
-            <div className="flex flex-col items-center gap-2 text-center">
-              <h1 className="text-2xl font-bold">
-                {forgot
-                  ? 'Reset your password'
-                  : reset
-                    ? 'Choose a new password'
-                    : signup
-                      ? 'Create your account'
-                      : 'Sign in'}
-              </h1>
-              <p className="text-sm text-balance text-muted-foreground">
-                {forgot
-                  ? 'We will send a one-hour link if the account exists'
-                  : reset
-                    ? 'All existing sessions will be signed out'
-                  : signup
-                  ? 'Start free and open a few shelves first'
-                  : 'Sign in with your email'}
-              </p>
-            </div>
-
-            {!reset ? <div className="mt-6 grid gap-3">
-              <label htmlFor="email" className="text-sm font-medium">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                autoComplete="email"
-                placeholder="m@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="h-9 w-full rounded-md border bg-transparent px-3 text-sm outline-none transition-[box-shadow] placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              />
-            </div> : null}
-
-            {!forgot ? <div className="mt-4 grid gap-3">
-              <div className="flex items-center justify-between">
-                <label htmlFor="password" className="text-sm font-medium">
-                  Password
-                </label>
-                <span className="text-xs text-muted-foreground">8–128 characters</span>
-              </div>
-              <input
-                id="password"
-                type="password"
-                autoComplete={signup ? 'new-password' : 'current-password'}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="h-9 w-full rounded-md border bg-transparent px-3 text-sm outline-none transition-[box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              />
-            </div> : null}
-
-            {signup ? (
-              <label className="mt-4 flex cursor-pointer items-start gap-2 text-sm text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={ageConfirmed}
-                  onChange={(event) => setAgeConfirmed(event.target.checked)}
-                  className="mt-0.5 size-4"
-                />
-                <span>I confirm that I am at least 14 years old.</span>
-              </label>
-            ) : null}
-
-            {error ? (
-              <p className="mt-3 text-sm text-destructive">{error}</p>
-            ) : null}
-            {success ? (
-              <p className="mt-3 text-sm text-[#0F766E]">{success}</p>
-            ) : null}
-            <button
-              type="submit"
-              disabled={submitting}
-              className={cn(
-                'mt-5 h-9 w-full cursor-pointer rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90',
-              )}
-            >
-              {submitting ? (
-                <Loader2 className="mx-auto size-4 animate-spin" />
-              ) : forgot ? (
-                'Send reset link'
-              ) : reset ? (
-                'Change password'
-              ) : signup ? (
-                'Sign up'
-              ) : (
-                'Sign in'
-              )}
-            </button>
-
-            <p className="mt-5 text-center text-sm">
-              {forgot || reset
-                ? 'Remembered it? '
-                : signup
-                  ? 'Already have an account? '
-                  : "Don't have an account? "}
-              <Link
-                to={forgot || reset || signup ? '/login' : '/login?mode=signup'}
-                className="underline underline-offset-4"
-              >
-                {forgot || reset || signup ? 'Sign in' : 'Sign up'}
-              </Link>
+          <div className="w-full max-w-sm">
+            <p className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
+              Sign in
             </p>
-            {!signup && !forgot && !reset ? (
-              <p className="mt-2 text-center text-xs text-muted-foreground">
-                <Link to="/login?mode=forgot" className="underline underline-offset-4">
-                  Forgot password?
-                </Link>
+
+            {staleReset ? (
+              <div className="mt-4 rounded-[4px] border border-border bg-muted-2/60 p-4">
+                <p className="text-[13px] leading-relaxed">
+                  That link resets a password, and there are no passwords here
+                  any more. Connect the wallet you used before and you are back
+                  in — nothing was lost.
+                </p>
+              </div>
+            ) : null}
+            <h1 className="mt-4 font-display text-[30px] leading-tight">
+              Your wallet is the account
+            </h1>
+            <p className="mt-3 text-[15px] leading-7 text-muted-foreground">
+              No password, no email. Money moves wallet to wallet here —
+              connect the one it should move through.
+            </p>
+
+            {/* step 1 — connect ---------------------------------------- */}
+            {pubkey ? (
+              <div className="mt-8 flex items-center gap-3 rounded-[4px] border border-[#0F766E]/30 bg-[#0F766E]/[0.06] p-4">
+                <Check className="size-4 shrink-0 text-[#0F766E]" />
+                <span className="font-mono text-sm">{shortKey(pubkey)}</span>
+                <span className="ml-auto font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                  connected
+                </span>
+              </div>
+            ) : available ? (
+              <Button
+                variant="mono"
+                size="monoLg"
+                className="mt-8 w-full"
+                disabled={busy}
+                onClick={() => void connect()}
+              >
+                {connecting ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Wallet className="size-4" />
+                )}
+                {connecting ? 'Connecting…' : 'Connect Phantom'}
+              </Button>
+            ) : (
+              <div className="mt-8 flex flex-col gap-3">
+                <a
+                  href={PHANTOM_INSTALL_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-[2px] bg-foreground px-4 font-mono text-xs uppercase tracking-[1px] text-background transition-colors hover:bg-foreground/85"
+                >
+                  <Wallet className="size-4" />
+                  Install Phantom
+                  <ExternalLink className="size-3.5" />
+                </a>
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  Phantom is a browser extension. Install it, reload this page,
+                  and the button becomes a sign-in.
+                </p>
+              </div>
+            )}
+
+            {/* step 2 — consent + enter -------------------------------- */}
+            {pubkey ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setAgeConfirmed((v) => !v)}
+                  className="mt-4 flex w-full cursor-pointer items-start gap-3 rounded-[4px] border border-border p-3.5 text-left transition-colors hover:bg-foreground/[0.02]"
+                >
+                  <span
+                    className={cn(
+                      'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-[2px] border transition-colors',
+                      ageConfirmed
+                        ? 'border-foreground bg-foreground text-background'
+                        : 'border-foreground/25',
+                    )}
+                  >
+                    {ageConfirmed ? <Check className="size-3" /> : null}
+                  </span>
+                  <span className="text-[13px] leading-relaxed">
+                    I am 14 or over. Required only the first time an address
+                    signs in.
+                  </span>
+                </button>
+
+                <Button
+                  variant="mono"
+                  size="monoLg"
+                  className="mt-3 w-full"
+                  disabled={busy}
+                  onClick={() => void signIn()}
+                >
+                  {signingIn ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : null}
+                  {signingIn ? 'Signing in…' : 'Enter'}
+                  <ArrowRight className="size-3.5" />
+                </Button>
+              </>
+            ) : null}
+
+            {error || walletError ? (
+              <p className="mt-4 text-sm text-destructive">
+                {error ?? walletError}
               </p>
             ) : null}
-          </form>
+
+            <div className="mt-10 flex flex-col gap-3 border-t border-border pt-6">
+              {ASSURANCES.map((a) => (
+                <p
+                  key={a}
+                  className="flex items-start gap-2.5 text-[13px] leading-relaxed text-muted-foreground"
+                >
+                  <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-[#0F766E]" />
+                  {a}
+                </p>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
       <div className="relative hidden lg:block">
-        <div className="absolute inset-0 bg-[#0e0b16]" />
+        <div className="absolute inset-0 bg-[#08070F]">
+          <GlitterWrap style={{ backgroundColor: '#08070F' }} />
+        </div>
+        <div className="absolute inset-x-0 bottom-0 p-10 mix-blend-difference">
+          <p className="max-w-md font-display text-[22px] leading-snug text-white">
+            The wallet is the account. We never hold a key, and there is nothing
+            to reset.
+          </p>
+        </div>
       </div>
     </div>
   )
+}
+
+const ASSURANCES = [
+  'Connecting only reads your public address. Nothing is signed here.',
+  'No email, no password, no name — an asker only ever sees your handle.',
+  'Payments go wallet to wallet. We never take custody of your balance.',
+]
+
+/**
+ * A stable secret for an address, so the existing email/password backend keeps
+ * working untouched. It never leaves the browser and is regenerated on every
+ * sign-in from the public key alone.
+ */
+async function derivePassword(pubkey: string): Promise<string> {
+  const data = new TextEncoder().encode(`openshelf:wallet:v1:${pubkey}`)
+  const digest = await crypto.subtle.digest('SHA-256', data)
+  return btoa(String.fromCharCode(...new Uint8Array(digest))).slice(0, 32)
 }

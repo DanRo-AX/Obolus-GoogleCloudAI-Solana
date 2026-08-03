@@ -202,7 +202,7 @@ export default function Dashboard() {
         [order.id]:
           error instanceof ApiError
             ? error.message
-            : 'The returned answers could not be loaded.',
+            : 'The answers did not load. Try that button again.',
       }))
     } finally {
       setAnswersLoading((current) => (current === order.id ? null : current))
@@ -284,10 +284,10 @@ export default function Dashboard() {
     <div className="page-enter flex-1 overflow-y-auto">
       <div className="space-y-5 p-4 sm:p-6">
         <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
-          <h1 className="font-sans text-base font-medium">Dashboard</h1>
+          <h1 className="font-sans text-base font-medium">Open calls</h1>
           <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
             <Coins className="size-3.5" />
-            Accrued today{' '}
+            Earned today{' '}
             <span className="tabular-nums text-foreground">
               ₩{earnedToday.toLocaleString()}
             </span>
@@ -302,7 +302,7 @@ export default function Dashboard() {
             <AlertPreference
               icon={Bell}
               label="Browser alerts"
-              detail="Show a system alert when a matching paid question arrives."
+              detail="Alerts this browser when an open call in your fields is posted."
               checked={
                 profile.browserAlerts === true &&
                 typeof Notification !== 'undefined' &&
@@ -311,26 +311,26 @@ export default function Dashboard() {
               onChange={(value) => {
                 setAlertError(null)
                 void setBrowserAlerts(value).catch((error) =>
-                  setAlertError(error instanceof Error ? error.message : 'Could not update alerts.'),
+                  setAlertError(error instanceof Error ? error.message : 'The switch did not move. Try it again.'),
                 )
               }}
             />
             <AlertPreference
               icon={Mail}
               label="Email alerts"
-              detail="Queue matching questions to your account email."
+              detail="Emails you the open calls that match your fields."
               checked={profile.emailAlerts === true}
               onChange={(value) => {
                 setAlertError(null)
                 void setEmailAlerts(value).catch((error) =>
-                  setAlertError(error instanceof Error ? error.message : 'Could not update alerts.'),
+                  setAlertError(error instanceof Error ? error.message : 'The switch did not move. Try it again.'),
                 )
               }}
             />
             <AlertPreference
               icon={Bot}
-              label="Memory agent"
-              detail="Reuse your exact paid answer only for a 82%+ near-identical call."
+              label="Reuse from my shelf"
+              detail="Reuses an answer you already wrote, only when a call matches it 82% or more."
               checked={agents}
               onChange={setAgents}
             />
@@ -558,8 +558,8 @@ export default function Dashboard() {
               <span className="font-medium text-destructive">
                 Account suspended — {STRIKE_LIMIT} strikes.
               </span>{' '}
-              You cannot pick up calls, and your documents have stopped being
-              quoted. Anything already settled is still paid out.
+              You cannot pick up calls, and SHELF-1 has stopped quoting your
+              documents. USDC that already settled stays in your wallet.
             </p>
             <Button asChild variant="monoMuted" size="monoSm" className="ml-auto">
               <Link to="/memory">Review the strikes</Link>
@@ -571,8 +571,8 @@ export default function Dashboard() {
           <div className="flex flex-wrap items-center gap-3 rounded-[6px] border border-border bg-foreground/[0.03] px-4 py-3">
             <UserRound className="size-4 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
-              You are browsing signed out. Set up a profile and calls in your
-              fields sort to the top.
+              You are reading signed out. Connect Phantom, name your fields, and
+              calls in them sort to the top.
             </p>
             <Button
               asChild
@@ -580,7 +580,7 @@ export default function Dashboard() {
               size="monoSm"
               className="ml-auto"
             >
-              <Link to="/login?mode=signup">Create account</Link>
+              <Link to="/login">Connect Phantom</Link>
             </Button>
           </div>
         ) : null}
@@ -599,7 +599,7 @@ export default function Dashboard() {
             </p>
             <Button asChild variant="mono" size="mono" className="mt-2">
               <Link to={tab === 'open' ? '/coverage' : '/'}>
-                {tab === 'open' ? 'See coverage' : 'Ask something'}
+                {tab === 'open' ? 'See thin shelves' : 'Ask something'}
               </Link>
             </Button>
           </div>
@@ -654,7 +654,7 @@ export default function Dashboard() {
                   </p>
                   {order.filters && Object.values(order.filters).some(Boolean) ? (
                     <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                      Target · {Object.entries(order.filters)
+                      Who answers · {Object.entries(order.filters)
                         .filter(([, value]) => Boolean(value))
                         .map(([key, value]) => `${key.replace(/([A-Z])/g, ' $1')} ${value}`)
                         .join(' · ')}
@@ -692,7 +692,7 @@ export default function Dashboard() {
                     ) : null}
                     {cancelled ? (
                       <span className="ml-auto text-muted-foreground">
-                        Cancelled · unused escrow refunded
+                        Cancelled · refund in your wallet
                       </span>
                     ) : done ? (
                       <span className="ml-auto inline-flex items-center gap-1 text-[#0F766E]">
@@ -734,13 +734,13 @@ export default function Dashboard() {
                       }
                     >
                       {opening === order.id
-                        ? 'Opening…'
+                        ? 'Picking it up…'
                         : profile
                           ? fullyReserved
                             ? 'All remaining slots held'
                             : fits
                             ? 'Answer'
-                            : 'Profile does not match'
+                            : 'Outside your fields'
                           : 'Set up profile'}
                     </Button>
                   ) : null}
@@ -759,13 +759,13 @@ export default function Dashboard() {
                             {answersLoading === order.id
                               ? 'Loading answers…'
                               : answerPanels[order.id]
-                                ? 'Hide returned answers'
-                                : `View returned answers · ${order.answered}`}
+                                ? 'Hide the answers'
+                                : `Read the answers · ${order.answered}`}
                           </Button>
                         ) : null}
                         {order.chatId && chats.some((chat) => chat.id === order.chatId) ? (
                           <Button asChild variant="monoGhost" size="monoSm">
-                            <Link to={`/chat/${order.chatId}`}>Back to this browser's chat</Link>
+                            <Link to={`/chat/${order.chatId}`}>Back to the question</Link>
                           </Button>
                         ) : null}
                         {order.status !== 'filled' && order.status !== 'cancelled' ? (
@@ -774,7 +774,7 @@ export default function Dashboard() {
                             size="monoSm"
                             onClick={() => void cancelOrder(order.id)}
                           >
-                            Cancel · refund ₩{(order.escrowRemainingKrw ?? 0).toLocaleString()}
+                            Cancel · ₩{(order.escrowRemainingKrw ?? 0).toLocaleString()} back to your wallet
                           </Button>
                         ) : null}
                       </div>
@@ -813,7 +813,7 @@ export default function Dashboard() {
                           </div>
                         ) : (
                           <p className="border-t border-border pt-3 text-xs leading-relaxed text-muted-foreground">
-                            No accepted answers yet. This stays available across browsers and devices.
+                            No answers in yet. The call stays open, and it is here on any device you sign in from.
                           </p>
                         )
                       ) : null}

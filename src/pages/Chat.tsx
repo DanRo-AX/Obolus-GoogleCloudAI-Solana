@@ -178,7 +178,7 @@ export default function Chat() {
       if (!chatId || !resolvedQueryId) return
       const session = chat?.paymentSession
       if (!session) {
-        setPayError('The payment recovery session is missing. Start a new query.')
+        setPayError('The payment session is gone. Ask the question again.')
         setPhase('failed')
         return
       }
@@ -193,7 +193,7 @@ export default function Chat() {
       }
       if (session.payer && session.payer !== wallet.pubkey) {
         setPayError(
-          `This query belongs to ${shortKey(session.payer)}. The connected wallet is ${shortKey(wallet.pubkey)}. Switch back to recover settled documents without paying twice.`,
+          `This question was started from ${shortKey(session.payer)}. The connected wallet is ${shortKey(wallet.pubkey)}. Switch back to open what you already paid for.`,
         )
         setPhase('failed')
         return
@@ -224,7 +224,7 @@ export default function Chat() {
         const remaining = citations.filter(
           (citation) => !openedHandles.has(citation.handle),
         )
-        let answer = `Opened ${result.citations.length} matching documents from the ${shelfName} shelf. Each passage below is quoted as written.${result.settlement.partial ? ' Payment stopped before the remaining documents, so they stayed closed.' : ''}`
+        let answer = `Opened ${result.citations.length} documents from the ${shelfName} shelf. Each passage below is quoted as written.${result.settlement.partial ? ' Payment stopped before the rest, so those stayed closed and cost nothing.' : ''}`
         if (result.citations.length > 0) {
           try {
             const synthesis = await synthesizeAnswer(
@@ -263,7 +263,7 @@ export default function Chat() {
           patchChat(chatId, { paymentSession: nextSession })
           setPending(remaining)
           setPayError(
-            `${result.citations.length} document${result.citations.length === 1 ? '' : 's'} settled and were recovered. ${remaining.length} remain unpaid.`,
+            `${result.citations.length} document${result.citations.length === 1 ? '' : 's'} opened and paid. ${remaining.length} stayed closed and cost nothing.`,
           )
           setPhase('failed')
         } else {
@@ -273,7 +273,7 @@ export default function Chat() {
         }
       } catch (e) {
         setPayError(
-          e instanceof PaymentError ? e.message : 'Settlement did not go through.',
+          e instanceof PaymentError ? e.message : 'The payment did not go through.',
         )
         setPhase('failed')
       }
@@ -380,7 +380,7 @@ export default function Chat() {
         setPhase('confirm')
       } catch (error) {
         if (cancelled) return
-        setPayError(error instanceof Error ? error.message : 'Search failed.')
+        setPayError(error instanceof Error ? error.message : 'The search did not finish. Ask again.')
         setPhase('failed')
       }
     }
@@ -408,8 +408,8 @@ export default function Chat() {
           role: 'assistant',
           content:
             existingOrder.escrowMode === 'x402_solana_escrow'
-              ? 'A targeted open-call answer arrived. Its Devnet USDC share is now a durable payout claim for the contributor.'
-              : 'A targeted zero-price answer arrived through the off-chain call ledger.',
+              ? 'An answer to your open call arrived. Your reserved escrow holds its Devnet USDC share as a payout claim for the author.'
+              : 'An answer to your open call arrived at ₩0, through the off-chain call ledger.',
           citations: [
             {
               handle: answer.handle,
@@ -473,7 +473,7 @@ export default function Chat() {
           to="/dashboard"
           className="shrink-0 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground"
         >
-          Dashboard
+          Open calls
         </Link>
       </div>
 
@@ -542,14 +542,16 @@ export default function Chat() {
                         ? 'off-chain application ledger · token settlement disabled'
                         : m.settlement.network === 'sandbox-escrow'
                           ? 'zero-price call · no token transfer'
+                        : m.settlement.network === 'offline'
+                          ? 'offline preview · no payment sent'
                         : m.settlement.mode === 'open_call_escrow'
-                          ? 'Devnet escrow · contributor payout claim created'
+                          ? 'Devnet escrow · payout claim created for the author'
                         : m.settlement.mode === 'bundle_escrow'
-                          ? 'legacy x402 bundle · contributor shares recorded as claimable'
+                          ? 'legacy x402 bundle · each author’s share is claimable'
                         : m.settlement.mode === 'pay_sh_direct'
-                          ? 'local Pay.sh · paid only the DBs opened by the agent'
+                          ? 'local Pay.sh · paid only the documents SHELF-1 opened'
                         : m.settlement.mode === 'pay_sh_orchestrated'
-                          ? 'prepaid balance · server agent paid each DB through Pay.sh'
+                          ? 'prepaid balance · SHELF-1 paid each author through Pay.sh'
                           : 'settled through x402 · unopened documents cost nothing'}
                     </span>
                     {(m.settlement.txSigs?.length
@@ -584,8 +586,8 @@ export default function Chat() {
 
               {phase === 'confirm' ? (
                 <Branch
-                  title={`${pending.length} people already match.`}
-                  body={`No open call needed. ${pending.length} documents cost ₩${total.toLocaleString()} total (about ${estimatedUsdc.toFixed(6)} USDC). ${paymentUsesLegacyPaySh ? 'This old local Pay.sh session cannot continue; start a new query.' : 'The amount is reserved from your prepaid USDC balance. Phantom appears only for the first refill or when the balance is low; the server agent pays each selected DB through Pay.sh.'}`}
+                  title={`${pending.length} documents already answer this.`}
+                  body={`No open call needed. Opening all ${pending.length} costs ₩${total.toLocaleString()}, which settles as ${estimatedUsdc.toFixed(6)} USDC on Solana. ${paymentUsesLegacyPaySh ? 'This old local Pay.sh session cannot continue. Ask again to start a new one.' : 'That amount is reserved from your prepaid USDC balance. Phantom appears only for the first refill, or when the balance runs low; SHELF-1 then pays each author through Pay.sh.'}`}
                 >
                   <div className="w-full rounded-[4px] bg-foreground/[0.04] px-3 py-2 font-mono text-[10px] uppercase leading-relaxed tracking-[0.8px] text-muted-foreground">
                     One-time wallet proof · refill only when low · no delegate permission or browser helper key. Verify Devnet USDC mint{' '}
@@ -621,10 +623,10 @@ export default function Chat() {
                       }}
                     >
                       {paymentUsesLegacyPaySh
-                          ? 'Start a new query'
+                        ? 'Ask again to start a new one'
                         : paymentPayerMismatch
                           ? 'Switch to the original wallet'
-                          : 'Connect wallet to pay'}
+                          : 'Connect Phantom to pay'}
                     </Button>
                   )}
                   <Button
@@ -641,17 +643,17 @@ export default function Chat() {
                 <Branch
                   title={
                     resolutionReason === 'insufficient_coverage'
-                      ? 'Human coverage is still thin.'
+                      ? 'The shelves are thin here.'
                       : resolutionReason === 'budget_too_low'
-                        ? 'Human knowledge exists outside this budget.'
-                        : 'Nobody has covered this yet.'
+                        ? 'People have written this, above your price.'
+                        : 'Nothing on the shelves has lived this yet.'
                   }
                   body={
                     resolutionReason === 'insufficient_coverage'
-                      ? 'Some relevant documents exist, but not enough for the requested coverage. Want me to fill the gap?'
+                      ? 'Documents exist here, but too few to answer the way you asked. Post an open call for the rest?'
                       : resolutionReason === 'budget_too_low'
-                        ? 'Relevant documents exist, but they do not fit the current budget. Want me to ask at a new price?'
-                        : 'Nothing on the shelves matches. Want me to ask people?'
+                        ? 'Documents exist here, but they cost more than your budget. Post an open call at a price you name?'
+                        : 'An open call goes to people who would know. You name what one answer is worth.'
                   }
                 >
                   {aiBaselineStatus === 'loading' ? (
@@ -697,7 +699,7 @@ export default function Chat() {
                   }
                   body={
                     openCallDraft?.existingMatches
-                      ? `${openCallDraft.existingMatches} relevant documents already exist. ${openCallDraft.answersNeeded} more fills the original ${openCallDraft.targetAnswers}-person request.`
+                      ? `${openCallDraft.existingMatches} documents already answer part of this. ${openCallDraft.answersNeeded} more fills the ${openCallDraft.targetAnswers} you asked for.`
                       : 'More answers means you see where they start to disagree.'
                   }
                 >
@@ -720,7 +722,7 @@ export default function Chat() {
               {phase === 'ask-price' ? (
                 <Branch
                   title="What do you want to pay per answer?"
-                  body="₩0 still gets answers. People read the demand and write it up in advance because they expect it to sell later."
+                  body="₩0 still gets answers, slower. You pay what you name here once per answer you accept."
                 >
                   {priceChoices.map((p) => (
                     <Button
@@ -733,7 +735,7 @@ export default function Chat() {
                       size="mono"
                       onClick={() => {
                         if (!account) {
-                          navigate('/login?mode=signup')
+                          navigate('/login')
                           return
                         }
                         void placeOrder({
@@ -753,7 +755,7 @@ export default function Chat() {
                             setPayError(
                               error instanceof Error
                                 ? error.message
-                                : 'The call could not be posted.',
+                                : 'The call was not posted and nothing left your wallet.',
                             )
                             setPhase('failed')
                           },
@@ -769,14 +771,14 @@ export default function Chat() {
               {phase === 'ordered' && placedOrder ? (
                 <Branch
                   title="Call posted."
-                  body={`${placedOrder.target} people · ₩${placedOrder.unitPrice.toLocaleString()} each. ₩${placedOrder.escrowRemainingKrw?.toLocaleString() ?? (placedOrder.target * placedOrder.unitPrice).toLocaleString()} is ${placedOrder.escrowMode === 'x402_solana_escrow' ? 'funded in Devnet USDC escrow with one wallet approval' : 'tracked as zero-price, off-chain call credit'}; accepted answers are paid from it and the unused amount is refundable.`}
+                  body={`${placedOrder.target} answers · ₩${placedOrder.unitPrice.toLocaleString()} each. ₩${placedOrder.escrowRemainingKrw?.toLocaleString() ?? (placedOrder.target * placedOrder.unitPrice).toLocaleString()} is ${placedOrder.escrowMode === 'x402_solana_escrow' ? 'held in Devnet USDC escrow on one Phantom approval' : 'tracked as zero-price, off-chain call credit'}. Each answer you accept pays its author from that, and whatever is left comes back.`}
                 >
                   <Button
                     variant="mono"
                     size="mono"
                     onClick={() => navigate('/dashboard')}
                   >
-                    View on dashboard
+                    See my open call
                   </Button>
                   <Button
                     variant="monoMuted"
@@ -792,17 +794,17 @@ export default function Chat() {
 
               {phase === 'settling' ? (
                 <Branch
-                  title="The Pay.sh agent is opening the selected DBs…"
-                  body="The server reserves this question from your prepaid balance, checks each 402 price and recipient, pays the DB owner, and returns only successfully paid passages. Phantom appears only if a refill is needed. You may close this tab; the job is durable."
+                  title="SHELF-1 is opening the documents…"
+                  body="The question is reserved against your prepaid balance. SHELF-1 checks each 402 price and recipient, pays the author, and returns only the passages it paid for. Phantom appears only if the balance needs a refill. You can close this tab — the job keeps running."
                 />
               ) : null}
 
               {phase === 'failed' ? (
                 <Branch
-                  title={queryId ? 'Settlement did not go through.' : 'SHELF-1 could not reach the backend.'}
+                  title={queryId ? 'The payment did not go through.' : 'SHELF-1 could not reach the shelves.'}
                   body={
                     payError ??
-                    'The documents stayed closed. Retry recovers the same durable job and prepaid reservation without paying twice.'
+                    'The documents stayed closed. Retry picks up the same job and the same reservation, so nothing is paid twice.'
                   }
                 >
                   {queryId && pending.length && !paymentPayerMismatch ? (
@@ -817,7 +819,7 @@ export default function Chat() {
                         )
                       }
                     >
-                      Check ledger and retry {pending.length} remaining
+                      Retry the {pending.length} that stayed closed
                     </Button>
                   ) : null}
                   {paymentPayerMismatch ? (
@@ -829,7 +831,7 @@ export default function Chat() {
                         navigate(`/chat/${next}`)
                       }}
                     >
-                      Start a separate query with this wallet
+                      Ask again with this wallet
                     </Button>
                   ) : null}
                 </Branch>
@@ -838,7 +840,7 @@ export default function Chat() {
               {phase === 'declined' ? (
                 <Branch
                   title="Understood."
-                  body="No call was posted, so nothing was charged. Try again with different conditions any time."
+                  body="No call was posted and nothing left your wallet. Ask again at a different price any time."
                 />
               ) : null}
             </div>
@@ -949,7 +951,7 @@ function FeedbackActions({
       setRecorded(feedback)
       setReporting(false)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Feedback could not be saved.')
+      setError(cause instanceof Error ? cause.message : 'That did not save. Press it again.')
     } finally {
       setSubmitting(false)
     }
@@ -959,7 +961,7 @@ function FeedbackActions({
     return (
       <p className="mt-3 border-t border-border/70 pt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
         {recorded.outcome === 'report'
-          ? 'Report submitted · admin review pending'
+          ? 'Report sent · under review'
           : `${recorded.outcome.replace('_', ' ')} · recorded`}
       </p>
     )
@@ -969,7 +971,7 @@ function FeedbackActions({
     <div className="mt-3 border-t border-border/70 pt-2">
       <div className="flex flex-wrap items-center gap-2">
         <span className="mr-1 font-mono text-[9px] uppercase tracking-[1px] text-muted-foreground">
-          Paid buyer feedback
+          You paid for this passage
         </span>
         <Button
           variant="monoGhost"
@@ -1003,7 +1005,7 @@ function FeedbackActions({
             maxLength={1000}
             value={reason}
             onChange={(event) => setReason(event.target.value)}
-            placeholder="Describe the specific safety, authenticity, or abuse issue (20–1000 characters)."
+            placeholder="Name what is wrong — made-up facts, copied text, low effort, abuse. 20 to 1000 characters."
             className="w-full resize-y rounded-[3px] border border-border bg-background p-2 text-sm outline-none focus:ring-1 focus:ring-foreground/30"
           />
           <Button
@@ -1014,7 +1016,7 @@ function FeedbackActions({
             onClick={() => void send('report')}
           >
             {submitting ? <Loader2 className="size-3 animate-spin" /> : null}
-            Submit report
+            Send report
           </Button>
         </div>
       ) : null}

@@ -99,7 +99,7 @@ export default function Shelf1() {
       <div className="border-b border-border bg-foreground text-background">
         <div className="mx-auto w-full max-w-5xl px-5 py-9 sm:px-8">
           <span className="font-mono text-[10px] uppercase tracking-[2px] opacity-60">
-            The whole thing, in one line
+            In one line
           </span>
           <p className="mt-3 font-display text-2xl font-medium leading-snug sm:text-[29px]">
             {DEFINITION}
@@ -113,7 +113,7 @@ export default function Shelf1() {
           <nav className="hidden lg:block">
             <div className="sticky top-10 flex flex-col gap-1">
               <span className="mb-3 font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-                Contents
+                Sections
               </span>
               {SECTIONS.map((s) => (
                 <a
@@ -174,19 +174,15 @@ export default function Shelf1() {
 
             <div className="border-t border-border pt-10">
               <p className="text-[15px] leading-8 text-muted-foreground">
-                The shelves are being filled now. Ask something, and if nothing
-                on them fits, commission it — that call becomes the next
-                person's answer.
+                The shelves are being filled now. Ask something. If nothing on
+                them fits, post an open call and name what one answer is worth.
               </p>
               <div className="mt-6 max-w-xl">
                 <Composer variant="flat" />
               </div>
               <div className="mt-6 flex flex-wrap gap-2">
                 <Button asChild variant="mono" size="mono">
-                  <Link to="/coverage">See what is covered</Link>
-                </Button>
-                <Button asChild variant="monoMuted" size="mono">
-                  <Link to="/pricing">See per-open pricing</Link>
+                  <Link to="/coverage">See the thin shelves</Link>
                 </Button>
               </div>
             </div>
@@ -372,7 +368,7 @@ function OpenProblems() {
         </div>
       ))}
       <p className="mt-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-        Written down rather than smoothed over
+        Written down, not smoothed over
         <ArrowUpRight className="size-3" />
       </p>
     </div>
