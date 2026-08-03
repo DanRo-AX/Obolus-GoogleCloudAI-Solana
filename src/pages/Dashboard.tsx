@@ -503,9 +503,11 @@ export default function Dashboard() {
           </DropdownMenu>
         </div>
 
-        {/* category tabs ------------------------------------------------- */}
-        <div className="-mx-4 overflow-x-auto px-4 sm:-mx-6 sm:px-6">
-          <div className="flex w-max items-center gap-1 border-b border-border pb-px">
+        {/* A vertical rail instead of a horizontal strip: eleven fields never
+            fit across the top without truncating or scrolling sideways, and a
+            field you cannot see is a field nobody filters by. */}
+        <div className="grid gap-5 lg:grid-cols-[164px_1fr] lg:gap-7">
+          <nav className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0 lg:pb-0">
             <CatTab
               active={category === 'all'}
               onClick={() => setCategory('all')}
@@ -522,9 +524,9 @@ export default function Dashboard() {
                 accent={c.accent}
               />
             ))}
-          </div>
-        </div>
+          </nav>
 
+          <div className="min-w-0 space-y-5">
         {/* filters ------------------------------------------------------- */}
         <div className="flex flex-wrap items-center gap-2">
           {MIN_PAY.map((p) => (
@@ -827,7 +829,9 @@ export default function Dashboard() {
               )
             })}
           </div>
-        )}
+          )}
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -879,26 +883,25 @@ function CatTab({
       type="button"
       onClick={onClick}
       className={cn(
-        'relative flex cursor-pointer items-center gap-1.5 whitespace-nowrap px-3 pb-2.5 pt-1 text-sm transition-colors',
+        'flex h-8 shrink-0 cursor-pointer items-center gap-2 rounded-[4px] px-2.5 text-[13px] tracking-[-0.006em] transition-colors lg:w-full',
         active
-          ? 'font-medium text-foreground'
-          : 'text-muted-foreground hover:text-foreground',
-        count === 0 && !active && 'opacity-40',
+          ? 'bg-background font-medium text-foreground shadow-[0_1px_2px_rgba(20,20,25,0.05)] lg:bg-muted-2'
+          : 'text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground',
+        count === 0 && !active && 'opacity-45',
       )}
     >
       {accent ? (
         <span
-          className="size-1.5 rounded-[1px]"
+          className="size-1.5 shrink-0 rounded-[1px]"
           style={{ backgroundColor: accent }}
         />
-      ) : null}
-      {label}
-      <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+      ) : (
+        <span className="size-1.5 shrink-0" />
+      )}
+      <span className="truncate">{label}</span>
+      <span className="ml-auto pl-1 font-mono text-[10px] tabular-nums text-muted-foreground">
         {count}
       </span>
-      {active ? (
-        <span className="absolute inset-x-2 -bottom-px h-0.5 bg-foreground" />
-      ) : null}
     </button>
   )
 }
