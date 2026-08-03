@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { promisify } from 'node:util'
 
 import {
   DEVNET_NETWORK,
@@ -16,12 +18,17 @@ import {
 } from './core.mjs'
 import {
   authenticate,
+  describeTools,
   decodeCliArguments,
   handleMcpRequest,
   invokeCliTool,
+  runtimeReadiness,
 } from './server.mjs'
 import { discoveryFallback } from './pay-compat.mjs'
+import { payInvocation } from './pay-command.mjs'
 import { callTool, tools } from './tools.mjs'
+
+const execFileAsync = promisify(execFile)
 
 test('MCP advertises complete asker and contributor actions', async () => {
   const discovery = await handleMcpRequest({
@@ -56,6 +63,9 @@ test('MCP advertises complete asker and contributor actions', async () => {
     assert.ok(names.includes(expected), `${expected} should be exposed`)
   }
   assert.equal(names.length, tools.length)
+  assert.equal(describeTools().length, tools.length)
+  assert.equal(describeTools('ask_people').inputSchema.required[0], 'question')
+  assert.throws(() => describeTools('not_a_tool'), /Unknown tool/)
 })
 
 test('Pay adapter forces Antigravity discovery back to the stable handshake', () => {
@@ -68,6 +78,64 @@ test('Pay adapter forces Antigravity discovery back to the stable handshake', ()
     },
   )
   assert.equal(discoveryFallback({ jsonrpc: '2.0', id: 8, method: 'initialize' }), null)
+})
+
+test('repository adapter exposes the pinned official Pay CLI', async () => {
+  const invocation = payInvocation(
+    { ...process.env, OPENSHELF_PAY_COMMAND: '' },
+    { projectPay: '/definitely/missing/pay', findSystemPay: () => null },
+  )
+  assert.equal(invocation.source, 'pinned-npx')
+  const { stdout, stderr } = await execFileAsync(
+    invocation.command,
+    [...invocation.args, '--version'],
+    { timeout: 10_000 },
+  )
+  assert.match(`${stdout}${stderr}`, /^pay 0\.26\./m)
+  assert.deepEqual(
+    payInvocation({ OPENSHELF_PAY_COMMAND: '/trusted/custom-pay' }),
+    { command: '/trusted/custom-pay', args: [], source: 'override' },
+  )
+})
+
+test('tool boundary validates schemas before network access', async () => {
+  await assert.rejects(
+    () => callTool('ask_people', { question: 'short' }),
+    /arguments\.question is too short/,
+  )
+  await assert.rejects(
+    () => callTool('ask_people', { question: 'A sufficiently concrete question', hidden: true }),
+    /arguments\.hidden is not supported/,
+  )
+  await assert.rejects(
+    () => callTool('answer_shelf_starter', {
+      starterId: 'starter_1',
+      answer: 'A concrete firsthand answer.',
+      priceKrw: 17,
+    }),
+    /arguments\.priceKrw must be one of/,
+  )
+})
+
+test('doctor separates free readiness from paid readiness', () => {
+  assert.deepEqual(
+    runtimeReadiness([
+      { name: 'Rust API', ok: true },
+      { name: 'x402 gateway', ok: false, requiredFor: 'paid actions only' },
+      { name: 'Pay.sh', ok: false, requiredFor: 'paid actions only' },
+      { name: 'Pay account', ok: false, requiredFor: 'paid actions only' },
+    ]),
+    { ok: true, paidActionsReady: false },
+  )
+  assert.deepEqual(
+    runtimeReadiness([
+      { name: 'Rust API', ok: false },
+      { name: 'x402 gateway', ok: true, requiredFor: 'paid actions only' },
+      { name: 'Pay.sh', ok: true, requiredFor: 'paid actions only' },
+      { name: 'Pay account', ok: true, requiredFor: 'paid actions only' },
+    ]),
+    { ok: false, paidActionsReady: false },
+  )
 })
 
 test('local authentication stores only the session token in a private file', async (context) => {

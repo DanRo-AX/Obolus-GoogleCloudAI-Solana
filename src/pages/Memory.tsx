@@ -185,8 +185,9 @@ export default function Memory() {
   const voided = memory.filter((m) => m.status === 'voided')
 
   useEffect(() => {
+    if (!authReady || !account) return
     void refreshLedger().catch(() => undefined)
-  }, [refreshLedger])
+  }, [account, authReady, refreshLedger])
 
   const shelves = useMemo(() => {
     const map = new Map<string, number>()
