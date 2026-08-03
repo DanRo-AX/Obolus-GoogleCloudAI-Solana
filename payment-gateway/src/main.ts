@@ -9,6 +9,7 @@ import {
   type PaymentRouteIdentity,
 } from "./payment-routing.js";
 import { createStableExactSvmServerScheme } from "./x402-svm.js";
+import "./root-env.js";
 
 const DEVNET_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as Network;
 const DEFAULT_DEVNET_RPC_URL = "https://api.devnet.solana.com";

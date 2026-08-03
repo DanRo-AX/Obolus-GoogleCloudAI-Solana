@@ -1,7 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { hostname } from "node:os";
 import { isAbsolute, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   fetchMint,
   findAssociatedTokenPda,
@@ -28,6 +27,7 @@ import {
   type Instruction,
   type KeyPairSigner,
 } from "@solana/kit";
+import { repositoryRoot } from "./root-env.js";
 
 const DEVNET_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 const MEMO_PROGRAM = address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
@@ -35,7 +35,6 @@ const rustApiUrl = env("RUST_API_URL", "http://127.0.0.1:8787").replace(/\/$/, "
 const internalToken = env("OPENSHELF_INTERNAL_TOKEN", "openshelf-local-internal");
 const rpcUrl = env("X402_RPC_URL", "https://api.devnet.solana.com");
 const configuredKeypairPath = requiredEnv("OPENSHELF_ESCROW_KEYPAIR_PATH");
-const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const keypairPath = isAbsolute(configuredKeypairPath)
   ? configuredKeypairPath
   : resolve(repositoryRoot, configuredKeypairPath);
