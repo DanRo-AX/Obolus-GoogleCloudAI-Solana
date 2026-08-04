@@ -23,6 +23,10 @@
 
 <h3 align="center"><a href="#시작하기"><ins>시작하기</ins></a></h3>
 
+> **프로젝트 일시 종료 기록 (2026-08-04):** 현재 코드, Devnet 배포, 검증한
+> 범위, 남은 위험, 비용이 계속 발생하는 자원, 롤백과 정확한 재개 순서는
+> **[프로젝트 인수인계](../PROJECT-HANDOFF-2026-08-04.ko.md)**에 정리했습니다.
+
 <p align="center">
   <img src="../assets/hero.png" alt="Obolus 랜딩 페이지의 질문 입력창" width="960" />
 </p>

@@ -23,6 +23,11 @@
 
 <h3 align="center"><a href="#getting-started"><ins>Getting started</ins></a></h3>
 
+> **Project pause snapshot (2026-08-04):** current code, Devnet deployment,
+> verified scope, unresolved risks, cost-bearing resources, rollback, and the
+> exact resume checklist are recorded in the
+> **[Korean project handoff](docs/PROJECT-HANDOFF-2026-08-04.ko.md)**.
+
 <p align="center">
   <img src="docs/assets/hero.png" alt="Obolus asking a question, with the shelf search box on the landing page" width="960" />
 </p>
