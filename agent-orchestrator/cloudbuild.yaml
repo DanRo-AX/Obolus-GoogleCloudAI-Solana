@@ -3,9 +3,10 @@ substitutions:
   _REPOSITORY: openshelf
   _SERVICE: openshelf-pay-orchestrator
   _BACKEND_URL: https://REPLACE_WITH_BACKEND_RUN_URL
-  _PAY_SH_URL: https://REPLACE_WITH_PAY_SH_RUN_URL
+  _PAYMENT_GATEWAY_URL: https://REPLACE_WITH_PUBLIC_PAYMENT_GATEWAY_RUN_URL
   _KMS_KEY_NAME: projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY/cryptoKeyVersions/1
   _KMS_PUBKEY: REPLACE_WITH_KMS_SOLANA_PUBKEY
+  _OPERATOR_WALLET: REPLACE_WITH_PAY_SH_OPERATOR_WALLET
   _SERVICE_ACCOUNT: openshelf-pay@PROJECT_ID.iam.gserviceaccount.com
 
 steps:
@@ -30,14 +31,15 @@ steps:
       - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/orchestrator:$BUILD_ID
       - --region=${_REGION}
       - --platform=managed
+      - --labels=initiative=kr2,kr=kr2,owner=ax,item=obolus
       - --service-account=${_SERVICE_ACCOUNT}
       - --allow-unauthenticated
       - --min-instances=1
       - --max-instances=1
       - --no-cpu-throttling
       - --concurrency=20
-      - --set-env-vars=RUST_API_URL=${_BACKEND_URL},PAY_SH_GATEWAY_BASE=${_PAY_SH_URL},OPENSHELF_PAY_GCP_KMS_KEY_NAME=${_KMS_KEY_NAME},OPENSHELF_PAY_GCP_KMS_PUBKEY=${_KMS_PUBKEY}
-      - --set-secrets=OPENSHELF_INTERNAL_TOKEN=openshelf-internal-token:latest,OPENSHELF_PAY_RPC_URL=openshelf-pay-rpc-url:latest
+      - --set-env-vars=RUST_API_URL=${_BACKEND_URL},PAY_SH_GATEWAY_BASE=${_PAYMENT_GATEWAY_URL},OPENSHELF_PAY_OPERATOR_WALLET=${_OPERATOR_WALLET},OPENSHELF_PAY_GCP_KMS_KEY_NAME=${_KMS_KEY_NAME},OPENSHELF_PAY_GCP_KMS_PUBKEY=${_KMS_PUBKEY}
+      - --set-secrets=OPENSHELF_INTERNAL_TOKEN=openshelf-internal-token:latest,OPENSHELF_PAY_RPC_URL=openshelf-pay-rpc-url:latest,OPENSHELF_PAY_RECONCILIATION_RPC_URLS=openshelf-pay-reconciliation-rpc-urls:latest
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/orchestrator:$BUILD_ID

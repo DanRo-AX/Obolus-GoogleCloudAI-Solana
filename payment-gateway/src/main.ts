@@ -1,10 +1,17 @@
 import express, { type NextFunction, type Request, type Response as ExpressResponse } from "express";
+import { performance } from "node:perf_hooks";
+import { Transaction, VersionedTransaction } from "@solana/web3.js";
 import { HTTPFacilitatorClient, type HTTPRequestContext } from "@x402/core/server";
-import type { Network } from "@x402/core/types";
+import type { Network, PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import {
-  assertPaymentQuoteUsable,
+  assertPaymentQuotePayable,
+  paymentAttemptId,
   paymentIdentityFromPath,
+  paymentMemo,
+  PaymentQuoteError,
+  SettlementReplayGuard,
+  VerifiedPaymentAttemptTracker,
   type PaymentRouteIdentity,
 } from "./payment-routing.js";
 import { createStableExactSvmServerScheme } from "./x402-svm.js";
@@ -12,28 +19,147 @@ import {
   DurableSettlementQueue,
   type DurableSettlement,
 } from "./durable-outbox.js";
+import { persistSettlementDurably } from "./settlement-durability.js";
+import {
+  findUnanimousFinalizedChainSettlement,
+  hasExactPreparedPaymentSemantics,
+  exactAbsenceDecision,
+  exactSettlementSignature,
+  scanExactFinalizedChainAttempt,
+  type ReconciliationAttempt,
+  type SolanaRpc,
+} from "./chain-reconciler.js";
+import { settleWithIndependentFinality } from "./verified-settlement.js";
+import { boundedFacilitatorSettlement } from "./facilitator-settlement.js";
+import { boundedResponseText, boundedSolanaRpc } from "./bounded-rpc.js";
+import {
+  PayShProxyError,
+  createDirectPayShRecipientAccountProbe,
+  proxyPayShRequest,
+  type BindPayShChallengesRequest,
+  type DirectPayShQuote,
+  type PreparedMppCredential,
+} from "./direct-pay-sh-proxy.js";
+import {
+  waitForIndependentPayShFinality,
+  type PayShReceiptEvidence,
+} from "./pay-sh-finality.js";
 import "./root-env.js";
+import { independentRpcUrls } from "./rpc-policy.js";
+import { secureServiceOrigin, secureServiceUrl } from "./url-policy.js";
+import { reconcilerReadiness } from "./reconciler-readiness.js";
+import { createReadyDependencyGuard } from "./dependency-readiness.js";
+import {
+  booleanEnv,
+  integerEnv,
+  managedRuntimeEnvironment,
+  researchOrchestratorReadinessRequired,
+} from "./runtime-config.js";
+import {
+  BundleFundingModeError,
+  bundleFundingMode,
+  type BundleFundingMode,
+} from "./bundle-funding-mode.js";
 
 const DEVNET_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as Network;
 const DEFAULT_DEVNET_RPC_URL = "https://api.devnet.solana.com";
+const MAX_BACKGROUND_RPC_RESPONSE_BYTES = 1024 * 1024;
+const MAX_ACCOUNT_PREFLIGHT_RESPONSE_BYTES = 128 * 1024;
+const MAX_INTERNAL_JSON_RESPONSE_BYTES = 1024 * 1024;
+const MAX_PAY_SH_PROXY_RESPONSE_BYTES = 1024 * 1024;
+const MAX_TRIGGER_RESPONSE_BYTES = 64 * 1024;
 const environment = env("OPENSHELF_ENV", env("NODE_ENV", "development")).toLowerCase();
-const production = ["production", "prod"].includes(environment);
-const managedEnvironment = production || ["staging", "stage"].includes(environment);
-const rustApiUrl = env("RUST_API_URL", "http://127.0.0.1:8787").replace(/\/$/, "");
+const managedEnvironment = managedRuntimeEnvironment(environment);
+const rustApiUrl = secureServiceOrigin(
+  "RUST_API_URL",
+  env("RUST_API_URL", "http://127.0.0.1:8787"),
+);
 const internalToken = env("OPENSHELF_INTERNAL_TOKEN", "openshelf-local-internal");
-const facilitatorUrl = env("X402_FACILITATOR_URL", "https://x402.org/facilitator");
+const facilitatorUrl = secureServiceUrl(
+  "X402_FACILITATOR_URL",
+  env("X402_FACILITATOR_URL", "https://x402.org/facilitator"),
+).replace(/\/$/, "");
 const network = env("X402_NETWORK", env("OPENSHELF_X402_NETWORK", DEVNET_NETWORK)) as Network;
 const rpcUrl = process.env.X402_RPC_URL?.trim() || DEFAULT_DEVNET_RPC_URL;
-const allowedOrigin = env(
+const chainReconciliationRpcUrls = independentRpcUrls([
+  rpcUrl,
+  ...(process.env.X402_RECONCILIATION_RPC_URLS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
+]);
+const payShRpcUrl = independentRpcUrls([env("PAY_SH_RPC_URL", rpcUrl)])[0];
+const payShReconciliationRpcUrls = independentRpcUrls([
+  payShRpcUrl,
+  ...(process.env.PAY_SH_RECONCILIATION_RPC_URLS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
+]);
+const allowedOrigin = secureServiceOrigin(
   "FRONTEND_ORIGIN",
-  env("OPENSHELF_FRONTEND_ORIGIN", "http://localhost:4319"),
+  env("FRONTEND_ORIGIN", env("OPENSHELF_FRONTEND_ORIGIN", "http://localhost:4319")),
 );
-const port = integerEnv("PORT", 1402);
-const rpcRateLimitPerMinute = integerEnv("X402_RPC_RATE_LIMIT_PER_MINUTE", 120);
-const researchOrchestratorUrl = env(
+const port = integerEnv("PORT", 1402, 1, 65_535);
+const rpcRateLimitPerMinute = integerEnv("X402_RPC_RATE_LIMIT_PER_MINUTE", 120, 1, 10_000);
+const chainReconciliationIntervalMs = integerEnv(
+  "X402_CHAIN_RECONCILIATION_INTERVAL_MS",
+  30_000,
+  5_000,
+  300_000,
+);
+const chainReconciliationBatchSize = integerEnv(
+  "X402_CHAIN_RECONCILIATION_BATCH_SIZE",
+  25,
+  1,
+  100,
+);
+const chainReconciliationSignaturePages = integerEnv(
+  "X402_CHAIN_RECONCILIATION_SIGNATURE_PAGES",
+  5,
+  1,
+  20,
+);
+const settlementFinalityTimeoutMs = integerEnv(
+  "X402_SETTLEMENT_FINALITY_TIMEOUT_MS",
+  20_000,
+  1_000,
+  45_000,
+);
+const facilitatorSettlementTimeoutMs = integerEnv(
+  "X402_FACILITATOR_SETTLEMENT_TIMEOUT_MS",
+  15_000,
+  100,
+  30_000,
+);
+const settlementFinalityPollIntervalMs = integerEnv(
+  "X402_SETTLEMENT_FINALITY_POLL_INTERVAL_MS",
+  500,
+  50,
+  5_000,
+);
+const settlementFinalityRpcTimeoutMs = integerEnv(
+  "X402_SETTLEMENT_FINALITY_RPC_TIMEOUT_MS",
+  3_000,
+  100,
+  10_000,
+);
+const researchOrchestratorUrl = secureServiceOrigin(
   "RESEARCH_ORCHESTRATOR_URL",
-  "http://127.0.0.1:1410",
-).replace(/\/$/, "");
+  env("RESEARCH_ORCHESTRATOR_URL", "http://127.0.0.1:1410"),
+);
+const requireGlobalResearchOrchestrator = researchOrchestratorReadinessRequired(
+  booleanEnv("OPENSHELF_REQUIRE_RESEARCH_ORCHESTRATOR", true),
+  managedEnvironment,
+);
+const privatePayShUrl = secureServiceOrigin(
+  "PAY_SH_PRIVATE_URL",
+  env("PAY_SH_PRIVATE_URL", "http://127.0.0.1:3402"),
+);
+const payShFrontToken = env("OPENSHELF_PAY_FRONT_TOKEN", "openshelf-local-pay-front");
+const payShOperatorWallet = process.env.OPENSHELF_PAY_OPERATOR_WALLET?.trim();
+const payShFeePayerKey = process.env.OPENSHELF_PAY_GCP_KMS_PUBKEY?.trim();
+const testFailpoint = process.env.OPENSHELF_TEST_FAILPOINT?.trim();
 
 if (
   managedEnvironment &&
@@ -47,11 +173,64 @@ if (
 if (managedEnvironment && !allowedOrigin.startsWith("https://")) {
   throw new Error("FRONTEND_ORIGIN must use HTTPS in production");
 }
+if (managedEnvironment && !rustApiUrl.startsWith("https://")) {
+  throw new Error("RUST_API_URL must use HTTPS in a managed environment");
+}
+if (managedEnvironment && !researchOrchestratorUrl.startsWith("https://")) {
+  throw new Error("RESEARCH_ORCHESTRATOR_URL must use HTTPS in a managed environment");
+}
+if (managedEnvironment && !facilitatorUrl.startsWith("https://")) {
+  throw new Error("X402_FACILITATOR_URL must use HTTPS in a managed environment");
+}
 if (managedEnvironment && rpcUrl === DEFAULT_DEVNET_RPC_URL) {
   throw new Error("X402_RPC_URL must use a managed RPC endpoint in production");
 }
+if (managedEnvironment && chainReconciliationRpcUrls.length < 2) {
+  throw new Error(
+    "X402_RECONCILIATION_RPC_URLS must include a second independent RPC origin",
+  );
+}
+if (chainReconciliationRpcUrls.length < 2) {
+  console.warn(
+    "x402 automatic absence release is disabled: configure a second independent RPC origin",
+  );
+}
+if (
+  managedEnvironment
+  && (!payShRpcUrl.startsWith("https://") || payShRpcUrl === DEFAULT_DEVNET_RPC_URL)
+) {
+  throw new Error("PAY_SH_RPC_URL must use a managed HTTPS RPC endpoint");
+}
+if (managedEnvironment && payShReconciliationRpcUrls.length < 2) {
+  throw new Error(
+    "PAY_SH_RECONCILIATION_RPC_URLS must include a second independent RPC origin",
+  );
+}
+if (managedEnvironment && !privatePayShUrl.startsWith("https://")) {
+  throw new Error("PAY_SH_PRIVATE_URL must use HTTPS in a managed environment");
+}
+if (
+  managedEnvironment
+  && (payShFrontToken.length < 32 || payShFrontToken === "openshelf-local-pay-front")
+) {
+  throw new Error("OPENSHELF_PAY_FRONT_TOKEN must be a non-default 32-character secret");
+}
+if (managedEnvironment && (!payShOperatorWallet || !payShFeePayerKey)) {
+  throw new Error(
+    "OPENSHELF_PAY_OPERATOR_WALLET and OPENSHELF_PAY_GCP_KMS_PUBKEY are required",
+  );
+}
 if (booleanEnv("OPENSHELF_REQUIRE_MAINNET", false) && network === DEVNET_NETWORK) {
   throw new Error("mainnet mode cannot use the Solana Devnet network");
+}
+if (
+  testFailpoint
+  && !["direct-after-prepare", "direct-after-receipt"].includes(testFailpoint)
+) {
+  throw new Error("OPENSHELF_TEST_FAILPOINT is not a recognized test crash point");
+}
+if (managedEnvironment && testFailpoint) {
+  throw new Error("OPENSHELF_TEST_FAILPOINT cannot be enabled in a managed environment");
 }
 
 type PaymentQuote = {
@@ -66,6 +245,7 @@ type PaymentQuote = {
   krwPerUsdc: number;
   expiresAt: number;
   resourcePath: string;
+  status: string;
 };
 
 type PaymentBundleQuote = {
@@ -77,6 +257,7 @@ type PaymentBundleQuote = {
   asset: string;
   amountAtomic: string;
   budgetAtomic: string;
+  minimumDepositAtomic: string;
   requiresPayment: boolean;
   availableBalanceAtomic: string;
   totalPriceKrw: number;
@@ -126,14 +307,17 @@ type OpenCallFundingSnapshot = {
 };
 
 type RouteIdentity = PaymentRouteIdentity;
-type QuoteCacheEntry = { quote: Promise<PayableQuote>; expiresAt: number };
 type PendingSettlement = DurableSettlement;
-
-const quotes = new Map<string, QuoteCacheEntry>();
 const pendingSettlements = new Map<string, PendingSettlement>();
+const settlementReplayGuard = new SettlementReplayGuard();
+const verifiedPaymentAttempts = new VerifiedPaymentAttemptTracker<PayableQuote>();
 const settlementQueue = DurableSettlementQueue.fromEnvironment(managedEnvironment, internalToken);
 const allowedBrowserRpcMethods = new Set(["getAccountInfo", "getLatestBlockhash"]);
 const rpcRateWindows = new Map<string, { startedAt: number; count: number }>();
+let chainReconciliationRunning = false;
+let lastChainReconciliationAt: number | null = null;
+let lastChainReconciliationMonotonicAt: number | null = null;
+let lastChainReconciliationError: string | null = null;
 
 class RustApiError extends Error {
   constructor(readonly status: number, message: string) {
@@ -144,14 +328,20 @@ class RustApiError extends Error {
 async function internalJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${rustApiUrl}${path}`, {
     ...init,
+    signal: init.signal ?? AbortSignal.timeout(20_000),
     headers: {
       "content-type": "application/json",
       "x-openshelf-internal-token": internalToken,
+      "x-openshelf-payment-protocol": "exact-chain-v1",
       ...init.headers,
     },
   });
+  const body = await boundedResponseText(
+    response,
+    MAX_INTERNAL_JSON_RESPONSE_BYTES,
+    "Rust API response",
+  );
   if (!response.ok) {
-    const body = await response.text();
     let message = `Rust API ${response.status}`;
     try {
       const payload = JSON.parse(body) as { error?: { message?: string } };
@@ -161,7 +351,100 @@ async function internalJson<T>(path: string, init: RequestInit = {}): Promise<T>
     }
     throw new RustApiError(response.status, message);
   }
-  return (await response.json()) as T;
+  return JSON.parse(body) as T;
+}
+
+const directPayShProxyDependencies = {
+  privatePayShBase: privatePayShUrl,
+  frontToken: payShFrontToken,
+  operatorWallet: payShOperatorWallet,
+  feePayerKey: payShFeePayerKey,
+  researchAuthorizationToken: internalToken,
+  loadQuote: (quoteId: string) => internalJson<DirectPayShQuote>(
+    `/internal/v1/pay-sh-quotes/${encodeURIComponent(quoteId)}`,
+  ),
+  recipientAssetAccountReady: createDirectPayShRecipientAccountProbe(
+    payShRpcUrl,
+    settlementFinalityRpcTimeoutMs,
+  ),
+  bindChallenges: (
+    queryToken: string | undefined,
+    request: BindPayShChallengesRequest,
+  ) => internalJson(
+    "/internal/v1/pay-sh-challenges/bind",
+    {
+      method: "POST",
+      headers: request.researchJobId
+        ? { "x-openshelf-research-protocol": "durable-mpp-v2" }
+        : { "x-openshelf-query-token": queryToken ?? "" },
+      body: JSON.stringify(request),
+    },
+  ),
+  prepareDirect: (
+    attemptId: string,
+    queryToken: string,
+    request: PreparedMppCredential & {
+      queryId: string;
+      documentHandle: string;
+      pathPriceKrw: number;
+      ownerWallet: string;
+    },
+  ) => internalJson(
+    `/internal/v1/direct-pay-sh-attempts/${encodeURIComponent(attemptId)}/prepare`,
+    {
+      method: "POST",
+      headers: { "x-openshelf-query-token": queryToken },
+      body: JSON.stringify(request),
+    },
+  ),
+  prepareResearch: (
+    jobId: string,
+    attemptId: string,
+    request: PreparedMppCredential,
+  ) => internalJson(
+    `/internal/v1/research-jobs/${encodeURIComponent(jobId)}`
+      + `/payment-attempts/${encodeURIComponent(attemptId)}/prepare`,
+    {
+      method: "POST",
+      headers: { "x-openshelf-research-protocol": "durable-mpp-v2" },
+      body: JSON.stringify(request),
+    },
+  ),
+  recordDirectReceipt: (attemptId: string, transactionSignature: string) => internalJson(
+    `/internal/v1/direct-pay-sh-attempts/${encodeURIComponent(attemptId)}/settle`,
+    { method: "POST", body: JSON.stringify({ transactionSignature }) },
+  ),
+  recordResearchReceipt: (
+    jobId: string,
+    attemptId: string,
+    transactionSignature: string,
+  ) => internalJson(
+    `/internal/v1/research-jobs/${encodeURIComponent(jobId)}`
+      + `/payment-attempts/${encodeURIComponent(attemptId)}/settle`,
+    {
+      method: "POST",
+      headers: { "x-openshelf-research-protocol": "durable-mpp-v2" },
+      body: JSON.stringify({ transactionSignature }),
+    },
+  ),
+  receiptFinalized: (evidence: PayShReceiptEvidence) => waitForIndependentPayShFinality({
+    evidence,
+    rpcs: payShReconciliationRpcUrls.map((endpoint) =>
+      boundedSolanaRpc(endpoint, settlementFinalityRpcTimeoutMs)
+    ),
+    minimumViews: managedEnvironment ? 2 : 1,
+    timeoutMs: settlementFinalityTimeoutMs,
+    pollIntervalMs: settlementFinalityPollIntervalMs,
+    nowMs: () => performance.now(),
+  }),
+  afterDirectPrepare: async () => crashAtTestFailpoint("direct-after-prepare"),
+  afterDirectReceipt: async () => crashAtTestFailpoint("direct-after-receipt"),
+};
+
+function crashAtTestFailpoint(name: string): void {
+  if (testFailpoint !== name) return;
+  process.kill(process.pid, "SIGKILL");
+  throw new Error(`test failpoint ${name} did not terminate the gateway`);
 }
 
 function identityFromPath(path: string): RouteIdentity {
@@ -172,12 +455,8 @@ function identityFromContext(context: HTTPRequestContext): RouteIdentity {
   return identityFromPath(context.path);
 }
 
-async function getQuote(identity: RouteIdentity): Promise<PayableQuote> {
-  const now = Date.now();
-  const cached = quotes.get(identity.key);
-  if (cached && cached.expiresAt > now + 5_000) return cached.quote;
-
-  const quotePromise = identity.kind === "document"
+async function loadQuote(identity: RouteIdentity): Promise<PayableQuote> {
+  const quote = await (identity.kind === "document"
     ? internalJson<PaymentQuote>(
         `/internal/v1/payment-quotes/${encodeURIComponent(identity.queryId)}/${encodeURIComponent(identity.handle)}`,
       )
@@ -187,25 +466,160 @@ async function getQuote(identity: RouteIdentity): Promise<PayableQuote> {
         )
       : internalJson<OpenCallFundingQuote>(
           `/internal/v1/open-call-funding-quotes/${encodeURIComponent(identity.quoteId)}`,
-        );
-  const entry: QuoteCacheEntry = { quote: quotePromise, expiresAt: now + 30_000 };
-  quotes.set(identity.key, entry);
+        ));
+  if (quote.network !== network) {
+    throw new Error(`quote network ${quote.network} does not match gateway network ${network}`);
+  }
+  return quote;
+}
+
+async function getQuote(identity: RouteIdentity): Promise<PayableQuote> {
+  settlementReplayGuard.assertNotSettled(identity.key);
+  const quote = await loadQuote(identity);
+  assertPaymentQuotePayable(quote);
+  if (identity.kind === "bundle") await requireResearchOrchestratorReady();
+  return quote;
+}
+
+const requireResearchOrchestratorReady = createReadyDependencyGuard({
+  name: "research orchestrator",
+  origin: researchOrchestratorUrl,
+});
+
+async function quoteForContext(context: HTTPRequestContext): Promise<PayableQuote> {
+  return getQuote(identityFromContext(context));
+}
+
+function identityFromPaymentHook(context: {
+  transportContext?: unknown;
+  paymentPayload: { resource?: { url?: string } };
+}): RouteIdentity {
+  const requestPath = (
+    context.transportContext as { request?: { path?: string } } | undefined
+  )?.request?.path;
+  return identityFromPath(requestPath ?? context.paymentPayload.resource?.url ?? "");
+}
+
+async function claimPaymentAttempt(
+  attemptId: string,
+  identity: RouteIdentity,
+  quote: PayableQuote,
+  payer: string,
+  signedTransactionBase64: string,
+): Promise<void> {
+  await internalJson("/internal/v1/payment-attempts", {
+    method: "POST",
+    body: JSON.stringify({
+      settlementKind: identity.kind,
+      quoteId: quote.id,
+      attemptId,
+      payer,
+      signedTransactionBase64,
+      recentBlockhash: recentBlockhashFromTransaction(signedTransactionBase64),
+    }),
+  });
+}
+
+async function releasePaymentAttempt(
+  attemptId: string,
+  identity: RouteIdentity,
+  quote: PayableQuote,
+): Promise<void> {
+  await internalJson("/internal/v1/payment-attempts/release", {
+    method: "POST",
+    body: JSON.stringify({
+      settlementKind: identity.kind,
+      quoteId: quote.id,
+      attemptId,
+    }),
+  });
+}
+
+async function deferPaymentAttemptReconciliation(
+  attempt: ReconciliationAttempt,
+  absenceObserved = false,
+): Promise<void> {
   try {
-    const quote = await quotePromise;
-    if (quote.network !== network) {
-      throw new Error(`quote network ${quote.network} does not match gateway network ${network}`);
-    }
-    assertPaymentQuoteUsable(quote.expiresAt);
-    entry.expiresAt = quote.expiresAt;
-    return quote;
+    await internalJson("/internal/v1/payment-attempts/reconciliation", {
+      method: "POST",
+      body: JSON.stringify({
+        settlementKind: attempt.settlementKind,
+        quoteId: attempt.quoteId,
+        attemptId: attempt.attemptId,
+        absenceObserved,
+      }),
+    });
   } catch (error) {
-    quotes.delete(identity.key);
+    // A normal settlement can clear the attempt while the scanner is reading.
+    if (error instanceof RustApiError && error.status === 404) return;
     throw error;
   }
 }
 
-async function quoteForContext(context: HTTPRequestContext): Promise<PayableQuote> {
-  return getQuote(identityFromContext(context));
+async function releaseReconciledPaymentAttempt(attempt: ReconciliationAttempt): Promise<void> {
+  await internalJson("/internal/v1/payment-attempts/reconciliation/release", {
+    method: "POST",
+    body: JSON.stringify({
+      settlementKind: attempt.settlementKind,
+      quoteId: attempt.quoteId,
+      attemptId: attempt.attemptId,
+    }),
+  });
+}
+
+async function releaseVerifiedPaymentAttempt(context: {
+  paymentPayload: { payload: Readonly<Record<string, unknown>> };
+}): Promise<void> {
+  const attemptId = paymentAttemptId(context.paymentPayload);
+  const attempt = verifiedPaymentAttempts.forAttempt(attemptId);
+  if (!attempt) return;
+  try {
+    await releasePaymentAttempt(attemptId, attempt.identity, attempt.quote);
+  } finally {
+    verifiedPaymentAttempts.forget(attemptId);
+  }
+}
+
+async function paymentAttemptForSettlement(
+  context: {
+    transportContext?: unknown;
+    paymentPayload: {
+      resource?: { url?: string };
+      payload: Readonly<Record<string, unknown>>;
+    };
+  },
+  attemptId: string,
+): Promise<{
+  attemptId: string;
+  identity: RouteIdentity;
+  quote: PayableQuote;
+  evidence: ReconciliationAttempt;
+}> {
+  const local = verifiedPaymentAttempts.forAttempt(attemptId);
+  const durable = await internalJson<ReconciliationAttempt>(
+    `/internal/v1/payment-attempts/${encodeURIComponent(attemptId)}`,
+  );
+  const identity = identityFromPaymentHook(context);
+  if (durable.attemptId !== attemptId || durable.settlementKind !== identity.kind) {
+    throw new Error("durable payment attempt does not match its settlement route");
+  }
+  const quote = local?.identity.key === identity.key ? local.quote : await loadQuote(identity);
+  if (quote.id !== durable.quoteId) {
+    throw new Error("durable payment attempt does not match its quote");
+  }
+  return { attemptId, identity, quote, evidence: durable };
+}
+
+async function quoteForProtectedHandler(identity: RouteIdentity): Promise<PayableQuote> {
+  const attempt = verifiedPaymentAttempts.forIdentity(identity.key);
+  if (!attempt) {
+    throw new PaymentQuoteError(
+      409,
+      "payment_not_payable",
+      "The verified payment attempt is unavailable. Recover it instead of paying again.",
+    );
+  }
+  return attempt.quote;
 }
 
 async function recordSettlement(settlement: PendingSettlement): Promise<void> {
@@ -230,14 +644,20 @@ async function triggerResearchJob(jobId: string): Promise<void> {
       `${researchOrchestratorUrl}/internal/v1/research-jobs/${encodeURIComponent(jobId)}/run`,
       {
         method: "POST",
+        signal: AbortSignal.timeout(10_000),
         headers: {
           "content-type": "application/json",
           "x-openshelf-internal-token": internalToken,
         },
       },
     );
+    const body = await boundedResponseText(
+      response,
+      MAX_TRIGGER_RESPONSE_BYTES,
+      "research orchestrator trigger response",
+    );
     if (!response.ok && response.status !== 202 && response.status !== 409) {
-      throw new Error(`orchestrator returned ${response.status}: ${(await response.text()).slice(0, 300)}`);
+      throw new Error(`orchestrator returned ${response.status}: ${body.slice(0, 300)}`);
     }
   } catch (error) {
     // The funding ledger is durable. Cloud Scheduler or the browser's status
@@ -250,6 +670,7 @@ async function retryPendingSettlements(): Promise<void> {
   for (const settlement of pendingSettlements.values()) {
     try {
       await reconcileSettlement(settlement);
+      verifiedPaymentAttempts.forget(settlement.attemptId);
     } catch (error) {
       console.error("x402 reconciliation retry failed", safeError(error));
     }
@@ -257,24 +678,216 @@ async function retryPendingSettlements(): Promise<void> {
 }
 
 async function reconcileSettlement(settlement: PendingSettlement): Promise<void> {
-  let durable = false;
-  if (settlementQueue) {
-    try {
-      await settlementQueue.enqueue(settlement);
-      durable = true;
-    } catch (error) {
-      console.error("could not enqueue durable x402 reconciliation", safeError(error));
+  const result = await persistSettlementDurably({
+    enqueue: settlementQueue
+      ? () => settlementQueue.enqueue(settlement)
+      : undefined,
+    record: () => recordSettlement(settlement),
+    releaseVolatileCopy: () => {
+      pendingSettlements.delete(settlement.transactionSignature);
+    },
+  });
+  if (result.queueError) {
+    console.error(
+      "could not enqueue durable x402 reconciliation",
+      safeError(result.queueError),
+    );
+  }
+  if (result.ledgerError) {
+    console.error(
+      "could not write x402 settlement to Rust ledger",
+      safeError(result.ledgerError),
+    );
+  }
+}
+
+function callSolanaRpcAt(endpoint: string): SolanaRpc {
+  return async (method, params) => {
+    const response = await fetchRpcWithBackoff({
+      jsonrpc: "2.0",
+      id: `openshelf-reconcile-${Date.now()}`,
+      method,
+      params,
+    }, endpoint);
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error(`Solana RPC ${method} returned HTTP ${response.status}`);
     }
-  }
+    const payload = JSON.parse(await boundedResponseText(
+      response,
+      MAX_BACKGROUND_RPC_RESPONSE_BYTES,
+      `Solana RPC ${method} response`,
+    )) as {
+      result?: unknown;
+      error?: { code?: number; message?: string };
+    };
+    if (payload.error) {
+      throw new Error(
+        `Solana RPC ${method} failed (${payload.error.code ?? "unknown"}): ` +
+          (payload.error.message ?? "unknown error"),
+      );
+    }
+    if (!("result" in payload)) throw new Error(`Solana RPC ${method} returned no result`);
+    return payload.result;
+  };
+}
+
+async function reconcileDueChainAttempts(): Promise<void> {
+  if (chainReconciliationRunning) return;
+  chainReconciliationRunning = true;
   try {
-    await recordSettlement(settlement);
-    durable = true;
+    let cycleError: string | null = null;
+    const attempts = await internalJson<ReconciliationAttempt[]>(
+      "/internal/v1/payment-attempts/reconciliation?" +
+        new URLSearchParams({ limit: String(chainReconciliationBatchSize) }),
+    );
+    for (const attempt of attempts) {
+      try {
+        if (
+          attempt.payer
+          && attempt.signedTransactionBase64
+          && attempt.recentBlockhash
+        ) {
+          const scans = await Promise.all(chainReconciliationRpcUrls.map(async (endpoint) => {
+            try {
+              return await scanExactFinalizedChainAttempt(
+                attempt,
+                callSolanaRpcAt(endpoint),
+                chainReconciliationSignaturePages,
+              );
+            } catch {
+              return { kind: "inconclusive" } as const;
+            }
+          }));
+          const exactSettlement = exactSettlementSignature(scans);
+          if (exactSettlement) {
+            const settlement: PendingSettlement = {
+              settlementKind: attempt.settlementKind,
+              quoteId: attempt.quoteId,
+              attemptId: attempt.attemptId,
+              transactionSignature: exactSettlement,
+              payer: attempt.payer,
+              payTo: attempt.payTo,
+              amountAtomic: attempt.amountAtomic,
+              network: attempt.network,
+              rawResponse: {
+                success: true,
+                transaction: exactSettlement,
+                payer: attempt.payer,
+                network: attempt.network,
+                amount: attempt.amountAtomic,
+                recovery: { method: "exact_finalized_transaction" },
+              },
+            };
+            pendingSettlements.set(settlement.transactionSignature, settlement);
+            await reconcileSettlement(settlement);
+            verifiedPaymentAttempts.forget(settlement.attemptId);
+            continue;
+          }
+          if (scans.some((scan) =>
+            scan.kind === "settled" || scan.kind === "inconclusive"
+          )) {
+            cycleError ??=
+              `${attempt.settlementKind}:${attempt.quoteId}: ` +
+              "independent RPC scans did not return complete exact evidence";
+            await deferPaymentAttemptReconciliation(attempt);
+            continue;
+          }
+          const blockhashViews = await Promise.all(chainReconciliationRpcUrls.map(
+            async (endpoint): Promise<boolean | null> => {
+              try {
+                const result = await callSolanaRpcAt(endpoint)("isBlockhashValid", [
+                  attempt.recentBlockhash,
+                  { commitment: "finalized" },
+                ]) as { value?: unknown };
+                return typeof result?.value === "boolean" ? result.value : null;
+              } catch {
+                return null;
+              }
+            },
+          ));
+          const absenceDecision = exactAbsenceDecision(
+            scans,
+            blockhashViews,
+            attempt.absenceObservedAt,
+          );
+          if (blockhashViews.some((view) => view === null)) {
+            cycleError ??=
+              `${attempt.settlementKind}:${attempt.quoteId}: ` +
+              "an independent RPC could not return finalized blockhash state";
+          }
+          if (absenceDecision === "defer") {
+            await deferPaymentAttemptReconciliation(attempt);
+          } else if (absenceDecision === "observe") {
+            await deferPaymentAttemptReconciliation(attempt, true);
+          } else {
+            await releaseReconciledPaymentAttempt(attempt);
+          }
+          continue;
+        }
+
+        const settlement = await findUnanimousFinalizedChainSettlement(
+          attempt,
+          chainReconciliationRpcUrls.map(callSolanaRpcAt),
+          network,
+          chainReconciliationSignaturePages,
+        );
+        if (!settlement) {
+          cycleError ??=
+            `${attempt.settlementKind}:${attempt.quoteId}: ` +
+            "legacy recovery did not obtain unanimous finalized evidence";
+          await deferPaymentAttemptReconciliation(attempt);
+          continue;
+        }
+        pendingSettlements.set(settlement.transactionSignature, settlement);
+        await reconcileSettlement(settlement);
+        verifiedPaymentAttempts.forget(settlement.attemptId);
+        console.log(
+          `recovered finalized x402 settlement ${settlement.transactionSignature} ` +
+            `for ${settlement.settlementKind}:${settlement.quoteId}`,
+        );
+      } catch (error) {
+        cycleError ??=
+          `${attempt.settlementKind}:${attempt.quoteId}: ${safeError(error)}`;
+        console.error(
+          `could not reconcile ${attempt.settlementKind}:${attempt.quoteId}`,
+          safeError(error),
+        );
+        try {
+          await deferPaymentAttemptReconciliation(attempt);
+        } catch (deferError) {
+          cycleError =
+            `${attempt.settlementKind}:${attempt.quoteId}: ` +
+            `reconciliation failed (${safeError(error)}); defer failed (${safeError(deferError)})`;
+          console.error(
+            `could not defer ${attempt.settlementKind}:${attempt.quoteId}`,
+            safeError(deferError),
+          );
+        }
+      }
+    }
+    lastChainReconciliationAt = Date.now();
+    lastChainReconciliationMonotonicAt = performance.now();
+    lastChainReconciliationError = cycleError;
   } catch (error) {
-    console.error("could not write x402 settlement to Rust ledger", safeError(error));
+    lastChainReconciliationError = safeError(error);
+    console.error("could not list due x402 payment attempts", lastChainReconciliationError);
+  } finally {
+    chainReconciliationRunning = false;
   }
-  if (!durable) {
-    throw new Error("x402 settlement is not yet durable");
+}
+
+function recentBlockhashFromTransaction(transactionBase64: string): string {
+  const bytes = Buffer.from(transactionBase64, "base64");
+  try {
+    const blockhash = Transaction.from(bytes).recentBlockhash;
+    if (blockhash) return blockhash;
+  } catch {
+    // Versioned transactions are parsed below.
   }
+  const blockhash = VersionedTransaction.deserialize(bytes).message.recentBlockhash;
+  if (!blockhash) throw new Error("verified x402 transaction omitted its recent blockhash");
+  return blockhash;
 }
 
 const facilitator = new HTTPFacilitatorClient({ url: facilitatorUrl });
@@ -282,11 +895,75 @@ const resourceServer = new x402ResourceServer(facilitator);
 resourceServer.register(network, createStableExactSvmServerScheme());
 
 resourceServer.onAfterVerify(async (context) => {
-  if (context.result.payer && context.result.payer === context.requirements.payTo) {
+  if (!context.result.payer) {
+    return {
+      abort: true,
+      reason: "payer_missing",
+      message: "The verified payment did not identify its payer.",
+    };
+  }
+  if (context.result.payer === context.requirements.payTo) {
     return {
       abort: true,
       reason: "self_payment_not_allowed",
       message: "payer and document recipient must be different wallets",
+    };
+  }
+  let attemptId: string | undefined;
+  let identity: RouteIdentity | undefined;
+  let quote: PayableQuote | undefined;
+  try {
+    attemptId = paymentAttemptId(context.paymentPayload);
+    identity = identityFromPaymentHook(context);
+    quote = await getQuote(identity);
+    // The Rust lease is the cross-instance fence. It is acquired after the
+    // facilitator verifies the signature but before it is allowed to settle.
+    const signedTransactionBase64 = String(context.paymentPayload.payload.transaction ?? "");
+    const evidence: ReconciliationAttempt = {
+      settlementKind: identity.kind,
+      quoteId: quote.id,
+      attemptId,
+      reconcileAfter: Date.now(),
+      createdAt: Date.now(),
+      payTo: quote.payTo,
+      network: quote.network,
+      asset: quote.asset,
+      amountAtomic: quote.amountAtomic,
+      payer: context.result.payer,
+      signedTransactionBase64,
+      recentBlockhash: recentBlockhashFromTransaction(signedTransactionBase64),
+    };
+    if (!await hasExactPreparedPaymentSemantics(
+      evidence,
+      Buffer.from(signedTransactionBase64, "base64"),
+    )) {
+      throw new PaymentQuoteError(
+        409,
+        "payment_not_payable",
+        "The verified transaction does not contain the exact quoted payment.",
+      );
+    }
+    await claimPaymentAttempt(
+      attemptId,
+      identity,
+      quote,
+      context.result.payer,
+      signedTransactionBase64,
+    );
+    try {
+      verifiedPaymentAttempts.remember(attemptId, identity, quote);
+    } catch (error) {
+      await releasePaymentAttempt(attemptId, identity, quote);
+      throw error;
+    }
+  } catch (error) {
+    console.error("x402 payment attempt could not be claimed", safeError(error));
+    return {
+      abort: true,
+      reason: error instanceof PaymentQuoteError ? error.code : "payment_attempt_unavailable",
+      message: error instanceof PaymentQuoteError
+        ? error.message
+        : "This payment resource cannot begin settlement right now. Retry without signing again.",
     };
   }
 });
@@ -297,19 +974,70 @@ resourceServer.onVerifyFailure(async (context) => {
 
 resourceServer.onSettleFailure(async (context) => {
   console.error("x402 payment settlement failed", safeError(context.error));
+  // A timeout or dropped facilitator response has an ambiguous chain outcome.
+  // Keep the durable fence until reconciliation proves failure or records the
+  // transfer; releasing here could authorize a second real payment.
+  console.error("x402 payment attempt retained for reconciliation");
+});
+
+resourceServer.onVerifiedPaymentCanceled(async (context) => {
+  try {
+    await releaseVerifiedPaymentAttempt(context);
+  } catch (error) {
+    console.error("could not release canceled x402 payment attempt", safeError(error));
+  }
+});
+
+resourceServer.onBeforeSettle(async (context) => {
+  // x402 treats ordinary before-settle hook exceptions as advisory and would
+  // fall through to a second facilitator call. This helper catches every
+  // uncertainty and always returns an explicit skip-or-abort directive.
+  return settleWithIndependentFinality({
+    settle: () => boundedFacilitatorSettlement({
+      url: facilitatorUrl,
+      paymentPayload: structuredClone(context.paymentPayload) as PaymentPayload,
+      paymentRequirements: structuredClone(context.requirements) as PaymentRequirements,
+      timeoutMs: facilitatorSettlementTimeoutMs,
+    }),
+    loadAttempt: async () => {
+      const attemptId = paymentAttemptId(context.paymentPayload);
+      return (await paymentAttemptForSettlement(context, attemptId)).evidence;
+    },
+    requirements: context.requirements,
+    rpcs: chainReconciliationRpcUrls.map((endpoint) =>
+      boundedSolanaRpc(endpoint, settlementFinalityRpcTimeoutMs)
+    ),
+    expectedNetwork: network,
+    timeoutMs: settlementFinalityTimeoutMs,
+    pollIntervalMs: settlementFinalityPollIntervalMs,
+    nowMs: () => performance.now(),
+  });
 });
 
 resourceServer.onAfterSettle(async (context) => {
-  if (!context.result.success || !context.result.payer) return;
-  const requestPath = (
-    context.transportContext as { request?: { path?: string } } | undefined
-  )?.request?.path;
-  const resourceUrl = context.paymentPayload.resource?.url;
-  const identity = identityFromPath(requestPath ?? resourceUrl ?? "");
-  const quote = await getQuote(identity);
+  if (!context.result.success || !context.result.payer) {
+    console.error("unsuccessful x402 payment attempt retained for reconciliation");
+    return;
+  }
+  let attempt;
+  try {
+    const attemptId = paymentAttemptId(context.paymentPayload);
+    attempt = await paymentAttemptForSettlement(context, attemptId);
+  } catch (error) {
+    console.error(
+      "x402 settled on-chain without recoverable pre-settlement state; manual reconciliation required",
+      safeError(error),
+    );
+    return;
+  }
+  const { attemptId, identity, quote } = attempt;
+  // Fence this resource before any fallible reconciliation call. A retry must
+  // recover the existing result, never construct another transfer.
+  settlementReplayGuard.markSettled(identity.key, quote.expiresAt);
   const settlement: PendingSettlement = {
     settlementKind: identity.kind,
     quoteId: quote.id,
+    attemptId,
     transactionSignature: context.result.transaction,
     payer: context.result.payer,
     payTo: context.requirements.payTo,
@@ -320,6 +1048,7 @@ resourceServer.onAfterSettle(async (context) => {
   pendingSettlements.set(settlement.transactionSignature, settlement);
   try {
     await reconcileSettlement(settlement);
+    verifiedPaymentAttempts.forget(attemptId);
   } catch (error) {
     console.error("x402 settled on-chain; reconciliation remains in memory", safeError(error));
   }
@@ -354,12 +1083,45 @@ app.use((request, response, next) => {
   next();
 });
 
+const proxyDirectPaySh = async (
+  request: Request,
+  response: ExpressResponse,
+  next: NextFunction,
+) => {
+  try {
+    const upstream = await proxyPayShRequest(
+      {
+        method: request.method,
+        pathAndQuery: request.originalUrl,
+        headers: webHeaders(request),
+        body: request.method === "GET" || request.method === "HEAD"
+          ? undefined
+          : Buffer.from(JSON.stringify(request.body ?? {})),
+      },
+      directPayShProxyDependencies,
+    );
+    await writeProxyResponse(response, upstream);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Agents use the x402 gateway as the only public Pay.sh origin. Free discovery
+// calls and 402 probes pass through, while the paid retry is durably fenced
+// before the private official gate can observe the credential.
+app.post("/api/v1/questions/resolve", proxyDirectPaySh);
+app.get(
+  /^\/api\/v1\/questions\/[^/]+\/pay-sh-(?:resources|documents)\/[^/]+$/,
+  proxyDirectPaySh,
+);
+app.get(/^\/api\/v2\/pay-sh\/documents\/[^/]+\/[^/]+\/[^/]+$/, proxyDirectPaySh);
+
 // The x402 SVM client needs mint metadata and a recent blockhash before it can
 // ask Phantom to sign. Proxy only those read-only methods so a paid RPC key can
 // remain server-side and browser bursts can honor upstream Retry-After headers.
 app.post("/rpc", async (request, response, next) => {
   try {
-    if (production && request.headers.origin !== allowedOrigin) {
+    if (managedEnvironment && request.headers.origin !== allowedOrigin) {
       response.status(403).json({
         jsonrpc: "2.0",
         error: { code: -32003, message: "RPC browser origin is not allowed" },
@@ -386,7 +1148,11 @@ app.post("/rpc", async (request, response, next) => {
       return;
     }
     const upstream = await fetchRpcWithBackoff(body);
-    const payload = await upstream.text();
+    const payload = await boundedResponseText(
+      upstream,
+      MAX_ACCOUNT_PREFLIGHT_RESPONSE_BYTES,
+      "browser Solana RPC response",
+    );
     response.status(upstream.status).type("application/json").send(payload);
   } catch (error) {
     next(error);
@@ -400,17 +1166,48 @@ app.get("/healthz", (_request, response) => {
     facilitator: facilitatorUrl,
     durableSettlementQueue: settlementQueue !== null,
     pendingReconciliations: pendingSettlements.size,
+    chainReconciler: {
+      running: chainReconciliationRunning,
+      lastCompletedAt: lastChainReconciliationAt,
+      lastError: lastChainReconciliationError,
+    },
   });
 });
 
 app.get("/readyz", async (_request, response) => {
   try {
-    await internalJson<{ status: string }>("/readyz");
+    const [, , payShHealth] = await Promise.all([
+      internalJson<{ status: string }>("/readyz"),
+      requireGlobalResearchOrchestrator
+        ? requireResearchOrchestratorReady()
+        : Promise.resolve(),
+      fetch(`${privatePayShUrl}/__402/health`, {
+        signal: AbortSignal.timeout(5_000),
+        headers: { "x-openshelf-pay-front-token": payShFrontToken },
+      }),
+    ]);
+    if (!payShHealth.ok) {
+      await payShHealth.body?.cancel().catch(() => undefined);
+      throw new Error(`private Pay.sh returned HTTP ${payShHealth.status}`);
+    }
+    await payShHealth.body?.cancel().catch(() => undefined);
+    const recovery = reconcilerReadiness({
+      nowMonotonicMs: performance.now(),
+      lastCompletedMonotonicMs: lastChainReconciliationMonotonicAt,
+      lastError: lastChainReconciliationError,
+      intervalMs: chainReconciliationIntervalMs,
+    });
+    if (!recovery.ready) throw new Error(recovery.reason);
     response.json({
       status: "ready",
       network,
       durableSettlementQueue: settlementQueue !== null,
       pendingReconciliations: pendingSettlements.size,
+      chainReconciler: {
+        running: chainReconciliationRunning,
+        lastCompletedAt: lastChainReconciliationAt,
+        lastError: lastChainReconciliationError,
+      },
     });
   } catch (error) {
     console.error("gateway readiness check failed", safeError(error));
@@ -427,15 +1224,10 @@ app.post("/api/v1/payment-bundles", async (request, response, next) => {
   try {
     const accessToken = request.header("x-openshelf-query-token")?.trim();
     const walletSession = request.header("x-openshelf-wallet-session")?.trim();
+    const agentProtocol = request.header("x-openshelf-agent-payment-mode")?.trim();
     if (!accessToken) {
       response.status(401).json({
         error: { code: "missing_query_token", message: "Query access token is required." },
-      });
-      return;
-    }
-    if (!walletSession) {
-      response.status(401).json({
-        error: { code: "missing_wallet_session", message: "Verified prepaid wallet session is required." },
       });
       return;
     }
@@ -457,24 +1249,41 @@ app.post("/api/v1/payment-bundles", async (request, response, next) => {
       });
       return;
     }
-    const quote = await internalJson<PaymentBundleQuote>("/internal/v1/payment-bundles", {
-      method: "POST",
-      headers: {
-        "x-openshelf-query-token": accessToken,
-        "x-openshelf-wallet-session": walletSession,
-      },
-      body: JSON.stringify({
-        queryId: body.queryId,
-        handles: body.handles,
+    let fundingMode: BundleFundingMode;
+    try {
+      fundingMode = bundleFundingMode({
+        walletSession,
+        agentProtocol,
         topUpAtomic: body.topUpAtomic,
-      }),
-    });
-    if (quote.requiresPayment) {
-      quotes.set(`bundle\u0000${quote.id}`, {
-        quote: Promise.resolve(quote),
-        expiresAt: quote.expiresAt,
       });
-    } else if (quote.status === "funded") {
+    } catch (error) {
+      if (!(error instanceof BundleFundingModeError)) throw error;
+      response.status(error.status).json({
+        error: { code: error.code, message: error.message },
+      });
+      return;
+    }
+    await requireResearchOrchestratorReady();
+    const quote = await internalJson<PaymentBundleQuote>(
+      fundingMode.kind === "prepaid"
+        ? "/internal/v1/payment-bundles"
+        : "/internal/v1/agent-payment-bundles",
+      {
+        method: "POST",
+        headers: {
+          "x-openshelf-query-token": accessToken,
+          ...(fundingMode.kind === "prepaid"
+            ? { "x-openshelf-wallet-session": fundingMode.walletSession }
+            : {}),
+        },
+        body: JSON.stringify({
+          queryId: body.queryId,
+          handles: body.handles,
+          ...(fundingMode.kind === "prepaid" ? { topUpAtomic: body.topUpAtomic } : {}),
+        }),
+      },
+    );
+    if (!quote.requiresPayment && quote.status === "funded") {
       void triggerResearchJob(quote.id);
     }
     response.status(201).json({
@@ -495,8 +1304,13 @@ app.use(
           network,
           payTo: async (context) => (await quoteForContext(context)).payTo,
           price: async (context) => {
-            const quote = await quoteForContext(context);
-            return { asset: quote.asset, amount: quote.amountAtomic };
+            const identity = identityFromContext(context);
+            const quote = await getQuote(identity);
+            return {
+              asset: quote.asset,
+              amount: quote.amountAtomic,
+              extra: { memo: paymentMemo(identity, quote.id) },
+            };
           },
           maxTimeoutSeconds: 60,
         },
@@ -529,8 +1343,13 @@ app.use(
           network,
           payTo: async (context) => (await quoteForContext(context)).payTo,
           price: async (context) => {
-            const quote = await quoteForContext(context);
-            return { asset: quote.asset, amount: quote.amountAtomic };
+            const identity = identityFromContext(context);
+            const quote = await getQuote(identity);
+            return {
+              asset: quote.asset,
+              amount: quote.amountAtomic,
+              extra: { memo: paymentMemo(identity, quote.id) },
+            };
           },
           maxTimeoutSeconds: 60,
         },
@@ -563,8 +1382,13 @@ app.use(
           network,
           payTo: async (context) => (await quoteForContext(context)).payTo,
           price: async (context) => {
-            const quote = await quoteForContext(context);
-            return { asset: quote.asset, amount: quote.amountAtomic };
+            const identity = identityFromContext(context);
+            const quote = await getQuote(identity);
+            return {
+              asset: quote.asset,
+              amount: quote.amountAtomic,
+              extra: { memo: paymentMemo(identity, quote.id) },
+            };
           },
           maxTimeoutSeconds: 60,
         },
@@ -608,11 +1432,12 @@ app.get("/api/v1/paid-documents/:queryId/:handle", async (request, response, nex
       handle: request.params.handle,
       key: `document\u0000${request.params.queryId}\u0000${request.params.handle}`,
     };
-    const quote = await getQuote(identity);
+    const quote = await quoteForProtectedHandler(identity);
     if (!("priceKrw" in quote)) throw new Error("document route received a bundle quote");
-    // Express x402 buffers this body, settles on-chain, runs onAfterSettle,
-    // and releases it only after success. The snapshot endpoint is internal
-    // and read-only; it does not claim that payment or delivery has happened.
+    // Express x402 buffers this body. Our before-settle gate invokes the
+    // facilitator once and releases the buffer only after two independent RPCs
+    // reproduce its exact finalized transaction; onAfterSettle then records the
+    // same evidence. The snapshot endpoint is internal and read-only.
     const document = await internalJson<PaymentDocumentSnapshot>(
       `/internal/v1/payment-quotes/${encodeURIComponent(quote.id)}/snapshot`,
     );
@@ -637,7 +1462,7 @@ app.get("/api/v1/paid-bundles/:quoteId", async (request, response, next) => {
       quoteId: request.params.quoteId,
       key: `bundle\u0000${request.params.quoteId}`,
     };
-    const quote = await getQuote(identity);
+    const quote = await quoteForProtectedHandler(identity);
     if (!("bundleHash" in quote)) throw new Error("bundle route received another quote type");
     response.json({
       jobId: quote.id,
@@ -680,7 +1505,7 @@ app.get("/api/v1/funded-open-calls/:quoteId", async (request, response, next) =>
       quoteId: request.params.quoteId,
       key: `open_call\u0000${request.params.quoteId}`,
     };
-    const quote = await getQuote(identity);
+    const quote = await quoteForProtectedHandler(identity);
     if (!("payloadHash" in quote)) throw new Error("open-call route received another quote type");
     const snapshot = await internalJson<OpenCallFundingSnapshot>(
       `/internal/v1/open-call-funding-quotes/${encodeURIComponent(quote.id)}/snapshot`,
@@ -705,37 +1530,81 @@ app.get("/api/v1/funded-open-calls/:quoteId", async (request, response, next) =>
 
 app.use((error: unknown, _request: Request, response: ExpressResponse, _next: NextFunction) => {
   console.error("gateway request failed", safeError(error));
-  const status = error instanceof RustApiError && error.status >= 400 && error.status < 500
+  const status = error instanceof PayShProxyError
     ? error.status
-    : 502;
+    : error instanceof PaymentQuoteError
+    ? error.status
+    : error instanceof RustApiError && error.status >= 400 && error.status < 500
+      ? error.status
+      : 502;
+  const code = error instanceof PayShProxyError
+    ? error.code
+    : error instanceof PaymentQuoteError
+    ? error.code
+    : status === 401
+      ? "wallet_session_invalid"
+      : "gateway_error";
+  const message = error instanceof PayShProxyError
+    ? error.message
+    : error instanceof PaymentQuoteError
+    ? error.message
+    : status === 401
+      ? error instanceof Error ? error.message : "Wallet session expired."
+      : "Payment service is temporarily unavailable.";
   response.status(status).json({
     error: {
-      code: status === 401 ? "wallet_session_invalid" : "gateway_error",
-      message: status === 401 ? error instanceof Error ? error.message : "Wallet session expired." : "Payment service is temporarily unavailable.",
+      code,
+      message,
     },
   });
 });
 
 setInterval(() => void retryPendingSettlements(), 5_000).unref();
-setInterval(() => pruneRpcRateWindows(), 60_000).unref();
+setInterval(
+  () => void reconcileDueChainAttempts(),
+  chainReconciliationIntervalMs,
+).unref();
+setTimeout(() => void reconcileDueChainAttempts(), 1_000).unref();
+setInterval(() => {
+  pruneRpcRateWindows();
+  settlementReplayGuard.prune();
+  verifiedPaymentAttempts.prune();
+}, 60_000).unref();
 app.listen(port, "0.0.0.0", () => {
   console.log(`OPENSHELF x402 gateway listening on http://0.0.0.0:${port}`);
 });
 
+function webHeaders(request: Request): Headers {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(request.headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(name, item);
+    } else if (value !== undefined) {
+      headers.set(name, value);
+    }
+  }
+  return headers;
+}
+
+async function writeProxyResponse(
+  response: ExpressResponse,
+  upstream: globalThis.Response,
+): Promise<void> {
+  for (const [name, value] of upstream.headers) {
+    if (["content-length", "content-encoding", "transfer-encoding", "connection"].includes(name)) {
+      continue;
+    }
+    response.setHeader(name, value);
+  }
+  response.status(upstream.status).send(Buffer.from(await boundedResponseText(
+    upstream,
+    MAX_PAY_SH_PROXY_RESPONSE_BYTES,
+    "Pay.sh proxy response",
+  ), "utf8"));
+}
+
 function env(name: string, fallback: string): string {
   return process.env[name]?.trim() || fallback;
-}
-
-function integerEnv(name: string, fallback: number): number {
-  const parsed = Number.parseInt(process.env[name] ?? "", 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function booleanEnv(name: string, fallback: boolean): boolean {
-  const value = process.env[name]?.trim().toLowerCase();
-  if (["1", "true", "yes", "on"].includes(value ?? "")) return true;
-  if (["0", "false", "no", "off"].includes(value ?? "")) return false;
-  return fallback;
 }
 
 function safeError(error: unknown): string {
@@ -788,14 +1657,24 @@ function pruneRpcRateWindows(): void {
   }
 }
 
-async function fetchRpcWithBackoff(body: unknown): Promise<Response> {
+async function fetchRpcWithBackoff(body: unknown, endpoint = rpcUrl): Promise<Response> {
   for (let attempt = 0; ; attempt += 1) {
-    const response = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    let response: Response;
+    try {
+      response = await fetch(endpoint, {
+        method: "POST",
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      if (attempt >= 3) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1_000 * 2 ** attempt));
+      continue;
+    }
     if (response.status !== 429 || attempt >= 3) return response;
+    await response.body?.cancel().catch(() => undefined);
     const retryAfterSeconds = Number.parseInt(response.headers.get("retry-after") ?? "", 10);
     const delayMs = Number.isFinite(retryAfterSeconds)
       ? Math.min(Math.max(retryAfterSeconds, 1) * 1_000, 10_000)

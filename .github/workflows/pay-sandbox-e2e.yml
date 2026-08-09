@@ -1,0 +1,36 @@
+name: Pay sandbox E2E
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 21 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pay-sandbox-e2e
+  cancel-in-progress: false
+
+jobs:
+  official-pay-sandbox:
+    name: Official Pay sandbox
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - run: npm ci
+      - run: npm --prefix payment-gateway ci
+      - name: Charge, deliver, and recover through the real three-process stack
+        run: npm run pay:sandbox:e2e
+      - name: Reject a missing owner USDC account before durable prepare or collection
+        run: npm run pay:sandbox:e2e:missing-ata
+      - name: Kill the public gateway after durable prepare and reject a second charge
+        run: npm run pay:sandbox:e2e:crash-after-prepare
+      - name: Kill the public gateway after collection and recover the committed settlement
+        run: npm run pay:sandbox:e2e:crash-after-collection

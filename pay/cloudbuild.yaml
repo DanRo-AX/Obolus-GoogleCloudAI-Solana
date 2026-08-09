@@ -34,10 +34,11 @@ steps:
       - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/pay:$BUILD_ID
       - --region=${_REGION}
       - --platform=managed
+      - --labels=initiative=kr2,kr=kr2,owner=ax,item=obolus
       - --service-account=${_SERVICE_ACCOUNT}
       - --allow-unauthenticated
       - --set-env-vars=OPENSHELF_BACKEND_URL=${_BACKEND_URL},OPENSHELF_PAY_OPERATOR_WALLET=${_OPERATOR_WALLET},OPENSHELF_PAY_GCP_KMS_KEY_NAME=${_KMS_KEY_NAME},OPENSHELF_PAY_GCP_KMS_PUBKEY=${_KMS_PUBKEY}
-      - --set-secrets=OPENSHELF_INTERNAL_TOKEN=openshelf-internal-token:latest,OPENSHELF_PAY_RPC_URL=openshelf-pay-rpc-url:latest
+      - --set-secrets=OPENSHELF_INTERNAL_TOKEN=openshelf-internal-token:latest,OPENSHELF_PAY_RPC_URL=openshelf-pay-rpc-url:latest,OPENSHELF_PAY_FRONT_TOKEN=openshelf-pay-front-token:latest
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/pay:$BUILD_ID

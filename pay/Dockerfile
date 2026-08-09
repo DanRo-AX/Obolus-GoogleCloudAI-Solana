@@ -17,14 +17,18 @@ RUN PAY_PDB_ALLOW_PLACEHOLDER=1 \
 
 FROM debian:bookworm-slim
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates libssl3 \
+    && apt-get install --yes --no-install-recommends ca-certificates gettext-base libssl3 nginx \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /src/pay/rust/target/release/pay /usr/local/bin/pay
 WORKDIR /app
 COPY pay/paywall.gcloud.yml /app/paywall.yml
 COPY backend/openapi.json /app/openapi.json
+COPY pay/nginx.conf.template /app/nginx.conf.template
+COPY pay/entrypoint.sh /app/entrypoint.sh
+RUN chmod 0755 /app/entrypoint.sh
 
 ENV PORT=8080
 EXPOSE 8080
+USER www-data
 
-CMD ["sh", "-c", "pay gate api /app/paywall.yml --bind 0.0.0.0:${PORT:-8080} --openapi /app/openapi.json --no-register"]
+CMD ["/app/entrypoint.sh"]

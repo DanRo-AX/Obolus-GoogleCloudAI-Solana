@@ -1,8 +1,10 @@
 import { CloudTasksClient } from "@google-cloud/tasks";
+import { secureServiceOrigin } from "./url-policy.js";
 
 export type DurableSettlement = {
-  settlementKind?: "document" | "bundle" | "open_call";
+  settlementKind: "document" | "bundle" | "open_call";
   quoteId: string;
+  attemptId: string;
   transactionSignature: string;
   payer: string;
   payTo: string;
@@ -36,7 +38,10 @@ export class DurableSettlementQueue {
     const projectId = process.env.GOOGLE_CLOUD_PROJECT?.trim();
     const location = process.env.OPENSHELF_SETTLEMENT_QUEUE_LOCATION?.trim();
     const queue = process.env.OPENSHELF_SETTLEMENT_QUEUE?.trim();
-    const targetBaseUrl = process.env.OPENSHELF_SETTLEMENT_TARGET_URL?.trim()?.replace(/\/$/, "");
+    const rawTargetBaseUrl = process.env.OPENSHELF_SETTLEMENT_TARGET_URL?.trim();
+    const targetBaseUrl = rawTargetBaseUrl
+      ? secureServiceOrigin("OPENSHELF_SETTLEMENT_TARGET_URL", rawTargetBaseUrl)
+      : undefined;
     const complete = projectId && location && queue && targetBaseUrl;
 
     if (!complete) {
@@ -92,11 +97,10 @@ export class DurableSettlementQueue {
             },
             body: Buffer.from(JSON.stringify(settlement)),
           },
-          // Give the synchronous ledger write a short head start. The queued
-          // delivery is still required and safely replays the idempotent write.
-          scheduleTime: {
-            seconds: Math.floor(Date.now() / 1_000) + 3,
-          },
+          // Dispatch immediately. The synchronous write below and this task
+          // may race, but Rust's settlement registry makes either order safe
+          // and removes a deliberate window where another instance could
+          // still observe the quote as payable.
           dispatchDeadline: { seconds: 30 },
         },
       });
