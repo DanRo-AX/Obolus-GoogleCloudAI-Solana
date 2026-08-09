@@ -11,7 +11,7 @@ subdomain: openshelf
 title: "OPENSHELF Human Data API"
 description: "Search first-person human memory, then pay only for the individual documents an agent opens."
 category: data
-version: v1
+version: v2
 routing:
   type: proxy
   url: "${OPENSHELF_BACKEND_URL}/"
@@ -48,7 +48,7 @@ endpoints:
     description: "Recover a Pay.sh document already opened for the same query without charging again."
 
   - method: GET
-    path: "api/v1/pay-sh/documents/5/{query_id}/{handle}"
+    path: "api/v2/pay-sh/documents/5/{query_id}/{handle}"
     resource: "human-document-krw-5"
     description: "Open one quoted five-won human document after an exact MPP charge."
     metering:
@@ -65,7 +65,7 @@ endpoints:
           memo: "OPENSHELF human document owner"
 
   - method: GET
-    path: "api/v1/pay-sh/documents/10/{query_id}/{handle}"
+    path: "api/v2/pay-sh/documents/10/{query_id}/{handle}"
     resource: "human-document-krw-10"
     description: "Open one quoted ten-won human document after an exact MPP charge."
     metering:
@@ -82,7 +82,7 @@ endpoints:
           memo: "OPENSHELF human document owner"
 
   - method: GET
-    path: "api/v1/pay-sh/documents/100/{query_id}/{handle}"
+    path: "api/v2/pay-sh/documents/100/{query_id}/{handle}"
     resource: "human-document-krw-100"
     description: "Open one quoted one-hundred-won human document after an exact MPP charge."
     metering:
@@ -99,7 +99,7 @@ endpoints:
           memo: "OPENSHELF human document owner"
 
   - method: GET
-    path: "api/v1/pay-sh/documents/15/{query_id}/{handle}"
+    path: "api/v2/pay-sh/documents/15/{query_id}/{handle}"
     resource: "human-document-krw-15"
     description: "Open one quoted fifteen-won human document after an exact MPP charge."
     metering:
@@ -116,7 +116,7 @@ endpoints:
           memo: "OPENSHELF human document owner"
 
   - method: GET
-    path: "api/v1/pay-sh/documents/25/{query_id}/{handle}"
+    path: "api/v2/pay-sh/documents/25/{query_id}/{handle}"
     resource: "human-document-krw-25"
     description: "Open one quoted twenty-five-won human document after an exact MPP charge."
     metering:
@@ -133,7 +133,7 @@ endpoints:
           memo: "OPENSHELF human document owner"
 
   - method: GET
-    path: "api/v1/pay-sh/documents/300/{query_id}/{handle}"
+    path: "api/v2/pay-sh/documents/300/{query_id}/{handle}"
     resource: "human-document-krw-300"
     description: "Open one quoted three-hundred-won human document after an exact MPP charge."
     metering:
@@ -150,7 +150,7 @@ endpoints:
           memo: "OPENSHELF human document owner"
 
   - method: GET
-    path: "api/v1/pay-sh/documents/500/{query_id}/{handle}"
+    path: "api/v2/pay-sh/documents/500/{query_id}/{handle}"
     resource: "human-document-krw-500"
     description: "Open one quoted five-hundred-won human document after an exact MPP charge."
     metering:
@@ -167,7 +167,7 @@ endpoints:
           memo: "OPENSHELF human document owner"
 
   - method: GET
-    path: "api/v1/pay-sh/documents/700/{query_id}/{handle}"
+    path: "api/v2/pay-sh/documents/700/{query_id}/{handle}"
     resource: "human-document-krw-700"
     description: "Open one quoted seven-hundred-won human document after an exact MPP charge."
     metering:
@@ -184,7 +184,7 @@ endpoints:
           memo: "OPENSHELF human document owner"
 
   - method: GET
-    path: "api/v1/pay-sh/documents/800/{query_id}/{handle}"
+    path: "api/v2/pay-sh/documents/800/{query_id}/{handle}"
     resource: "human-document-krw-800"
     description: "Open one quoted eight-hundred-won human document after an exact MPP charge."
     metering:
@@ -201,7 +201,7 @@ endpoints:
           memo: "OPENSHELF human document owner"
 
   - method: GET
-    path: "api/v1/pay-sh/documents/1000/{query_id}/{handle}"
+    path: "api/v2/pay-sh/documents/1000/{query_id}/{handle}"
     resource: "human-document-krw-1000"
     description: "Open one quoted one-thousand-won human document after an exact MPP charge."
     metering:

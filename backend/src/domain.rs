@@ -698,11 +698,26 @@ pub struct PayoutClaim {
     pub signed_transaction_base64: Option<String>,
     pub recent_blockhash: Option<String>,
     pub last_valid_block_height: Option<u64>,
+    pub absence_observed_at: Option<u64>,
     pub attempt_count: u32,
     pub last_error: Option<String>,
     pub created_at: u64,
     pub updated_at: u64,
     pub confirmed_at: Option<u64>,
+}
+
+/// Unconfirmed payout work grouped by the exact escrow signer that can move it.
+/// This is an operational safety view: a replacement worker must not report
+/// ready while an old KMS wallet still owns durable payout work.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PayoutClaimBacklog {
+    pub escrow_wallet: String,
+    pub network: String,
+    pub claim_count: u64,
+    pub prepared_count: u64,
+    pub blocked_count: u64,
+    pub oldest_created_at: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -762,7 +777,7 @@ pub struct Citation {
     pub price: u64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SynthesizeAnswerRequest {
     pub query_id: String,
@@ -917,6 +932,9 @@ pub struct PaymentBundleQuote {
     /// Exact research budget reserved from the prepaid account. `amount_atomic`
     /// is only the Phantom refill required for this quote and can be zero.
     pub budget_atomic: String,
+    /// Immutable deficit at quote creation. The browser combines this with its
+    /// own requested top-up instead of reinterpreting a later mutable balance.
+    pub minimum_deposit_atomic: String,
     pub requires_payment: bool,
     pub available_balance_atomic: String,
     pub total_price_krw: u64,
@@ -1019,8 +1037,146 @@ pub struct FailResearchJobRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BeginResearchPaymentRequest {
+    pub quote_id: String,
+    pub attempt_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrepareResearchPaymentRequest {
+    pub quote_id: String,
+    pub payer: String,
+    pub platform_recipient_wallet: String,
+    pub challenge_id: String,
+    pub external_id: String,
+    pub signed_transaction_base64: String,
+    pub recent_blockhash: String,
+    pub challenge_expires_at: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PayShChallengeBindingRequest {
+    pub challenge_id: String,
+    pub external_id: String,
+    pub challenge_expires_at: u64,
+}
+
+/// One or more MPP challenges issued for an immutable Pay.sh quote. The
+/// gateway persists these before returning the upstream 402 to the caller, so
+/// a later credential cannot be attached to a different same-price document.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BindPayShChallengesRequest {
+    pub quote_id: String,
+    pub query_id: String,
+    pub document_handle: String,
+    pub path_price_krw: u64,
+    pub owner_wallet: String,
+    #[serde(default)]
+    pub research_job_id: Option<String>,
+    #[serde(default)]
+    pub payment_attempt_id: Option<String>,
+    pub challenges: Vec<PayShChallengeBindingRequest>,
+}
+
+/// Exact MPP credential captured by the public authorization proxy before the
+/// official Pay.sh gate is allowed to verify or broadcast it.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrepareDirectPayShPaymentRequest {
+    pub quote_id: String,
+    pub query_id: String,
+    pub document_handle: String,
+    pub path_price_krw: u64,
+    pub owner_wallet: String,
+    pub payer: String,
+    pub platform_recipient_wallet: String,
+    pub challenge_id: String,
+    pub external_id: String,
+    pub signed_transaction_base64: String,
+    pub recent_blockhash: String,
+    pub challenge_expires_at: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettleResearchPaymentRequest {
+    pub transaction_signature: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeferResearchPaymentRequest {
+    #[serde(default)]
+    pub absence_observed: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseResearchPaymentRequest {
+    pub expected_status: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchPaymentReconciliation {
+    pub job_id: String,
+    pub quote_id: String,
+    pub attempt_id: String,
+    pub status: String,
+    pub reconcile_after: u64,
+    pub created_at: u64,
+    pub prepared_at: Option<u64>,
+    pub payer: String,
+    pub network: String,
+    pub asset: String,
+    pub amount_atomic: String,
+    pub owner_amount_atomic: String,
+    pub platform_amount_atomic: String,
+    pub recipient_wallet: String,
+    pub platform_recipient_wallet: Option<String>,
+    pub signed_transaction_base64: Option<String>,
+    pub recent_blockhash: Option<String>,
+    pub challenge_id: Option<String>,
+    pub external_id: Option<String>,
+    pub challenge_expires_at: Option<u64>,
+    pub absence_observed_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectPayShPaymentReconciliation {
+    pub quote_id: String,
+    pub attempt_id: String,
+    pub status: String,
+    pub reconcile_after: u64,
+    pub created_at: u64,
+    pub prepared_at: u64,
+    pub payer: String,
+    pub network: String,
+    pub asset: String,
+    pub amount_atomic: String,
+    pub owner_amount_atomic: String,
+    pub platform_amount_atomic: String,
+    pub recipient_wallet: String,
+    pub platform_recipient_wallet: Option<String>,
+    pub signed_transaction_base64: String,
+    pub recent_blockhash: String,
+    pub challenge_id: String,
+    pub external_id: String,
+    pub challenge_expires_at: u64,
+    pub absence_observed_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RecordChainSettlementRequest {
     pub quote_id: String,
+    #[serde(default)]
+    pub attempt_id: Option<String>,
     pub transaction_signature: String,
     pub payer: String,
     pub pay_to: String,
@@ -1028,6 +1184,55 @@ pub struct RecordChainSettlementRequest {
     pub network: String,
     #[serde(default)]
     pub raw_response: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimPaymentAttemptRequest {
+    pub settlement_kind: String,
+    pub quote_id: String,
+    pub attempt_id: String,
+    #[serde(default)]
+    pub payer: Option<String>,
+    #[serde(default)]
+    pub signed_transaction_base64: Option<String>,
+    #[serde(default)]
+    pub recent_blockhash: Option<String>,
+    #[serde(default)]
+    pub absence_observed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentAttemptFence {
+    pub settlement_kind: String,
+    pub quote_id: String,
+    pub attempt_id: String,
+    pub reconcile_after: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentAttemptReconciliation {
+    pub settlement_kind: String,
+    pub quote_id: String,
+    pub attempt_id: String,
+    pub reconcile_after: u64,
+    pub created_at: u64,
+    pub pay_to: String,
+    pub network: String,
+    pub asset: String,
+    pub amount_atomic: String,
+    pub payer: Option<String>,
+    pub signed_transaction_base64: Option<String>,
+    pub recent_blockhash: Option<String>,
+    pub absence_observed_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentAttemptRelease {
+    pub released: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

@@ -3,7 +3,7 @@ use std::{
     collections::{HashMap, HashSet},
     ops::Deref,
     path::Path,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use postgres::{Client, NoTls, Row as PostgresRow, types::Type};
@@ -46,12 +46,14 @@ pub enum Connection {
 
 pub struct BlockingClient {
     client: Option<Client>,
+    connection_string: String,
 }
 
 impl BlockingClient {
-    fn new(client: Client) -> Self {
+    fn new(client: Client, connection_string: &str) -> Self {
         Self {
             client: Some(client),
+            connection_string: connection_string.to_owned(),
         }
     }
 
@@ -59,6 +61,18 @@ impl BlockingClient {
         self.client
             .as_mut()
             .expect("PostgreSQL client is available")
+    }
+
+    fn reconnect_if_closed(&mut self) -> Result<()> {
+        if self
+            .client
+            .as_ref()
+            .is_some_and(|client| !client.is_closed())
+        {
+            return Ok(());
+        }
+        self.client = Some(Client::connect(&self.connection_string, NoTls)?);
+        Ok(())
     }
 }
 
@@ -83,7 +97,18 @@ impl Connection {
         let client = blocking_postgres(|| Client::connect(connection_string, NoTls))?;
         Ok(Self::Postgres(Box::new(RefCell::new(BlockingClient::new(
             client,
+            connection_string,
         )))))
+    }
+
+    /// Reconnect only between top-level store operations. Calling this from an
+    /// individual query could silently move the remainder of a failed
+    /// transaction onto a new session and commit a torn ledger update.
+    pub fn reconnect_if_closed(&self) -> Result<()> {
+        if let Self::Postgres(client) = self {
+            blocking_postgres(|| client.borrow_mut().reconnect_if_closed())?;
+        }
+        Ok(())
     }
 
     pub fn is_sqlite(&self) -> bool {
@@ -109,6 +134,42 @@ impl Connection {
         Ok(())
     }
 
+    pub fn ensure_wal(&self, timeout: Duration) -> Result<()> {
+        let Self::Sqlite(connection) = self else {
+            return Ok(());
+        };
+        let deadline = Instant::now() + timeout;
+        loop {
+            match connection.pragma_query_value(None, "journal_mode", |row| row.get::<_, String>(0))
+            {
+                Ok(mode) if mode.eq_ignore_ascii_case("wal") => return Ok(()),
+                Ok(_) => {}
+                Err(rusqlite::Error::SqliteFailure(error, _))
+                    if matches!(
+                        error.code,
+                        rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                    ) && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            }
+            match connection.pragma_update(None, "journal_mode", "WAL") {
+                Ok(()) => return Ok(()),
+                Err(rusqlite::Error::SqliteFailure(error, _))
+                    if matches!(
+                        error.code,
+                        rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                    ) && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+
     pub fn transaction(&mut self) -> Result<Transaction<'_>> {
         match self {
             Self::Sqlite(connection) => connection.execute_batch("BEGIN IMMEDIATE")?,
@@ -120,6 +181,23 @@ impl Connection {
             connection: self,
             active: true,
         })
+    }
+
+    /// Serialize schema migration across application processes. SQLite's
+    /// `BEGIN IMMEDIATE` already owns the database write lock; PostgreSQL needs
+    /// an explicit transaction-scoped advisory lock because multiple Cloud Run
+    /// revisions can cold-start against the same schema simultaneously.
+    pub fn acquire_migration_lock(&self) -> Result<()> {
+        if let Self::Postgres(client) = self {
+            const OPENSHELF_SCHEMA_LOCK: i64 = 0x4f50_454e_5348_454c;
+            blocking_postgres(|| {
+                client.borrow_mut().get().query_one(
+                    "SELECT 1 FROM (SELECT pg_advisory_xact_lock($1)) AS migration_lock",
+                    &[&OPENSHELF_SCHEMA_LOCK],
+                )
+            })?;
+        }
+        Ok(())
     }
 
     pub fn execute<P>(&self, sql: &str, params: P) -> Result<usize>
@@ -256,10 +334,9 @@ impl Connection {
 }
 
 fn blocking_postgres<T>(operation: impl FnOnce() -> T) -> T {
-    if tokio::runtime::Handle::try_current().is_ok() {
-        tokio::task::block_in_place(operation)
-    } else {
-        operation()
+    match tokio::runtime::Handle::try_current().map(|handle| handle.runtime_flavor()) {
+        Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(operation),
+        _ => operation(),
     }
 }
 
@@ -757,6 +834,9 @@ fn postgres_sql(sql: &str) -> String {
         }
     }
     output = output.replace(" COLLATE NOCASE", "");
+    // SQLite treats this marker as a comment while PostgreSQL turns it into a
+    // row lock. It lets payment state transitions share one portable query.
+    output = output.replace("/*FOR_UPDATE*/", "FOR UPDATE");
     let trimmed = output.trim();
     if trimmed
         .to_ascii_uppercase()
@@ -875,13 +955,26 @@ fn referenced_tables(statement: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{postgres_schema_sql, postgres_sql};
+    use super::{blocking_postgres, postgres_schema_sql, postgres_sql};
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn blocking_adapter_does_not_panic_on_a_current_thread_runtime() {
+        assert_eq!(blocking_postgres(|| 42), 42);
+    }
 
     #[test]
     fn translates_sqlite_placeholders_and_ignore() {
         assert_eq!(
             postgres_sql("INSERT OR IGNORE INTO users (id) VALUES (?1)"),
             "INSERT INTO users (id) VALUES ($1) ON CONFLICT DO NOTHING"
+        );
+    }
+
+    #[test]
+    fn translates_portable_row_lock_marker() {
+        assert_eq!(
+            postgres_sql("SELECT id FROM payment_quotes WHERE id = ?1 /*FOR_UPDATE*/"),
+            "SELECT id FROM payment_quotes WHERE id = $1 FOR UPDATE"
         );
     }
 

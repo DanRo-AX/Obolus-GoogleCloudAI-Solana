@@ -1,6 +1,10 @@
 use std::net::SocketAddr;
 
-use openshelf_api::{build_app, store::Store};
+use openshelf_api::{
+    build_app,
+    environment::{managed_runtime_environment, validate_system_clock},
+    store::Store,
+};
 use tokio::net::TcpListener;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -13,6 +17,8 @@ async fn main() {
                 .unwrap_or_else(|_| EnvFilter::new("openshelf_api=info,tower_http=info")),
         )
         .init();
+
+    validate_system_clock().unwrap_or_else(|error| panic!("invalid system clock: {error}"));
 
     let bind = std::env::var("OPENSHELF_BIND").unwrap_or_else(|_| "127.0.0.1:8787".to_owned());
     let address: SocketAddr = bind
@@ -30,8 +36,12 @@ async fn main() {
         }
     }
 
-    let database_path =
-        std::env::var("OPENSHELF_DATABASE").unwrap_or_else(|_| "openshelf.db".to_owned());
+    let environment = std::env::var("OPENSHELF_ENV").unwrap_or_else(|_| "development".to_owned());
+    let production = managed_runtime_environment(&environment)
+        .unwrap_or_else(|error| panic!("invalid deployment environment: {error}"));
+    let configured_database = std::env::var("OPENSHELF_DATABASE").ok();
+    let database_path = validated_database_target(production, configured_database.as_deref())
+        .unwrap_or_else(|error| panic!("invalid OPENSHELF_DATABASE: {error}"));
     let database_engine = if database_path.starts_with("postgres://")
         || database_path.starts_with("postgresql://")
         || database_path.starts_with("host=")
@@ -52,6 +62,26 @@ async fn main() {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .expect("server failed");
+}
+
+fn validated_database_target(
+    production: bool,
+    configured_database: Option<&str>,
+) -> Result<String, &'static str> {
+    let configured_database = configured_database
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if production && configured_database.is_none() {
+        return Err("a PostgreSQL connection string is required in production");
+    }
+    let database = configured_database.unwrap_or("openshelf.db");
+    let postgres = database.starts_with("postgres://")
+        || database.starts_with("postgresql://")
+        || database.starts_with("host=");
+    if production && !postgres {
+        return Err("production cannot use a process-local SQLite ledger");
+    }
+    Ok(database.to_owned())
 }
 
 async fn shutdown_signal() {
@@ -75,5 +105,29 @@ async fn shutdown_signal() {
     tokio::select! {
         () = ctrl_c => {},
         () = terminate => {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validated_database_target;
+
+    #[test]
+    fn production_never_falls_back_to_an_ephemeral_sqlite_ledger() {
+        assert!(validated_database_target(true, None).is_err());
+        assert!(validated_database_target(true, Some("  ")).is_err());
+        assert!(validated_database_target(true, Some("/data/openshelf.db")).is_err());
+        assert_eq!(
+            validated_database_target(
+                true,
+                Some("host=/cloudsql/project:region:instance dbname=obolus")
+            )
+            .unwrap(),
+            "host=/cloudsql/project:region:instance dbname=obolus"
+        );
+        assert_eq!(
+            validated_database_target(false, None).unwrap(),
+            "openshelf.db"
+        );
     }
 }
