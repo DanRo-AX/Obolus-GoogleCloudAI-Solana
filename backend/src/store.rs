@@ -17575,7 +17575,7 @@ fn claim_chain_transaction(
         params![signature, settlement_kind, quote_id, as_i64(now_ms())?],
     )?;
     if claimed == 0
-        && !transaction
+        && transaction
             .query_row(
                 "SELECT 1 FROM chain_transaction_registry
                  WHERE transaction_signature = ?1
@@ -17584,7 +17584,7 @@ fn claim_chain_transaction(
                 |_| Ok(()),
             )
             .optional()?
-            .is_some()
+            .is_none()
     {
         return Err(StoreError::Conflict(
             "this transaction signature has already been recorded".to_owned(),
