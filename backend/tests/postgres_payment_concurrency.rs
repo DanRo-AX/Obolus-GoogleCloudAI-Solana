@@ -1505,7 +1505,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
         )
         .expect("completed email outbox row should load");
     assert_eq!(email_state.get::<_, String>(0), "delivered");
-    assert_eq!(email_state.get::<_, i32>(1), 1);
+    assert_eq!(email_state.get::<_, i64>(1), 1);
     for index in 2..=4 {
         assert_eq!(
             email_state.get::<_, String>(index),
