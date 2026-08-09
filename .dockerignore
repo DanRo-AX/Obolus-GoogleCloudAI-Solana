@@ -8,3 +8,10 @@ backend/target
 backend/openshelf.db*
 dist
 *.log
+.tmp
+.presentation-work
+.omc
+**/.omc
+presentation-variants
+*.pptx
+*.pptx.inspect.ndjson

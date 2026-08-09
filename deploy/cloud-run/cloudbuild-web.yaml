@@ -1,3 +1,5 @@
+# Legacy rollback build only. New frontend releases use Cloudflare Pages via
+# `npm run build:pages` and `npm run pages:deploy`.
 substitutions:
   _REGION: asia-northeast3
   _REPOSITORY: obolus

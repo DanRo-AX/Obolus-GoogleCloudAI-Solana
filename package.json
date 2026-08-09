@@ -6,11 +6,23 @@
   "scripts": {
     "dev": "vite",
     "dev:stack": "bash scripts/dev-stack.sh",
-    "pay:gateway:sandbox": "OPENSHELF_BACKEND_URL=${OPENSHELF_BACKEND_URL:-http://127.0.0.1:8787} npx --yes @solana/pay@1.0.26 --sandbox gate api backend/paywall.yml --bind 127.0.0.1:3402 --openapi openapi.json --no-register",
+    "pay:gateway:sandbox": "OPENSHELF_BACKEND_URL=${OPENSHELF_BACKEND_URL:-http://127.0.0.1:8787} npx --yes @solana/pay@1.0.26 --sandbox gate api backend/paywall.yml --bind 127.0.0.1:${OPENSHELF_PAY_SANDBOX_PORT:-3402} --openapi openapi.json --no-register",
     "pay:smoke": "node scripts/pay-sh-smoke.ts",
+    "pay:sandbox:e2e": "bash scripts/pay-sh-sandbox-e2e.sh success",
+    "pay:sandbox:e2e:missing-ata": "bash scripts/pay-sh-sandbox-e2e.sh missing-recipient-ata",
+    "pay:sandbox:e2e:crash-after-prepare": "bash scripts/pay-sh-sandbox-e2e.sh crash-after-prepare",
+    "pay:sandbox:e2e:crash-after-collection": "bash scripts/pay-sh-sandbox-e2e.sh crash-after-collection",
+    "pay:sandbox:e2e:cross-route": "bash scripts/pay-sh-sandbox-e2e.sh cross-route-replay",
     "pay:image:gcloud": "docker build -f pay/Dockerfile -t openshelf-pay:gcp-kms .",
     "pay:version": "npx --yes @solana/pay@1.0.26 --version",
     "agent:test": "node --test integrations/antigravity/openshelf/runtime/*.test.mjs",
+    "test:unit": "node --test src/lib/*.test.ts",
+    "test:pages": "node --test cloudflare/*.test.mjs",
+    "typecheck:pages": "wrangler types --check && tsc -p tsconfig.functions.json",
+    "build:pages": "VITE_API_BASE= VITE_X402_GATEWAY_BASE=/x402 npm run build",
+    "verify:pages-bundle": "node scripts/verify-pages-bundle.mjs",
+    "pages:dev": "npm run build:pages && wrangler pages dev dist",
+    "pages:deploy": "npm run build:pages && wrangler pages deploy dist --project-name=obolus",
     "agent:doctor": "node integrations/antigravity/openshelf/runtime/server.mjs doctor",
     "agent:tools": "node integrations/antigravity/openshelf/runtime/server.mjs tools",
     "agent:call": "node integrations/antigravity/openshelf/runtime/server.mjs call",
@@ -19,7 +31,7 @@
     "x402:devnet:smoke": "node scripts/devnet-x402-smoke.ts",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "check:all": "npm run build && npm run lint && npm run agent:test && npm --prefix payment-gateway run typecheck && npm --prefix payment-gateway run test && npm --prefix agent-orchestrator run typecheck && npm --prefix agent-orchestrator run test && cargo test --manifest-path backend/Cargo.toml && cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings",
+    "check:all": "npm run build && npm run verify:pages-bundle && npm run typecheck:pages && npm run lint && npm run test:unit && npm run test:pages && npm run agent:test && npm --prefix payment-gateway run typecheck && npm --prefix payment-gateway run test && npm --prefix agent-orchestrator run typecheck && npm --prefix agent-orchestrator run test && cargo test --manifest-path backend/Cargo.toml && cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -43,12 +55,13 @@
     "lucide-react": "^1.28.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.2",
+    "react-router-dom": "7.18.2",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",
     "three": "^0.185.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260809.1",
     "@playwright/test": "1.62.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^24.13.3",
@@ -58,7 +71,8 @@
     "oxlint": "^1.75.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~5.9.3",
-    "vite": "^8.2.0"
+    "vite": "^8.2.0",
+    "wrangler": "^4.120.0"
   },
   "overrides": {
     "jayson": {

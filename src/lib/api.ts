@@ -341,7 +341,7 @@ export type OpenCallFundingQuote = {
   expiresAt: number
   resourcePath: string
   payloadHash: string
-  status: 'quoted' | 'funded' | 'expired'
+  status: 'quoted' | 'settling' | 'funded' | 'expired'
   openCallId?: string | null
 }
 
@@ -499,6 +499,26 @@ export type PrepaidWalletSession = {
 
 export type PrepaidBalance = Omit<PrepaidWalletSession, 'token' | 'expiresAt'>
 
+export type PaymentBundleQuote = {
+  id: string
+  queryId: string
+  documentHandles: string[]
+  payTo: string
+  network: string
+  asset: string
+  amountAtomic: string
+  budgetAtomic: string
+  minimumDepositAtomic: string
+  requiresPayment: boolean
+  availableBalanceAtomic: string
+  totalPriceKrw: number
+  krwPerUsdc: number
+  expiresAt: number
+  resourcePath: string
+  bundleHash: string
+  status: string
+}
+
 export function createPrepaidWalletSession(
   wallet: string,
   challengeId: string,
@@ -513,6 +533,19 @@ export function createPrepaidWalletSession(
 
 export function getPrepaidBalance(): Promise<PrepaidBalance> {
   return apiFetch('/api/v1/prepaid/balance')
+}
+
+export function getPaymentBundleQuote(
+  quoteId: string,
+  queryAccessToken: string,
+  walletSessionToken: string,
+): Promise<PaymentBundleQuote> {
+  return apiFetch(`/api/v1/payment-bundles/${encodeURIComponent(quoteId)}`, {
+    headers: {
+      'x-openshelf-query-token': queryAccessToken,
+      'x-openshelf-wallet-session': walletSessionToken,
+    },
+  })
 }
 
 export function withdrawPrepaidBalance(amountAtomic?: string): Promise<{

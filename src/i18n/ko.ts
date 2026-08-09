@@ -444,6 +444,7 @@ export const KO: Record<string, string> = {
   'Payment stopped before the rest, so those stayed closed and cost nothing.': '나머지는 결제가 멈췄어요. 닫힌 채로 남았고, 돈도 안 나갔어요.',
   'Payment service is temporarily unavailable. Retry this same call; a settled transfer will be recovered instead of paid twice.': '결제 서비스가 잠시 불안정합니다. 같은 호출을 다시 시도하면 이미 정산된 송금은 중복 결제하지 않고 복구합니다.',
   'Payment service is temporarily unavailable. Retry this same job; anything already settled will be recovered instead of paid twice.': '결제 서비스가 잠시 불안정합니다. 같은 작업을 다시 시도하면 이미 정산된 내역은 중복 결제하지 않고 복구합니다.',
+  'Payment is already settling. Retry this same call to recover it without another wallet approval.': '결제가 이미 정산 중입니다. 지갑에서 다시 승인하지 말고 같은 호출을 재시도해 복구하세요.',
   'Payments go wallet to wallet. We never take custody of your balance.': '결제는 지갑에서 지갑으로 가요. 잔액은 맡아 두지 않아요.',
   'Payouts land here': '이 지갑으로 정산',
   'Payouts to': '정산 지갑',

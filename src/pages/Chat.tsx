@@ -26,6 +26,7 @@ import {
   type AiBaseline,
   type Resolution,
 } from '@/lib/api'
+import { krwPerUsdc } from '@/lib/browserPaymentConfig'
 import { cn } from '@/lib/utils'
 import { explorerUrl, openDocuments, PaymentError } from '@/lib/x402'
 import { DEVNET_USDC, shortKey, useWallet } from '@/state/wallet'
@@ -61,7 +62,7 @@ type RankedShelf = {
   accent: string
 }
 
-const KRW_PER_USDC = Number(import.meta.env.VITE_KRW_PER_USDC ?? 1350)
+const KRW_PER_USDC = krwPerUsdc(import.meta.env.VITE_KRW_PER_USDC, import.meta.env.PROD)
 
 const STEPS = [
   { n: 2, label: 'Search the shelves', blurb: 'People\u2019s documents, not the web' },
