@@ -13997,7 +13997,7 @@ fn active_bundle_reservation(
              FROM payment_bundle_quotes pbq
              JOIN payment_bundle_documents pbd ON pbd.quote_id = pbq.id
              WHERE pbq.query_id = ?1 AND pbd.document_handle = ?2
-               AND (?3 IS NULL OR pbq.id <> ?3)
+               AND (CAST(?3 AS TEXT) IS NULL OR pbq.id <> CAST(?3 AS TEXT))
                AND (
                     EXISTS (
                         SELECT 1 FROM chain_payment_attempts attempt
