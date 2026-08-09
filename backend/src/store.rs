@@ -8986,7 +8986,8 @@ impl Store {
                 let completed_at = now_ms();
                 let settled = transaction.execute(
                     "UPDATE research_payment_attempts
-                     SET status = 'settled', transaction_signature = COALESCE(?1, transaction_signature),
+                     SET status = 'settled',
+                         transaction_signature = COALESCE(CAST(?1 AS TEXT), transaction_signature),
                          failure_reason = NULL, completed_at = ?2
                      WHERE attempt_id = ?3 AND job_id = ?4 AND quote_id = ?5
                        AND status IN ('prepared', 'ambiguous')
@@ -8996,7 +8997,8 @@ impl Store {
                              AND fence.attempt_kind = 'research'
                              AND fence.attempt_id = research_payment_attempts.attempt_id
                        )
-                       AND (transaction_signature IS NULL OR ?1 IS NULL OR transaction_signature = ?1)",
+                       AND (transaction_signature IS NULL OR CAST(?1 AS TEXT) IS NULL
+                            OR transaction_signature = CAST(?1 AS TEXT))",
                     params![
                         transaction_signature,
                         as_i64(completed_at)?,
@@ -9047,14 +9049,16 @@ impl Store {
                 let settled = transaction.execute(
                     "UPDATE direct_pay_sh_attempts
                      SET status = CASE
-                           WHEN status = 'settled' OR ?1 IS NOT NULL THEN 'settled'
+                           WHEN status = 'settled' OR CAST(?1 AS TEXT) IS NOT NULL THEN 'settled'
                            ELSE 'ambiguous'
                          END,
-                         transaction_signature = COALESCE(?1, transaction_signature),
-                         reconcile_after = CASE WHEN ?1 IS NULL THEN ?2 ELSE reconcile_after END,
+                         transaction_signature = COALESCE(CAST(?1 AS TEXT), transaction_signature),
+                         reconcile_after = CASE
+                           WHEN CAST(?1 AS TEXT) IS NULL THEN ?2 ELSE reconcile_after
+                         END,
                          failure_reason = NULL,
                          completed_at = CASE
-                           WHEN status = 'settled' OR ?1 IS NOT NULL
+                           WHEN status = 'settled' OR CAST(?1 AS TEXT) IS NOT NULL
                            THEN COALESCE(completed_at, ?3)
                            ELSE completed_at
                          END
@@ -9066,7 +9070,8 @@ impl Store {
                              AND fence.attempt_kind = 'direct'
                              AND fence.attempt_id = direct_pay_sh_attempts.attempt_id
                        ))
-                       AND (transaction_signature IS NULL OR ?1 IS NULL OR transaction_signature = ?1)",
+                       AND (transaction_signature IS NULL OR CAST(?1 AS TEXT) IS NULL
+                            OR transaction_signature = CAST(?1 AS TEXT))",
                     params![
                         transaction_signature,
                         as_i64(completed_at.saturating_add(PAYMENT_ATTEMPT_RECONCILE_AFTER_MS))?,
