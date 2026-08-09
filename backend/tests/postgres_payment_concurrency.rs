@@ -455,7 +455,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
     // the same document. The winner may depend on scheduling, but the loser
     // must fail before either product can expose a second fund movement.
     let product_race_question = format!(
-        "Can direct and aggregate funding collide for one real purchase {}?",
+        "Can direct and aggregate funding collide for one real Seongsu lunch purchase {}?",
         now_ms()
     );
     let product_race_resolution = Resolver::new(
@@ -556,7 +556,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
     // The research job owns this document, so an old direct writer must lose
     // even when both INSERTs reach separate database sessions simultaneously.
     let attempt_race_question = format!(
-        "Can old direct and research writers charge one quote {}?",
+        "Can old direct and research writers charge one Seongsu lunch quote {}?",
         now_ms()
     );
     let attempt_race_resolution = Resolver::new(
@@ -899,7 +899,8 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
     // A rolling deployment can still have an old process that writes the
     // ledger tables directly without calling bind_document_payment_rail. Race
     // those old write shapes and prove the PostgreSQL triggers serialize them.
-    let rolling_question = "Can an old Pay.sh writer and a new x402 writer both win one row lock?";
+    let rolling_question =
+        "Can an old Pay.sh writer and a new x402 writer both win one Seongsu lunch row lock?";
     let rolling_resolution = Resolver::new(cleanup.documents().expect("documents should load"))
         .resolve(ResolveQuestionRequest {
             question: rolling_question.to_owned(),
@@ -1970,7 +1971,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
     // becomes claimable without deleting the incident audit trail.
     let hold_suffix = now_ms();
     let hold_question =
-        format!("Can a stale PostgreSQL writer escape a restore hold {hold_suffix}?");
+        format!("Can a stale PostgreSQL writer escape a Seongsu lunch restore hold {hold_suffix}?");
     let hold_store = Store::open(&database_url).expect("restore-hold setup should open");
     let hold_resolution = Resolver::new(
         hold_store

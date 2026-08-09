@@ -2,7 +2,7 @@ FROM node:24-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
-COPY index.html vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json ./
+COPY index.html vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json tsconfig.functions.json ./
 COPY public ./public
 COPY src ./src
 ARG VITE_BACKEND_ENABLED=true
