@@ -36,3 +36,4 @@ openshelf.db-wal
 *.sw?
 .gstack/
 .secrets/
+.wrangler/

@@ -6,13 +6,14 @@ import {
   apiRequest,
   assertDevnetQuote,
   compactQueryForState,
+  exactAgentBundleQuote,
   gatewayRequest,
   jsonBody,
   paymentPlan,
   readState,
   requireQuery,
   runtimeConfig,
-  writeState,
+  updateState,
 } from './core.mjs'
 
 const objectSchema = (properties = {}, required = []) => ({
@@ -99,6 +100,18 @@ export const tools = [
         handles: stringArray('One or more document handles from that query.'),
       },
       ['queryId', 'handles'],
+    ),
+  },
+  {
+    name: 'evidence_payment_status',
+    description:
+      'Recover or poll a multi-document research job after payment preparation. This never signs or starts another payment.',
+    inputSchema: objectSchema(
+      {
+        queryId: string('Query id returned by ask_people.'),
+        jobId: string('Job/quote id returned by prepare_evidence_payment or Pay curl.'),
+      },
+      ['queryId', 'jobId'],
     ),
   },
   {
@@ -338,8 +351,13 @@ export async function callTool(name, args = {}, options = {}) {
           { config, state, auth: false },
         )
       ).body
-      state.queries[result.queryId] = compactQueryForState({ ...result, question: args.question })
-      await writeState(state, config)
+      await updateState(config, (current) => {
+        current.queries[result.queryId] = compactQueryForState({
+          ...result,
+          question: args.question,
+        })
+        return current
+      })
       const { paymentAccessToken: _secret, ...safe } = result
       return {
         ...safe,
@@ -364,6 +382,29 @@ export async function callTool(name, args = {}, options = {}) {
     }
     case 'prepare_evidence_payment':
       return prepareEvidencePayment(args, state, config)
+    case 'evidence_payment_status': {
+      const query = requireQuery(state, args.queryId)
+      const job = (
+        await gatewayRequest(
+          `/api/v1/research-jobs/${encodeURIComponent(args.jobId)}`,
+          { headers: { 'x-openshelf-query-token': query.paymentAccessToken } },
+          { config },
+        )
+      ).body
+      if (job.queryId !== args.queryId || job.id !== args.jobId) {
+        throw new AgentError(
+          'Research recovery returned a job outside the requested query.',
+          'unsafe_recovery_response',
+        )
+      }
+      return {
+        ...job,
+        nextAction:
+          job.status === 'completed' || job.status === 'refund_pending' || job.status === 'balance_refunded'
+            ? 'Use the returned paid citation handles with synthesize_human_answer. Do not pay this job again.'
+            : 'Poll evidence_payment_status again. Do not prepare or approve another payment for this job.',
+      }
+    }
     case 'synthesize_human_answer': {
       const query = requireQuery(state, args.queryId)
       return (
@@ -667,15 +708,43 @@ async function prepareEvidencePayment(args, state, config) {
         headers: {
           'content-type': 'application/json',
           'x-openshelf-query-token': query.paymentAccessToken,
+          'x-openshelf-agent-payment-mode': 'exact-agent-bundle-v1',
         },
         body: jsonBody({ queryId: args.queryId, handles }),
       },
       { config },
     )
   ).body
+  if (!prepared?.quote || typeof prepared.quote.id !== 'string') {
+    throw new AgentError('The gateway returned a malformed research quote.', 'quote_unavailable')
+  }
+  const canonicalQuote = (
+    await apiRequest(
+      `/api/v1/agent-payment-bundles/${encodeURIComponent(prepared.quote.id)}`,
+      { headers: { 'x-openshelf-query-token': query.paymentAccessToken } },
+      { config, state, auth: false },
+    )
+  ).body
+  const quote = exactAgentBundleQuote({
+    gatewayQuote: prepared.quote,
+    canonicalQuote,
+    queryId: args.queryId,
+    handles,
+  })
+  if (quote.status !== 'quoted' || quote.requiresPayment !== true) {
+    return {
+      status: 'recovery_required',
+      jobId: quote.id,
+      queryId: args.queryId,
+      documentHandles: handles,
+      jobStatus: quote.status,
+      nextAction:
+        'Call evidence_payment_status for this same query and job. Do not ask for approval or call Pay again.',
+    }
+  }
   return paymentPlan(
-    prepared.resourceUrl || `${config.gatewayOrigin}${prepared.quote.resourcePath}`,
-    prepared.quote,
+    `${config.gatewayOrigin}${quote.resourcePath}`,
+    quote,
     `Open ${handles.length} exact human documents in one aggregate payment`,
   )
 }
@@ -732,9 +801,11 @@ async function accountData(args, state, config) {
     )
   }
   await apiRequest('/api/v1/account', { method: 'DELETE' }, { config, state })
-  state.token = null
-  state.user = null
-  state.queries = {}
-  await writeState(state, config)
+  await updateState(config, (current) => {
+    current.token = null
+    current.user = null
+    current.queries = {}
+    return current
+  })
   return { status: 'deleted', recoverable: false }
 }

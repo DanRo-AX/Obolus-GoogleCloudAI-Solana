@@ -16,7 +16,6 @@ From this repository:
 ```bash
 agy plugin install ./integrations/antigravity/openshelf
 node integrations/antigravity/openshelf/runtime/server.mjs doctor
-node integrations/antigravity/openshelf/runtime/server.mjs auth login --email YOU@example.com
 agy
 ```
 
@@ -40,16 +39,20 @@ For direct terminal use, `npm run agent:tools` lists every service action and
 `npm run agent:tools -- TOOL` prints its exact JSON schema. Invoke the same
 validated implementation with `npm run agent:call -- TOOL --json '{...}'`.
 
-For two-role testing without two Google accounts, use two named local profiles:
+For buyer-side testing without changing Google accounts, use named local Pay
+profiles:
 
 ```bash
 OPENSHELF_AGENT_PROFILE=buyer OPENSHELF_PAY_ACCOUNT=buyer agy
-OPENSHELF_AGENT_PROFILE=contributor OPENSHELF_PAY_ACCOUNT=contributor agy
+OPENSHELF_AGENT_PROFILE=buyer-two OPENSHELF_PAY_ACCOUNT=buyer-two agy
 ```
 
-Run `auth login` with the same `OPENSHELF_AGENT_PROFILE` before launching each
-shell. Each selector gets a different mode-`0600` OpenShelf session file and a
-different named Pay signer, while Antigravity may keep the same Google login.
+Each selector gets a different mode-`0600` local capability file and a different
+named Pay signer, while Antigravity may keep the same Google login. Managed
+contributor-account commands remain deferred until this runtime can complete a
+wallet challenge/SIWX sign-in without exposing a private key. The existing
+email `auth register/login` commands are test-only and work only against a local
+API started with `OPENSHELF_EMAIL_PASSWORD_AUTH_ENABLED=true`.
 
 The repository also ships `.agents/mcp_config.json`, so running `agy` at the repository root can load the same two MCP servers without a global plugin install.
 
@@ -64,7 +67,38 @@ The backend must expose the same API origin through `OPENSHELF_AGENT_API_ORIGIN`
 
 ## Authentication and secrets
 
-Authentication is intentionally a local CLI step so an OpenShelf password never enters the Antigravity model transcript or a tool argument. The runtime extracts the HttpOnly session token returned by Rust and writes only that token plus short-lived query capabilities to `~/.config/openshelf/agent-session.json` with mode `0600`.
+The managed account surface is wallet-only. Browser sign-in proves the wallet
+with an expiring message; agent buyer tools need only short-lived query
+capabilities and the separate Pay signer. A future contributor-account bridge
+must complete the same proof locally and store only the returned HttpOnly
+session token in `~/.config/openshelf/agent-session.json` with mode `0600`.
+
+Every API/gateway request has a 15-second end-to-end deadline covering both
+connection setup and response-body consumption. A peer that sends HTTP 200 and
+then stops halfway through JSON fails with `request_timeout`; it cannot pin an
+agent tool forever or turn an ambiguous payment response into an automatic
+retry.
+
+The session file is updated under a per-profile cross-process lock and replaced
+atomically. Concurrent MCP/CLI calls merge their query capabilities instead of
+letting the last writer erase another payment-recovery token. A lock left by a
+dead process is reclaimed only after 30 seconds and only when its recorded PID
+is no longer alive.
+
+Multi-document payment preparation declares
+`x-openshelf-agent-payment-mode: exact-agent-bundle-v1`. This is a public
+protocol selector, not a secret: the query capability remains the authority.
+It requests exactly the committed downstream budget, sends no browser wallet
+session or top-up, and cannot leave a reusable prepaid balance. The runtime
+contract test rejects a fake gateway fixture unless all of those properties are
+present, so the agent test cannot silently accept an endpoint that production
+would answer with `401`.
+
+If a repeated preparation finds the same job already settling, funded,
+processing, completed, or refunding, it returns `recovery_required` and no
+payment URL. `evidence_payment_status` uses the locally stored query capability
+to trigger or poll that exact job without exposing the capability or asking the
+wallet to pay again.
 
 Pay.sh keeps its own key in the operating-system credential store and asks for local approval for real signatures. OpenShelf never reads or stores the private key.
 
@@ -93,8 +127,8 @@ Three identities are intentionally separate:
 | Pay account | Local Solana signing and selected wallet | Pay.sh / OS credential store |
 
 Changing Google accounts must not silently change an OpenShelf profile or Pay
-wallet. A future social-login screen should require an explicit link/unlink
-operation and preserve an email/password recovery path. Payout ownership is
+wallet. A future agent-account bridge must require an explicit wallet proof and
+must not infer identity from a Google or email account. Payout ownership is
 separately proven through the one-time SIWX link returned by
 `prepare_payout_wallet_link`; matching email addresses are never wallet proof.
 See [`../../../docs/ACCOUNT-LINKING.md`](../../../docs/ACCOUNT-LINKING.md).

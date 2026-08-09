@@ -263,7 +263,6 @@ the fully static fallback.
 ```bash
 agy plugin install ./integrations/antigravity/openshelf
 npm run agent:doctor
-node integrations/antigravity/openshelf/runtime/server.mjs auth login --email YOU@example.com
 agy
 ```
 
@@ -282,9 +281,11 @@ npm run agent:call -- ask_people --json \
   '{"question":"What do people living in Paris actually eat on weeknights?","requestedDocuments":3}'
 ```
 
-Authenticated contributor commands reuse the local session from `auth login`.
-Paid commands return an exact URL and amount for the separate Pay MCP. They
-never receive a private key.
+Paid buyer commands return an exact URL and amount for the separate Pay MCP;
+they never receive a private key. Managed contributor-account commands are
+deferred until the agent can complete the same wallet challenge/SIWX proof as
+the browser. The legacy email `auth login` command remains test-only behind
+`OPENSHELF_EMAIL_PASSWORD_AUTH_ENABLED=true` and is not part of the launch path.
 
 See [`integrations/antigravity/openshelf/README.md`](integrations/antigravity/openshelf/README.md),
 [`docs/ACCOUNT-LINKING.md`](docs/ACCOUNT-LINKING.md), [`pay/PAY.md`](pay/PAY.md),
