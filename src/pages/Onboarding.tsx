@@ -188,7 +188,7 @@ export default function Onboarding() {
       <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center px-4 py-10 sm:px-6">
         <div key={step} className="page-enter">
           <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            {String(step).padStart(2, '0')}
+            {String(step + 1).padStart(2, '0')}
           </span>
 
           {step === 0 ? (

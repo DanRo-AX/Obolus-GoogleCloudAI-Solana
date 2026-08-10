@@ -113,6 +113,7 @@ export default function Chat() {
   const [count, setCount] = useState<number | null>(null)
   const [placedOrderId, setPlacedOrderId] = useState<string | null>(null)
   const [payError, setPayError] = useState<string | null>(null)
+  const [mintCopied, setMintCopied] = useState(false)
   const [queryId, setQueryId] = useState<string | null>(
     () => chat?.paymentSession?.queryId ?? null,
   )
@@ -128,6 +129,7 @@ export default function Chat() {
   >(() => (chat?.aiBaseline ? 'ready' : 'idle'))
   const startedRef = useRef<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const mintCopiedTimeoutRef = useRef<number | null>(null)
 
   const lastUser = useMemo(
     () => [...(chat?.messages ?? [])].reverse().find((m) => m.role === 'user'),
@@ -604,6 +606,30 @@ export default function Chat() {
                     <span className="text-foreground" title={DEVNET_USDC}>
                       {shortKey(DEVNET_USDC)}
                     </span>.
+                  </div>
+                  <div className="flex w-full items-center justify-between gap-3 rounded-[4px] bg-foreground/[0.04] px-3 py-2 font-mono text-[10px] uppercase leading-relaxed tracking-[0.8px] text-muted-foreground">
+                    <span>
+                      {t('Phantom may label this token “Unknown” — Devnet USDC has no on-chain name. Match the mint before approving.')}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="monoGhost"
+                      size="monoSm"
+                      className="shrink-0"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(DEVNET_USDC)
+                        setMintCopied(true)
+                        if (mintCopiedTimeoutRef.current !== null) {
+                          window.clearTimeout(mintCopiedTimeoutRef.current)
+                        }
+                        mintCopiedTimeoutRef.current = window.setTimeout(() => {
+                          setMintCopied(false)
+                          mintCopiedTimeoutRef.current = null
+                        }, 1600)
+                      }}
+                    >
+                      {mintCopied ? t('Mint copied') : t('Copy mint')}
+                    </Button>
                   </div>
                   {!account ? (
                     <Button

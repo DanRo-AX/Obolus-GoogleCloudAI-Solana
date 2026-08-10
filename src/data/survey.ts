@@ -17,7 +17,7 @@ export type Warmup =
 
 /** Warm-ups are chosen by shelf, so a new open call inherits the right set. */
 export const WARMUPS: Record<string, Warmup[]> = {
-  'Seongsu daily life': [
+  '성수동에서 먹고 삽니다': [
     {
       id: 'w1',
       kind: 'choice',
@@ -45,7 +45,7 @@ export const WARMUPS: Record<string, Warmup[]> = {
       placeholder: 'e.g. the noodle place near exit 3',
     },
   ],
-  'Primary school parents': [
+  '초등 입학 준비': [
     {
       id: 'w1',
       kind: 'choice',
@@ -73,7 +73,7 @@ export const WARMUPS: Record<string, Warmup[]> = {
       placeholder: 'e.g. the branded backpack set',
     },
   ],
-  'Small shop owners': [
+  '가게를 3년째 운영합니다': [
     {
       id: 'w1',
       kind: 'choice',
@@ -101,7 +101,7 @@ export const WARMUPS: Record<string, Warmup[]> = {
       placeholder: 'e.g. water filter changes',
     },
   ],
-  'Living in Paris': [
+  '파리에 삽니다': [
     {
       id: 'w1',
       kind: 'choice',
