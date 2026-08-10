@@ -25,7 +25,7 @@ import {
   Switch,
 } from '@/components/ui/primitives'
 import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from '@/data/categories'
-import { STRIKE_LIMIT } from '@/data/onboarding'
+import { AGE_BANDS, HOUSEHOLDS, REGIONS, STRIKE_LIMIT } from '@/data/onboarding'
 import { useT } from '@/i18n'
 import {
   ApiError,
@@ -690,6 +690,14 @@ export default function Dashboard() {
                             const filterCat = CATEGORY_BY_ID[value as CategoryId]
                             const prefix = key === 'field' ? t('Field') : t('Category')
                             return `${prefix} ${filterCat?.label ? t(filterCat.label) : value}`
+                          }
+                          if (key === 'ageBand' || key === 'region' || key === 'household') {
+                            const options =
+                              key === 'ageBand' ? AGE_BANDS : key === 'region' ? REGIONS : HOUSEHOLDS
+                            const prefix =
+                              key === 'ageBand' ? t('Age') : key === 'region' ? t('Region') : t('Household')
+                            const filterOption = options.find((o) => o.value === value)
+                            return `${prefix} ${filterOption ? t(filterOption.label) : value}`
                           }
                           return `${key.replace(/([A-Z])/g, ' $1')} ${value}`
                         })

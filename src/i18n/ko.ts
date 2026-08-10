@@ -462,7 +462,7 @@ export const KO: Record<string, string> = {
   'Per-open pricing only works when one open can cost ₩5. Phantom refills a prepaid balance, and only when it runs low; a bounded GCP KMS agent then pays each DB independently through Pay.sh.': '열기 1회에 ₩5을 매길 수 있어야 이 값매김이 됩니다. Phantom은 선불 잔액만 채웁니다. 그것도 잔액이 모자랄 때만. 그다음은 권한이 묶인 GCP KMS 에이전트가 Pay.sh로 DB마다 냅니다.',
   'Permanently delete': '영구 삭제',
   'Phantom is a browser extension. Install it, reload this page, and the button becomes a sign-in.': 'Phantom은 브라우저 확장 프로그램이에요. 설치한 뒤 새로고침해 주세요. 버튼이 로그인으로 바뀌어요.',
-  'Phantom may label this token “Unknown” — Devnet USDC has no on-chain name. Match the mint before approving.': 'Phantom에는 “Unknown”으로 보일 수 있음 — Devnet USDC는 온체인 이름이 없음. 승인 전 위 민트와 대조.',
+  'Phantom may label this token “Unknown” — Devnet USDC has no on-chain name. Match the mint before approving.': 'Phantom에는 “Unknown”으로 보일 수 있음. Devnet USDC는 온체인 이름이 없음. 승인 전 위 민트와 대조.',
   'Pick a handle': '활동명 고르기',
   'Pick anything you have actually lived through, not only your job. These decide which open calls reach you first.': '직업만 고르지 말고, 실제로 겪은 일이면 뭐든 골라 주세요. 고른 분야가 먼저 도착할 공개 모집을 정해요.',
   'Pick the fields you have lived. Calls in those fields sort to the top of your board.': '겪어본 분야를 골라 주세요. 그 분야 모집이 목록 맨 위로 올라와요.',

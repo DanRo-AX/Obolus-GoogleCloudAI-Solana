@@ -129,6 +129,7 @@ export default function Chat() {
   >(() => (chat?.aiBaseline ? 'ready' : 'idle'))
   const startedRef = useRef<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const mintCopiedTimeoutRef = useRef<number | null>(null)
 
   const lastUser = useMemo(
     () => [...(chat?.messages ?? [])].reverse().find((m) => m.role === 'user'),
@@ -618,7 +619,13 @@ export default function Chat() {
                       onClick={() => {
                         void navigator.clipboard?.writeText(DEVNET_USDC)
                         setMintCopied(true)
-                        window.setTimeout(() => setMintCopied(false), 1600)
+                        if (mintCopiedTimeoutRef.current !== null) {
+                          window.clearTimeout(mintCopiedTimeoutRef.current)
+                        }
+                        mintCopiedTimeoutRef.current = window.setTimeout(() => {
+                          setMintCopied(false)
+                          mintCopiedTimeoutRef.current = null
+                        }, 1600)
                       }}
                     >
                       {mintCopied ? t('Mint copied') : t('Copy mint')}
