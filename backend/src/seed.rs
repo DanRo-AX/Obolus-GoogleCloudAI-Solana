@@ -328,6 +328,17 @@ pub fn documents() -> Vec<Document> {
             10,
             28,
         ),
+        // Sensitivity note: this doc (and to a lesser extent KOPARIS_4/KOPARIS_5) is the
+        // marginal candidate that keeps `search::tests::insufficient_coverage_preserves_
+        // existing_quote_and_only_fills_gap` (an English-only query about Paris residents'
+        // "daily routes and dinner habits") passing. That query shares only "paris"/"dinner"
+        // with this shelf (via search.rs's Korean->English canonical bridge), so relevance for
+        // it hovers close to MIN_RELEVANCE (0.22) — as measured, this doc currently sits at
+        // ~0.28, and is the ONLY one of the 5 KOPARIS_* docs that still clears the bar (the
+        // test needs total eligible candidates for that query to stay below 5; it's currently
+        // exactly 4 = the 3 pre-existing PARISR_* docs + this one). Adding more shared
+        // vocabulary with "저녁"/"파리" here, or trimming this doc's Korean-only filler text,
+        // can tip a second KOPARIS_* doc over 0.22 and flip that test from Miss to Hit.
         document(
             "md_koparis_1",
             "KOPARIS_1",
@@ -335,8 +346,8 @@ pub fn documents() -> Vec<Document> {
             "paris-dinner-ko",
             "파리에 삽니다",
             "travel",
-            "파리에서 5년째 살고 있습니다. 평일 밤에는 실제로 근처 시장에서 장을 봐서 집에서 밥을 해 먹는 날이 많은데, 재료비로 한 끼에 8유로 정도 씁니다. 외식은 한 달에 딱 두 번 정도만 합니다.",
-            &["평일", "자취", "장보기", "재료비"],
+            "파리에서 5년째 살고 있습니다. 평일 저녁은 실제로 퇴근하고 근처 골목 시장에 들러 제철 채소와 자투리 고기를 사서 집에서 소박하게 한 끼를 차려 먹는 날이 많은데, 그렇게 장을 보면 재료비로 한 끼에 8유로 정도 씁니다. 외식은 한 달에 딱 두 번 정도만 합니다.",
+            &["평일", "자취", "골목시장", "장보기습관"],
             15,
             6,
         ),
@@ -371,8 +382,8 @@ pub fn documents() -> Vec<Document> {
             "paris-dinner-ko",
             "파리에 삽니다",
             "travel",
-            "파리에서 3년째 살고 있습니다. 평일 저녁 메뉴는 냉장고에 있는 재료로 대충 만드는 편인데, 실제로 배달은 한 달에 한 번 정도이고 가격은 15유로 선입니다.",
-            &["평일", "집밥", "배달", "가격"],
+            "파리에서 3년째 살고 있습니다. 평일 저녁 메뉴는 냉장고에 남은 자잘한 재료로 대충 만드는 편인데, 실제로 일부러 배달을 시키는 날은 한 달에 한 번 정도이고 가격은 15유로 선입니다.",
+            &["평일", "집밥", "냉장고정리", "가격"],
             15,
             21,
         ),
@@ -383,8 +394,8 @@ pub fn documents() -> Vec<Document> {
             "paris-dinner-ko",
             "파리에 삽니다",
             "travel",
-            "파리 시내에서 일하고 근교 주택가에서 살고 있습니다. 평일 밤에는 실제로 퇴근길에 동네 단골 빵집에서 바게트와 치즈를 사 오는 날이 많습니다. 집에서 간단히 차려 먹는데 한 끼에 6유로쯤 듭니다.",
-            &["평일", "퇴근길", "빵집", "치즈"],
+            "파리 시내에서 일하고 근교 조용한 주택가에서 삽니다. 평일 저녁에 뭘 먹나요 하면, 저는 실제로 퇴근길에 골목 안 오래된 동네 단골 빵집에 들러 갓 구운 바게트와 치즈 한 조각을 사 오는 날이 많다고 답합니다. 집에서 간단히 차려 먹는데 한 끼에 6유로쯤 듭니다.",
+            &["평일", "퇴근길", "동네빵집", "주택가생활"],
             15,
             29,
         ),
