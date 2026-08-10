@@ -664,7 +664,7 @@ export default function Dashboard() {
                       <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
                         {cat?.label ? t(cat.label) : null}
                       </span>
-                      <Badge className="truncate px-1.5 py-0 uppercase tracking-[1px]">
+                      <Badge className="truncate px-1.5 py-0 uppercase tracking-[1px]" title={order.shelf}>
                         {order.shelf}
                       </Badge>
                     </span>
