@@ -688,7 +688,8 @@ export default function Dashboard() {
                         .map(([key, value]) => {
                           if (key === 'category' || key === 'field') {
                             const filterCat = CATEGORY_BY_ID[value as CategoryId]
-                            return `${t('Field')} ${filterCat?.label ? t(filterCat.label) : value}`
+                            const prefix = key === 'field' ? t('Field') : t('Category')
+                            return `${prefix} ${filterCat?.label ? t(filterCat.label) : value}`
                           }
                           return `${key.replace(/([A-Z])/g, ' $1')} ${value}`
                         })

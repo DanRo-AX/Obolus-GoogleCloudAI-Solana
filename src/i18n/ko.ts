@@ -191,6 +191,7 @@ export const KO: Record<string, string> = {
   'Cancel': '취소',
   'Cancel and refund': '취소·환불',
   'Cancelled · refund in your wallet': '취소 · 지갑으로 환불',
+  'Category': '분류',
   'Claimable escrow': '청구할 에스크로',
   'Cleaning up a document destroys what it was worth': '문서를 다듬으면 사라지는 값',
   'Closing soon': '마감 임박',
