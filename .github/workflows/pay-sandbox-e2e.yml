@@ -26,6 +26,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.89.0
       - run: npm ci
       - run: npm --prefix payment-gateway ci
+      - run: npm --prefix agent-orchestrator ci
       - name: Build the backend before bounded runtime readiness checks
         run: cargo build --locked --manifest-path backend/Cargo.toml
       - name: Charge, deliver, and recover through the real three-process stack
