@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - 커밋은 **로컬만**, `git push` 금지 (스펙 "비가역 작업" 조항)
-- 커밋 메시지는 레포 관례: 소문자 시작 명령형 문장, prefix 없음 (예: `Add a seeded mock backend and a recorded end-to-end pass`)
+- 커밋 메시지는 레포 관례: 명령형 문장(대문자 시작), prefix 없음 (예: `Add a seeded mock backend and a recorded end-to-end pass`)
 - ko.ts 번역 레지스터: 대화형 UI 문장은 해요체, 모노 박스·라벨은 체언 종결 (ko.ts 파일 상단 주석의 표면별 레지스터 규칙 준수)
 - 사용자 카피에서 제품명은 **Obolus**, 에이전트명은 SHELF (Obulus 표기 금지)
 - 프론트 검증 게이트: `npm run build` + `npm run lint` 통과 + browse 실화면 확인 (프론트 단위테스트 프레임워크 없음 — 도입하지 않는다)
