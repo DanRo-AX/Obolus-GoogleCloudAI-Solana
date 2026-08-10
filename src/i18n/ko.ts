@@ -376,6 +376,7 @@ export const KO: Record<string, string> = {
   'Name what is wrong — made-up facts, copied text, low effort, abuse. 20 to 1000 characters.': '무엇이 잘못됐는지 적어 주세요. 지어낸 사실, 베낀 글, 성의 없는 답, 욕설. 20~1000자.',
   'Neighbourhood bistros are usually a good bet.': '동네 비스트로가 대체로 무난합니다.',
   'Never bother': '아예 안 함',
+  'New question': '새 질문',
   'Newest': '최신순',
   'Next': '다음',
   'Next open call': '다음 공개 모집',

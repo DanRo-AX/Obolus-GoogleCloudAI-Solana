@@ -4,6 +4,7 @@ import { Menu } from 'lucide-react'
 import { AppSidebar } from '@/components/AppSidebar'
 import { Composer } from '@/components/Composer'
 import { Button } from '@/components/ui/button'
+import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
 import { useWallet } from '@/state/wallet'
@@ -14,6 +15,7 @@ import { MobileSidebar } from '@/components/MobileSidebar'
  * Below md the sidebar becomes a sheet and a floating pill nav takes over.
  */
 export function AppLayout() {
+  const t = useT()
   const {
     collapsed,
     setCollapsed,
@@ -126,7 +128,7 @@ export function AppLayout() {
                 onClick={() => setComposerOpen(true)}
                 className="h-11 rounded-[2px] border border-foreground/80 bg-foreground/85 px-4 text-xs text-background transition-all duration-300 hover:bg-foreground/75"
               >
-                New question
+                {t('New question')}
               </Button>
             </div>
           </nav>

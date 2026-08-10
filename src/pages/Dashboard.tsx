@@ -685,7 +685,13 @@ export default function Dashboard() {
                     <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
                       {t('Who answers')} · {Object.entries(order.filters)
                         .filter(([, value]) => Boolean(value))
-                        .map(([key, value]) => `${key.replace(/([A-Z])/g, ' $1')} ${value}`)
+                        .map(([key, value]) => {
+                          if (key === 'category' || key === 'field') {
+                            const filterCat = CATEGORY_BY_ID[value as CategoryId]
+                            return `${t('Field')} ${filterCat?.label ? t(filterCat.label) : value}`
+                          }
+                          return `${key.replace(/([A-Z])/g, ' $1')} ${value}`
+                        })
                         .join(' · ')}
                     </p>
                   ) : null}
