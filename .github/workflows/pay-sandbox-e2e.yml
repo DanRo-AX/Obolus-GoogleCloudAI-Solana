@@ -26,6 +26,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.89.0
       - run: npm ci
       - run: npm --prefix payment-gateway ci
+      - name: Build the backend before bounded runtime readiness checks
+        run: cargo build --locked --manifest-path backend/Cargo.toml
       - name: Charge, deliver, and recover through the real three-process stack
         run: npm run pay:sandbox:e2e
       - name: Reject a missing owner USDC account before durable prepare or collection
