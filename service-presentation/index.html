@@ -3,31 +3,33 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="OPENSHELF 사용자 시나리오와 실제 UI를 설명하는 인터랙티브 발표자료" />
-  <title>OPENSHELF — 사람의 기억을 검색하는 데이터 시장</title>
+  <meta name="description" content="OBOLUS 프로젝트와 현재 구현 기능을 설명하는 인터랙티브 HTML 소개서" />
+  <title>OBOLUS — 사람의 경험을 검색 가능한 자산으로</title>
   <style>
     :root {
       color-scheme: light;
-      --ink: #121212;
-      --muted: #686a6e;
-      --line: #d9dadd;
-      --paper: #ffffff;
-      --wash: #f3f4f5;
-      --blue: #eaf5fb;
-      --teal: #0f766e;
-      --red: #b42318;
-      --shadow: 0 24px 70px rgb(20 24 28 / 12%);
-      --page-x: clamp(28px, 5vw, 76px);
-      --page-y: clamp(76px, 8vh, 104px);
+      --ink: #11100f;
+      --paper: #f8f7f3;
+      --white: #fff;
+      --muted: #66635e;
+      --line: #d8d5ce;
+      --soft: #eceae4;
+      --green: #0d7668;
+      --green-soft: #dceee9;
+      --violet: #6752d9;
+      --violet-soft: #e8e4fb;
+      --orange: #d56528;
+      --red: #a9382f;
+      --page-x: clamp(34px, 5vw, 82px);
+      --page-y: clamp(76px, 9vh, 104px);
+      --shadow: 0 18px 58px rgb(24 22 18 / 12%);
     }
 
     * { box-sizing: border-box; }
-
     html, body { width: 100%; min-height: 100%; margin: 0; }
-
     body {
       overflow: hidden;
-      background: #e7e9eb;
+      background: #dfddd7;
       color: var(--ink);
       font-family: Inter, Pretendard, -apple-system, BlinkMacSystemFont, "Noto Sans KR", "Segoe UI", sans-serif;
       -webkit-font-smoothing: antialiased;
@@ -39,14 +41,14 @@
     .chrome {
       position: fixed;
       inset: 0 0 auto;
-      z-index: 30;
+      z-index: 40;
       display: flex;
       align-items: center;
       gap: 12px;
       height: 58px;
       padding: 0 22px;
-      border-bottom: 1px solid rgb(0 0 0 / 8%);
-      background: rgb(255 255 255 / 88%);
+      border-bottom: 1px solid rgb(0 0 0 / 9%);
+      background: rgb(248 247 243 / 91%);
       backdrop-filter: blur(18px);
     }
 
@@ -56,21 +58,19 @@
       gap: 10px;
       margin-right: auto;
       font-size: 13px;
-      font-weight: 800;
+      font-weight: 850;
       letter-spacing: .08em;
     }
 
     .brand-mark {
       display: grid;
       place-items: center;
-      width: 29px;
-      height: 29px;
-      border-radius: 3px;
+      width: 30px;
+      height: 30px;
       background: var(--ink);
       color: white;
       font-family: Georgia, serif;
-      font-size: 16px;
-      letter-spacing: -.12em;
+      font-size: 17px;
     }
 
     .chrome-button,
@@ -81,189 +81,155 @@
       min-width: 42px;
       height: 34px;
       border: 1px solid var(--line);
-      border-radius: 7px;
-      background: white;
+      border-radius: 3px;
+      background: var(--white);
       color: var(--ink);
       cursor: pointer;
       transition: background .18s ease, border-color .18s ease, transform .18s ease;
     }
 
-    .chrome-button { padding: 0 13px; font-size: 12px; font-weight: 700; }
-    .chrome-button:hover, .nav-button:hover { border-color: #9fa3a8; background: var(--wash); }
+    .chrome-button { padding: 0 13px; font-size: 12px; font-weight: 750; }
+    .chrome-button:hover, .nav-button:hover { border-color: #9f9b92; background: var(--soft); }
     .chrome-button:active, .nav-button:active { transform: translateY(1px); }
+    .counter { min-width: 68px; color: var(--muted); font: 750 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-align: center; }
 
-    .counter {
-      min-width: 62px;
-      color: var(--muted);
-      font-variant-numeric: tabular-nums;
-      font-size: 12px;
-      font-weight: 700;
-      text-align: center;
-    }
-
-    .deck {
-      position: relative;
-      width: 100vw;
-      height: 100dvh;
-      overflow: hidden;
-    }
-
+    .deck { position: relative; width: 100vw; height: 100dvh; overflow: hidden; }
     .slide {
       position: absolute;
       inset: 0;
       display: grid;
       grid-template-rows: auto minmax(0, 1fr) auto;
-      gap: clamp(16px, 2.5vh, 28px);
+      gap: clamp(17px, 2.5vh, 28px);
       width: 100%;
       height: 100%;
-      padding: var(--page-y) var(--page-x) clamp(72px, 8vh, 94px);
+      padding: var(--page-y) var(--page-x) clamp(70px, 8vh, 92px);
       overflow: auto;
       background: var(--paper);
       opacity: 0;
       pointer-events: none;
-      transform: translateX(24px) scale(.995);
+      transform: translateX(26px) scale(.996);
       transition: opacity .3s ease, transform .38s cubic-bezier(.2, .8, .2, 1);
     }
 
-    .slide.is-active {
-      z-index: 2;
-      opacity: 1;
-      pointer-events: auto;
-      transform: translateX(0) scale(1);
-    }
-
-    .slide.was-active { transform: translateX(-24px) scale(.995); }
+    .slide.is-active { z-index: 2; opacity: 1; pointer-events: auto; transform: translateX(0) scale(1); }
+    .slide.was-active { transform: translateX(-26px) scale(.996); }
+    .slide h1, .slide h2, .slide h3, .slide p, .slide figure { margin: 0; }
 
     .slide-kicker {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 12px;
-      color: var(--teal);
-      font-size: clamp(11px, 1vw, 14px);
-      font-weight: 850;
-      letter-spacing: .04em;
+      gap: 9px;
+      margin-bottom: 11px;
+      color: var(--green);
+      font: 850 clamp(11px, 1vw, 14px)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .08em;
       text-transform: uppercase;
     }
 
-    .slide h1,
-    .slide h2,
-    .slide h3,
-    .slide p { margin: 0; }
-
+    .slide-kicker::before { content: ""; width: 18px; height: 2px; background: currentColor; }
     .slide-title {
       max-width: 1180px;
-      font-size: clamp(34px, 4.1vw, 64px);
-      font-weight: 720;
-      letter-spacing: -.045em;
-      line-height: 1.06;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(34px, 4.2vw, 66px);
+      font-weight: 520;
+      letter-spacing: -.04em;
+      line-height: 1.02;
       word-break: keep-all;
     }
 
     .slide-subtitle {
-      max-width: 1050px;
-      margin-top: 14px !important;
+      max-width: 1080px;
+      margin-top: 13px !important;
       color: var(--muted);
-      font-size: clamp(16px, 1.55vw, 23px);
-      line-height: 1.55;
+      font-size: clamp(16px, 1.45vw, 22px);
+      line-height: 1.5;
       word-break: keep-all;
     }
 
-    .slide-foot {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    .slide-number { font-weight: 800; font-variant-numeric: tabular-nums; }
+    .slide-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 12px; }
+    .slide-number { color: var(--ink); font: 800 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
 
     .cover {
       grid-template-rows: 1fr auto;
-      align-content: center;
+      color: white;
       background:
-        radial-gradient(circle at 82% 18%, rgb(15 118 110 / 11%), transparent 27%),
-        linear-gradient(145deg, #fff 0%, #fff 62%, #f2f5f4 100%);
+        radial-gradient(circle at 76% 32%, rgb(86 70 206 / 43%), transparent 27%),
+        radial-gradient(circle at 22% 80%, rgb(13 118 104 / 32%), transparent 25%),
+        #0b0a10;
     }
 
-    .cover-main { align-self: center; max-width: 1050px; }
-
-    .cover .eyebrow {
-      margin-bottom: clamp(34px, 6vh, 68px);
-      font-size: 18px;
-      font-weight: 850;
-      letter-spacing: .08em;
+    .cover::after {
+      content: "";
+      position: absolute;
+      inset: 58px 0 0;
+      opacity: .35;
+      pointer-events: none;
+      background-image: radial-gradient(circle, rgb(255 255 255 / 58%) 0 1px, transparent 1.2px);
+      background-size: 46px 46px;
+      mask-image: linear-gradient(135deg, transparent, black 40%, transparent 92%);
     }
 
-    .cover-title {
-      max-width: 980px;
-      font-size: clamp(54px, 7.2vw, 112px);
-      font-weight: 560;
-      letter-spacing: -.06em;
-      line-height: .98;
-      word-break: keep-all;
-    }
+    .cover-main { position: relative; z-index: 1; align-self: center; max-width: 1120px; }
+    .cover .eyebrow { margin-bottom: clamp(30px, 6vh, 64px); font: 850 18px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .13em; }
+    .cover-title { max-width: 1080px; font-family: Georgia, "Times New Roman", serif; font-size: clamp(54px, 7.2vw, 110px); font-weight: 500; letter-spacing: -.065em; line-height: .94; word-break: keep-all; }
+    .cover-subtitle { max-width: 860px; margin-top: clamp(26px, 4vh, 46px) !important; color: #ddd9ef; font-size: clamp(20px, 2vw, 30px); line-height: 1.42; word-break: keep-all; }
+    .cover .slide-foot { position: relative; z-index: 1; color: #aaa6b2; }
 
-    .cover-subtitle {
-      max-width: 720px;
-      margin-top: clamp(28px, 5vh, 52px) !important;
-      color: #303236;
-      font-size: clamp(20px, 2vw, 31px);
-      line-height: 1.45;
-      word-break: keep-all;
-    }
-
-    .keyboard-hint {
-      display: inline-flex;
+    .problem-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(380px, .9fr);
+      gap: clamp(36px, 6vw, 92px);
       align-items: center;
-      gap: 8px;
-      color: var(--muted);
-      font-size: 12px;
+      min-height: 0;
     }
 
-    kbd {
-      display: inline-grid;
-      place-items: center;
-      min-width: 28px;
-      height: 26px;
-      padding: 0 7px;
-      border: 1px solid #cfd1d4;
-      border-bottom-width: 2px;
-      border-radius: 6px;
-      background: white;
-      color: #303236;
-      font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    .problem-statement {
+      max-width: 780px;
+      font: 520 clamp(36px, 4.4vw, 68px)/1.06 Georgia, "Times New Roman", serif;
+      letter-spacing: -.05em;
+      word-break: keep-all;
     }
 
-    .role-grid {
+    .problem-statement em { color: var(--green); font-style: normal; }
+    .problem-list { display: grid; gap: 0; }
+    .problem-item { display: grid; grid-template-columns: 54px 1fr; gap: 20px; padding: 20px 0; border-top: 1px solid var(--line); }
+    .problem-item span { color: var(--green); font: 850 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .problem-item h3 { font-size: clamp(21px, 1.9vw, 29px); letter-spacing: -.035em; }
+    .problem-item p { margin-top: 7px; color: var(--muted); font-size: clamp(14px, 1.12vw, 17px); line-height: 1.45; }
+
+    .segment-grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 14px;
       align-content: center;
+      min-height: 0;
+      border-top: 1px solid var(--ink);
+      border-bottom: 1px solid var(--ink);
     }
 
-    .role-card {
-      min-height: 150px;
-      padding: clamp(18px, 2vw, 28px);
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      background: white;
-    }
+    .segment { min-width: 0; padding: clamp(24px, 3vw, 42px); }
+    .segment + .segment { border-left: 1px solid var(--line); }
+    .segment-index { color: var(--green); font: 850 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+    .segment h3 { margin-top: 22px; font: 520 clamp(29px, 3vw, 45px)/1 Georgia, serif; letter-spacing: -.04em; }
+    .segment .audience { min-height: 74px; margin-top: 17px; color: var(--muted); font-size: clamp(15px, 1.2vw, 18px); line-height: 1.48; word-break: keep-all; }
+    .segment .need { margin-top: 23px; padding-top: 17px; border-top: 1px solid var(--line); font-size: clamp(15px, 1.2vw, 18px); font-weight: 720; line-height: 1.42; word-break: keep-all; }
 
-    .role-card strong {
-      display: block;
-      margin-bottom: 12px;
-      font-size: clamp(19px, 1.8vw, 27px);
-      letter-spacing: -.03em;
-    }
+    .adoption-list { display: grid; align-content: center; min-height: 0; border-top: 1px solid var(--ink); }
+    .adoption-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) 40px minmax(0, 1fr) 40px minmax(0, 1fr); gap: 18px; align-items: center; min-height: 126px; padding: 18px 0; border-bottom: 1px solid var(--line); }
+    .adoption-row > strong { font: 520 clamp(25px, 2.5vw, 38px)/1 Georgia, serif; letter-spacing: -.04em; }
+    .adoption-cell span { display: block; margin-bottom: 7px; color: var(--green); font: 850 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+    .adoption-cell p { color: #36342f; font-size: clamp(14px, 1.15vw, 17px); line-height: 1.42; word-break: keep-all; }
+    .adoption-arrow { color: var(--muted); font-size: 24px; text-align: center; }
 
-    .role-card p { color: var(--muted); font-size: clamp(14px, 1.15vw, 18px); line-height: 1.5; }
-    .role-card.primary { background: var(--blue); border-color: #cfe5ef; }
-    .role-card.alert { background: #fff7f6; border-color: #f0cbc6; }
+    .architecture-layout { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 13px; min-height: 0; }
+    .architecture-frame { min-height: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); }
+    .architecture-frame img { display: block; width: 100%; height: 100%; object-fit: contain; }
+    .architecture-legend { display: flex; flex-wrap: wrap; gap: 8px 20px; color: var(--muted); font-size: 12px; }
+    .legend-item { display: inline-flex; align-items: center; gap: 7px; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); }
+    .legend-dot.ai { background: var(--violet); }
+    .legend-dot.pay { background: var(--orange); }
 
-    .loop {
+    .feature-loop {
       position: relative;
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -271,230 +237,171 @@
       align-content: center;
     }
 
-    .loop::before {
-      content: "";
+    .feature-loop::before { content: ""; position: absolute; top: 57px; right: 8%; left: 8%; height: 1px; background: var(--ink); }
+    .feature-step { position: relative; z-index: 1; min-width: 0; }
+    .step-index { display: grid; place-items: center; width: 44px; height: 44px; margin: 35px 0 34px; border: 1px solid var(--ink); border-radius: 50%; background: var(--paper); font: 850 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .feature-step h3 { font-size: clamp(23px, 2.3vw, 35px); letter-spacing: -.04em; line-height: 1.08; }
+    .feature-step p { margin-top: 11px; color: var(--muted); font-size: clamp(15px, 1.25vw, 19px); line-height: 1.48; word-break: keep-all; }
+    .feature-step strong { display: block; margin-bottom: 8px; color: var(--green); font: 850 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+
+    .split { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(280px, .72fr); gap: clamp(26px, 4vw, 60px); min-height: 0; align-items: center; }
+    .split.reverse { grid-template-columns: minmax(280px, .72fr) minmax(0, 1.8fr); }
+    .split.equal { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    .media-frame { position: relative; min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: white; box-shadow: var(--shadow); }
+    .media-frame img { display: block; width: 100%; height: 100%; object-fit: contain; background: white; }
+    .product-shot::after {
+      content: "◩  OBOLUS";
       position: absolute;
-      top: 42px;
-      right: 10%;
-      left: 10%;
-      height: 1px;
-      background: var(--ink);
-    }
-
-    .loop-step { position: relative; z-index: 1; padding-right: 12px; }
-    .loop-node { width: 18px; height: 18px; margin: 34px 0 34px; border: 5px solid white; border-radius: 50%; background: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
-    .loop-step h3 { font-size: clamp(23px, 2.25vw, 34px); letter-spacing: -.035em; }
-    .loop-step p { margin-top: 10px; color: var(--muted); font-size: clamp(15px, 1.3vw, 20px); line-height: 1.5; word-break: keep-all; }
-    .loop-label { color: var(--teal); font-size: 12px; font-weight: 850; letter-spacing: .08em; }
-
-    .split {
-      display: grid;
-      grid-template-columns: minmax(0, 1.9fr) minmax(260px, .72fr);
-      gap: clamp(24px, 4vw, 58px);
-      min-height: 0;
-      align-items: center;
-    }
-
-    .split.reverse { grid-template-columns: minmax(260px, .72fr) minmax(0, 1.9fr); }
-
-    .media-frame {
-      position: relative;
-      min-width: 0;
-      overflow: hidden;
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      background: white;
-      box-shadow: 0 10px 30px rgb(20 24 28 / 7%);
-    }
-
-    .media-frame img {
-      display: block;
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-      background: white;
-    }
-
-    .media-wide { aspect-ratio: 1.97 / 1; }
-    .media-medium { aspect-ratio: 1.88 / 1; }
-
-    .copy-block h3 {
-      font-size: clamp(27px, 3vw, 44px);
-      letter-spacing: -.045em;
-      line-height: 1.1;
-      word-break: keep-all;
-    }
-
-    .copy-block p { margin-top: 18px; color: var(--muted); font-size: clamp(16px, 1.45vw, 22px); line-height: 1.55; word-break: keep-all; }
-
-    .bullet-list {
-      display: grid;
-      gap: 10px;
-      margin: 26px 0 0;
-      padding: 0;
-      list-style: none;
-    }
-
-    .bullet-list li { display: flex; gap: 10px; color: #35373a; font-size: clamp(15px, 1.35vw, 20px); line-height: 1.45; }
-    .bullet-list li::before { content: "•"; color: var(--teal); font-weight: 900; }
-
-    .pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 28px; }
-
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      min-height: 34px;
-      padding: 7px 13px;
-      border-radius: 7px;
-      background: var(--wash);
-      color: #303236;
-      font-size: 13px;
-      font-weight: 750;
-    }
-
-    .pill.dark { background: var(--ink); color: white; }
-    .pill.blue { background: var(--blue); }
-    .pill.red { background: #fdeceb; color: var(--red); }
-
-    .media-pair {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 42px minmax(0, 1fr);
-      gap: clamp(12px, 2vw, 26px);
-      min-height: 0;
-      align-items: center;
-    }
-
-    .media-pair.simple { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-
-    .arrow-disc {
-      display: grid;
-      place-items: center;
-      width: 38px;
-      height: 38px;
-      border-radius: 50%;
-      background: var(--ink);
-      color: white;
-      font-size: 20px;
-      font-weight: 800;
-    }
-
-    .caption-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(24px, 5vw, 80px); }
-    .caption h3 { margin-top: 14px; font-size: clamp(21px, 2vw, 30px); letter-spacing: -.035em; }
-    .caption p { margin-top: 8px; color: var(--muted); font-size: clamp(14px, 1.15vw, 18px); line-height: 1.45; }
-
-    .answer-metric {
-      padding: 18px 22px;
-      border-radius: 14px;
-      background: var(--ink);
-      color: white;
-      font-size: clamp(23px, 2.5vw, 36px);
-      font-weight: 850;
-      letter-spacing: -.03em;
-    }
-
-    .trust-strip {
-      padding: 14px 18px;
-      border: 1px solid #f0cbc6;
-      border-radius: 11px;
-      background: #fff7f6;
-      color: #6d302a;
-      font-size: clamp(14px, 1.15vw, 18px);
-      line-height: 1.45;
-    }
-
-    .closing {
-      grid-template-rows: 1fr auto;
-      background:
-        linear-gradient(90deg, transparent 0 72%, rgb(15 118 110 / 8%) 72% 100%),
-        white;
-    }
-
-    .closing-main { align-self: center; }
-    .closing-title { max-width: 900px; font-size: clamp(58px, 7vw, 108px); font-weight: 560; letter-spacing: -.06em; line-height: 1; }
-    .closing-points { display: grid; gap: 8px; margin-top: 52px; color: #34363a; font-size: clamp(18px, 1.8vw, 27px); }
-
-    .controls {
-      position: fixed;
-      z-index: 40;
-      right: 22px;
-      bottom: 18px;
-      left: 22px;
+      z-index: 2;
+      top: 0;
+      left: 0;
       display: flex;
       align-items: center;
-      gap: 10px;
-      pointer-events: none;
+      width: 14%;
+      min-width: 92px;
+      height: 8.2%;
+      min-height: 28px;
+      padding-left: 10px;
+      background: white;
+      color: #11100f;
+      font: 850 clamp(8px, .75vw, 11px)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .05em;
+    }
+    .media-wide { aspect-ratio: 1.916 / 1; }
+    .media-crop { aspect-ratio: 1.92 / 1; }
+    .media-crop img { object-fit: cover; object-position: center top; }
+
+    .copy-block h3 { font-size: clamp(27px, 3vw, 45px); letter-spacing: -.045em; line-height: 1.06; word-break: keep-all; }
+    .copy-block p { margin-top: 17px; color: var(--muted); font-size: clamp(16px, 1.4vw, 21px); line-height: 1.52; word-break: keep-all; }
+    .copy-block .big-number { display: block; margin-bottom: 16px; color: var(--green); font: 600 clamp(50px, 6vw, 88px)/.9 Georgia, serif; letter-spacing: -.06em; }
+
+    .bullet-list { display: grid; gap: 10px; margin: 24px 0 0; padding: 0; list-style: none; }
+    .bullet-list li { display: flex; gap: 11px; color: #36342f; font-size: clamp(15px, 1.25vw, 19px); line-height: 1.43; word-break: keep-all; }
+    .bullet-list li::before { content: "↳"; color: var(--green); font-weight: 900; }
+    .bullet-list li.alert::before { color: var(--red); }
+
+    .stat-line { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 27px; }
+    .tag { display: inline-flex; align-items: center; min-height: 31px; padding: 6px 11px; border: 1px solid var(--line); border-radius: 2px; background: white; color: #37342f; font: 750 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .03em; }
+    .tag.dark { border-color: var(--ink); background: var(--ink); color: white; }
+    .tag.green { border-color: #a6d0c7; background: var(--green-soft); color: #075b50; }
+    .tag.violet { border-color: #c7bff2; background: var(--violet-soft); color: #4332a4; }
+
+    .boundary {
+      display: grid;
+      grid-template-columns: 1fr 1px 1fr;
+      gap: clamp(28px, 4vw, 64px);
+      align-items: center;
+      min-height: 0;
     }
 
+    .boundary-line { width: 1px; height: 74%; background: var(--line); }
+    .boundary-side { display: grid; gap: 15px; align-content: center; }
+    .boundary-side h3 { font: 520 clamp(30px, 3.2vw, 49px)/1 Georgia, serif; letter-spacing: -.04em; }
+    .boundary-side p { color: var(--muted); font-size: clamp(16px, 1.35vw, 21px); line-height: 1.5; }
+    .data-row { display: grid; grid-template-columns: 118px 1fr; gap: 18px; padding: 15px 0; border-top: 1px solid var(--line); }
+    .data-row span:first-child { color: var(--green); font: 850 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; }
+    .data-row span:last-child { font-size: clamp(15px, 1.2vw, 18px); line-height: 1.42; }
+
+    .payment-steps { position: relative; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; align-content: center; }
+    .payment-step { position: relative; min-height: 250px; padding: 76px 24px 24px; border-top: 1px solid var(--ink); }
+    .payment-step::before { content: attr(data-step); position: absolute; top: -18px; left: 0; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--ink); color: white; font: 800 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .payment-step:not(:last-child)::after { content: "→"; position: absolute; top: -13px; right: 12px; color: var(--muted); font-size: 20px; }
+    .payment-step h3 { max-width: 180px; font-size: clamp(21px, 2vw, 30px); letter-spacing: -.035em; line-height: 1.08; }
+    .payment-step p { margin-top: 12px; color: var(--muted); font-size: clamp(14px, 1.1vw, 17px); line-height: 1.45; word-break: keep-all; }
+    .payment-step strong { display: block; margin-bottom: 10px; color: var(--green); font: 850 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+    .media-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(16px, 2.2vw, 30px); min-height: 0; align-items: center; }
+    .caption-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(20px, 4vw, 64px); margin-top: 17px; }
+    .caption h3 { font-size: clamp(21px, 2vw, 30px); letter-spacing: -.035em; }
+    .caption p { margin-top: 7px; color: var(--muted); font-size: clamp(14px, 1.12vw, 17px); line-height: 1.42; }
+
+    .liquidity {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+      gap: clamp(30px, 5vw, 76px);
+      align-items: center;
+      min-height: 0;
+    }
+
+    .liquidity-layers { display: grid; gap: 10px; }
+    .liquidity-layer { display: grid; grid-template-columns: 118px 1fr; gap: 20px; align-items: center; min-height: 98px; padding: 18px 22px; border: 1px solid var(--line); background: white; }
+    .liquidity-layer strong { font: 850 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+    .liquidity-layer p { color: var(--muted); font-size: clamp(15px, 1.25vw, 19px); line-height: 1.42; }
+    .liquidity-layer.human { border-color: #9ecdc4; background: var(--green-soft); }
+    .liquidity-layer.ai { border-color: #c5bdf1; background: var(--violet-soft); }
+    .liquidity-layer.call { border-color: #e0baa5; background: #fae9df; }
+
+    .terminal { overflow: hidden; border: 1px solid #2b2933; border-radius: 8px; background: #0f0e14; color: #e5e3ec; box-shadow: var(--shadow); font: 500 clamp(13px, 1.1vw, 17px)/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .terminal-bar { display: flex; align-items: center; gap: 7px; height: 42px; padding: 0 15px; border-bottom: 1px solid #2b2933; background: #17151e; }
+    .terminal-dot { width: 9px; height: 9px; border-radius: 50%; background: #625e6b; }
+    .terminal pre { min-height: 330px; margin: 0; padding: 25px 28px; overflow: hidden; white-space: pre-wrap; }
+    .terminal .prompt { color: #76d7c7; }
+    .terminal .accent { color: #b1a2ff; }
+    .terminal .dim { color: #898592; }
+
+    .trust-stack { display: grid; gap: 11px; }
+    .trust-item { display: grid; grid-template-columns: 62px 1fr; gap: 20px; align-items: start; padding: 17px 0; border-top: 1px solid var(--line); }
+    .trust-item span { color: var(--green); font: 850 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .trust-item h3 { font-size: clamp(20px, 1.8vw, 28px); letter-spacing: -.03em; }
+    .trust-item p { margin-top: 6px; color: var(--muted); font-size: clamp(14px, 1.1vw, 17px); line-height: 1.43; }
+
+    .closing { grid-template-rows: 1fr auto; color: white; background: #0c0b0f; }
+    .closing-main { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(360px, .8fr); gap: 70px; align-items: center; }
+    .closing-title { max-width: 820px; font: 500 clamp(54px, 6.5vw, 100px)/.98 Georgia, serif; letter-spacing: -.06em; }
+    .closing-copy { display: grid; gap: 19px; padding-left: 32px; border-left: 1px solid #49464f; }
+    .closing-copy p { color: #d1ced8; font-size: clamp(17px, 1.5vw, 23px); line-height: 1.48; }
+    .closing-copy strong { color: white; }
+    .closing .slide-foot { color: #96929d; }
+
+    .controls { position: fixed; z-index: 45; right: 22px; bottom: 18px; left: 22px; display: flex; align-items: center; gap: 10px; pointer-events: none; }
     .controls > * { pointer-events: auto; }
-
-    .progress {
-      flex: 1;
-      height: 4px;
-      margin: 0 8px;
-      overflow: hidden;
-      border-radius: 999px;
-      background: rgb(0 0 0 / 10%);
-    }
-
-    .progress-bar { width: 8.333%; height: 100%; border-radius: inherit; background: var(--teal); transition: width .3s ease; }
+    .progress { flex: 1; height: 3px; margin: 0 8px; overflow: hidden; background: rgb(0 0 0 / 13%); }
+    .progress-bar { width: 5.882%; height: 100%; background: var(--green); transition: width .3s ease; }
     .nav-button { font-size: 22px; font-weight: 450; }
     .nav-button:disabled { opacity: .35; cursor: default; }
 
-    .toc {
-      position: fixed;
-      z-index: 60;
-      top: 0;
-      right: 0;
-      bottom: 0;
-      width: min(430px, 92vw);
-      padding: 84px 22px 24px;
-      overflow: auto;
-      border-left: 1px solid var(--line);
-      background: rgb(255 255 255 / 96%);
-      box-shadow: -20px 0 50px rgb(20 24 28 / 12%);
-      backdrop-filter: blur(18px);
-      transform: translateX(102%);
-      transition: transform .28s ease;
-    }
-
+    .toc { position: fixed; z-index: 60; top: 0; right: 0; bottom: 0; width: min(450px, 92vw); padding: 84px 22px 24px; overflow: auto; border-left: 1px solid var(--line); background: rgb(248 247 243 / 97%); box-shadow: -20px 0 50px rgb(20 18 15 / 13%); backdrop-filter: blur(18px); transform: translateX(102%); transition: transform .28s ease; }
     .toc.is-open { transform: translateX(0); }
     .toc-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 18px; }
-    .toc h2 { margin: 0; font-size: 26px; }
-    .toc-close { width: 42px; height: 42px; border: 1px solid var(--line); border-radius: 50%; background: white; color: var(--ink); cursor: pointer; font-size: 24px; line-height: 1; }
-    .toc-close:hover { border-color: var(--teal); color: var(--teal); }
-    .toc-list { display: grid; gap: 6px; }
-    .toc-item { display: grid; grid-template-columns: 36px 1fr; gap: 10px; width: 100%; padding: 12px; border: 0; border-radius: 9px; background: transparent; color: var(--ink); cursor: pointer; text-align: left; }
-    .toc-item:hover, .toc-item.is-current { background: var(--wash); }
-    .toc-item span:first-child { color: var(--teal); font-size: 12px; font-weight: 850; }
+    .toc h2 { margin: 0; font: 520 29px/1 Georgia, serif; }
+    .toc-close { width: 42px; height: 42px; border: 1px solid var(--line); border-radius: 50%; background: white; cursor: pointer; font-size: 24px; }
+    .toc-list { display: grid; gap: 4px; }
+    .toc-item { display: grid; grid-template-columns: 38px 1fr; gap: 10px; width: 100%; padding: 12px; border: 0; background: transparent; color: var(--ink); cursor: pointer; text-align: left; }
+    .toc-item:hover, .toc-item.is-current { background: var(--soft); }
+    .toc-item span:first-child { color: var(--green); font: 850 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
     .toc-item span:last-child { font-size: 14px; font-weight: 700; line-height: 1.35; }
-
-    .scrim { position: fixed; z-index: 50; inset: 0; background: rgb(0 0 0 / 22%); opacity: 0; pointer-events: none; transition: opacity .25s ease; }
+    .scrim { position: fixed; z-index: 50; inset: 0; background: rgb(0 0 0 / 24%); opacity: 0; pointer-events: none; transition: opacity .25s ease; }
     .scrim.is-visible { opacity: 1; pointer-events: auto; }
 
-    @media (max-width: 900px) {
+    kbd { display: inline-grid; place-items: center; min-width: 28px; height: 25px; padding: 0 7px; border: 1px solid #c8c5bd; border-bottom-width: 2px; border-radius: 4px; background: white; color: #34322e; font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .keyboard-hint { display: inline-flex; align-items: center; gap: 7px; }
+
+    @media (max-width: 940px) {
       :root { --page-x: 24px; --page-y: 82px; }
       body { overflow: auto; }
       .slide { grid-template-rows: auto auto auto; align-content: start; padding-bottom: 92px; }
-      .slide-title { font-size: clamp(30px, 9vw, 46px); }
-      .slide-subtitle { font-size: 16px; }
-      .role-grid { grid-template-columns: 1fr 1fr; align-content: start; }
-      .loop { grid-template-columns: 1fr 1fr; align-content: start; }
-      .loop::before { display: none; }
-      .loop-node { margin: 16px 0; }
-      .split, .split.reverse { grid-template-columns: 1fr; align-content: start; }
+      .feature-loop { grid-template-columns: 1fr 1fr; }
+      .feature-loop::before { display: none; }
+      .step-index { margin: 15px 0; }
+      .split, .split.reverse, .split.equal, .boundary, .liquidity, .closing-main, .problem-layout { grid-template-columns: 1fr; }
+      .segment-grid { grid-template-columns: 1fr; }
+      .segment + .segment { border-top: 1px solid var(--line); border-left: 0; }
+      .adoption-row { grid-template-columns: 1fr; gap: 9px; }
+      .adoption-arrow { display: none; }
       .copy-block { order: -1; }
-      .media-pair, .media-pair.simple { grid-template-columns: 1fr; }
-      .arrow-disc { display: none; }
-      .caption-grid { grid-template-columns: 1fr; }
+      .boundary-line { display: none; }
+      .payment-steps { grid-template-columns: 1fr 1fr; gap: 18px; }
+      .media-pair, .caption-grid { grid-template-columns: 1fr; }
       .chrome-button[data-label="fullscreen"] { display: none; }
     }
 
     @media (max-width: 580px) {
       .chrome { padding: 0 12px; }
       .brand span:last-child { display: none; }
-      .role-grid { grid-template-columns: 1fr; }
+      .feature-loop, .payment-steps { grid-template-columns: 1fr; }
       .slide-foot .keyboard-hint { display: none; }
-      .cover-title { font-size: 52px; }
+      .cover-title { font-size: 49px; }
       .controls { right: 12px; left: 12px; }
     }
 
@@ -507,236 +414,324 @@
       body { overflow: visible; background: white; }
       .chrome, .controls, .toc, .scrim { display: none !important; }
       .deck { width: auto; height: auto; overflow: visible; }
-      .slide {
-        position: relative;
-        display: grid !important;
-        width: 16in;
-        height: 9in;
-        padding: .7in .75in .55in;
-        overflow: hidden;
-        opacity: 1 !important;
-        pointer-events: auto;
-        transform: none !important;
-        break-after: page;
-        page-break-after: always;
-      }
+      .slide { position: relative; display: grid !important; width: 16in; height: 9in; padding: .7in .75in .55in; overflow: hidden; opacity: 1 !important; pointer-events: auto; transform: none !important; break-after: page; page-break-after: always; }
     }
   </style>
 </head>
 <body>
   <header class="chrome">
-    <div class="brand"><span class="brand-mark">▥</span><span>OPENSHELF</span></div>
+    <div class="brand"><span class="brand-mark">O</span><span>OBOLUS</span></div>
     <button class="chrome-button" id="tocButton" type="button" aria-controls="toc" aria-expanded="false">목차</button>
     <button class="chrome-button" id="fullscreenButton" data-label="fullscreen" type="button">전체화면</button>
-    <div class="counter" id="counter" aria-live="polite">01 / 12</div>
+    <div class="counter" id="counter" aria-live="polite">01 / 17</div>
   </header>
 
   <main class="deck" id="deck">
-    <section class="slide cover is-active" data-title="인터넷에 없던 답을, 사람의 기억에서 산다" aria-label="1번 슬라이드">
+    <section class="slide cover is-active" data-title="사람의 경험을 검색 가능한 자산으로" aria-label="1번 슬라이드">
       <div class="cover-main">
-        <div class="eyebrow">OPENSHELF</div>
-        <h1 class="cover-title">인터넷에 없던 답을,<br />사람의 기억에서 산다</h1>
-        <p class="cover-subtitle">질문자는 경험을 사고, 응답자는 답변을 반복 수익이 나는 메모리 자산으로 만든다.</p>
+        <div class="eyebrow">OBOLUS · PROJECT BRIEF</div>
+        <h1 class="cover-title">사람의 경험을<br />검색 가능한 자산으로</h1>
+        <p class="cover-subtitle">질문자는 필요한 firsthand evidence를 사고, 기여자는 자신의 경험을 반복 수익이 나는 데이터베이스로 만든다.</p>
       </div>
-      <footer class="slide-foot">
-        <span>서비스 사용자 시나리오 · 실제 UI 데모</span>
-        <span class="keyboard-hint"><kbd>←</kbd><kbd>→</kbd> 키로 이동</span>
-      </footer>
+      <footer class="slide-foot"><span>2026.08.10 · PR #31 검증 기준</span><span class="keyboard-hint"><kbd>←</kbd><kbd>→</kbd> 이동</span></footer>
     </section>
 
-    <section class="slide" data-title="서비스를 쓰는 여섯 가지 사용자 상태" aria-label="2번 슬라이드">
+    <section class="slide" data-title="중요한 의사결정일수록 웹에 답이 없다" aria-label="2번 슬라이드">
       <header>
-        <div class="slide-kicker">WHO USES IT</div>
-        <h2 class="slide-title">서비스를 쓰는 여섯 가지 사용자 상태</h2>
-        <p class="slide-subtitle">한 사람이 질문자와 응답자를 오갈 수 있고, 제재·검토·탈퇴는 별도의 신뢰 경로로 관리된다.</p>
+        <div class="slide-kicker">THE PROBLEM</div>
+        <h2 class="slide-title">중요한 의사결정일수록 웹에 답이 없다</h2>
+        <p class="slide-subtitle">조직과 개인이 원하는 것은 평균적 정보가 아니라 “그 상황을 실제로 살아본 사람의 구체적 판단”이다.</p>
       </header>
-      <div class="role-grid">
-        <article class="role-card primary"><strong>방문자</strong><p>가입 전에 기존 메모리를 검색하고, 원하는 답이 있는지 먼저 확인한다.</p></article>
-        <article class="role-card primary"><strong>질문자 · 구매자</strong><p>검색 실패 시 인원과 단가를 정해 오픈콜을 만들고, 답변과 지급 내역을 받는다.</p></article>
-        <article class="role-card"><strong>경험 제공자</strong><p>프로필에 맞는 질문만 골라 답한다. 채택된 답변은 자신의 메모리에 축적된다.</p></article>
-        <article class="role-card alert"><strong>제한 · 이의제기 사용자</strong><p>무효 사유와 스트라이크를 확인하고, 계정당 한 번 이의제기를 요청할 수 있다.</p></article>
-        <article class="role-card"><strong>검토자 · 운영자</strong><p>이의제기를 승인하거나 거절하고 문서·슬롯·지급 상태를 함께 처리한다.</p></article>
-        <article class="role-card"><strong>탈퇴 사용자</strong><p>미사용 예산을 환불받고 프로필·메모리를 삭제한다. 감사 로그는 익명화된다.</p></article>
-      </div>
-      <footer class="slide-foot"><span>사용자 역할과 계정 상태</span><span class="slide-number">02</span></footer>
-    </section>
-
-    <section class="slide" data-title="답변이 다음 검색의 공급이 된다" aria-label="3번 슬라이드">
-      <header>
-        <div class="slide-kicker">THE LOOP</div>
-        <h2 class="slide-title">한 번 묻고 끝나지 않는다 — 답변이 다음 검색의 공급이 된다</h2>
-      </header>
-      <div class="loop">
-        <article class="loop-step"><span class="loop-label">01 · SEARCH</span><div class="loop-node"></div><h3>먼저 검색</h3><p>웹이 아니라 사람들이 직접 쓴 메모리에서 답을 찾는다.</p></article>
-        <article class="loop-step"><span class="loop-label">02 · BRANCH</span><div class="loop-node"></div><h3>없으면 질문</h3><p>검색 실패를 한 질문짜리 유료 오픈콜로 전환한다.</p></article>
-        <article class="loop-step"><span class="loop-label">03 · EARN</span><div class="loop-node"></div><h3>채택 시 지급</h3><p>구체적 답변이 통과되면 예약 예산에서 즉시 정산된다.</p></article>
-        <article class="loop-step"><span class="loop-label">04 · COMPOUND</span><div class="loop-node"></div><h3>다시 인용</h3><p>메모리가 다음 질문에 맞으면 새 답변 없이도 다시 수익화된다.</p></article>
-      </div>
-      <footer class="slide-foot"><span>검색 실패 → 공급 생성 → 검색 성공률 상승</span><span class="slide-number">03</span></footer>
-    </section>
-
-    <section class="slide" data-title="방문자는 먼저 사람의 경험을 검색한다" aria-label="4번 슬라이드">
-      <header>
-        <div class="slide-kicker">01 · VISITOR → BUYER</div>
-        <h2 class="slide-title">방문자는 먼저 ‘사람의 경험’을 검색한다</h2>
-        <p class="slide-subtitle">계정이나 긴 설문보다 질문이 먼저다. 필요한 상황 밴드를 함께 지정한다.</p>
-      </header>
-      <div class="split">
-        <figure class="media-frame media-wide"><img src="assets/02-buyer-target.png" alt="구매자가 질문과 네 가지 타깃 조건을 입력한 OPENSHELF 홈 화면" /></figure>
-        <div class="copy-block">
-          <span class="slide-kicker">검색 전</span>
-          <h3>누구의 경험이 필요한지 지정</h3>
-          <ul class="bullet-list"><li>연령대</li><li>거주 지역</li><li>가구 형태</li><li>경험 분야</li></ul>
-          <div class="pill-row"><span class="pill blue">검색은 무료</span><span class="pill dark">돈이 움직일 때 가입</span></div>
+      <div class="problem-layout">
+        <p class="problem-statement">사람의 경험은 가치가 있지만,<br /><em>검색·검증·지급·재사용</em>할 수 있는 형태가 아니다.</p>
+        <div class="problem-list">
+          <article class="problem-item"><span>01</span><div><h3>웹과 범용 AI는 일반론에 강하다</h3><p>지역·직무·가구·시점이 맞는 firsthand evidence는 찾기 어렵고 출처의 삶을 검증하기 어렵다.</p></div></article>
+          <article class="problem-item"><span>02</span><div><h3>설문과 인터뷰는 매번 다시 시작한다</h3><p>모집·스크리닝·보상·정리 비용이 반복되고, 한 번 모은 답변이 다음 질문의 자산이 되지 못한다.</p></div></article>
+          <article class="problem-item"><span>03</span><div><h3>기여자는 자신의 경험을 축적하지 못한다</h3><p>한 번 답하고 끝나며, 이후 같은 경험이 재사용돼도 원저자에게 수익과 통제가 돌아가지 않는다.</p></div></article>
         </div>
       </div>
-      <footer class="slide-foot"><span>낮은 진입 장벽 · 상황 기반 검색</span><span class="slide-number">04</span></footer>
+      <footer class="slide-foot"><span>정보 부족이 아니라 경험 데이터의 시장 부재</span><span class="slide-number">02 / 17</span></footer>
     </section>
 
-    <section class="slide" data-title="검색 실패가 질문 주문으로 바뀐다" aria-label="5번 슬라이드">
+    <section class="slide" data-title="세 종류의 고객이 같은 데이터 루프를 공유한다" aria-label="3번 슬라이드">
       <header>
-        <div class="slide-kicker">02 · BUYER</div>
-        <h2 class="slide-title">검색 실패가 곧바로 ‘질문 주문’으로 바뀐다</h2>
-        <p class="slide-subtitle">결과 없음 화면에서 인원과 단가를 정하면 Phantom 한 번으로 전체 Devnet USDC 예산을 에스크로에 넣는다.</p>
+        <div class="slide-kicker">TARGET USERS</div>
+        <h2 class="slide-title">세 종류의 고객이 같은 데이터 루프를 공유한다</h2>
+        <p class="slide-subtitle">기관·기업·개인의 질문은 다르지만, 필요한 사람을 찾고 정확한 경험에만 비용을 지불한다는 요구는 같다.</p>
+      </header>
+      <div class="segment-grid">
+        <article class="segment"><span class="segment-index">01 · INSTITUTION</span><h3>기관</h3><p class="audience">지자체·공공기관·대학·연구소·비영리 조직의 정책, 현장조사, 시민경험 담당자</p><p class="need">필요: 공개 통계가 놓치는 현장 맥락과 다양한 생활 집단의 구체적 증언</p></article>
+        <article class="segment"><span class="segment-index">02 · COMPANY</span><h3>기업</h3><p class="audience">전략·리서치·제품·CX·마케팅·HR 팀, 지역·산업별 시장을 이해해야 하는 운영 조직</p><p class="need">필요: 빠른 탐색, 타깃 경험자 접근, 사용한 evidence만 과금되는 조사 방식</p></article>
+        <article class="segment"><span class="segment-index">03 · INDIVIDUAL</span><h3>개인·에이전트</h3><p class="audience">창업가·연구자·크리에이터·구매자와, 직업·지역·돌봄·소비 경험을 가진 기여자</p><p class="need">필요: 긴 꼬리 질문에 대한 실제 답과, 자신의 경험에 대한 지속적 소유·수익</p></article>
+      </div>
+      <footer class="slide-foot"><span>타깃 정의이며 현재 고객사 실적을 의미하지 않음</span><span class="slide-number">03 / 17</span></footer>
+    </section>
+
+    <section class="slide" data-title="도입은 기존 업무의 검색 단계에서 시작한다" aria-label="4번 슬라이드">
+      <header>
+        <div class="slide-kicker">ADOPTION SCENARIOS</div>
+        <h2 class="slide-title">도입은 기존 업무의 ‘검색 단계’에서 시작한다</h2>
+        <p class="slide-subtitle">별도의 대형 패널 프로젝트보다 작게 시작한다. 답이 있으면 즉시 사고, 없으면 같은 화면에서 새 조사를 만든다.</p>
+      </header>
+      <div class="adoption-list">
+        <article class="adoption-row"><strong>기관</strong><div class="adoption-cell"><span>TRIGGER</span><p>정책·지역 서비스 설계 전, 특정 생활집단의 실제 불편을 확인</p></div><div class="adoption-arrow">→</div><div class="adoption-cell"><span>USE</span><p>상황 밴드로 검색하고 부족한 집단에 표적 오픈콜 게시</p></div><div class="adoption-arrow">→</div><div class="adoption-cell"><span>OUTPUT</span><p>익명·출처 연결된 현장 evidence와 지급·동의 감사 기록</p></div></article>
+        <article class="adoption-row"><strong>기업</strong><div class="adoption-cell"><span>TRIGGER</span><p>제품·상권·채용·고객경험 의사결정 전에 빠른 질적 근거 필요</p></div><div class="adoption-arrow">→</div><div class="adoption-cell"><span>USE</span><p>기존 human DB를 먼저 열고, gap만 소수 인터뷰로 보충</p></div><div class="adoption-arrow">→</div><div class="adoption-cell"><span>OUTPUT</span><p>질문별 비용이 보이는 인용 가능한 경험 묶음과 재검색 자산</p></div></article>
+        <article class="adoption-row"><strong>개인·Agent</strong><div class="adoption-cell"><span>TRIGGER</span><p>웹에 없는 지역·직업·생활 선택을 자연어로 질문</p></div><div class="adoption-arrow">→</div><div class="adoption-cell"><span>USE</span><p>웹 UI 또는 Antigravity가 검색·승인·결제를 한 흐름으로 수행</p></div><div class="adoption-arrow">→</div><div class="adoption-cell"><span>OUTPUT</span><p>사람의 원문 인용, AI 일반 기준선, 필요한 경우 신규 오픈콜</p></div></article>
+      </div>
+      <footer class="slide-foot"><span>검색 우선 · gap만 조사 · 사용한 evidence만 비용</span><span class="slide-number">04 / 17</span></footer>
+    </section>
+
+    <section class="slide" data-title="한 질문이 시장 전체를 한 바퀴 돈다" aria-label="5번 슬라이드">
+      <header>
+        <div class="slide-kicker">THE PRODUCT LOOP</div>
+        <h2 class="slide-title">한 질문이 검색·결제·답변·재판매를 한 바퀴 돈다</h2>
+        <p class="slide-subtitle">질문자와 기여자가 따로 노는 서비스가 아니다. 오늘의 답변이 내일의 검색 공급이 된다.</p>
+      </header>
+      <div class="feature-loop">
+        <article class="feature-step"><strong>ASKER</strong><div class="step-index">01</div><h3>사람의 문서를 검색</h3><p>질문과 상황 밴드로 후보를 찾고, 본문을 열기 전에 가격과 적합도를 본다.</p></article>
+        <article class="feature-step"><strong>SHELF-1</strong><div class="step-index">02</div><h3>가까운 몇 개만 선택</h3><p>관련성·신뢰·신선도·권위·저자 다양성을 함께 계산한다.</p></article>
+        <article class="feature-step"><strong>PAY.SH</strong><div class="step-index">03</div><h3>열린 문서만 지급</h3><p>선불 잔액에서 총액을 예약하고 성공한 DB 소유자에게 각각 정산한다.</p></article>
+        <article class="feature-step"><strong>CONTRIBUTOR</strong><div class="step-index">04</div><h3>답변이 자산으로 축적</h3><p>채택된 경험은 Memory에 들어가 다음 검색에서 다시 수익을 만든다.</p></article>
+      </div>
+      <footer class="slide-foot"><span>검색 → 정산 → 인용 → 공급 증가</span><span class="slide-number">05 / 17</span></footer>
+    </section>
+
+    <section class="slide" data-title="질문자는 검색부터 시작한다" aria-label="6번 슬라이드">
+      <header>
+        <div class="slide-kicker">01 · SEARCH</div>
+        <h2 class="slide-title">질문자는 설문을 주문하지 않는다 — 그냥 검색한다</h2>
+        <p class="slide-subtitle">질문과 연령·지역·가구·분야를 지정하면 Rust가 사람의 문서에서 먼저 답을 찾는다. 검색과 순위 계산은 무료다.</p>
+      </header>
+      <div class="split">
+        <figure class="media-frame media-wide product-shot"><img src="assets/15-home-latest.png" alt="OBOLUS Devnet 질문 입력 화면" /></figure>
+        <div class="copy-block">
+          <span class="big-number">₩0</span>
+          <h3>본문을 열기 전까지 무료</h3>
+          <ul class="bullet-list"><li>질문과 상황 밴드로 검색</li><li>후보 핸들·가격·점수만 공개</li><li>예산 안에서 소수 문서만 선택</li><li>사람 공급이 얇으면 AI 일반 기준선 제공</li></ul>
+          <div class="stat-line"><span class="tag dark">SHELF-1</span><span class="tag green">FREE DISCOVERY</span></div>
+        </div>
+      </div>
+      <footer class="slide-foot"><span>실제 UI 캡처 · 지갑 전용 릴리스</span><span class="slide-number">06 / 17</span></footer>
+    </section>
+
+    <section class="slide" data-title="검색 가능성과 본문 공개를 분리한다" aria-label="7번 슬라이드">
+      <header>
+        <div class="slide-kicker">02 · PRIVACY-SAFE RANKING</div>
+        <h2 class="slide-title">검색 가능성과 본문 공개를 분리한다</h2>
+        <p class="slide-subtitle">사람을 통째로 공개하지 않고도 데이터베이스를 발견하고 비교할 수 있다. 결제가 확정돼야 정확한 스냅샷 하나가 열린다.</p>
+      </header>
+      <div class="boundary">
+        <section class="boundary-side">
+          <h3>결제 전 · Discovery</h3>
+          <p>질문별로 필요한 사람과 문서를 찾되, private passage는 서버 밖으로 나오지 않는다.</p>
+          <div class="data-row"><span>VISIBLE</span><span>익명 핸들 · 분야 · 상황 밴드 · 가격 · 점수 · 해시 · 버전</span></div>
+          <div class="data-row"><span>RANKING</span><span>관련성 · 신선도 · 신뢰 · personalized PageRank · 저자 다양성</span></div>
+          <div class="data-row"><span>NOT VISIBLE</span><span>원문 · 개인 이메일 · 실명 · 비공개 인터뷰 맥락</span></div>
+        </section>
+        <div class="boundary-line" aria-hidden="true"></div>
+        <section class="boundary-side">
+          <h3>결제 후 · Delivery</h3>
+          <p>결제 콜백이 미리 커밋된 가격·소유자·해시·민트·네트워크와 모두 일치해야 본문이 열린다.</p>
+          <div class="data-row"><span>COMMIT</span><span>document · owner · content hash · version · price · expiry</span></div>
+          <div class="data-row"><span>RELEASE</span><span>정확히 결제된 immutable snapshot과 passage-level citation</span></div>
+          <div class="data-row"><span>CONTROL</span><span>잠금·동의 철회 시 검색과 인용에서 즉시 제외</span></div>
+        </section>
+      </div>
+      <footer class="slide-foot"><span>검색 인덱스와 원문 저장소의 권한 경계</span><span class="slide-number">07 / 17</span></footer>
+    </section>
+
+    <section class="slide" data-title="100명에게 물어도 승인 100번이 아니다" aria-label="8번 슬라이드">
+      <header>
+        <div class="slide-kicker">03 · PREPAID SETTLEMENT</div>
+        <h2 class="slide-title">100명에게 물어도 지갑 승인 100번이 아니다</h2>
+      </header>
+      <div class="split">
+        <figure class="media-frame media-wide product-shot"><img src="assets/16-prepaid-search.png" alt="5개 문서의 총액을 선불 잔액에서 예약하는 검색 결과 화면" /></figure>
+        <div class="copy-block">
+          <span class="big-number">5 DB</span>
+          <h3>₩50을 한 번 예약</h3>
+          <p>화면은 전체 예상 비용을 먼저 보여주고, 서버 에이전트는 선택된 다섯 소유자에게 독립적으로 지급한다.</p>
+          <ul class="bullet-list"><li>일회성 지갑 소유권 증명</li><li>잔액이 낮을 때만 Devnet USDC 충전</li><li>delegate·출금 권한 없음</li><li>실패한 문서 몫은 잔액으로 복구</li></ul>
+        </div>
+      </div>
+      <footer class="slide-foot"><span></span><span class="slide-number">08 / 17</span></footer>
+    </section>
+
+    <section class="slide" data-title="결제 실패를 돈의 손실로 만들지 않는다" aria-label="9번 슬라이드">
+      <header>
+        <div class="slide-kicker">04 · PAYMENT ENGINE</div>
+        <h2 class="slide-title">결제 실패를 사용자 돈의 손실로 만들지 않는다</h2>
+        <p class="slide-subtitle">한 질문을 durable job으로 만들고 문서별 지급을 독립 처리한다. 브라우저가 닫혀도 Cloud Run worker가 이어간다.</p>
+      </header>
+      <div class="payment-steps">
+        <article class="payment-step" data-step="01"><strong>RUST</strong><h3>정확한 DB 묶음 커밋</h3><p>소유자·해시·가격·민트·네트워크·만료를 고정한다.</p></article>
+        <article class="payment-step" data-step="02"><strong>LEDGER</strong><h3>총액을 원자적으로 예약</h3><p>부족하면 refill 402를 내고, 충분하면 job을 funded로 바꾼다.</p></article>
+        <article class="payment-step" data-step="03"><strong>PAY.SH + KMS</strong><h3>DB별로 직접 지급</h3><p>비추출 GCP KMS 키가 각 MPP challenge를 서명한다.</p></article>
+        <article class="payment-step" data-step="04"><strong>RECOVERY</strong><h3>성공한 스냅샷만 인용</h3><p>응답이 유실돼도 ledger에서 복구하고 중복 지급하지 않는다.</p></article>
+        <article class="payment-step" data-step="05"><strong>REFUND</strong><h3>미지급 몫은 자동 반환</h3><p>영구 실패한 atomic remainder를 prepaid credit으로 되돌린다.</p></article>
+      </div>
+      <footer class="slide-foot"><span>idempotent settlement · partial recovery · exact remainder</span><span class="slide-number">09 / 17</span></footer>
+    </section>
+
+    <section class="slide" data-title="검색 실패가 새 공급을 만든다" aria-label="10번 슬라이드">
+      <header>
+        <div class="slide-kicker">05 · MISS → OPEN CALL</div>
+        <h2 class="slide-title">검색 실패가 막다른 길이 아니라 새 공급을 만든다</h2>
+        <p class="slide-subtitle">사람 답변이 부족하면 같은 질문을 ‘단가 × 인원’의 오픈콜로 전환한다. 채워지지 않은 슬롯은 환불 가능하다.</p>
       </header>
       <div>
         <div class="media-pair">
-          <figure class="media-frame media-medium"><img src="assets/03-buyer-miss.png" alt="검색 결과가 없어 Ask them 버튼을 제시하는 화면" /></figure>
-          <div class="arrow-disc" aria-hidden="true">→</div>
-          <figure class="media-frame media-medium"><img src="assets/04-buyer-posted.png" alt="3명에게 500원씩 지급하는 오픈콜이 게시된 화면" /></figure>
+          <figure class="media-frame media-wide product-shot"><img src="assets/03-buyer-miss.png" alt="검색 결과가 없어 Ask them을 제안하는 화면" /></figure>
+          <figure class="media-frame media-wide product-shot"><img src="assets/04-buyer-posted.png" alt="인원과 단가가 정해진 오픈콜 게시 화면" /></figure>
         </div>
         <div class="caption-grid">
-          <div class="caption"><span class="pill">1 · MISS 감지</span><h3>“Ask them”으로 전환</h3><p>원하지 않으면 바로 종료할 수 있다.</p></div>
-          <div class="caption"><span class="pill blue">2 · 예산 예약</span><h3>3명 × ₩500 = ₩1,500</h3><p>채택분만 지급하고 미사용분은 환불한다.</p></div>
+          <div class="caption"><h3>1 · Human gap을 명시</h3><p>AI가 답인 척하지 않고, 지금 부족한 firsthand evidence를 공개한다.</p></div>
+          <div class="caption"><h3>2 · 질문 예산을 예약</h3><p>인원·단가·타깃을 확정하고, 수락된 답변마다 deterministic share를 지급한다.</p></div>
         </div>
       </div>
-      <footer class="slide-foot"><span>검색과 리서치 주문이 한 대화 안에서 연결</span><span class="slide-number">05</span></footer>
+      <footer class="slide-foot"><span></span><span class="slide-number">10 / 17</span></footer>
     </section>
 
-    <section class="slide" data-title="응답자는 상황과 경험으로 매칭된다" aria-label="6번 슬라이드">
-      <header>
-        <div class="slide-kicker">03 · CONTRIBUTOR</div>
-        <h2 class="slide-title">응답자는 실명 대신 ‘상황과 경험’으로 매칭된다</h2>
-        <p class="slide-subtitle">구매자에게 필요한 것은 신원 정보가 아니라, 이 답이 어떤 삶에서 나왔는지다.</p>
-      </header>
-      <div>
-        <div class="media-pair simple">
-          <figure class="media-frame media-medium"><img src="assets/05-onboarding-handle.png" alt="익명 핸들을 선택하는 응답자 온보딩 화면" /></figure>
-          <figure class="media-frame media-medium"><img src="assets/06-onboarding-bands.png" alt="연령, 지역, 가구 형태 밴드를 선택하는 온보딩 화면" /></figure>
-        </div>
-        <div class="caption-grid">
-          <div class="caption"><span class="pill dark">익명 핸들</span><h3>개인 신원은 숨긴다</h3><p>이름·이메일·사진은 구매자에게 노출되지 않는다.</p></div>
-          <div class="caption"><span class="pill blue">상황 밴드</span><h3>답변의 맥락은 남긴다</h3><p>정밀 값 대신 연령·지역·가구·분야 범주로 적합도를 판단한다.</p></div>
-        </div>
-      </div>
-      <footer class="slide-foot"><span>익명성 + 맥락 검증</span><span class="slide-number">06</span></footer>
-    </section>
-
-    <section class="slide" data-title="답할 수 있는 질문과 답하면 안 되는 질문을 구분한다" aria-label="7번 슬라이드">
-      <header>
-        <div class="slide-kicker">04 · CONTRIBUTOR</div>
-        <h2 class="slide-title">대시보드는 ‘답할 수 있는 질문’과 ‘답하면 안 되는 질문’을 구분한다</h2>
-        <p class="slide-subtitle">가격·마감·분야를 보고 고르되, 타깃이 맞지 않으면 답변 버튼 자체가 잠긴다.</p>
-      </header>
-      <div class="split">
-        <figure class="media-frame media-wide"><img src="assets/08-contributor-dashboard.png" alt="응답자에게 적합한 질문과 분야 밖 질문을 구분한 대시보드" /></figure>
-        <div class="copy-block">
-          <span class="slide-kicker">MATCHING</span>
-          <h3>Fits you</h3>
-          <p>타깃과 프로필이 모두 맞을 때만 Answer가 활성화된다.</p>
-          <h3 style="margin-top:42px;color:var(--red)">Outside your fields</h3>
-          <p>분야 밖 질문은 읽을 수 있어도 제출할 수 없다.</p>
-          <div class="pill-row"><span class="pill">가격 순</span><span class="pill">최신 순</span><span class="pill">적합도</span></div>
-        </div>
-      </div>
-      <footer class="slide-foot"><span>UI와 서버 양쪽에서 매칭 조건 검증</span><span class="slide-number">07</span></footer>
-    </section>
-
-    <section class="slide" data-title="돈을 받는 답변은 구체적 경험이어야 한다" aria-label="8번 슬라이드">
-      <header>
-        <div class="slide-kicker">05 · CONTRIBUTOR</div>
-        <h2 class="slide-title">돈을 받는 답변은 ‘구체적 경험’이어야 한다</h2>
-        <p class="slide-subtitle">장소·시간·숫자·행동이 없는 요약은 채택되지 않는다.</p>
-      </header>
-      <div class="split reverse">
-        <div class="copy-block">
-          <span class="slide-kicker">THE ONE THAT PAYS</span>
-          <h3>31일 · -27°C · 12시간</h3>
-          <p>실제 숫자가 답변을 검색 가능한 문서로 만든다.</p>
-          <ul class="bullet-list"><li>실제 장소·시간·숫자</li><li>내가 한 행동</li><li>거친 원문 그대로</li><li style="color:var(--red)">일반론과 요약은 제외</li></ul>
-          <div class="pill-row"><span class="pill dark">서버 품질 검사</span><span class="pill blue">통과 시 ₩500</span></div>
-        </div>
-        <figure class="media-frame media-wide"><img src="assets/09-answer-form.png" alt="구체적인 현장 경험과 숫자가 입력된 유료 답변 작성 화면" /></figure>
-      </div>
-      <footer class="slide-foot"><span>구체성 · 질문 반복률 · 최소 정보량 검사</span><span class="slide-number">08</span></footer>
-    </section>
-
-    <section class="slide" data-title="답변이 내 메모리에 쌓인다" aria-label="9번 슬라이드">
+    <section class="slide" data-title="기여자는 맞는 질문만 받고 구체성으로 통과한다" aria-label="11번 슬라이드">
       <header>
         <div class="slide-kicker">06 · CONTRIBUTOR</div>
-        <h2 class="slide-title">정산으로 끝나지 않는다 — 답변이 ‘내 메모리’에 쌓인다</h2>
-        <p class="slide-subtitle">처음에는 오픈콜 수익, 이후에는 자동 매칭 인용 수익으로 이어진다.</p>
+        <h2 class="slide-title">기여자는 자신에게 맞는 질문만 받고, 구체성으로 통과한다</h2>
+        <p class="slide-subtitle">프로필 밴드와 분야가 타깃에 맞아야 예약할 수 있다. 서버는 장소·시간·숫자·행동이 없는 일반론을 거절한다.</p>
+      </header>
+      <div>
+        <div class="media-pair">
+          <figure class="media-frame media-wide product-shot"><img src="assets/08-contributor-dashboard.png" alt="기여자에게 적합한 유료 질문을 보여주는 대시보드" /></figure>
+          <figure class="media-frame media-wide product-shot"><img src="assets/09-answer-form.png" alt="구체적인 firsthand 경험을 작성하는 답변 화면" /></figure>
+        </div>
+        <div class="caption-grid">
+          <div class="caption"><h3>Fits you만 Answer 활성화</h3><p>분야·연령·지역·가구 밴드는 UI뿐 아니라 Rust가 다시 검증한다.</p></div>
+          <div class="caption"><h3>구체적 경험만 sellable</h3><p>중복·직접식별자·짧은 일반론을 차단하고, 통과한 원문만 문서가 된다.</p></div>
+        </div>
+      </div>
+      <footer class="slide-foot"><span></span><span class="slide-number">11 / 17</span></footer>
+    </section>
+
+    <section class="slide" data-title="답변은 한 번 지급되고 계속 수익화된다" aria-label="12번 슬라이드">
+      <header>
+        <div class="slide-kicker">07 · MEMORY AS AN ASSET</div>
+        <h2 class="slide-title">답변은 한 번 지급되고, Memory에서 계속 수익화된다</h2>
+        <p class="slide-subtitle">채택된 답변은 버전·해시·신뢰도·동의 상태를 가진 human document가 된다. 다음 질문에 인용되면 새 답변 없이 다시 지급된다.</p>
       </header>
       <div class="split reverse">
         <div class="copy-block">
-          <figure class="media-frame media-wide"><img src="assets/10-earned.png" alt="500원 적립 완료 화면" /></figure>
-          <h3 style="margin-top:24px">지급 청구 생성</h3>
-          <p>정확한 Devnet USDC 몫이 검증된 작성자 지갑의 payout claim이 되고, 워커가 확인 후 지급 완료로 바꾼다.</p>
-          <div class="answer-metric" style="margin-top:28px">₩500 · OPEN CALL</div>
+          <span class="big-number">2×</span>
+          <h3>답변 수익 + 인용 수익</h3>
+          <ul class="bullet-list"><li>오픈콜 채택 시 첫 지급</li><li>Memory에 immutable version 저장</li><li>Auto-match가 다음 질문에 연결</li><li>잠금·수정·내보내기·접근 로그 지원</li></ul>
+          <div class="stat-line"><span class="tag green">HUMAN INVENTORY</span><span class="tag dark">AUTO-MATCH</span></div>
         </div>
-        <div>
-          <figure class="media-frame media-wide"><img src="assets/11-memory.png" alt="수익 원장과 메모리 스트림, 자동 매칭 스위치가 있는 My memory 화면" /></figure>
-          <div class="pill-row"><span class="pill blue">AUTO-MATCH ON</span><span class="pill">다음 질문에 인용되면 다시 수익</span></div>
-        </div>
+        <figure class="media-frame media-wide product-shot"><img src="assets/11-memory.png" alt="수익 원장과 자동 매칭을 보여주는 My Memory 화면" /></figure>
       </div>
-      <footer class="slide-foot"><span>답변 → 메모리 → 재인용 수익</span><span class="slide-number">09</span></footer>
+      <footer class="slide-foot"><span>사람의 답변만 가격·권위·수익을 가진다</span><span class="slide-number">12 / 17</span></footer>
     </section>
 
-    <section class="slide" data-title="구매자는 답변과 지급 내역을 함께 받는다" aria-label="10번 슬라이드">
+    <section class="slide" data-title="AI는 시장을 대체하지 않고 유동성을 공급한다" aria-label="13번 슬라이드">
       <header>
-        <div class="slide-kicker">07 · BUYER</div>
-        <h2 class="slide-title">구매자는 답변·상황 밴드·지급 내역을 한 화면에서 받는다</h2>
-        <p class="slide-subtitle">누가 썼는지는 익명으로, 어떤 상황에서 나온 답인지는 검증 가능하게 전달한다.</p>
+        <div class="slide-kicker">08 · HUMAN-FIRST AI LIQUIDITY</div>
+        <h2 class="slide-title">AI는 시장을 대체하지 않고 유동성을 공급한다</h2>
+        <p class="slide-subtitle">Gemini on Vertex AI는 빈 화면을 막는 무료 일반 기준선이다. 가격·권위·수익은 언제나 사람의 firsthand document에만 붙는다.</p>
       </header>
-      <div class="split">
-        <figure class="media-frame media-wide"><img src="assets/12-buyer-answer.png" alt="익명 문서 핸들과 상황 밴드, 지급액이 표시된 구매자 답변 수신 화면" /></figure>
+      <div class="liquidity">
+        <div class="liquidity-layers">
+          <article class="liquidity-layer human"><strong>HUMAN</strong><p>구체적인 lived experience · 가격 있음 · Memory 저장 · 검색 권위와 수익 생성</p></article>
+          <article class="liquidity-layer ai"><strong>AI BASELINE</strong><p>일반적 방향과 판단 기준만 · 무료 · 만료됨 · 재판매·랭킹·인용 수익 없음</p></article>
+          <article class="liquidity-layer call"><strong>OPEN CALL</strong><p>AI가 밝힌 firsthand gap을 사람에게 돌려 새 human inventory로 전환</p></article>
+        </div>
         <div class="copy-block">
-          <span class="slide-kicker">DELIVERED</span>
-          <h3>답변 1건<br />₩500 지급</h3>
-          <p>함께 보이는 것</p>
-          <ul class="bullet-list"><li>익명 문서 핸들</li><li>연령·지역·가구·분야</li><li>실제 인용된 원문</li><li>지급 금액과 출처</li></ul>
+          <h3>사람 공급이 얇을 때만 켜지고, 충분해지면 스스로 꺼진다</h3>
+          <ul class="bullet-list"><li>private shelf passage는 Vertex AI에 전송하지 않음</li><li>예산이 부족할 뿐 사람이 충분하면 baseline 생성 거절</li><li>AI output은 open-call 슬롯을 채울 수 없음</li><li>기여자에게는 판매 보장 없는 starter 질문만 제공</li></ul>
+          <div class="stat-line"><span class="tag violet">GENERAL FLOOR</span><span class="tag green">HUMAN UPSIDE</span></div>
         </div>
       </div>
-      <footer class="slide-foot"><span>익명성은 유지하고 답변 맥락은 검증</span><span class="slide-number">10</span></footer>
+      <footer class="slide-foot"><span>AI = liquidity · Human = asset</span><span class="slide-number">13 / 17</span></footer>
     </section>
 
-    <section class="slide" data-title="제재와 이의제기, 복구 경로" aria-label="11번 슬라이드">
+    <section class="slide" data-title="Web과 Antigravity 모두 지갑 하나로 시작한다" aria-label="14번 슬라이드">
       <header>
-        <div class="slide-kicker">08 · TRUST PATH</div>
-        <h2 class="slide-title">낮은 품질은 숨기지 않고, 제재·이의제기·복구 경로를 남긴다</h2>
-        <p class="slide-subtitle">응답자에게는 근거가 보이고, 검토자에게는 원자적 복구 또는 유지 권한이 있다.</p>
+        <div class="slide-kicker">09 · AGENT INTERFACE</div>
+        <h2 class="slide-title">Web과 Antigravity 모두 지갑 하나로 시작한다</h2>
       </header>
-      <div>
-        <div class="media-pair simple">
-          <figure class="media-frame media-medium"><img src="assets/14-disputant-memory.png" alt="무효 답변 사유와 스트라이크, 이의제기 상태가 표시된 응답자 메모리" /></figure>
-          <figure class="media-frame media-medium"><img src="assets/13-admin-dispute.png" alt="이의제기 사유를 검토하고 승인 또는 거절하는 관리자 화면" /></figure>
+      <div class="split equal">
+        <div class="terminal" aria-label="Antigravity OBOLUS 실행 예시">
+          <div class="terminal-bar"><span class="terminal-dot"></span><span class="terminal-dot"></span><span class="terminal-dot"></span></div>
+          <pre><span class="prompt">$</span> agy
+
+<span class="accent">/ask-people</span> 성수동 점심 경험을
+20명에게 물어봐. 총 5 USDC 이내.
+
+✓ free search
+✓ exact aggregate quote
+✓ approval required
+✓ Pay.sh settlement
+✓ cited human evidence
+
+<span class="prompt">$</span> <span class="accent">/contribute</span>
+내가 답할 수 있는 질문만 보여줘.
+<span class="dim">→ reserve · answer · earnings · payout</span></pre>
         </div>
-        <div class="caption-grid">
-          <div class="caption"><span class="pill red">응답자</span><h3>근거를 확인하고 이의제기</h3><p>무효 사유·스트라이크·검토 상태가 메모리 스트림에 남는다.</p></div>
-          <div class="caption"><span class="pill blue">검토자</span><h3>복구하거나 제재를 유지</h3><p>승인하면 문서·슬롯·지급을 함께 복구하고, 거절하면 기존 판정을 유지한다.</p></div>
+        <div class="copy-block">
+          <h3>서비스 계정은 지갑, 모델 계정은 별도</h3>
+          <div class="data-row"><span>MODEL</span><span>Antigravity 로그인과 Gemini quota에만 사용</span></div>
+          <div class="data-row"><span>OBOLUS</span><span>지갑 서명으로 로그인하고 프로필·Memory·원장을 연결</span></div>
+          <div class="data-row"><span>PAY</span><span>Web은 Phantom, Agent는 OS credential store의 로컬 서명 계정</span></div>
+          <p>출시 경로에는 이메일과 비밀번호가 없다. 사용자는 지갑 소유권을 한 번 증명하고, 정확한 Devnet 총액을 확인한 뒤 결제한다.</p>
+          <div class="stat-line"><span class="tag dark">23 TOOLS</span><span class="tag green">DEVNET ONLY</span></div>
         </div>
-        <div class="trust-strip" style="margin-top:20px">자동 판정 → 계정당 1회 이의제기 → 관리자 판정 · 탈퇴 시 프로필과 메모리는 삭제되고 감사 로그는 익명화</div>
       </div>
-      <footer class="slide-foot"><span>품질 규칙과 사용자 구제 절차</span><span class="slide-number">11</span></footer>
+      <footer class="slide-foot"><span>지갑 전용 로그인 구현·자동 검증 · private key 비수탁</span><span class="slide-number">14 / 17</span></footer>
     </section>
 
-    <section class="slide closing" data-title="한 번의 경험이 두 번 수익이 된다" aria-label="12번 슬라이드">
-      <div class="closing-main">
-        <div class="slide-kicker">OPENSHELF</div>
-        <h2 class="closing-title">한 번의 경험이<br />두 번 수익이 된다</h2>
-        <div class="closing-points"><span>1 · 질문에 답할 때</span><span>2 · 이후 검색에 인용될 때</span><span>3 · 데이터가 쌓일수록 더 잘 매칭될 때</span></div>
+    <section class="slide" data-title="제어 평면과 정산 평면을 분리한다" aria-label="15번 슬라이드">
+      <header>
+        <div class="slide-kicker">SYSTEM ARCHITECTURE · PRODUCTION TARGET</div>
+        <h2 class="slide-title">제어 평면과 정산 평면을 분리한다</h2>
+        <p class="slide-subtitle">Cloudflare Pages와 Cloud Run을 서비스 경계로 두고, 운영 원장은 ax-apps-db의 전용 obolus DB에, 롤백 감사는 ax-apps-storage의 전용 prefix에 둔다.</p>
+      </header>
+      <div class="architecture-layout">
+        <figure class="architecture-frame"><img src="assets/system-architecture.svg?v=kr2" alt="Cloudflare Pages, Antigravity, Cloud Run API, Cloud SQL PostgreSQL, Cloud Storage, Vertex AI, KMS, Pay.sh와 Solana Devnet을 연결한 운영 목표 아키텍처" /></figure>
+        <div class="architecture-legend">
+          <span class="legend-item"><span class="legend-dot"></span>OBOLUS control plane · 지갑 세션, 검색, quote, PostgreSQL ledger</span>
+          <span class="legend-item"><span class="legend-dot ai"></span>Bounded AI · 일반 기준선과 paid-evidence synthesis</span>
+          <span class="legend-item"><span class="legend-dot pay"></span>Settlement plane · KMS 서명과 DB별 직접 지급</span>
+          <span class="legend-item">→ 모든 운영 리소스: initiative=kr2 · 최소권한 서비스 계정</span>
+        </div>
       </div>
-      <footer class="slide-foot"><span>사람의 기억을 검색 가능한 데이터 시장으로</span><span class="slide-number">12</span></footer>
+      <footer class="slide-foot"><span>Cloudflare Pages · Cloud Run · ax-apps-db · ax-apps-storage · Vertex AI · KMS · Pay.sh · Solana</span><span class="slide-number">15 / 17</span></footer>
+    </section>
+
+    <section class="slide" data-title="품질 실패와 결제 실패 모두 복구 경로가 있다" aria-label="16번 슬라이드">
+      <header>
+        <div class="slide-kicker">10 · TRUST & RECOVERY</div>
+        <h2 class="slide-title">품질 실패와 결제 실패 모두 복구 경로가 있다</h2>
+        <p class="slide-subtitle">시장 신뢰는 성공 화면이 아니라 실패를 어떻게 기록하고 되돌리는지에서 만들어진다.</p>
+      </header>
+      <div class="split equal">
+        <div class="trust-stack">
+          <article class="trust-item"><span>01</span><div><h3>중복·교차 결제 방지</h3><p>query·document·quote에 묶인 ledger가 유실 응답을 복구하고, 동일 가격의 다른 문서로 credential을 재사용하지 못하게 한다.</p></div></article>
+          <article class="trust-item"><span>02</span><div><h3>부분 실패 잔액 복구</h3><p>영구 실패한 문서 몫만 정확히 prepaid credit으로 되돌린다.</p></div></article>
+          <article class="trust-item"><span>03</span><div><h3>품질 스트라이크</h3><p>2회면 auto-match·지급 보류, 3회면 추가 제출을 정지한다.</p></div></article>
+          <article class="trust-item"><span>04</span><div><h3>이의제기와 원자적 복구</h3><p>관리자 승인 시 문서·슬롯·지급을 한 트랜잭션으로 복원한다.</p></div></article>
+        </div>
+        <figure class="media-frame media-wide product-shot"><img src="assets/13-admin-dispute.png" alt="관리자가 이의제기를 검토하고 승인 또는 거절하는 화면" /></figure>
+      </div>
+      <footer class="slide-foot"><span>일반 CI 6/6 · Pay sandbox E2E 5/5 · PostgreSQL 16 contract 포함</span><span class="slide-number">16 / 17</span></footer>
+    </section>
+
+    <section class="slide closing" data-title="가장 좋은 시작은 폐쇄형 분야 파일럿이다" aria-label="17번 슬라이드">
+      <div class="closing-main">
+        <h2 class="closing-title">가장 좋은 시작은<br />폐쇄형 분야<br />파일럿이다</h2>
+        <div class="closing-copy">
+          <p><strong>1 · 검증 완료</strong> 지갑 전용 로그인, PostgreSQL 동시성, Pay.sh 결제·장애 복구·credential 경계를 자동화했다.</p>
+          <p><strong>2 · 운영 연결</strong> Cloud Run 후보를 ax-apps-db의 obolus DB와 ax-apps-storage의 전용 감사 prefix에 연결한다.</p>
+          <p><strong>3 · 복구 훈련</strong> 실제 PostgreSQL restore와 GCS 감사 기록을 사용해 트래픽 차단·대조·재개 절차를 검증한다.</p>
+          <p><strong>4 · 폐쇄형 파일럿</strong> 동의된 기여자 집단에서 time-to-evidence, human coverage, recovery rate를 측정한다.</p>
+        </div>
+      </div>
+      <footer class="slide-foot"><span>현재: 코드·자동 E2E 준비 완료 · 다음: Cloud SQL cutover와 실제 restore drill</span><span class="slide-number">17 / 17</span></footer>
     </section>
   </main>
 
@@ -748,10 +743,7 @@
 
   <div class="scrim" id="scrim"></div>
   <aside class="toc" id="toc" aria-label="발표자료 목차" aria-hidden="true">
-    <div class="toc-head">
-      <h2>목차</h2>
-      <button class="toc-close" id="tocCloseButton" type="button" aria-label="목차 닫기">×</button>
-    </div>
+    <div class="toc-head"><h2>프로젝트 소개서</h2><button class="toc-close" id="tocCloseButton" type="button" aria-label="목차 닫기">×</button></div>
     <div class="toc-list" id="tocList"></div>
   </aside>
 
@@ -795,7 +787,7 @@
         progressBar.style.width = `${((index + 1) / slides.length) * 100}%`;
         prevButton.disabled = index === 0;
         nextButton.disabled = index === slides.length - 1;
-        document.title = `${slides[index].dataset.title} — OPENSHELF`;
+        document.title = `${slides[index].dataset.title} — OBOLUS`;
         if (updateHash) history.replaceState(null, '', `#${index + 1}`);
       }
 
@@ -819,7 +811,6 @@
       tocButton.addEventListener('click', () => toc.classList.contains('is-open') ? closeToc() : openToc());
       tocCloseButton.addEventListener('click', closeToc);
       scrim.addEventListener('click', closeToc);
-
       fullscreenButton.addEventListener('click', async () => {
         try {
           if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
