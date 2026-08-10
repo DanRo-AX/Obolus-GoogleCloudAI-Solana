@@ -22,7 +22,7 @@ use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_kn
 
 use crate::{
     domain::{
-        AccountControls, AiLiquidityMetrics, AuthResponse, BalanceSummary,
+        AccountControls, AdminOperationsSnapshot, AiLiquidityMetrics, AuthResponse, BalanceSummary,
         BeginResearchPaymentRequest, BindPayShChallengesRequest, ChainSettlementReceipt,
         ChatAnswer, ClaimPaymentAttemptRequest, CompletePayoutClaimRequest, ContributorManifest,
         ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
@@ -449,6 +449,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/v1/admin/ai-liquidity-metrics",
             get(ai_liquidity_metrics),
         )
+        .route("/api/v1/admin/operations", get(admin_operations))
         .route("/api/v1/admin/disputes/{id}/review", post(review_dispute))
         .route(
             "/api/v1/admin/document-feedback",
@@ -1440,6 +1441,14 @@ async fn ai_liquidity_metrics(
 ) -> Result<Json<AiLiquidityMetrics>, ApiError> {
     let user = authenticated(&state, &headers)?;
     Ok(Json(state.store.ai_liquidity_metrics(&user.id)?))
+}
+
+async fn admin_operations(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<AdminOperationsSnapshot>, ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok(Json(state.store.admin_operations_snapshot(&user.id)?))
 }
 
 async fn chat_answers(

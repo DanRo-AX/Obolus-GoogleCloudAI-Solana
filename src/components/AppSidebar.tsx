@@ -1,5 +1,5 @@
 import { NavLink, Link } from 'react-router-dom'
-import { LogIn, LogOut, PanelLeft, ShieldCheck } from 'lucide-react'
+import { Activity, LogIn, LogOut, PanelLeft, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CATEGORY_BY_ID } from '@/data/categories'
 import { NAV_ITEMS } from '@/data/nav'
@@ -279,23 +279,42 @@ export function AppSidebar() {
                   </li>
               ))}
               {account?.role === 'admin' ? (
-                <li className="relative">
-                  <NavLink
-                    to="/admin/disputes"
-                    className={({ isActive }) =>
-                      cn(
-                        MENU_BUTTON,
-                        'group/nav flex h-8 items-center gap-2.5 rounded-[4px] px-2 text-[13px] tracking-[-0.006em] transition-colors [&>svg]:size-[15px] [&>svg]:shrink-0',
-                        isActive
-                          ? 'bg-background font-medium text-foreground shadow-[0_1px_2px_rgba(20,20,25,0.05)]'
-                          : 'text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground',
-                      )
-                    }
-                  >
-                    <ShieldCheck className="opacity-70" />
-                    <span>{t('Disputes')}</span>
-                  </NavLink>
-                </li>
+                <>
+                  <li className="relative">
+                    <NavLink
+                      to="/admin/operations"
+                      className={({ isActive }) =>
+                        cn(
+                          MENU_BUTTON,
+                          'group/nav flex h-8 items-center gap-2.5 rounded-[4px] px-2 text-[13px] tracking-[-0.006em] transition-colors [&>svg]:size-[15px] [&>svg]:shrink-0',
+                          isActive
+                            ? 'bg-background font-medium text-foreground shadow-[0_1px_2px_rgba(20,20,25,0.05)]'
+                            : 'text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground',
+                        )
+                      }
+                    >
+                      <Activity className="opacity-70" />
+                      <span>{t('Operations')}</span>
+                    </NavLink>
+                  </li>
+                  <li className="relative">
+                    <NavLink
+                      to="/admin/disputes"
+                      className={({ isActive }) =>
+                        cn(
+                          MENU_BUTTON,
+                          'group/nav flex h-8 items-center gap-2.5 rounded-[4px] px-2 text-[13px] tracking-[-0.006em] transition-colors [&>svg]:size-[15px] [&>svg]:shrink-0',
+                          isActive
+                            ? 'bg-background font-medium text-foreground shadow-[0_1px_2px_rgba(20,20,25,0.05)]'
+                            : 'text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground',
+                        )
+                      }
+                    >
+                      <ShieldCheck className="opacity-70" />
+                      <span>{t('Disputes')}</span>
+                    </NavLink>
+                  </li>
+                </>
               ) : null}
               </ul>
             </div>

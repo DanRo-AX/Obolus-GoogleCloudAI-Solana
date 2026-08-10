@@ -11,6 +11,7 @@ import { Splash } from '@/components/Splash'
 import { TooltipProvider } from '@/components/ui/primitives'
 import { UiProvider } from '@/state/ui'
 const AdminDisputes = lazy(() => import('@/pages/AdminDisputes'))
+const AdminOperations = lazy(() => import('@/pages/AdminOperations'))
 const Archive = lazy(() => import('@/pages/Archive'))
 const Chat = lazy(() => import('@/pages/Chat'))
 const Coverage = lazy(() => import('@/pages/Coverage'))
@@ -36,6 +37,7 @@ const TITLES: Record<string, string> = {
   '/terms': 'Terms · Obolus',
   '/privacy': 'Privacy · Obolus',
   '/login': 'Obolus',
+  '/admin/operations': 'Operations · Obolus',
 }
 
 function DocumentTitle() {
@@ -65,6 +67,7 @@ export default function App() {
                 <Route path="/onboarding" element={<Onboarding />} />
                 <Route path="/answer/:orderId" element={<Survey />} />
                 <Route path="/admin/disputes" element={<AdminDisputes />} />
+                <Route path="/admin/operations" element={<AdminOperations />} />
                 <Route path="/coverage" element={<Coverage />} />
                 <Route
                   path="/shelf"
