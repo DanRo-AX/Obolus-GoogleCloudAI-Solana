@@ -184,7 +184,7 @@ function ThreadCard({ row }: { row: Row }) {
       <div className="flex flex-wrap items-start gap-3 p-5">
         <div className="min-w-0 flex-1">
           <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            {relative(chat.createdAt)} · {chat.messages.length}{t(' messages')}
+            {relative(chat.createdAt, t)} · {chat.messages.length}{t(' messages')}
           </p>
           <p className="mt-1.5 text-[15px] leading-relaxed">{chat.title}</p>
         </div>
@@ -263,10 +263,11 @@ function ThreadCard({ row }: { row: Row }) {
   )
 }
 
-function relative(ts: number) {
+/** Not a component, so the translator arrives as an argument, not a hook. */
+function relative(ts: number, t: (en: string) => string) {
   const min = Math.round((Date.now() - ts) / 60000)
-  if (min < 60) return `${Math.max(1, min)}m ago`
+  if (min < 60) return `${Math.max(1, min)}${t('m ago')}`
   const hr = Math.round(min / 60)
-  if (hr < 24) return `${hr}h ago`
-  return `${Math.round(hr / 24)}d ago`
+  if (hr < 24) return `${hr}${t('h ago')}`
+  return `${Math.round(hr / 24)}${t('d ago')}`
 }

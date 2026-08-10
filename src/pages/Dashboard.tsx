@@ -25,7 +25,7 @@ import {
   Switch,
 } from '@/components/ui/primitives'
 import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from '@/data/categories'
-import { STRIKE_LIMIT } from '@/data/onboarding'
+import { AGE_BANDS, HOUSEHOLDS, REGIONS, STRIKE_LIMIT } from '@/data/onboarding'
 import { useT } from '@/i18n'
 import {
   ApiError,
@@ -664,7 +664,7 @@ export default function Dashboard() {
                       <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
                         {cat?.label ? t(cat.label) : null}
                       </span>
-                      <Badge className="truncate px-1.5 py-0 uppercase tracking-[1px]">
+                      <Badge className="truncate px-1.5 py-0 uppercase tracking-[1px]" title={order.shelf}>
                         {order.shelf}
                       </Badge>
                     </span>
@@ -685,7 +685,22 @@ export default function Dashboard() {
                     <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
                       {t('Who answers')} · {Object.entries(order.filters)
                         .filter(([, value]) => Boolean(value))
-                        .map(([key, value]) => `${key.replace(/([A-Z])/g, ' $1')} ${value}`)
+                        .map(([key, value]) => {
+                          if (key === 'category' || key === 'field') {
+                            const filterCat = CATEGORY_BY_ID[value as CategoryId]
+                            const prefix = key === 'field' ? t('Field') : t('Category')
+                            return `${prefix} ${filterCat?.label ? t(filterCat.label) : value}`
+                          }
+                          if (key === 'ageBand' || key === 'region' || key === 'household') {
+                            const options =
+                              key === 'ageBand' ? AGE_BANDS : key === 'region' ? REGIONS : HOUSEHOLDS
+                            const prefix =
+                              key === 'ageBand' ? t('Age') : key === 'region' ? t('Region') : t('Household')
+                            const filterOption = options.find((o) => o.value === value)
+                            return `${prefix} ${filterOption ? t(filterOption.label) : value}`
+                          }
+                          return `${key.replace(/([A-Z])/g, ' $1')} ${value}`
+                        })
                         .join(' · ')}
                     </p>
                   ) : null}
@@ -766,13 +781,11 @@ export default function Dashboard() {
                     >
                       {opening === order.id
                         ? t('Picking it up…')
-                        : profile
-                          ? fullyReserved
-                            ? t('All remaining slots held')
-                            : fits
-                            ? t('Answer')
-                            : t('Outside your fields')
-                          : t('Set up profile')}
+                        : fullyReserved
+                          ? t('All remaining slots held')
+                          : profile && !fits
+                            ? t('Outside your fields')
+                            : t('Answer')}
                     </Button>
                   ) : null}
 
