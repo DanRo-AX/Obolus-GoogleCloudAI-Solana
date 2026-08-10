@@ -459,6 +459,10 @@ pub fn documents() -> Vec<Document> {
             20,
             25,
         ),
+        // 패딩 문서 6건(INDIEC_13/14, BACKEN_13/14, ONCHAI_13/14)은 검색의 앵커 컷오프
+        // (search.rs의 rare_cutoff = 문서수/5, 현재 40건→8)를 안정시키기 위한 것.
+        // 시드를 지우거나 추가하면 컷오프와 용어 빈도가 바뀌어 모든 질문의 HIT 결과가
+        // 조용히 달라질 수 있으니, 시드 증감 시 데모 질문 4종 스모크를 다시 돌릴 것.
         document(
             "md_kocafe_1",
             "INDIEC_13",

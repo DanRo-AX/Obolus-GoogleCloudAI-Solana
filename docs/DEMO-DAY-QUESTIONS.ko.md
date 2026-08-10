@@ -21,10 +21,13 @@ curl -s http://127.0.0.1:8787/healthz
 
 `{"status":"ok"}` 가 나오면 준비된 것이다.
 
+전체 스택(프론트엔드·API·결제 게이트웨이)을 한 번에 기동하려면 `npm run dev:stack`을 쓴다
+(프론트엔드 4319, API 8787, 게이트웨이 1402). 브라우저 데모는 http://localhost:4319 에서 실행된다.
+
 ## ② 데모 질문 4개
 
 각 질문은 `POST /api/v1/questions/resolve` (`requestedDocuments:5, budgetKrw:2500`) 호출
-기준으로 검증됐다. 실측치 출처는 `task-3-report.md`.
+기준으로 검증됐다. 실측: 2026-08-10.
 
 ### HIT-1 — 성수동 점심
 
