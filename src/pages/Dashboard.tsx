@@ -766,13 +766,11 @@ export default function Dashboard() {
                     >
                       {opening === order.id
                         ? t('Picking it up…')
-                        : profile
-                          ? fullyReserved
-                            ? t('All remaining slots held')
-                            : fits
-                            ? t('Answer')
-                            : t('Outside your fields')
-                          : t('Set up profile')}
+                        : fullyReserved
+                          ? t('All remaining slots held')
+                          : profile && !fits
+                            ? t('Outside your fields')
+                            : t('Answer')}
                     </Button>
                   ) : null}
 
