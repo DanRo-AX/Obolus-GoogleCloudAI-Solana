@@ -644,6 +644,51 @@ export type DocumentFeedback = {
   reviewedAt?: number
 }
 
+export type OperationsStatusCount = {
+  status: string
+  count: number
+}
+
+export type AdminOperationsSnapshot = {
+  generatedAt: number
+  marketplace: {
+    humanDocuments: number
+    independentContributors: number
+    openCalls: number
+    filledCalls: number
+    pendingDisputes: number
+    pendingDocumentReports: number
+  }
+  settlements: {
+    paymentQuotes: OperationsStatusCount[]
+    researchJobs: OperationsStatusCount[]
+    researchPaymentAttempts: OperationsStatusCount[]
+    directPaymentAttempts: OperationsStatusCount[]
+    payoutClaims: OperationsStatusCount[]
+    unresolvedPaymentAttempts: number
+    oldestUnresolvedPaymentAt: number | null
+  }
+  aiLiquidity: {
+    totalQueries: number
+    aiLiquidityOnlyQueries: number
+    hybridCoverageQueries: number
+    humanCoveredQueries: number
+    baselinesGenerated: number
+    activeBaselines: number
+    shelfStartersGenerated: number
+    shelfStartersAnswered: number
+    humanDocuments: number
+    openHumanCalls: number
+    pricedAiDocuments: number
+    aiAuthorityEdges: number
+    starterToHumanDocumentRate: number
+  }
+}
+
+export function getAdminOperations(): Promise<AdminOperationsSnapshot> {
+  return apiFetch('/api/v1/admin/operations')
+}
+
 export function submitDocumentFeedback(
   queryId: string,
   handle: string,
