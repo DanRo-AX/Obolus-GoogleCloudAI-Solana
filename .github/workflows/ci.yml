@@ -15,6 +15,7 @@ jobs:
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v7
@@ -22,13 +23,20 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npm run lint
       - run: npm run build
+      - run: npm run verify:pages-bundle
+      - run: npm run typecheck:pages
+      - run: npm run test:unit
+      - run: npm run test:pages
       - run: npm run agent:test
+      - run: docker build --file deploy/cloud-run/web.Dockerfile --tag openshelf-web-ci:${GITHUB_SHA} .
 
   agent-orchestrator:
     name: Agent orchestrator
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: agent-orchestrator
@@ -40,13 +48,16 @@ jobs:
           cache: npm
           cache-dependency-path: agent-orchestrator/package-lock.json
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
+      - run: docker build --tag openshelf-orchestrator-ci:${GITHUB_SHA} .
 
   payment-gateway:
     name: Payment gateway
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: payment-gateway
@@ -58,13 +69,158 @@ jobs:
           cache: npm
           cache-dependency-path: payment-gateway/package-lock.json
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
+      - run: docker build --tag openshelf-gateway-ci:${GITHUB_SHA} .
+
+  pay-front-boundary:
+    name: Pay.sh front boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the production Pay.sh image
+        run: docker build --file pay/Dockerfile --tag openshelf-pay-ci:${GITHUB_SHA} .
+      - name: Exercise the final nginx boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="openshelf-pay-ci:${GITHUB_SHA}"
+          [[ "$(docker image inspect --format '{{.Config.User}}' "${image}")" == "www-data" ]]
+          front_token="ci_pay_front_token_0123456789abcdef"
+          upstream_log="${RUNNER_TEMP}/pay-upstream.log"
+          nginx_config="${RUNNER_TEMP}/openshelf-nginx.conf"
+
+          if docker run --rm -e OPENSHELF_PAY_FRONT_TOKEN=short "${image}"; then
+            echo "production entrypoint accepted a weak front token" >&2
+            exit 1
+          fi
+          docker run --rm --entrypoint /usr/local/bin/pay "${image}" --version
+          docker run --rm -i \
+            -e PORT=8080 \
+            -e OPENSHELF_PAY_FRONT_TOKEN="${front_token}" \
+            --entrypoint /usr/bin/envsubst \
+            "${image}" '${PORT} ${OPENSHELF_PAY_FRONT_TOKEN}' \
+            < pay/nginx.conf.template > "${nginx_config}"
+
+          python3 - <<'PY' > "${upstream_log}" 2>&1 &
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  body = (self.headers.get("X-Openshelf-Pay-Front-Token") or "absent").encode()
+                  self.send_response(200)
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def log_message(self, format, *args):
+                  print(format % args, flush=True)
+
+          HTTPServer(("127.0.0.1", 8081), Handler).serve_forever()
+          PY
+          upstream_pid=$!
+          cleanup() {
+            docker rm -f openshelf-pay-front-test >/dev/null 2>&1 || true
+            kill "${upstream_pid}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker run --rm --network host \
+            --name openshelf-pay-front-test \
+            --volume "${nginx_config}:/tmp/openshelf-nginx.conf:ro" \
+            --entrypoint /usr/sbin/nginx \
+            "${image}" -c /tmp/openshelf-nginx.conf -g 'daemon off;' &
+
+          ready=0
+          for _ in $(seq 1 50); do
+            status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              http://127.0.0.1:8080/__402/health || true)
+            if [[ "${status}" == "404" ]]; then
+              ready=1
+              break
+            fi
+            sleep 0.2
+          done
+          [[ "${ready}" == "1" ]]
+          [[ ! -s "${upstream_log}" ]]
+
+          wrong_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            -H 'X-Openshelf-Pay-Front-Token: wrong' \
+            http://127.0.0.1:8080/__402/health)
+          [[ "${wrong_status}" == "404" ]]
+          [[ ! -s "${upstream_log}" ]]
+
+          upstream_body=$(curl --fail --silent \
+            -H "X-Openshelf-Pay-Front-Token: ${front_token}" \
+            http://127.0.0.1:8080/__402/health)
+          [[ "${upstream_body}" == "absent" ]]
+
+  backend-production-image:
+    name: Backend production image boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the deployable backend image
+        run: docker build --file backend/Dockerfile --tag openshelf-api-ci:${GITHUB_SHA} backend
+      - name: Prove the image cannot silently boot an ephemeral production ledger
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="openshelf-api-ci:${GITHUB_SHA}"
+          docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${image}" \
+            | grep --fixed-strings --line-regexp 'OPENSHELF_ENV=production'
+          if docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${image}" \
+            | grep --quiet '^OPENSHELF_DATABASE='; then
+            echo "backend image embedded a production database fallback" >&2
+            exit 1
+          fi
+
+          log="${RUNNER_TEMP}/openshelf-api-production-database.log"
+          if docker run --rm \
+            -e OPENSHELF_INTERNAL_TOKEN=ci_internal_token_0123456789abcdef \
+            "${image}" >"${log}" 2>&1; then
+            echo "backend image booted without a durable production database" >&2
+            exit 1
+          fi
+          grep --fixed-strings \
+            'a PostgreSQL connection string is required in production' "${log}"
+
+          if docker run --rm \
+            -e OPENSHELF_INTERNAL_TOKEN=ci_internal_token_0123456789abcdef \
+            -e OPENSHELF_DATABASE=/data/looks-persistent.db \
+            "${image}" >"${log}" 2>&1; then
+            echo "backend image booted a process-local SQLite production ledger" >&2
+            exit 1
+          fi
+          grep --fixed-strings \
+            'production cannot use a process-local SQLite ledger' "${log}"
 
   backend:
     name: Backend
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: openshelf_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d openshelf_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OPENSHELF_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/openshelf_test
+      OPENSHELF_REQUIRE_POSTGRES_CONTRACT: "true"
+      OPENSHELF_SEED_DEMO: "true"
     defaults:
       run:
         working-directory: backend

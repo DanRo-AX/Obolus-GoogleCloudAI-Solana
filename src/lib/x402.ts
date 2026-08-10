@@ -10,14 +10,17 @@ import type { Citation, Order } from '@/state/ui'
 import { getBase58Decoder } from '@solana/kit'
 import {
   createPrepaidWalletSession,
-  createWalletChallenge,
+  createWalletAuthChallenge,
   getOpenCallFundingQuote,
+  getPaymentBundleQuote,
   listOpenCalls,
   prepareOpenCallFundingQuote,
   type CreateOpenCallInput,
   type OpenCallFundingQuote,
 } from '@/lib/api'
 import { getPhantom } from '@/state/wallet'
+import { exactQuotePaymentPolicy, exactResearchBundleQuote } from '@/lib/exactPaymentPolicy'
+import { prepaidTopUpAtomic } from '@/lib/browserPaymentConfig'
 
 export type OpenRequest = {
   queryId: string
@@ -44,7 +47,8 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 const BACKEND_ENABLED = import.meta.env.VITE_BACKEND_ENABLED !== 'false'
 export const X402_ENABLED = import.meta.env.VITE_X402_ENABLED !== 'false'
 const X402_GATEWAY_BASE = (
-  import.meta.env.VITE_X402_GATEWAY_BASE ?? 'http://127.0.0.1:1402'
+  import.meta.env.VITE_X402_GATEWAY_BASE ??
+  (import.meta.env.PROD ? '/x402' : 'http://127.0.0.1:1402')
 ).replace(/\/$/, '')
 const RESOURCE = '/api/flash-research'
 const DEVNET_NETWORK = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
@@ -52,10 +56,7 @@ const DEVNET_RPC_BACKOFF_MS = [1_500, 3_000, 6_000]
 const PENDING_OPEN_CALL_KEY = 'openshelf:pending-funded-open-call:v1'
 const PENDING_RESEARCH_KEY = 'openshelf:pending-research-job:v1'
 const PREPAID_SESSION_KEY = 'openshelf:prepaid-wallet-session:v1'
-const DEFAULT_TOP_UP_ATOMIC = Math.round(
-  Math.min(1_000, Math.max(0.1, Number(import.meta.env.VITE_PREPAID_TOPUP_USDC ?? 5))) *
-    1_000_000,
-)
+const DEFAULT_TOP_UP_ATOMIC = prepaidTopUpAtomic(import.meta.env.VITE_PREPAID_TOPUP_USDC)
 
 export class PaymentError extends Error {
   code: 'cancelled' | 'identity_mismatch' | 'failed'
@@ -128,20 +129,23 @@ export async function fundOpenCall(input: CreateOpenCallInput): Promise<Order> {
   if (pending && JSON.stringify(pending.input) === JSON.stringify(input)) {
     try {
       quote = await getOpenCallFundingQuote(pending.quoteId)
-      if (quote.status === 'funded' && quote.openCallId) {
-        const recovered = await findOpenCall(quote.openCallId)
-        if (recovered) {
-          window.localStorage.removeItem(PENDING_OPEN_CALL_KEY)
-          return recovered
-        }
-      }
-      if (quote.expiresAt <= Date.now()) quote = undefined
-    } catch {
+      if (quote.status === 'funded') return await recoverFundedOpenCall(quote)
+      if (quote.status === 'settling') return await recoverSettlingOpenCall(quote)
+      if (quote.status !== 'quoted' || quote.expiresAt <= Date.now()) quote = undefined
+    } catch (error) {
+      if (error instanceof PaymentError) throw error
+      quote = undefined
       // A stale local recovery pointer is harmless; prepare is idempotent for
-      // an identical, still-live quote.
+      // an identical quote, including one that already funded its call.
     }
   }
   quote ??= await prepareOpenCallFundingQuote(input)
+  if (quote.status === 'funded') return await recoverFundedOpenCall(quote)
+  if (quote.status === 'settling') return await recoverSettlingOpenCall(quote)
+  if (quote.status !== 'quoted') {
+    window.localStorage.removeItem(PENDING_OPEN_CALL_KEY)
+    throw new PaymentError('This open-call funding quote is no longer payable. Prepare a new call.')
+  }
   window.localStorage.setItem(
     PENDING_OPEN_CALL_KEY,
     JSON.stringify({ quoteId: quote.id, input }),
@@ -156,6 +160,7 @@ export async function fundOpenCall(input: CreateOpenCallInput): Promise<Order> {
         import('@/lib/phantomSigner'),
       ])
     const client = new x402Client()
+    client.registerPolicy(exactQuotePaymentPolicy('open_call', quote))
     const signer = phantomSvmSigner(provider)
     svm.registerExactSvmScheme(client, { signer, networks: [DEVNET_NETWORK] })
     client.register(
@@ -194,12 +199,41 @@ export async function fundOpenCall(input: CreateOpenCallInput): Promise<Order> {
     if (/reject|declin|cancel/i.test(message)) {
       throw new PaymentError('Payment approval was cancelled in the wallet.', 'cancelled')
     }
+    if (isNetworkFailure(message)) {
+      throw new PaymentError(
+        'Payment service is temporarily unavailable. Retry this same call; a settled transfer will be recovered instead of paid twice.',
+      )
+    }
     throw new PaymentError(`x402 open-call funding failed: ${message}`)
   }
 }
 
 async function findOpenCall(openCallId: string): Promise<Order | undefined> {
   return (await listOpenCalls()).find((call) => call.id === openCallId)
+}
+
+async function recoverFundedOpenCall(quote: OpenCallFundingQuote): Promise<Order> {
+  if (quote.openCallId) {
+    const recovered = await findOpenCall(quote.openCallId)
+    if (recovered) {
+      window.localStorage.removeItem(PENDING_OPEN_CALL_KEY)
+      return recovered
+    }
+  }
+  throw new PaymentError(
+    'Payment already settled and the call ledger is still reconciling. Retry this same call to recover it without another payment.',
+  )
+}
+
+async function recoverSettlingOpenCall(quote: OpenCallFundingQuote): Promise<Order> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const reconciled = await getOpenCallFundingQuote(quote.id)
+    if (reconciled.status === 'funded') return recoverFundedOpenCall(reconciled)
+    await delay(750)
+  }
+  throw new PaymentError(
+    'Payment is already settling. Retry this same call to recover it without another wallet approval.',
+  )
 }
 
 function readPendingOpenCall(): { quoteId: string; input: CreateOpenCallInput } | null {
@@ -228,6 +262,8 @@ type ResearchJobStatus = {
     | 'quoted'
     | 'funded'
     | 'processing'
+    | 'payment_in_progress'
+    | 'payment_reconciliation'
     | 'completed'
     | 'refund_pending'
     | 'balance_refunded'
@@ -282,28 +318,6 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
     }
     let walletSession = await ensurePrepaidWalletSession(provider, connectedPayer)
 
-    const [
-      { x402Client },
-      { wrapFetchWithPayment, decodePaymentResponseHeader },
-      { decodePaymentRequiredHeader },
-      svm,
-      { phantomSvmSigner },
-    ] =
-      await Promise.all([
-        import('@x402/core/client'),
-        import('@x402/fetch'),
-        import('@x402/core/http'),
-        import('@x402/svm/exact/client'),
-        import('@/lib/phantomSigner'),
-      ])
-    const client = new x402Client()
-    const signer = phantomSvmSigner(provider)
-    svm.registerExactSvmScheme(client, { signer, networks: [DEVNET_NETWORK] })
-    client.register(
-      DEVNET_NETWORK,
-      new svm.ExactSvmScheme(signer, { rpcUrl: `${X402_GATEWAY_BASE}/rpc` }),
-    )
-    const paidFetch = wrapFetchWithPayment(window.fetch.bind(window), client)
     const prepare = (token: string) =>
       fetch(`${X402_GATEWAY_BASE}/api/v1/payment-bundles`, {
         method: 'POST',
@@ -330,32 +344,61 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
         | null
       throw new Error(payload?.error?.message ?? `Could not prepare research job (${prepared.status}).`)
     }
-    const bundle = (await prepared.json()) as {
-      quote: {
-        id: string
-        resourcePath: string
-        status: string
-        requiresPayment: boolean
-        amountAtomic: string
-        availableBalanceAtomic: string
-      }
+    const bundle = (await prepared.json()) as { quote?: unknown }
+    const gatewayQuoteId = (bundle.quote as { id?: unknown } | null)?.id
+    if (typeof gatewayQuoteId !== 'string' || !gatewayQuoteId) {
+      throw new Error('The payment gateway returned a malformed research quote.')
     }
+    const canonicalQuote = await getPaymentBundleQuote(
+      gatewayQuoteId,
+      req.accessToken,
+      walletSession.token,
+    )
+    const quote = exactResearchBundleQuote({
+      gatewayQuote: bundle.quote,
+      canonicalQuote,
+      queryId: req.queryId,
+      documentHandles: handles,
+      preferredTopUpAtomic: DEFAULT_TOP_UP_ATOMIC.toString(),
+    })
     writePendingResearchJob({
-      jobId: bundle.quote.id,
+      jobId: quote.id,
       queryId: req.queryId,
       handles,
       payer: connectedPayer,
     })
-    if (!bundle.quote.requiresPayment) {
-      const recovered = await pollResearchJob(bundle.quote.id, req.accessToken, 120)
+    if (!quote.requiresPayment) {
+      const recovered = await pollResearchJob(quote.id, req.accessToken, 120)
       if (!recovered) {
         throw new Error('The existing Pay.sh research job is still working. Retry to check it again without paying.')
       }
       return researchResult(recovered)
     }
+    const [
+      { x402Client },
+      { wrapFetchWithPayment, decodePaymentResponseHeader },
+      { decodePaymentRequiredHeader },
+      svm,
+      { phantomSvmSigner },
+    ] = await Promise.all([
+      import('@x402/core/client'),
+      import('@x402/fetch'),
+      import('@x402/core/http'),
+      import('@x402/svm/exact/client'),
+      import('@/lib/phantomSigner'),
+    ])
+    const client = new x402Client()
+    client.registerPolicy(exactQuotePaymentPolicy('bundle', quote))
+    const signer = phantomSvmSigner(provider)
+    svm.registerExactSvmScheme(client, { signer, networks: [DEVNET_NETWORK] })
+    client.register(
+      DEVNET_NETWORK,
+      new svm.ExactSvmScheme(signer, { rpcUrl: `${X402_GATEWAY_BASE}/rpc` }),
+    )
+    const paidFetch = wrapFetchWithPayment(window.fetch.bind(window), client)
     const response = await paidFetchWithRpcBackoff(
       paidFetch,
-      `${X402_GATEWAY_BASE}${bundle.quote.resourcePath}`,
+      `${X402_GATEWAY_BASE}${quote.resourcePath}`,
     )
     if (!response.ok) {
       const payload = (await response.json().catch(() => null)) as
@@ -372,7 +415,7 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
         payload?.error?.message ?? protocolMessage ?? `x402 gateway returned ${response.status}.`,
       )
     }
-    const result = await pollResearchJob(bundle.quote.id, req.accessToken, 120)
+    const result = await pollResearchJob(quote.id, req.accessToken, 120)
     if (!result) {
       throw new Error('The deposit settled and the Pay.sh agent is still working. Retry to recover this same job without paying again.')
     }
@@ -383,6 +426,16 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
     if (error instanceof PaymentError) throw error
     if (cancelled) {
       throw new PaymentError('Payment approval was cancelled in the wallet.', 'cancelled')
+    }
+    if (isNetworkFailure(message)) {
+      throw new PaymentError(
+        'Payment service is temporarily unavailable. Retry this same job; anything already settled will be recovered instead of paid twice.',
+      )
+    }
+    if (isPayloadRpcRateLimit(message)) {
+      throw new PaymentError(
+        'Solana Devnet is rate-limiting payment creation. Wait 15 seconds and retry this same job; nothing was signed or paid twice.',
+      )
     }
     throw new PaymentError(`x402 payment failed: ${message}`)
   }
@@ -404,6 +457,7 @@ async function pollResearchJob(
       const job = (await response.json()) as ResearchJobStatus
       if (
         job.status === 'completed' ||
+        job.status === 'payment_reconciliation' ||
         job.status === 'refund_pending' ||
         job.status === 'balance_refunded'
       ) return job
@@ -414,6 +468,11 @@ async function pollResearchJob(
 }
 
 function researchResult(job: ResearchJobStatus): OpenResult {
+  if (job.status === 'payment_reconciliation') {
+    throw new PaymentError(
+      `Pay.sh payment outcome is being reconciled. Do not retry or approve another payment; the reserved balance has not been refunded.${job.failureReason ? ` ${job.failureReason}` : ''}`,
+    )
+  }
   if (job.status === 'balance_refunded' && job.citations.length === 0) {
     window.localStorage.removeItem(PENDING_RESEARCH_KEY)
     throw new PaymentError(
@@ -454,7 +513,7 @@ async function ensurePrepaidWalletSession(
       'This wallet cannot sign the one-time prepaid spending authorization message.',
     )
   }
-  const challenge = await createWalletChallenge(wallet)
+  const challenge = await createWalletAuthChallenge(wallet)
   const signed = await provider.signMessage(
     new TextEncoder().encode(challenge.message),
     'utf8',
@@ -541,6 +600,12 @@ function isPayloadRpcRateLimit(message: string): boolean {
   return (
     message.includes('Failed to create payment payload') &&
     message.includes('HTTP error (429)')
+  )
+}
+
+function isNetworkFailure(message: string): boolean {
+  return /failed to fetch|fetch failed|networkerror|network request failed|load failed/i.test(
+    message,
   )
 }
 

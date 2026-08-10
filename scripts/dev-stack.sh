@@ -22,11 +22,6 @@ export OPENSHELF_BIND="${OPENSHELF_BIND:-127.0.0.1:8787}"
 export OPENSHELF_DATABASE="${OPENSHELF_DATABASE:-backend/openshelf.db}"
 export RUST_API_URL="${RUST_API_URL:-http://127.0.0.1:8787}"
 export PORT="${PORT:-1402}"
-outbox_path="${X402_OUTBOX_PATH:-payment-gateway/x402-outbox.ndjson}"
-if [[ "$outbox_path" != /* ]]; then
-  outbox_path="$project_dir/$outbox_path"
-fi
-export X402_OUTBOX_PATH="$outbox_path"
 
 child_pids=()
 cleanup() {

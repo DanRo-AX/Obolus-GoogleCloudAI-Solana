@@ -18,9 +18,13 @@ wallet receives the payment in the same MPP charge.
 4. Call the free
    `GET /api/v1/questions/{queryId}/pay-sh-resources/{handle}` with the same
    header. If `status` is `delivered`, use `recoveryPath`. Otherwise check the
-   recipient, atomic amount, price, network, asset, and expiry.
-5. Use `pay curl` on the returned `resourcePath`, preserving
-   `x-openshelf-query-token`. Pay.sh handles the 402/MPP exchange and retries.
+   recipient, atomic amount, price, network, asset, and expiry. `settling`
+   means an exact signed transfer is already being reconciled; use only the
+   recovery route and do not create another payment.
+5. Use `pay curl` against the public OPENSHELF payment-gateway origin on the
+   returned `resourcePath`, preserving `x-openshelf-query-token`. The gateway
+   durably records the exact signed MPP transaction before the private official
+   Pay.sh collector can see it.
 6. Synthesize only from returned citations and retain every citation handle.
 
 Example:
@@ -38,5 +42,8 @@ directly to the verified database owner; one atomic unit remains with the
 primary gateway recipient because Pay.sh requires a positive primary share.
 
 Do not retry a paid URL blindly after a timeout. Always use the free recovery
-route first. Do not use passages from one `queryId` in another query: the query
-token is a scoped, 24-hour capability rather than a general database key.
+route first. A copied, expired, delivered, or differently signed paid request is
+rejected before the collector, while a byte-identical interrupted request may
+resume the same transaction. Do not use passages from one `queryId` in another
+query: the query token is a scoped, 24-hour capability rather than a general
+database key.

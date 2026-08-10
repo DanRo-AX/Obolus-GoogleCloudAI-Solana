@@ -23,6 +23,10 @@
 
 <h3 align="center"><a href="#시작하기"><ins>시작하기</ins></a></h3>
 
+> **프로젝트 일시 종료 기록 (2026-08-04):** 현재 코드, Devnet 배포, 검증한
+> 범위, 남은 위험, 비용이 계속 발생하는 자원, 롤백과 정확한 재개 순서는
+> **[프로젝트 인수인계](../PROJECT-HANDOFF-2026-08-04.ko.md)**에 정리했습니다.
+
 <p align="center">
   <img src="../assets/hero.png" alt="Obolus 랜딩 페이지의 질문 입력창" width="960" />
 </p>
@@ -78,7 +82,7 @@ HTTP에는 이미 이 용도의 상태 코드가 있습니다. 서버가 `402`�
 
 ### 지갑 하나로 로그인
 
-이메일, 비밀번호, 이름을 받지 않습니다. 지갑을 연결하면 공개 주소만 읽고, 질문자에게 보이는 정보는 핸들뿐입니다.
+이메일, 비밀번호, 이름을 받지 않습니다. 지갑을 연결하면 공개 주소를 읽고, 들어갈 때 송금 권한이 없는 만료형 메시지 하나만 서명합니다. 질문자에게 보이는 정보는 핸들뿐입니다.
 
 지갑 연결 전에도 Devnet SOL과 USDC faucet 링크를 로그인 화면에서 바로 쓸 수 있습니다.
 
@@ -202,6 +206,8 @@ Obolus의 거래 단위는 문서 하나, 열람 한 번, 답변 하나입니다
 사용자 개인키, 브라우저 보조 키, SPL 위임은 Rust와 게이트웨이, Cloud Run 어디에도
 전달되지 않습니다. 서비스 지갑은 GCP KMS를 통해 서명합니다. 자세한 내용은
 [`docs/agent-payment-threat-model.md`](../agent-payment-threat-model.md)를 참고하세요.
+정산 키를 바꾸면 예전 지갑의 미완료 지급을 먼저 모두 비워야 합니다. 한 건이라도
+남거나 반복 실패가 10회에 이르면 새 워커의 준비 상태는 의도적으로 실패합니다.
 
 </details>
 
@@ -213,7 +219,7 @@ Obolus의 거래 단위는 문서 하나, 열람 한 번, 답변 하나입니다
 
 <p>
   <kbd>React&nbsp;19</kbd> &nbsp; <kbd>TypeScript&nbsp;5.9</kbd> &nbsp; <kbd>Vite&nbsp;8</kbd> &nbsp; <kbd>Tailwind&nbsp;v4</kbd> &nbsp; <kbd>React&nbsp;Router&nbsp;7</kbd> &nbsp; <kbd>three.js</kbd> &nbsp;
-  <kbd>Rust&nbsp;1.89&nbsp;/&nbsp;Axum</kbd> &nbsp; <kbd>SQLite</kbd> &nbsp;
+  <kbd>Rust&nbsp;1.89&nbsp;/&nbsp;Axum</kbd> &nbsp; <kbd>Cloud SQL&nbsp;/&nbsp;PostgreSQL</kbd> &nbsp;
   <kbd>x402&nbsp;v2&nbsp;—&nbsp;exact&nbsp;/&nbsp;SVM</kbd> &nbsp; <kbd>Solana&nbsp;Devnet</kbd> &nbsp; <kbd>USDC</kbd> &nbsp; <kbd>Phantom</kbd> &nbsp;
   <kbd>Pay.sh&nbsp;+&nbsp;MPP</kbd> &nbsp; <kbd>GCP&nbsp;KMS</kbd> &nbsp; <kbd>Cloud&nbsp;Run</kbd> &nbsp; <kbd>Gemini&nbsp;on&nbsp;Vertex&nbsp;AI</kbd>
 </p>
@@ -257,7 +263,6 @@ npm run x402:devnet:smoke        # 자금이 든 지갑으로 정산 검증
 ```bash
 agy plugin install ./integrations/antigravity/openshelf
 npm run agent:doctor
-node integrations/antigravity/openshelf/runtime/server.mjs auth login --email YOU@example.com
 agy
 ```
 
@@ -276,8 +281,11 @@ npm run agent:call -- ask_people --json \
   '{"question":"What do people living in Paris actually eat on weeknights?","requestedDocuments":3}'
 ```
 
-인증이 필요한 기여자 명령은 `auth login`이 만든 로컬 세션을 그대로 사용합니다. 유료
-명령은 개인키를 받는 대신, 별도 Pay MCP에 넘길 정확한 URL과 금액을 돌려줍니다.
+유료 구매자 명령은 개인키를 받는 대신, 별도 Pay MCP에 넘길 정확한 URL과 금액을
+돌려줍니다. 운영 기여자 계정 명령은 에이전트가 브라우저와 같은 지갑
+challenge/SIWX 증명을 마칠 수 있을 때까지 뒤로 미룹니다. 기존 이메일 `auth login`
+명령은 `OPENSHELF_EMAIL_PASSWORD_AUTH_ENABLED=true`인 테스트 전용이며 출시 경로가
+아닙니다.
 
 Cloud Run과 GCP KMS 배포는
 [`integrations/antigravity/openshelf/README.md`](../../integrations/antigravity/openshelf/README.md),
@@ -342,7 +350,10 @@ x402 exact/SVM 정산을 사용합니다. 세션은 서버가 발급하는 HttpO
 클라이언트가 보낸 `userId`는 받지 않습니다. 에스크로 예약, 답변당 결정적 지급,
 취소와 계정 삭제 시 정확한 환불이 모두 구현돼 있습니다. 계정 삭제는 모든 세션을
 폐기하고 프로필, 메모리, 문서 본문을 삭제하며, 추가만 가능한 금전 감사 기록은
-익명화합니다. 콘텐츠 해시, 불변 버전, 수정 시 이전 구절 잠금, 비공개 내보내기 로그,
+익명화합니다. 진행 중인 외부 결제가 있으면 결과가 확정될 때까지 삭제를 거부하고,
+삭제가 먼저 이긴 경우 복사된 결제 URL과 결제·번들 스냅숏을 원문 삭제와 같은
+트랜잭션에서 폐기합니다. 이미 전달된 글은 수신자에게서 회수할 수 없지만 서비스의
+복구 API에서는 다시 제공하지 않습니다. 콘텐츠 해시, 불변 버전, 수정 시 이전 구절 잠금, 비공개 내보내기 로그,
 매칭 메타데이터만 노출하는 공개 매니페스트도 실제로 동작합니다. 2진 자동매칭 및
 지급 보류와 3진 계정 정지는 서버가 강제합니다.
 

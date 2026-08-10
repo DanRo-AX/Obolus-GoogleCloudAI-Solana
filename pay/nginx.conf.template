@@ -1,0 +1,35 @@
+pid /tmp/openshelf-nginx.pid;
+
+events {}
+
+http {
+  access_log /dev/stdout;
+  error_log /dev/stderr warn;
+  client_body_temp_path /tmp/openshelf-client-body;
+  proxy_temp_path /tmp/openshelf-proxy;
+  fastcgi_temp_path /tmp/openshelf-fastcgi;
+  uwsgi_temp_path /tmp/openshelf-uwsgi;
+  scgi_temp_path /tmp/openshelf-scgi;
+
+  map $http_x_openshelf_pay_front_token $openshelf_pay_front_authorized {
+    default 0;
+    "${OPENSHELF_PAY_FRONT_TOKEN}" 1;
+  }
+
+  server {
+    listen ${PORT};
+    server_name _;
+    client_max_body_size 64k;
+
+    location / {
+      if ($openshelf_pay_front_authorized = 0) {
+        return 404;
+      }
+      proxy_http_version 1.1;
+      proxy_set_header Host $host;
+      proxy_set_header X-Openshelf-Pay-Front-Token "";
+      proxy_set_header Connection "";
+      proxy_pass http://127.0.0.1:8081;
+    }
+  }
+}

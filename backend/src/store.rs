@@ -1,14 +1,13 @@
 use std::{
     collections::HashSet,
     path::Path,
-    sync::{
-        Arc, Mutex, MutexGuard,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    sync::{Arc, Mutex, MutexGuard},
+    time::Duration,
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use ed25519_dalek::{Signature, VerifyingKey};
+use rand_core::{OsRng, RngCore};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -16,26 +15,30 @@ use crate::{
     db::{self, Connection, OptionalExtension, Transaction},
     domain::{
         AccountControls, AiBaseline, AiBaselineDraft, AiLiquidityMetrics, AnswerIssue,
-        BalanceSummary, ChainSettlementReceipt, ChatAnswer, Citation, ContributorManifest,
-        ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
+        BalanceSummary, BeginResearchPaymentRequest, BindPayShChallengesRequest,
+        ChainSettlementReceipt, ChatAnswer, Citation, ClaimPaymentAttemptRequest,
+        ContributorManifest, ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
         CreateEvidenceEdgeRequest, CreateOpenCallRequest, CreatePaymentBundleRequest,
-        DemographicBands, DisputeCase, Document, DocumentFeedback, EarningEvent, EarningsSummary,
-        EvidenceContribution, EvidenceEdge, InterviewResponse, LiquidityState, MemoryAccessEvent,
-        MemoryEntry, MemoryExport, OpenCall, OpenCallFundingQuote, OpenCallFundingSnapshot,
-        OpenCallReservation, OpenDocumentsResponse, PaidDocument, PayShResource,
-        PaymentBundleQuote, PaymentBundleSnapshot, PaymentDocumentProgress,
-        PaymentDocumentSnapshot, PaymentProgress, PaymentQuote, PayoutClaim, PrepaidBalance,
-        PrepaidWalletSession, PublicDocument, RecordChainSettlementRequest, RecoveredPaidDocument,
-        ResearchJobPlan, ResearchJobStatus, ResolveQuestionResponse, ReviewDisputeRequest,
+        DemographicBands, DirectPayShPaymentReconciliation, DisputeCase, Document,
+        DocumentFeedback, EarningEvent, EarningsSummary, EvidenceContribution, EvidenceEdge,
+        InterviewResponse, LiquidityState, MemoryAccessEvent, MemoryEntry, MemoryExport, OpenCall,
+        OpenCallFundingQuote, OpenCallFundingSnapshot, OpenCallReservation, OpenDocumentsResponse,
+        PaidDocument, PayShResource, PaymentAttemptFence, PaymentAttemptReconciliation,
+        PaymentAttemptRelease, PaymentBundleQuote, PaymentBundleSnapshot, PaymentDocumentProgress,
+        PaymentDocumentSnapshot, PaymentProgress, PaymentQuote, PayoutClaim, PayoutClaimBacklog,
+        PrepaidBalance, PrepaidWalletSession, PrepareDirectPayShPaymentRequest,
+        PrepareResearchPaymentRequest, PublicDocument, RecordChainSettlementRequest,
+        RecoveredPaidDocument, ReleaseResearchPaymentRequest, ResearchJobPlan, ResearchJobStatus,
+        ResearchPaymentReconciliation, ResolveQuestionResponse, ReviewDisputeRequest,
         ReviewDocumentFeedbackRequest, SearchFilters, Settlement, ShelfStarter, ShelfStarterDraft,
         SiwxPayload, SubmitAnswerResponse, SubmitDocumentFeedbackRequest,
         SubmitShelfStarterAnswerResponse, UpdatePreferencesRequest, UpsertProfileRequest,
         UserAccount, UserProfile, WalletChallenge,
     },
+    environment::{boolean_value, managed_runtime_environment, monotonic_unix_time_ms},
     params, quality, seed,
 };
 
-static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 const STRIKE_LIMIT: usize = 3;
 const AUTO_MATCH_STRIKE_LIMIT: usize = 2;
 const PAYOUT_HOLD_MS: u64 = 14 * 24 * 60 * 60 * 1_000;
@@ -46,6 +49,27 @@ const LOGIN_FAILURE_WINDOW_MS: u64 = 15 * 60 * 1_000;
 const LOGIN_BLOCK_MS: u64 = 15 * 60 * 1_000;
 const MAX_PREPAID_TOP_UP_ATOMIC: u64 = 1_000 * 1_000_000;
 const QUERY_TOKEN_TTL_MS: u64 = 24 * 60 * 60 * 1_000;
+const AI_GENERATION_BUDGET_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
+const AI_BASELINE_GENERATION_LIMIT: u64 = 1;
+const AI_SHELF_STARTER_GENERATION_LIMIT: u64 = 1;
+const AI_SYNTHESIS_GENERATION_LIMIT: u64 = 3;
+const AI_GENERATION_IN_FLIGHT_MAX_MS: u64 = 30 * 1_000;
+const BUNDLE_FUNDING_PREPAID: &str = "prepaid";
+const BUNDLE_FUNDING_AGENT_DIRECT: &str = "agent_chain_direct";
+const PAYMENT_ATTEMPT_RECONCILE_AFTER_MS: u64 = 60 * 1_000;
+const PAYMENT_ATTEMPT_RETRY_AFTER_MS: u64 = 5 * 60 * 1_000;
+const MAX_PAY_SH_CHALLENGES_PER_RESPONSE: usize = 8;
+const MAX_ACTIVE_PAY_SH_CHALLENGES_PER_QUOTE: u64 = 4;
+const RESEARCH_PAYMENT_PREPARE_DEADLINE_MS: u64 = 60 * 1_000;
+const RESEARCH_PAYMENT_RETRY_AFTER_MS: u64 = 5 * 60 * 1_000;
+const RESEARCH_PAYMENT_ABSENCE_CONFIRMATION_MS: u64 = 2 * 60 * 1_000;
+const PAYOUT_ABSENCE_CONFIRMATION_MS: u64 = 2 * 60 * 1_000;
+const EMAIL_MAX_LEASE_MS: u64 = 30 * 60 * 1_000;
+const PAYOUT_MAX_LEASE_MS: u64 = 10 * 60 * 1_000;
+// A small allowance prevents a harmless NTP correction between the writer and
+// readiness reader from looking like corruption. Legitimate writers never
+// schedule recovery farther ahead than the per-queue maximum below.
+const RECOVERY_SCHEDULE_CLOCK_SKEW_MS: u64 = 60 * 1_000;
 const LOGIN_FAILURE_LIMIT: u64 = 5;
 const CATEGORY_IDS: &[&str] = &[
     "life",
@@ -86,7 +110,21 @@ pub struct PayShDeliveryRequest<'a> {
     pub quote_id: &'a str,
     pub payment_token_hash: Option<&'a str>,
     pub research_job_id: Option<&'a str>,
+    pub payment_attempt_id: Option<&'a str>,
+    pub direct_payment_attempt_id: Option<&'a str>,
     pub policy: &'a PaymentQuotePolicy,
+}
+
+enum PayShPaymentAttempt<'a> {
+    Research {
+        job_id: &'a str,
+        attempt_id: &'a str,
+        transaction_signature: Option<&'a str>,
+    },
+    Direct {
+        attempt_id: &'a str,
+        transaction_signature: Option<&'a str>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +155,13 @@ pub struct AiArtifactMetadata<'a> {
     pub mode: &'a str,
     pub policy_version: &'a str,
     pub ttl_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AiGenerationClaim {
+    Acquired { window_started_at: u64 },
+    Cached(String),
+    Suppressed,
 }
 
 #[derive(Clone)]
@@ -221,9 +266,8 @@ impl Store {
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
         }
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
-        connection.pragma_update(None, "journal_mode", "WAL")?;
-        let production = production_environment();
-        let seed_demo = env_flag("OPENSHELF_SEED_DEMO", !production);
+        let production = production_environment()?;
+        let seed_demo = env_flag("OPENSHELF_SEED_DEMO", !production)?;
         if production && seed_demo {
             return Err(StoreError::Validation(
                 "OPENSHELF_SEED_DEMO cannot be enabled in production".to_owned(),
@@ -239,7 +283,7 @@ impl Store {
     fn from_connection(connection: Connection, seed_demo: bool) -> Result<Self, StoreError> {
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
-        connection.pragma_update(None, "journal_mode", "WAL")?;
+        connection.ensure_wal(Duration::from_secs(5))?;
         connection.pragma_update(None, "synchronous", "NORMAL")?;
         let store = Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -252,7 +296,12 @@ impl Store {
     }
 
     fn connection(&self) -> Result<MutexGuard<'_, Connection>, StoreError> {
-        self.connection.lock().map_err(|_| StoreError::LockPoisoned)
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| StoreError::LockPoisoned)?;
+        connection.reconnect_if_closed()?;
+        Ok(connection)
     }
 
     pub fn register_user(
@@ -524,8 +573,435 @@ impl Store {
     }
 
     pub fn ready(&self) -> Result<(), StoreError> {
-        self.connection()?
-            .query_row("SELECT 1", params![], |_| Ok(()))?;
+        let connection = self.connection()?;
+        connection.query_row("SELECT 1", params![], |_| Ok(()))?;
+        require_no_rollback_recovery_holds(&connection)?;
+        let now = now_ms();
+
+        let chain_schedule_limit = now
+            .saturating_add(PAYMENT_ATTEMPT_RETRY_AFTER_MS)
+            .saturating_add(RECOVERY_SCHEDULE_CLOCK_SKEW_MS);
+        let recovery_clock_limit = now.saturating_add(RECOVERY_SCHEDULE_CLOCK_SKEW_MS);
+        let chain_hidden = connection.query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM chain_payment_attempts attempt
+               WHERE attempt.reconcile_after < 0
+                  OR attempt.reconcile_after > CAST(?1 AS BIGINT)
+                  OR attempt.created_at <= 0
+                  OR attempt.created_at > CAST(?2 AS BIGINT)
+                  OR attempt.legacy_evidence NOT IN (0, 1)
+                  OR (attempt.legacy_evidence = 0 AND (
+                        attempt.payer_wallet IS NULL OR attempt.payer_wallet = ''
+                        OR attempt.signed_transaction_base64 IS NULL
+                        OR attempt.signed_transaction_base64 = ''
+                        OR attempt.recent_blockhash IS NULL
+                        OR attempt.recent_blockhash = ''
+                     ))
+                  OR (attempt.absence_observed_at IS NOT NULL AND (
+                        attempt.absence_observed_at < attempt.created_at
+                        OR attempt.absence_observed_at > CAST(?2 AS BIGINT)
+                     ))
+                  OR attempt.settlement_kind NOT IN ('document', 'bundle', 'open_call')
+                  OR (attempt.settlement_kind = 'document' AND NOT EXISTS (
+                        SELECT 1 FROM payment_quotes quote WHERE quote.id = attempt.quote_id
+                     ))
+                  OR (attempt.settlement_kind = 'bundle' AND NOT EXISTS (
+                        SELECT 1 FROM payment_bundle_quotes quote WHERE quote.id = attempt.quote_id
+                     ))
+                  OR (attempt.settlement_kind = 'open_call' AND NOT EXISTS (
+                        SELECT 1 FROM open_call_funding_quotes quote
+                        WHERE quote.id = attempt.quote_id
+                     ))
+             )",
+            params![as_i64(chain_schedule_limit)?, as_i64(recovery_clock_limit)?],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if chain_hidden {
+            return Err(StoreError::Conflict(
+                "chain payment recovery contains work hidden from its due scan".to_owned(),
+            ));
+        }
+
+        let pay_sh_schedule_limit = now
+            .saturating_add(RESEARCH_PAYMENT_RETRY_AFTER_MS)
+            .saturating_add(RECOVERY_SCHEDULE_CLOCK_SKEW_MS);
+        let research_hidden = connection.query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM research_payment_attempts attempt
+               WHERE attempt.status NOT IN
+                       ('claimed', 'prepared', 'ambiguous', 'settled', 'released')
+                  OR attempt.created_at <= 0
+                  OR attempt.created_at > CAST(?2 AS BIGINT)
+                  OR attempt.transaction_signature = ''
+                  OR (attempt.status = 'claimed' AND (
+                       attempt.challenge_id IS NOT NULL
+                       OR attempt.external_id IS NOT NULL
+                       OR attempt.payer_wallet IS NOT NULL
+                       OR attempt.platform_recipient_wallet IS NOT NULL
+                       OR attempt.signed_transaction_base64 IS NOT NULL
+                       OR attempt.recent_blockhash IS NOT NULL
+                       OR attempt.challenge_expires_at IS NOT NULL
+                       OR attempt.transaction_signature IS NOT NULL
+                       OR attempt.prepared_at IS NOT NULL
+                       OR attempt.completed_at IS NOT NULL
+                  ))
+                  OR (attempt.status IN ('prepared', 'ambiguous', 'settled') AND (
+                       attempt.challenge_id IS NULL OR attempt.challenge_id = ''
+                       OR attempt.external_id IS NULL OR attempt.external_id = ''
+                       OR attempt.payer_wallet IS NULL OR attempt.payer_wallet = ''
+                       OR attempt.platform_recipient_wallet IS NULL
+                       OR attempt.platform_recipient_wallet = ''
+                       OR attempt.signed_transaction_base64 IS NULL
+                       OR attempt.signed_transaction_base64 = ''
+                       OR attempt.recent_blockhash IS NULL
+                       OR attempt.recent_blockhash = ''
+                       OR attempt.challenge_expires_at IS NULL
+                       OR attempt.challenge_expires_at <= 0
+                       OR attempt.prepared_at IS NULL OR attempt.prepared_at <= 0
+                       OR attempt.prepared_at < attempt.created_at
+                  ))
+                  OR (attempt.status = 'released' AND (
+                       attempt.completed_at IS NULL OR attempt.completed_at <= 0
+                       OR NOT (
+                         (attempt.challenge_id IS NULL AND attempt.external_id IS NULL
+                          AND attempt.payer_wallet IS NULL
+                          AND attempt.platform_recipient_wallet IS NULL
+                          AND attempt.signed_transaction_base64 IS NULL
+                          AND attempt.recent_blockhash IS NULL
+                          AND attempt.challenge_expires_at IS NULL
+                          AND attempt.transaction_signature IS NULL
+                          AND attempt.prepared_at IS NULL)
+                         OR
+                         (attempt.challenge_id IS NOT NULL AND attempt.challenge_id <> ''
+                          AND attempt.external_id IS NOT NULL AND attempt.external_id <> ''
+                          AND attempt.payer_wallet IS NOT NULL AND attempt.payer_wallet <> ''
+                          AND attempt.platform_recipient_wallet IS NOT NULL
+                          AND attempt.platform_recipient_wallet <> ''
+                          AND attempt.signed_transaction_base64 IS NOT NULL
+                          AND attempt.signed_transaction_base64 <> ''
+                          AND attempt.recent_blockhash IS NOT NULL
+                          AND attempt.recent_blockhash <> ''
+                          AND attempt.challenge_expires_at IS NOT NULL
+                          AND attempt.challenge_expires_at > 0
+                          AND attempt.prepared_at IS NOT NULL
+                          AND attempt.prepared_at >= attempt.created_at)
+                       )
+                  ))
+                  OR (attempt.status = 'settled' AND (
+                       attempt.completed_at IS NULL OR attempt.completed_at <= 0
+                       OR attempt.transaction_signature IS NULL
+                       OR NOT EXISTS (
+                            SELECT 1 FROM payment_quotes quote
+                            WHERE quote.id = attempt.quote_id
+                              AND quote.status = 'delivered'
+                              AND quote.payment_rail = 'pay_sh'
+                              AND EXISTS (
+                                SELECT 1 FROM settlements settlement
+                                WHERE settlement.transaction_signature =
+                                      'pay.sh:' || attempt.quote_id
+                              )
+                       )
+                  ))
+                  OR (attempt.status IN ('claimed', 'prepared', 'ambiguous') AND (
+                       attempt.reconcile_after < 0
+                       OR attempt.reconcile_after > CAST(?1 AS BIGINT)
+                       OR (attempt.prepared_at IS NOT NULL AND (
+                            attempt.prepared_at < attempt.created_at
+                            OR attempt.prepared_at > CAST(?2 AS BIGINT)
+                       ))
+                       OR (attempt.absence_observed_at IS NOT NULL AND (
+                            attempt.absence_observed_at < COALESCE(
+                                attempt.prepared_at, attempt.created_at
+                            )
+                            OR attempt.absence_observed_at > CAST(?2 AS BIGINT)
+                       ))
+                       OR NOT EXISTS (
+                            SELECT 1 FROM payment_bundle_quotes job
+                            WHERE job.id = attempt.job_id
+                              AND job.payment_attempt_id = attempt.attempt_id
+                              AND job.payment_attempt_quote_id = attempt.quote_id
+                       )
+                       OR NOT EXISTS (
+                            SELECT 1 FROM payment_quotes quote
+                            WHERE quote.id = attempt.quote_id
+                       )
+                  ))
+               UNION ALL
+               SELECT 1 FROM payment_bundle_quotes job
+               WHERE (job.status IN ('payment_in_progress', 'payment_reconciliation') AND (
+                        job.payment_attempt_id IS NULL
+                        OR job.payment_attempt_quote_id IS NULL
+                        OR NOT EXISTS (
+                             SELECT 1 FROM research_payment_attempts attempt
+                             WHERE attempt.job_id = job.id
+                               AND attempt.attempt_id = job.payment_attempt_id
+                               AND attempt.quote_id = job.payment_attempt_quote_id
+                               AND attempt.status IN ('claimed', 'prepared', 'ambiguous')
+                        )
+                     ))
+                  OR (job.status NOT IN ('payment_in_progress', 'payment_reconciliation')
+                      AND (job.payment_attempt_id IS NOT NULL
+                           OR job.payment_attempt_quote_id IS NOT NULL))
+             )",
+            params![
+                as_i64(pay_sh_schedule_limit)?,
+                as_i64(recovery_clock_limit)?
+            ],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if research_hidden {
+            return Err(StoreError::Conflict(
+                "research payment recovery contains work hidden from its due scan".to_owned(),
+            ));
+        }
+
+        let direct_hidden = connection.query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM direct_pay_sh_attempts attempt
+               WHERE attempt.status NOT IN ('prepared', 'ambiguous', 'settled', 'released')
+                  OR attempt.query_token_hash = ''
+                  OR attempt.challenge_id = '' OR attempt.external_id = ''
+                  OR attempt.payer_wallet = '' OR attempt.platform_recipient_wallet = ''
+                  OR attempt.signed_transaction_base64 = '' OR attempt.recent_blockhash = ''
+                  OR attempt.challenge_expires_at <= 0
+                  OR attempt.created_at <= 0
+                  OR attempt.created_at > CAST(?2 AS BIGINT)
+                  OR attempt.prepared_at <= 0 OR attempt.prepared_at < attempt.created_at
+                  OR attempt.transaction_signature = ''
+                  OR (attempt.status IN ('prepared', 'ambiguous')
+                      AND attempt.completed_at IS NOT NULL)
+                  OR (attempt.status IN ('settled', 'released') AND (
+                       attempt.completed_at IS NULL OR attempt.completed_at <= 0
+                  ))
+                  OR (attempt.status = 'settled' AND (
+                       attempt.transaction_signature IS NULL
+                       OR NOT EXISTS (
+                            SELECT 1 FROM payment_quotes quote
+                            WHERE quote.id = attempt.quote_id
+                              AND quote.status = 'delivered'
+                              AND quote.payment_rail = 'pay_sh'
+                              AND EXISTS (
+                                SELECT 1 FROM settlements settlement
+                                WHERE settlement.transaction_signature =
+                                      'pay.sh:' || attempt.quote_id
+                              )
+                       )
+                  ))
+                  OR (attempt.status IN ('prepared', 'ambiguous') AND (
+                       attempt.reconcile_after < 0
+                       OR attempt.reconcile_after > CAST(?1 AS BIGINT)
+                       OR attempt.prepared_at > CAST(?2 AS BIGINT)
+                       OR (attempt.absence_observed_at IS NOT NULL AND (
+                            attempt.absence_observed_at < attempt.prepared_at
+                            OR attempt.absence_observed_at > CAST(?2 AS BIGINT)
+                       ))
+                       OR NOT EXISTS (
+                            SELECT 1 FROM payment_quotes quote
+                            WHERE quote.id = attempt.quote_id
+                       )
+                  ))
+             )",
+            params![
+                as_i64(pay_sh_schedule_limit)?,
+                as_i64(recovery_clock_limit)?
+            ],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if direct_hidden {
+            return Err(StoreError::Conflict(
+                "direct Pay.sh recovery contains work hidden from its due scan".to_owned(),
+            ));
+        }
+
+        let pay_sh_fence_invalid = connection.query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM pay_sh_quote_fences fence
+               WHERE NOT EXISTS (
+                        SELECT 1 FROM payment_quotes quote
+                        WHERE quote.id = fence.quote_id
+                          AND quote.payment_rail = 'pay_sh'
+                          AND (quote.status = 'quoted'
+                               OR (fence.attempt_kind = 'direct'
+                                   AND quote.status = 'delivered'))
+                     )
+                  OR (fence.attempt_kind = 'research' AND NOT EXISTS (
+                        SELECT 1 FROM research_payment_attempts attempt
+                        WHERE attempt.quote_id = fence.quote_id
+                          AND attempt.attempt_id = fence.attempt_id
+                          AND attempt.status IN ('claimed', 'prepared', 'ambiguous')
+                     ))
+                  OR (fence.attempt_kind = 'direct' AND NOT EXISTS (
+                        SELECT 1 FROM direct_pay_sh_attempts attempt
+                        WHERE attempt.quote_id = fence.quote_id
+                          AND attempt.attempt_id = fence.attempt_id
+                          AND attempt.status IN ('prepared', 'ambiguous')
+                     ))
+               UNION ALL
+               SELECT 1 FROM research_payment_attempts attempt
+               WHERE attempt.status IN ('claimed', 'prepared', 'ambiguous')
+                 AND NOT EXISTS (
+                     SELECT 1 FROM pay_sh_quote_fences fence
+                     WHERE fence.quote_id = attempt.quote_id
+                       AND fence.attempt_kind = 'research'
+                       AND fence.attempt_id = attempt.attempt_id
+                 )
+               UNION ALL
+               SELECT 1 FROM direct_pay_sh_attempts attempt
+               WHERE attempt.status IN ('prepared', 'ambiguous')
+                 AND NOT EXISTS (
+                     SELECT 1 FROM pay_sh_quote_fences fence
+                     WHERE fence.quote_id = attempt.quote_id
+                       AND fence.attempt_kind = 'direct'
+                       AND fence.attempt_id = attempt.attempt_id
+                 )
+             )",
+            params![],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if pay_sh_fence_invalid {
+            return Err(StoreError::Conflict(
+                "Pay.sh quote fence does not match its recoverable payment attempt".to_owned(),
+            ));
+        }
+        let prepaid_owner_invalid = connection.query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM prepaid_wallet_sessions session
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM prepaid_wallet_owners owner
+                 WHERE owner.wallet = session.wallet AND owner.user_id = session.user_id
+               )
+               UNION ALL
+               SELECT 1 FROM prepaid_accounts account
+               WHERE account.available_atomic > 0 AND NOT EXISTS (
+                 SELECT 1 FROM prepaid_wallet_owners owner
+                 WHERE owner.wallet = account.wallet
+               )
+               UNION ALL
+               SELECT 1 FROM payment_bundle_quotes quote
+               WHERE quote.funding_source = 'prepaid'
+                 AND quote.status NOT IN
+                     ('deleted', 'completed', 'balance_refunded', 'delivered')
+                 AND (quote.payer_wallet IS NULL OR NOT EXISTS (
+                   SELECT 1 FROM prepaid_wallet_owners owner
+                   WHERE owner.wallet = quote.payer_wallet
+                 ))
+             )",
+            params![],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if prepaid_owner_invalid {
+            return Err(StoreError::Conflict(
+                "prepaid wallet value or work does not match one canonical account owner"
+                    .to_owned(),
+            ));
+        }
+        let ai_generation_invalid = connection.query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM ai_generation_budgets budget
+               WHERE budget.artifact_kind NOT IN ('baseline', 'shelf_starters', 'synthesis')
+                  OR budget.attempts_used < 0
+                  OR budget.attempts_used > CASE budget.artifact_kind
+                       WHEN 'baseline' THEN CAST(?1 AS BIGINT)
+                       WHEN 'shelf_starters' THEN CAST(?2 AS BIGINT)
+                       WHEN 'synthesis' THEN CAST(?3 AS BIGINT)
+                       ELSE 0 END
+                  OR budget.window_started_at < 0
+                  OR budget.window_started_at > CAST(?4 AS BIGINT)
+                  OR budget.attempts_used <> (
+                       SELECT COUNT(*) FROM ai_generation_attempts attempt
+                       WHERE attempt.artifact_kind = budget.artifact_kind
+                         AND attempt.scope_id = budget.scope_id
+                         AND attempt.window_started_at = budget.window_started_at
+                     )
+               UNION ALL
+               SELECT 1 FROM ai_generation_attempts attempt
+               WHERE attempt.artifact_kind NOT IN ('baseline', 'shelf_starters', 'synthesis')
+                  OR attempt.status NOT IN ('started', 'completed', 'failed')
+                  OR attempt.claimed_at < attempt.window_started_at
+                  OR attempt.claimed_at > CAST(?4 AS BIGINT)
+                  OR (attempt.status = 'started' AND (
+                       attempt.completed_at IS NOT NULL OR attempt.response_json IS NOT NULL
+                     ))
+                  OR (attempt.status IN ('completed', 'failed') AND (
+                       attempt.completed_at IS NULL
+                       OR attempt.completed_at < attempt.claimed_at
+                       OR attempt.completed_at > CAST(?4 AS BIGINT)
+                     ))
+                  OR (attempt.artifact_kind = 'synthesis'
+                      AND attempt.status = 'completed' AND attempt.response_json IS NULL)
+                  OR (attempt.artifact_kind <> 'synthesis' AND attempt.response_json IS NOT NULL)
+                  OR (attempt.artifact_kind = 'synthesis' AND NOT EXISTS (
+                       SELECT 1 FROM ai_generation_documents document
+                       WHERE document.artifact_kind = attempt.artifact_kind
+                         AND document.scope_id = attempt.scope_id
+                         AND document.input_hash = attempt.input_hash
+                     ))
+                  OR NOT EXISTS (
+                       SELECT 1 FROM ai_generation_budgets budget
+                       WHERE budget.artifact_kind = attempt.artifact_kind
+                         AND budget.scope_id = attempt.scope_id
+                         AND budget.window_started_at = attempt.window_started_at
+                     )
+               UNION ALL
+               SELECT 1 FROM ai_generation_documents generation
+               WHERE NOT EXISTS (
+                       SELECT 1 FROM ai_generation_attempts attempt
+                       WHERE attempt.artifact_kind = generation.artifact_kind
+                         AND attempt.scope_id = generation.scope_id
+                         AND attempt.input_hash = generation.input_hash
+                     )
+                  OR NOT EXISTS (
+                       SELECT 1 FROM documents document
+                       WHERE document.handle = generation.document_handle
+                         AND document.author_id = generation.author_id
+                     )
+             )",
+            params![
+                as_i64(AI_BASELINE_GENERATION_LIMIT)?,
+                as_i64(AI_SHELF_STARTER_GENERATION_LIMIT)?,
+                as_i64(AI_SYNTHESIS_GENERATION_LIMIT)?,
+                as_i64(recovery_clock_limit)?,
+            ],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if ai_generation_invalid {
+            return Err(StoreError::Conflict(
+                "AI provider generation fence or budget is inconsistent".to_owned(),
+            ));
+        }
+        validate_bundle_document_payment_reservations(&connection)?;
+        validate_research_refund_completion(&connection)?;
+
+        let email_lease_limit = now
+            .saturating_add(EMAIL_MAX_LEASE_MS)
+            .saturating_add(RECOVERY_SCHEDULE_CLOCK_SKEW_MS);
+        let email_hidden = connection.query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM email_outbox email
+               WHERE email.status NOT IN ('pending', 'retry', 'sending', 'delivered', 'exhausted')
+                  OR (email.status IN ('pending', 'retry') AND email.attempts >= 5)
+                  OR (email.status IN ('pending', 'retry', 'sending')
+                      AND email.lease_expires_at > CAST(?1 AS BIGINT))
+             )",
+            [as_i64(email_lease_limit)?],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if email_hidden {
+            return Err(StoreError::Conflict(
+                "email delivery contains work hidden from its lease scan".to_owned(),
+            ));
+        }
+
+        drop(connection);
+        if self
+            .payout_claim_backlogs()?
+            .iter()
+            .any(|backlog| backlog.blocked_count > 0)
+        {
+            return Err(StoreError::Conflict(
+                "payout recovery contains exhausted or hidden work".to_owned(),
+            ));
+        }
         Ok(())
     }
 
@@ -630,12 +1106,18 @@ impl Store {
                  WHERE author_id = ?1 AND payout_status = 'held' AND available_at <= ?2",
                 params![user_id, as_i64(now)?],
             )?;
-            transaction.execute(
+            let moved = transaction.execute(
                 "UPDATE balances SET held_krw = held_krw - ?1,
                     available_krw = available_krw + ?1, updated_at = ?2
                  WHERE user_id = ?3 AND held_krw >= ?1",
                 params![as_i64(matured)?, as_i64(now)?, user_id],
             )?;
+            if moved != 1 {
+                return Err(StoreError::Conflict(
+                    "matured earnings do not match the contributor balance; stop ledger writes and reconcile"
+                        .to_owned(),
+                ));
+            }
         }
         transaction.commit()?;
         Ok(())
@@ -674,7 +1156,10 @@ impl Store {
     }
 
     fn migrate(&self) -> Result<(), StoreError> {
-        let connection = self.connection()?;
+        let mut connection_guard = self.connection()?;
+        let transaction = connection_guard.transaction()?;
+        transaction.acquire_migration_lock()?;
+        let connection: &Connection = &transaction;
         connection.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS documents (
@@ -717,6 +1202,57 @@ impl Store {
                 policy_version TEXT NOT NULL,
                 generated_at INTEGER NOT NULL,
                 expires_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_generation_budgets (
+                artifact_kind TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                window_started_at INTEGER NOT NULL,
+                attempts_used INTEGER NOT NULL DEFAULT 0 CHECK (attempts_used >= 0),
+                PRIMARY KEY (artifact_kind, scope_id, window_started_at)
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_generation_attempts (
+                artifact_kind TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                input_hash TEXT NOT NULL,
+                window_started_at INTEGER NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('started', 'completed', 'failed')),
+                response_json TEXT,
+                claimed_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                PRIMARY KEY (artifact_kind, scope_id, input_hash, window_started_at)
+            );
+
+            CREATE TABLE IF NOT EXISTS rollback_recovery_holds (
+                hold_id TEXT PRIMARY KEY,
+                recovery_id TEXT NOT NULL,
+                object_name TEXT NOT NULL,
+                intent_kind TEXT NOT NULL CHECK (
+                    intent_kind IN ('window', 'payment', 'model')
+                ),
+                rail TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                audit_created_at INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                resolved_at INTEGER,
+                resolution_evidence TEXT,
+                CHECK (
+                    (resolved_at IS NULL AND resolution_evidence IS NULL)
+                    OR (resolved_at IS NOT NULL AND resolution_evidence IS NOT NULL)
+                ),
+                UNIQUE(recovery_id, object_name)
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_generation_documents (
+                artifact_kind TEXT NOT NULL CHECK (artifact_kind = 'synthesis'),
+                scope_id TEXT NOT NULL,
+                input_hash TEXT NOT NULL,
+                document_handle TEXT NOT NULL,
+                author_id TEXT NOT NULL,
+                PRIMARY KEY (artifact_kind, scope_id, input_hash, document_handle)
             );
 
             CREATE TABLE IF NOT EXISTS shelf_starters (
@@ -810,6 +1346,7 @@ impl Store {
                 pay_to TEXT NOT NULL,
                 amount_atomic INTEGER NOT NULL CHECK (amount_atomic > 0),
                 network TEXT NOT NULL,
+                prepared_transaction_base64 TEXT,
                 raw_response_json TEXT NOT NULL,
                 confirmed_at INTEGER NOT NULL
             );
@@ -871,7 +1408,10 @@ impl Store {
                 document_version INTEGER NOT NULL DEFAULT 1,
                 status TEXT NOT NULL DEFAULT 'quoted',
                 consent_version TEXT NOT NULL DEFAULT 'legacy',
-                delivered_at INTEGER
+                delivered_at INTEGER,
+                payment_rail TEXT CHECK (
+                    payment_rail IS NULL OR payment_rail IN ('x402', 'pay_sh')
+                )
             );
 
             CREATE TABLE IF NOT EXISTS memory_access_events (
@@ -902,6 +1442,7 @@ impl Store {
                 pay_to TEXT NOT NULL,
                 amount_atomic INTEGER NOT NULL CHECK (amount_atomic > 0),
                 network TEXT NOT NULL,
+                prepared_transaction_base64 TEXT,
                 raw_response_json TEXT NOT NULL,
                 confirmed_at INTEGER NOT NULL
             );
@@ -923,7 +1464,15 @@ impl Store {
                 status TEXT NOT NULL DEFAULT 'quoted',
                 payer_wallet TEXT,
                 failure_reason TEXT,
-                refund_claim_id TEXT
+                refund_claim_id TEXT,
+                payment_attempt_quote_id TEXT REFERENCES payment_quotes(id),
+                payment_attempt_id TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS prepaid_wallet_owners (
+                wallet TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at INTEGER NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS prepaid_wallet_sessions (
@@ -990,8 +1539,94 @@ impl Store {
                 pay_to TEXT NOT NULL,
                 amount_atomic INTEGER NOT NULL CHECK (amount_atomic > 0),
                 network TEXT NOT NULL,
+                prepared_transaction_base64 TEXT,
                 raw_response_json TEXT NOT NULL,
                 confirmed_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS chain_transaction_registry (
+                transaction_signature TEXT PRIMARY KEY,
+                settlement_kind TEXT NOT NULL,
+                quote_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                UNIQUE(settlement_kind, quote_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS chain_payment_attempts (
+                settlement_kind TEXT NOT NULL,
+                quote_id TEXT NOT NULL,
+                attempt_id TEXT NOT NULL UNIQUE,
+                payer_wallet TEXT,
+                signed_transaction_base64 TEXT,
+                recent_blockhash TEXT,
+                absence_observed_at INTEGER,
+                legacy_evidence INTEGER NOT NULL DEFAULT 0 CHECK (legacy_evidence IN (0, 1)),
+                reconcile_after INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY(settlement_kind, quote_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS research_payment_attempts (
+                attempt_id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL REFERENCES payment_bundle_quotes(id) ON DELETE CASCADE,
+                quote_id TEXT NOT NULL REFERENCES payment_quotes(id),
+                status TEXT NOT NULL CHECK (
+                    status IN ('claimed', 'prepared', 'ambiguous', 'settled', 'released')
+                ),
+                challenge_id TEXT,
+                external_id TEXT,
+                payer_wallet TEXT,
+                platform_recipient_wallet TEXT,
+                signed_transaction_base64 TEXT,
+                recent_blockhash TEXT,
+                challenge_expires_at INTEGER,
+                absence_observed_at INTEGER,
+                transaction_signature TEXT UNIQUE,
+                reconcile_after INTEGER NOT NULL,
+                failure_reason TEXT,
+                created_at INTEGER NOT NULL,
+                prepared_at INTEGER,
+                completed_at INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS direct_pay_sh_attempts (
+                attempt_id TEXT PRIMARY KEY,
+                quote_id TEXT NOT NULL REFERENCES payment_quotes(id),
+                query_token_hash TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (
+                    status IN ('prepared', 'ambiguous', 'settled', 'released')
+                ),
+                challenge_id TEXT NOT NULL,
+                external_id TEXT NOT NULL,
+                payer_wallet TEXT NOT NULL,
+                platform_recipient_wallet TEXT NOT NULL,
+                signed_transaction_base64 TEXT NOT NULL,
+                recent_blockhash TEXT NOT NULL,
+                challenge_expires_at INTEGER NOT NULL,
+                absence_observed_at INTEGER,
+                transaction_signature TEXT UNIQUE,
+                reconcile_after INTEGER NOT NULL,
+                failure_reason TEXT,
+                created_at INTEGER NOT NULL,
+                prepared_at INTEGER NOT NULL,
+                completed_at INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS pay_sh_challenge_bindings (
+                challenge_id TEXT PRIMARY KEY,
+                quote_id TEXT NOT NULL REFERENCES payment_quotes(id) ON DELETE CASCADE,
+                external_id TEXT NOT NULL,
+                challenge_expires_at INTEGER NOT NULL,
+                binding_kind TEXT NOT NULL CHECK (binding_kind IN ('research', 'direct')),
+                binding_owner TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS pay_sh_quote_fences (
+                quote_id TEXT PRIMARY KEY REFERENCES payment_quotes(id) ON DELETE CASCADE,
+                attempt_kind TEXT NOT NULL CHECK (attempt_kind IN ('research', 'direct')),
+                attempt_id TEXT NOT NULL UNIQUE,
+                created_at INTEGER NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS dispute_events (
@@ -1035,6 +1670,21 @@ impl Store {
                 token_hash TEXT NOT NULL UNIQUE,
                 expires_at INTEGER NOT NULL,
                 used_at INTEGER,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS wallet_auth_challenges (
+                id TEXT PRIMARY KEY,
+                wallet TEXT NOT NULL,
+                message TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                consumed_at INTEGER,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS wallet_identities (
+                wallet TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
                 created_at INTEGER NOT NULL
             );
 
@@ -1106,6 +1756,8 @@ impl Store {
                 status TEXT NOT NULL DEFAULT 'pending',
                 attempts INTEGER NOT NULL DEFAULT 0,
                 last_error TEXT,
+                lease_owner TEXT,
+                lease_expires_at INTEGER,
                 created_at INTEGER NOT NULL,
                 delivered_at INTEGER
             );
@@ -1143,6 +1795,8 @@ impl Store {
                 signed_transaction_base64 TEXT,
                 recent_blockhash TEXT,
                 last_valid_block_height INTEGER,
+                prepared_at INTEGER,
+                absence_observed_at INTEGER,
                 attempt_count INTEGER NOT NULL DEFAULT 0,
                 last_error TEXT,
                 created_at INTEGER NOT NULL,
@@ -1219,6 +1873,9 @@ impl Store {
             CREATE UNIQUE INDEX IF NOT EXISTS idx_earnings_settlement_document
                 ON earning_events(settlement_id, document_id)
                 WHERE settlement_id IS NOT NULL AND document_id IS NOT NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_settlements_pay_sh_quote
+                ON settlements(transaction_signature)
+                WHERE mode = 'pay_sh_mpp_direct' AND transaction_signature IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_payment_quotes_lookup
                 ON payment_quotes(query_id, document_handle, expires_at DESC);
             CREATE INDEX IF NOT EXISTS idx_chain_settlements_signature
@@ -1227,10 +1884,26 @@ impl Store {
                 ON payment_bundle_quotes(query_id, expires_at DESC);
             CREATE INDEX IF NOT EXISTS idx_payment_bundle_documents_handle
                 ON payment_bundle_documents(document_handle, quote_id);
+            CREATE INDEX IF NOT EXISTS idx_research_payment_attempts_due
+                ON research_payment_attempts(status, reconcile_after);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_research_payment_attempts_active_job
+                ON research_payment_attempts(job_id)
+                WHERE status IN ('claimed', 'prepared', 'ambiguous');
+            CREATE INDEX IF NOT EXISTS idx_direct_pay_sh_attempts_due
+                ON direct_pay_sh_attempts(status, reconcile_after);
+            CREATE INDEX IF NOT EXISTS idx_pay_sh_challenge_bindings_quote
+                ON pay_sh_challenge_bindings(quote_id, challenge_expires_at);
+            CREATE INDEX IF NOT EXISTS idx_pay_sh_challenge_bindings_expiry
+                ON pay_sh_challenge_bindings(challenge_expires_at);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_direct_pay_sh_attempts_active_quote
+                ON direct_pay_sh_attempts(quote_id)
+                WHERE status IN ('prepared', 'ambiguous');
             CREATE INDEX IF NOT EXISTS idx_bundle_chain_settlements_signature
                 ON bundle_chain_settlements(transaction_signature);
             CREATE INDEX IF NOT EXISTS idx_wallet_challenges_user
                 ON wallet_challenges(user_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_wallet_auth_challenges_wallet
+                ON wallet_auth_challenges(wallet, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_wallet_siwx_challenges_user
                 ON wallet_siwx_challenges(user_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_document_feedback_status
@@ -1247,30 +1920,38 @@ impl Store {
                 ON password_reset_tokens(expires_at, used_at);
             CREATE INDEX IF NOT EXISTS idx_ai_baselines_expiry
                 ON ai_baselines(expires_at);
+            CREATE INDEX IF NOT EXISTS idx_ai_generation_attempts_scope
+                ON ai_generation_attempts(artifact_kind, scope_id, window_started_at);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_generation_attempts_exact_input
+                ON ai_generation_attempts(artifact_kind, scope_id, input_hash);
+            CREATE INDEX IF NOT EXISTS idx_ai_generation_attempts_window
+                ON ai_generation_attempts(window_started_at);
+            CREATE INDEX IF NOT EXISTS idx_ai_generation_budgets_window
+                ON ai_generation_budgets(window_started_at);
+            CREATE INDEX IF NOT EXISTS idx_rollback_recovery_holds_unresolved
+                ON rollback_recovery_holds(resolved_at, recovery_id);
+            CREATE INDEX IF NOT EXISTS idx_ai_generation_documents_author
+                ON ai_generation_documents(author_id, artifact_kind, scope_id, input_hash);
             CREATE INDEX IF NOT EXISTS idx_shelf_starters_user
                 ON shelf_starters(user_id, answered_at, expires_at DESC);
             "#,
         )?;
-        add_column_if_missing(&connection, "queries", "payment_token_hash", "TEXT")?;
-        add_column_if_missing(
-            &connection,
-            "queries",
-            "payment_token_expires_at",
-            "INTEGER",
-        )?;
+        install_chain_transaction_guards(connection)?;
+        add_column_if_missing(connection, "queries", "payment_token_hash", "TEXT")?;
+        add_column_if_missing(connection, "queries", "payment_token_expires_at", "INTEGER")?;
         connection.execute(
             "UPDATE queries SET payment_token_expires_at = created_at + ?1
              WHERE payment_token_hash IS NOT NULL AND payment_token_expires_at IS NULL",
             [as_i64(QUERY_TOKEN_TTL_MS)?],
         )?;
         add_column_if_missing(
-            &connection,
+            connection,
             "queries",
             "liquidity_state",
             "TEXT NOT NULL DEFAULT 'human_covered'",
         )?;
         add_column_if_missing(
-            &connection,
+            connection,
             "memory_entries",
             "interview_json",
             "TEXT NOT NULL DEFAULT '[]'",
@@ -1286,13 +1967,13 @@ impl Store {
             ("last_accessed_at", "INTEGER"),
             ("source_ids_json", "TEXT NOT NULL DEFAULT '[]'"),
         ] {
-            add_column_if_missing(&connection, "memory_entries", name, definition)?;
+            add_column_if_missing(connection, "memory_entries", name, definition)?;
         }
         for (name, definition) in [
             ("content_hash", "TEXT NOT NULL DEFAULT ''"),
             ("version", "INTEGER NOT NULL DEFAULT 1"),
         ] {
-            add_column_if_missing(&connection, "documents", name, definition)?;
+            add_column_if_missing(connection, "documents", name, definition)?;
         }
         for (name, definition) in [
             ("content_snapshot", "TEXT NOT NULL DEFAULT ''"),
@@ -1302,19 +1983,83 @@ impl Store {
             ("status", "TEXT NOT NULL DEFAULT 'quoted'"),
             ("consent_version", "TEXT NOT NULL DEFAULT 'legacy'"),
             ("delivered_at", "INTEGER"),
+            ("payment_rail", "TEXT"),
         ] {
-            add_column_if_missing(&connection, "payment_quotes", name, definition)?;
+            add_column_if_missing(connection, "payment_quotes", name, definition)?;
         }
         for (name, definition) in [
             ("payer_wallet", "TEXT"),
             ("failure_reason", "TEXT"),
             ("refund_claim_id", "TEXT"),
             ("deposit_atomic", "INTEGER NOT NULL DEFAULT 0"),
+            ("minimum_deposit_atomic", "INTEGER NOT NULL DEFAULT 0"),
             ("funding_source", "TEXT NOT NULL DEFAULT 'legacy_direct'"),
             ("balance_release_atomic", "INTEGER NOT NULL DEFAULT 0"),
+            ("payment_attempt_quote_id", "TEXT"),
+            ("payment_attempt_id", "TEXT"),
         ] {
-            add_column_if_missing(&connection, "payment_bundle_quotes", name, definition)?;
+            add_column_if_missing(connection, "payment_bundle_quotes", name, definition)?;
         }
+        connection.execute(
+            "UPDATE payment_bundle_quotes
+             SET minimum_deposit_atomic = deposit_atomic
+             WHERE minimum_deposit_atomic = 0 AND deposit_atomic > 0",
+            params![],
+        )?;
+        add_column_if_missing(
+            connection,
+            "research_payment_attempts",
+            "absence_observed_at",
+            "INTEGER",
+        )?;
+        add_column_if_missing(
+            connection,
+            "payout_claims",
+            "absence_observed_at",
+            "INTEGER",
+        )?;
+        add_column_if_missing(connection, "payout_claims", "prepared_at", "INTEGER")?;
+        connection.execute(
+            "UPDATE payout_claims SET prepared_at = updated_at
+             WHERE status = 'prepared' AND prepared_at IS NULL",
+            params![],
+        )?;
+        add_column_if_missing(connection, "email_outbox", "lease_owner", "TEXT")?;
+        add_column_if_missing(connection, "email_outbox", "lease_expires_at", "INTEGER")?;
+        add_column_if_missing(
+            connection,
+            "research_payment_attempts",
+            "payer_wallet",
+            "TEXT",
+        )?;
+        add_column_if_missing(
+            connection,
+            "research_payment_attempts",
+            "platform_recipient_wallet",
+            "TEXT",
+        )?;
+        add_column_if_missing(
+            connection,
+            "direct_pay_sh_attempts",
+            "query_token_hash",
+            "TEXT NOT NULL DEFAULT ''",
+        )?;
+        add_column_if_missing(
+            connection,
+            "direct_pay_sh_attempts",
+            "platform_recipient_wallet",
+            "TEXT",
+        )?;
+        for (name, definition) in [
+            ("payer_wallet", "TEXT"),
+            ("signed_transaction_base64", "TEXT"),
+            ("recent_blockhash", "TEXT"),
+            ("absence_observed_at", "INTEGER"),
+        ] {
+            add_column_if_missing(connection, "chain_payment_attempts", name, definition)?;
+        }
+        ensure_chain_attempt_evidence_schema(connection)?;
+        ensure_chain_settlement_snapshot_columns(connection)?;
         connection.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_prepaid_sessions_wallet
                  ON prepaid_wallet_sessions(wallet, expires_at DESC);
@@ -1322,32 +2067,32 @@ impl Store {
                  ON prepaid_ledger(wallet, created_at DESC);",
         )?;
         add_column_if_missing(
-            &connection,
+            connection,
             "payment_bundle_documents",
             "pay_sh_quote_id",
             "TEXT REFERENCES payment_quotes(id) ON DELETE SET NULL",
         )?;
         add_column_if_missing(
-            &connection,
+            connection,
             "evidence_edges",
             "actor",
             "TEXT NOT NULL DEFAULT 'legacy'",
         )?;
-        add_column_if_missing(&connection, "profiles", "wallet_verified_at", "INTEGER")?;
+        add_column_if_missing(connection, "profiles", "wallet_verified_at", "INTEGER")?;
         add_column_if_missing(
-            &connection,
+            connection,
             "profiles",
             "browser_alerts",
             "INTEGER NOT NULL DEFAULT 0",
         )?;
         add_column_if_missing(
-            &connection,
+            connection,
             "profiles",
             "email_alerts",
             "INTEGER NOT NULL DEFAULT 0",
         )?;
         add_column_if_missing(
-            &connection,
+            connection,
             "profiles",
             "consent_version",
             "TEXT NOT NULL DEFAULT 'legacy'",
@@ -1359,13 +2104,13 @@ impl Store {
             params![],
         )?;
         add_column_if_missing(
-            &connection,
+            connection,
             "earning_events",
             "available_at",
             "INTEGER NOT NULL DEFAULT 0",
         )?;
         add_column_if_missing(
-            &connection,
+            connection,
             "open_calls",
             "escrow_remaining_krw",
             "INTEGER NOT NULL DEFAULT 0",
@@ -1376,7 +2121,7 @@ impl Store {
             ("target_household", "TEXT"),
             ("target_field", "TEXT"),
         ] {
-            add_column_if_missing(&connection, "open_calls", name, definition)?;
+            add_column_if_missing(connection, "open_calls", name, definition)?;
         }
         for (name, definition) in [
             ("escrow_mode", "TEXT NOT NULL DEFAULT 'sandbox'"),
@@ -1388,7 +2133,7 @@ impl Store {
             ("funding_transaction_signature", "TEXT"),
             ("payer_wallet", "TEXT"),
         ] {
-            add_column_if_missing(&connection, "open_calls", name, definition)?;
+            add_column_if_missing(connection, "open_calls", name, definition)?;
         }
         for (name, definition) in [
             ("reason", "TEXT NOT NULL DEFAULT ''"),
@@ -1397,7 +2142,7 @@ impl Store {
             ("review_note", "TEXT"),
             ("reviewed_at", "INTEGER"),
         ] {
-            add_column_if_missing(&connection, "dispute_events", name, definition)?;
+            add_column_if_missing(connection, "dispute_events", name, definition)?;
         }
         connection.execute(
             "UPDATE earning_events SET available_at = created_at WHERE available_at = 0",
@@ -1419,8 +2164,18 @@ impl Store {
             "UPDATE dispute_events SET status = 'approved' WHERE status = 'pending' AND reason = ''",
             params![],
         )?;
-        backfill_bundle_payout_claims(&connection)?;
-        backfill_content_hashes(&connection)?;
+        backfill_chain_transaction_registry(connection)?;
+        backfill_document_payment_rails(connection)?;
+        backfill_prepaid_wallet_owners(connection)?;
+        backfill_confirmed_research_refunds(connection)?;
+        validate_bundle_document_payment_reservations(connection)?;
+        install_active_pay_sh_attempt_guards(connection)?;
+        install_pay_sh_challenge_binding_guards(connection)?;
+        install_document_payment_rail_guards(connection)?;
+        install_rollback_recovery_schema(connection)?;
+        backfill_bundle_payout_claims(connection)?;
+        backfill_content_hashes(connection)?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -1543,7 +2298,10 @@ impl Store {
                  FROM payment_bundle_documents pbd
                  JOIN payment_bundle_quotes pbq ON pbq.id = pbd.quote_id
                  WHERE pbq.query_id = ?1 AND pbq.status IN ('delivered', 'completed')
-                   AND (pbq.status = 'delivered' OR EXISTS (
+                   AND ((pbq.status = 'delivered' AND EXISTS (
+                     SELECT 1 FROM bundle_chain_settlements funded
+                     WHERE funded.quote_id = pbq.id
+                   )) OR EXISTS (
                      SELECT 1 FROM payment_quotes paid
                      WHERE paid.id = pbd.pay_sh_quote_id AND paid.status = 'delivered'
                    ))",
@@ -1565,7 +2323,8 @@ impl Store {
                 .query_row(
                     "SELECT document_handle, shelf_snapshot, content_snapshot, price_krw
                      FROM payment_quotes
-                     WHERE query_id = ?1 AND document_handle = ?2 AND settled_at IS NOT NULL
+                     WHERE query_id = ?1 AND document_handle = ?2
+                       AND status = 'delivered' AND settled_at IS NOT NULL
                      ORDER BY settled_at DESC LIMIT 1",
                     params![query_id.trim(), handle],
                     |row| {
@@ -1578,7 +2337,40 @@ impl Store {
                     },
                 )
                 .optional()?;
-            let citation = if let Some(snapshot) = settled_snapshot {
+            let bundle_snapshot = if settled_snapshot.is_none() {
+                connection
+                    .query_row(
+                        "SELECT pbd.document_handle, pbd.shelf_snapshot,
+                                pbd.content_snapshot, pbd.price_krw
+                         FROM payment_bundle_documents pbd
+                         JOIN payment_bundle_quotes pbq ON pbq.id = pbd.quote_id
+                         WHERE pbq.query_id = ?1 AND pbd.document_handle = ?2
+                           AND pbq.status IN ('delivered', 'completed')
+                           AND ((pbq.status = 'delivered' AND EXISTS (
+                             SELECT 1 FROM bundle_chain_settlements funded
+                             WHERE funded.quote_id = pbq.id
+                           )) OR EXISTS (
+                             SELECT 1 FROM payment_quotes paid
+                             WHERE paid.id = pbd.pay_sh_quote_id
+                               AND paid.status = 'delivered'
+                           ))
+                         ORDER BY COALESCE(pbq.delivered_at, pbq.settled_at,
+                                           pbq.created_at) DESC LIMIT 1",
+                        params![query_id.trim(), handle],
+                        |row| {
+                            Ok(Citation {
+                                handle: row.get(0)?,
+                                shelf: row.get(1)?,
+                                excerpt: row.get(2)?,
+                                price: as_u64(row.get(3)?)?,
+                            })
+                        },
+                    )
+                    .optional()?
+            } else {
+                None
+            };
+            let citation = if let Some(snapshot) = settled_snapshot.or(bundle_snapshot) {
                 snapshot
             } else {
                 connection
@@ -1712,6 +2504,312 @@ impl Store {
             )?;
         }
         transaction.commit()?;
+        Ok(())
+    }
+
+    /// Atomically reserves one provider call for an exact server-owned input.
+    /// A process that dies after the provider accepts the request leaves a
+    /// durable `started` row, so even a retry across a budget-window or clock-
+    /// skew boundary fails closed instead of purchasing the same input again.
+    pub fn claim_ai_generation(
+        &self,
+        artifact_kind: &str,
+        scope_id: &str,
+        input_hash: &str,
+        document_handles: &[String],
+    ) -> Result<AiGenerationClaim, StoreError> {
+        let attempt_limit = ai_generation_attempt_limit(artifact_kind)
+            .ok_or_else(|| StoreError::Validation("unsupported AI artifact kind".to_owned()))?;
+        let scope_id = scope_id.trim();
+        let input_hash = input_hash.trim();
+        if scope_id.is_empty()
+            || scope_id.chars().count() > 200
+            || input_hash.len() != 64
+            || !input_hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || (artifact_kind == "synthesis" && !(1..=20).contains(&document_handles.len()))
+            || (artifact_kind != "synthesis" && !document_handles.is_empty())
+        {
+            return Err(StoreError::Validation(
+                "invalid AI generation scope or input hash".to_owned(),
+            ));
+        }
+
+        let now = now_ms();
+        let window_started_at = now - (now % AI_GENERATION_BUDGET_WINDOW_MS);
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+
+        let mut generation_documents = Vec::new();
+        if artifact_kind == "synthesis" {
+            let mut requested = document_handles
+                .iter()
+                .map(|handle| handle.trim())
+                .collect::<Vec<_>>();
+            requested.sort_unstable();
+            requested.dedup();
+            if requested.len() != document_handles.len()
+                || requested.iter().any(|handle| handle.is_empty())
+            {
+                return Err(StoreError::Validation(
+                    "synthesis document handles must be unique and non-empty".to_owned(),
+                ));
+            }
+            let mut unlocked_documents = Vec::with_capacity(requested.len());
+            for handle in requested {
+                let document = transaction
+                    .query_row(
+                        "SELECT id, author_id FROM documents WHERE handle = ?1",
+                        [handle],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    )
+                    .optional()?
+                    .ok_or(StoreError::DocumentNotQuoted)?;
+                unlocked_documents.push((document.0, handle.to_owned(), document.1));
+            }
+            unlocked_documents.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+            for (document_id, handle, expected_author) in unlocked_documents {
+                let author = transaction
+                    .query_row(
+                        "SELECT author_id FROM documents WHERE id = ?1 /*FOR_UPDATE*/",
+                        [document_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?
+                    .ok_or(StoreError::DocumentNotQuoted)?;
+                if author != expected_author {
+                    return Err(StoreError::Conflict(
+                        "synthesis document ownership changed while claiming the provider"
+                            .to_owned(),
+                    ));
+                }
+                generation_documents.push((handle, author));
+            }
+        }
+
+        if let Some(existing) = transaction
+            .query_row(
+                "SELECT status, response_json FROM ai_generation_attempts
+                 WHERE artifact_kind = ?1 AND scope_id = ?2 AND input_hash = ?3
+                 ORDER BY window_started_at DESC LIMIT 1",
+                params![artifact_kind, scope_id, input_hash],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()?
+        {
+            transaction.commit()?;
+            return Ok(match existing {
+                (status, Some(response)) if status == "completed" => {
+                    AiGenerationClaim::Cached(response)
+                }
+                _ => AiGenerationClaim::Suppressed,
+            });
+        }
+
+        // The application check gives current revisions a useful 409.
+        // Database triggers repeat this invariant for stale revisions and for
+        // a hold installed between this read and the insert.
+        require_no_rollback_recovery_holds(&transaction)?;
+        let inserted = transaction.execute(
+            "INSERT OR IGNORE INTO ai_generation_attempts
+             (artifact_kind, scope_id, input_hash, window_started_at, status,
+              response_json, claimed_at, completed_at)
+             VALUES (?1, ?2, ?3, ?4, 'started', NULL, ?5, NULL)",
+            params![
+                artifact_kind,
+                scope_id,
+                input_hash,
+                as_i64(window_started_at)?,
+                as_i64(now)?,
+            ],
+        )?;
+        if inserted == 0 {
+            let existing = transaction.query_row(
+                "SELECT status, response_json FROM ai_generation_attempts
+                 WHERE artifact_kind = ?1 AND scope_id = ?2 AND input_hash = ?3
+                 ORDER BY window_started_at DESC LIMIT 1",
+                params![artifact_kind, scope_id, input_hash],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )?;
+            transaction.commit()?;
+            return Ok(match existing {
+                (status, Some(response)) if status == "completed" => {
+                    AiGenerationClaim::Cached(response)
+                }
+                _ => AiGenerationClaim::Suppressed,
+            });
+        }
+
+        transaction.execute(
+            "INSERT OR IGNORE INTO ai_generation_budgets
+             (artifact_kind, scope_id, window_started_at, attempts_used)
+             VALUES (?1, ?2, ?3, 0)",
+            params![artifact_kind, scope_id, as_i64(window_started_at)?],
+        )?;
+        let budgeted = transaction.execute(
+            "UPDATE ai_generation_budgets
+             SET attempts_used = attempts_used + 1
+             WHERE artifact_kind = ?1 AND scope_id = ?2 AND window_started_at = ?3
+               AND attempts_used < ?4",
+            params![
+                artifact_kind,
+                scope_id,
+                as_i64(window_started_at)?,
+                as_i64(attempt_limit)?,
+            ],
+        )?;
+        if budgeted != 1 {
+            transaction.execute(
+                "DELETE FROM ai_generation_attempts
+                 WHERE artifact_kind = ?1 AND scope_id = ?2 AND input_hash = ?3
+                   AND window_started_at = ?4 AND status = 'started'",
+                params![
+                    artifact_kind,
+                    scope_id,
+                    input_hash,
+                    as_i64(window_started_at)?,
+                ],
+            )?;
+            transaction.commit()?;
+            return Ok(AiGenerationClaim::Suppressed);
+        }
+        for (document_handle, author_id) in generation_documents {
+            transaction.execute(
+                "INSERT INTO ai_generation_documents
+                 (artifact_kind, scope_id, input_hash, document_handle, author_id)
+                 VALUES ('synthesis', ?1, ?2, ?3, ?4)",
+                params![scope_id, input_hash, document_handle, author_id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(AiGenerationClaim::Acquired { window_started_at })
+    }
+
+    pub fn complete_ai_generation(
+        &self,
+        artifact_kind: &str,
+        scope_id: &str,
+        input_hash: &str,
+        window_started_at: u64,
+        response_json: Option<&str>,
+    ) -> Result<(), StoreError> {
+        ai_generation_attempt_limit(artifact_kind)
+            .ok_or_else(|| StoreError::Validation("unsupported AI artifact kind".to_owned()))?;
+        if artifact_kind == "synthesis" && response_json.is_none() {
+            return Err(StoreError::Validation(
+                "completed synthesis requires a durable response".to_owned(),
+            ));
+        }
+        if artifact_kind != "synthesis" && response_json.is_some() {
+            return Err(StoreError::Validation(
+                "only synthesis stores a response in the provider fence".to_owned(),
+            ));
+        }
+        if response_json.is_some_and(|response| response.len() > 262_144) {
+            return Err(StoreError::Validation(
+                "AI generation response is too large to persist".to_owned(),
+            ));
+        }
+        let changed = self.connection()?.execute(
+            "UPDATE ai_generation_attempts
+             SET status = 'completed', response_json = ?1, completed_at = ?2
+             WHERE artifact_kind = ?3 AND scope_id = ?4 AND input_hash = ?5
+               AND window_started_at = ?6 AND status = 'started'",
+            params![
+                response_json,
+                as_i64(now_ms())?,
+                artifact_kind,
+                scope_id.trim(),
+                input_hash.trim(),
+                as_i64(window_started_at)?,
+            ],
+        )?;
+        if changed != 1 {
+            return Err(StoreError::Conflict(
+                "AI generation attempt is not the active provider fence".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Rolls back only the local reservation when the independent audit write
+    /// failed before any provider request could begin. Once transport starts,
+    /// callers must use `fail_ai_generation` and retain the consumed budget
+    /// because a lost provider response may already have incurred cost.
+    pub fn release_ai_generation_before_provider(
+        &self,
+        artifact_kind: &str,
+        scope_id: &str,
+        input_hash: &str,
+        window_started_at: u64,
+    ) -> Result<(), StoreError> {
+        ai_generation_attempt_limit(artifact_kind)
+            .ok_or_else(|| StoreError::Validation("unsupported AI artifact kind".to_owned()))?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let deleted_documents = transaction.execute(
+            "DELETE FROM ai_generation_documents
+             WHERE artifact_kind = ?1 AND scope_id = ?2 AND input_hash = ?3",
+            params![artifact_kind, scope_id.trim(), input_hash.trim()],
+        )?;
+        if artifact_kind != "synthesis" && deleted_documents != 0 {
+            return Err(StoreError::Conflict(
+                "non-synthesis provider claim unexpectedly owned document mappings".to_owned(),
+            ));
+        }
+        let deleted = transaction.execute(
+            "DELETE FROM ai_generation_attempts
+             WHERE artifact_kind = ?1 AND scope_id = ?2 AND input_hash = ?3
+               AND window_started_at = ?4 AND status = 'started'",
+            params![
+                artifact_kind,
+                scope_id.trim(),
+                input_hash.trim(),
+                as_i64(window_started_at)?,
+            ],
+        )?;
+        if deleted != 1 {
+            return Err(StoreError::Conflict(
+                "AI generation claim changed before pre-provider release".to_owned(),
+            ));
+        }
+        let budget_released = transaction.execute(
+            "UPDATE ai_generation_budgets
+             SET attempts_used = attempts_used - 1
+             WHERE artifact_kind = ?1 AND scope_id = ?2 AND window_started_at = ?3
+               AND attempts_used > 0",
+            params![artifact_kind, scope_id.trim(), as_i64(window_started_at)?,],
+        )?;
+        if budget_released != 1 {
+            return Err(StoreError::Conflict(
+                "AI generation budget changed before pre-provider release".to_owned(),
+            ));
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn fail_ai_generation(
+        &self,
+        artifact_kind: &str,
+        scope_id: &str,
+        input_hash: &str,
+        window_started_at: u64,
+    ) -> Result<(), StoreError> {
+        ai_generation_attempt_limit(artifact_kind)
+            .ok_or_else(|| StoreError::Validation("unsupported AI artifact kind".to_owned()))?;
+        self.connection()?.execute(
+            "UPDATE ai_generation_attempts
+             SET status = 'failed', completed_at = ?1
+             WHERE artifact_kind = ?2 AND scope_id = ?3 AND input_hash = ?4
+               AND window_started_at = ?5 AND status = 'started'",
+            params![
+                as_i64(now_ms())?,
+                artifact_kind,
+                scope_id.trim(),
+                input_hash.trim(),
+                as_i64(window_started_at)?,
+            ],
+        )?;
         Ok(())
     }
 
@@ -2242,7 +3340,7 @@ impl Store {
                  FROM payment_quotes pq
                  JOIN chain_settlements cs ON cs.quote_id = pq.id
                  WHERE pq.query_id = ?1 AND pq.document_handle = ?2
-                   AND cs.payer = ?3
+                   AND pq.status = 'delivered' AND cs.payer = ?3
                  ORDER BY cs.confirmed_at DESC LIMIT 1",
                 params![query_id, handle, payer],
                 |row| {
@@ -2599,10 +3697,22 @@ impl Store {
         if let Some(quote) = connection
             .query_row(
                 "SELECT id, pay_to, network, asset, amount_atomic, total_price_krw,
-                        krw_per_usdc, expires_at, payload_hash, status, open_call_id
+                        krw_per_usdc, expires_at, payload_hash,
+                        CASE WHEN status = 'quoted' AND EXISTS (
+                            SELECT 1 FROM chain_payment_attempts attempt
+                            WHERE attempt.settlement_kind = 'open_call'
+                              AND attempt.quote_id = open_call_funding_quotes.id
+                        ) THEN 'settling' ELSE status END,
+                        open_call_id
                  FROM open_call_funding_quotes
-                 WHERE owner_id = ?1 AND payload_hash = ?2 AND status = 'quoted'
-                   AND expires_at > ?3 ORDER BY created_at DESC LIMIT 1",
+                 WHERE owner_id = ?1 AND payload_hash = ?2
+                   AND ((status = 'quoted' AND (expires_at > ?3 OR EXISTS (
+                       SELECT 1 FROM chain_payment_attempts attempt
+                       WHERE attempt.settlement_kind = 'open_call'
+                         AND attempt.quote_id = open_call_funding_quotes.id
+                   ))) OR status = 'funded')
+                 ORDER BY CASE WHEN status = 'funded' THEN 0 ELSE 1 END,
+                          created_at DESC LIMIT 1",
                 params![owner_id, payload_hash, as_i64(now)?],
                 open_call_funding_quote_from_row,
             )
@@ -2642,7 +3752,13 @@ impl Store {
         self.connection()?
             .query_row(
                 "SELECT id, pay_to, network, asset, amount_atomic, total_price_krw,
-                        krw_per_usdc, expires_at, payload_hash, status, open_call_id
+                        krw_per_usdc, expires_at, payload_hash,
+                        CASE WHEN status = 'quoted' AND EXISTS (
+                            SELECT 1 FROM chain_payment_attempts attempt
+                            WHERE attempt.settlement_kind = 'open_call'
+                              AND attempt.quote_id = open_call_funding_quotes.id
+                        ) THEN 'settling' ELSE status END,
+                        open_call_id
                  FROM open_call_funding_quotes WHERE id = ?1",
                 [quote_id.trim()],
                 open_call_funding_quote_from_row,
@@ -2659,7 +3775,13 @@ impl Store {
         self.connection()?
             .query_row(
                 "SELECT id, pay_to, network, asset, amount_atomic, total_price_krw,
-                        krw_per_usdc, expires_at, payload_hash, status, open_call_id
+                        krw_per_usdc, expires_at, payload_hash,
+                        CASE WHEN status = 'quoted' AND EXISTS (
+                            SELECT 1 FROM chain_payment_attempts attempt
+                            WHERE attempt.settlement_kind = 'open_call'
+                              AND attempt.quote_id = open_call_funding_quotes.id
+                        ) THEN 'settling' ELSE status END,
+                        open_call_id
                  FROM open_call_funding_quotes WHERE id = ?1 AND owner_id = ?2",
                 params![quote_id.trim(), owner_id],
                 open_call_funding_quote_from_row,
@@ -2694,6 +3816,354 @@ impl Store {
         })
     }
 
+    pub fn claim_payment_attempt(
+        &self,
+        request: &ClaimPaymentAttemptRequest,
+    ) -> Result<PaymentAttemptFence, StoreError> {
+        validate_payment_attempt_request(request)?;
+        let now = now_ms();
+        // This timestamp schedules reconciliation; it never re-opens payment.
+        // Only a verified pre-settlement cancellation or a recorded settlement
+        // may remove the durable fence, because an expired network call can
+        // still have landed on-chain.
+        let reconcile_after = now.saturating_add(PAYMENT_ATTEMPT_RECONCILE_AFTER_MS);
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let document_identity = if request.settlement_kind == "document" {
+            let identity = transaction
+                .query_row(
+                    "SELECT query_id, document_handle FROM payment_quotes WHERE id = ?1",
+                    [request.quote_id.trim()],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?
+                .ok_or(StoreError::NotFound("payment quote"))?;
+            transaction.query_row(
+                "SELECT id FROM queries WHERE id = ?1 /*FOR_UPDATE*/",
+                [&identity.0],
+                |row| row.get::<_, String>(0),
+            )?;
+            Some(identity)
+        } else {
+            None
+        };
+        let (status, expires_at, payment_rail): (String, u64, Option<String>) =
+            match request.settlement_kind.as_str() {
+                "document" => transaction
+                    .query_row(
+                        "SELECT status, expires_at, payment_rail FROM payment_quotes
+                     WHERE id = ?1 /*FOR_UPDATE*/",
+                        [request.quote_id.trim()],
+                        |row| Ok((row.get(0)?, as_u64(row.get(1)?)?, row.get(2)?)),
+                    )
+                    .optional()?
+                    .ok_or(StoreError::NotFound("payment quote"))?,
+                "bundle" => transaction
+                    .query_row(
+                        "SELECT status, expires_at FROM payment_bundle_quotes
+                     WHERE id = ?1 /*FOR_UPDATE*/",
+                        [request.quote_id.trim()],
+                        |row| Ok((row.get(0)?, as_u64(row.get(1)?)?, None)),
+                    )
+                    .optional()?
+                    .ok_or(StoreError::NotFound("payment bundle quote"))?,
+                "open_call" => transaction
+                    .query_row(
+                        "SELECT status, expires_at FROM open_call_funding_quotes
+                     WHERE id = ?1 /*FOR_UPDATE*/",
+                        [request.quote_id.trim()],
+                        |row| Ok((row.get(0)?, as_u64(row.get(1)?)?, None)),
+                    )
+                    .optional()?
+                    .ok_or(StoreError::NotFound("open-call funding quote"))?,
+                _ => unreachable!("validated settlement kind"),
+            };
+        // A previous request may have committed this fence and then lost its
+        // response while the independent rollback-audit write was unavailable.
+        // Re-authorizing the byte-identical signed transaction is safe: Solana
+        // cannot execute one signature twice. A changed credential remains a
+        // hard conflict. This check deliberately precedes quote expiry/status
+        // gates because those may advance while the caller is recovering the
+        // already-durable attempt.
+        if let Some(existing) = matching_chain_payment_attempt(&transaction, request)? {
+            transaction.commit()?;
+            return Ok(existing);
+        }
+        if request.settlement_kind == "document" && payment_rail.as_deref() != Some("x402") {
+            return Err(StoreError::Conflict(
+                "this document quote is not reserved for x402 payment".to_owned(),
+            ));
+        }
+        if let Some((query_id, document_handle)) = document_identity.as_ref()
+            && let Some(bundle_id) =
+                active_bundle_reservation(&transaction, query_id, document_handle, None)?
+        {
+            return Err(StoreError::Conflict(format!(
+                "this document purchase is reserved by research bundle {bundle_id}"
+            )));
+        }
+        if status != "quoted" {
+            return Err(StoreError::Conflict(
+                "this payment resource is no longer payable".to_owned(),
+            ));
+        }
+        if expires_at <= now {
+            return Err(StoreError::Conflict(
+                "this payment quote expired before settlement began".to_owned(),
+            ));
+        }
+        require_no_rollback_recovery_holds(&transaction)?;
+        let claimed = transaction.execute(
+            "INSERT OR IGNORE INTO chain_payment_attempts
+             (settlement_kind, quote_id, attempt_id, payer_wallet,
+              signed_transaction_base64, recent_blockhash, reconcile_after, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                request.settlement_kind,
+                request.quote_id.trim(),
+                request.attempt_id,
+                request.payer.as_deref(),
+                request.signed_transaction_base64.as_deref(),
+                request.recent_blockhash.as_deref(),
+                as_i64(reconcile_after)?,
+                as_i64(now)?,
+            ],
+        )?;
+        if claimed == 0 {
+            // A separate API instance can win the unique insert after this
+            // transaction's first read. Re-read after the conflict so exact
+            // concurrent retries converge instead of stranding the external
+            // audit step.
+            if let Some(existing) = matching_chain_payment_attempt(&transaction, request)? {
+                transaction.commit()?;
+                return Ok(existing);
+            }
+            return Err(StoreError::Conflict(
+                "this payment resource already has a verified payment in progress".to_owned(),
+            ));
+        }
+        transaction.commit()?;
+        Ok(PaymentAttemptFence {
+            settlement_kind: request.settlement_kind.clone(),
+            quote_id: request.quote_id.trim().to_owned(),
+            attempt_id: request.attempt_id.clone(),
+            reconcile_after,
+        })
+    }
+
+    pub fn release_payment_attempt(
+        &self,
+        request: &ClaimPaymentAttemptRequest,
+    ) -> Result<PaymentAttemptRelease, StoreError> {
+        validate_payment_attempt_request(request)?;
+        let released = self.connection()?.execute(
+            "DELETE FROM chain_payment_attempts
+             WHERE settlement_kind = ?1 AND quote_id = ?2 AND attempt_id = ?3",
+            params![
+                request.settlement_kind,
+                request.quote_id.trim(),
+                request.attempt_id,
+            ],
+        )? > 0;
+        Ok(PaymentAttemptRelease { released })
+    }
+
+    pub fn payment_attempt(&self, attempt_id: &str) -> Result<PaymentAttemptFence, StoreError> {
+        validate_attempt_id(attempt_id)?;
+        self.connection()?
+            .query_row(
+                "SELECT settlement_kind, quote_id, attempt_id, reconcile_after
+                 FROM chain_payment_attempts WHERE attempt_id = ?1",
+                [attempt_id],
+                |row| {
+                    Ok(PaymentAttemptFence {
+                        settlement_kind: row.get(0)?,
+                        quote_id: row.get(1)?,
+                        attempt_id: row.get(2)?,
+                        reconcile_after: as_u64(row.get(3)?)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("payment attempt"))
+    }
+
+    pub fn payment_attempt_reconciliations(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PaymentAttemptReconciliation>, StoreError> {
+        let now = now_ms();
+        let limit = limit.clamp(1, 100);
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT settlement_kind, quote_id, attempt_id, reconcile_after, created_at,
+                    pay_to, network, asset, amount_atomic, payer_wallet,
+                    signed_transaction_base64, recent_blockhash, absence_observed_at
+             FROM (
+                 SELECT attempt.settlement_kind, attempt.quote_id, attempt.attempt_id,
+                        attempt.reconcile_after, attempt.created_at, quote.pay_to,
+                        quote.network, quote.asset, quote.amount_atomic,
+                        attempt.payer_wallet, attempt.signed_transaction_base64,
+                        attempt.recent_blockhash, attempt.absence_observed_at
+                 FROM chain_payment_attempts attempt
+                 JOIN payment_quotes quote ON quote.id = attempt.quote_id
+                 WHERE attempt.settlement_kind = 'document'
+                 UNION ALL
+                 SELECT attempt.settlement_kind, attempt.quote_id, attempt.attempt_id,
+                        attempt.reconcile_after, attempt.created_at, quote.pay_to,
+                        quote.network, quote.asset, quote.deposit_atomic,
+                        attempt.payer_wallet, attempt.signed_transaction_base64,
+                        attempt.recent_blockhash, attempt.absence_observed_at
+                 FROM chain_payment_attempts attempt
+                 JOIN payment_bundle_quotes quote ON quote.id = attempt.quote_id
+                 WHERE attempt.settlement_kind = 'bundle'
+                 UNION ALL
+                 SELECT attempt.settlement_kind, attempt.quote_id, attempt.attempt_id,
+                        attempt.reconcile_after, attempt.created_at, quote.pay_to,
+                        quote.network, quote.asset, quote.amount_atomic,
+                        attempt.payer_wallet, attempt.signed_transaction_base64,
+                        attempt.recent_blockhash, attempt.absence_observed_at
+                 FROM chain_payment_attempts attempt
+                 JOIN open_call_funding_quotes quote ON quote.id = attempt.quote_id
+                 WHERE attempt.settlement_kind = 'open_call'
+             ) due
+             WHERE reconcile_after <= ?1
+             ORDER BY reconcile_after ASC, created_at ASC
+             LIMIT ?2",
+        )?;
+        let reconciliations = statement
+            .query_map(params![as_i64(now)?, limit as i64], |row| {
+                Ok(PaymentAttemptReconciliation {
+                    settlement_kind: row.get(0)?,
+                    quote_id: row.get(1)?,
+                    attempt_id: row.get(2)?,
+                    reconcile_after: as_u64(row.get(3)?)?,
+                    created_at: as_u64(row.get(4)?)?,
+                    pay_to: row.get(5)?,
+                    network: row.get(6)?,
+                    asset: row.get(7)?,
+                    amount_atomic: as_u64(row.get(8)?)?.to_string(),
+                    payer: row.get(9)?,
+                    signed_transaction_base64: row.get(10)?,
+                    recent_blockhash: row.get(11)?,
+                    absence_observed_at: row.get::<_, Option<i64>>(12)?.map(as_u64).transpose()?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(reconciliations)
+    }
+
+    /// Loads the exact economic record immediately after a fence is claimed.
+    /// Unlike the due-reconciliation list this is not time-filtered: the API
+    /// needs it before returning permission to invoke an external rail.
+    pub fn payment_attempt_reconciliation(
+        &self,
+        attempt_id: &str,
+    ) -> Result<PaymentAttemptReconciliation, StoreError> {
+        validate_attempt_id(attempt_id)?;
+        self.connection()?
+            .query_row(
+                "SELECT settlement_kind, quote_id, attempt_id, reconcile_after, created_at,
+                        pay_to, network, asset, amount_atomic, payer_wallet,
+                        signed_transaction_base64, recent_blockhash, absence_observed_at
+                 FROM (
+                     SELECT attempt.settlement_kind, attempt.quote_id, attempt.attempt_id,
+                            attempt.reconcile_after, attempt.created_at, quote.pay_to,
+                            quote.network, quote.asset, quote.amount_atomic,
+                            attempt.payer_wallet, attempt.signed_transaction_base64,
+                            attempt.recent_blockhash, attempt.absence_observed_at
+                     FROM chain_payment_attempts attempt
+                     JOIN payment_quotes quote ON quote.id = attempt.quote_id
+                     WHERE attempt.settlement_kind = 'document'
+                     UNION ALL
+                     SELECT attempt.settlement_kind, attempt.quote_id, attempt.attempt_id,
+                            attempt.reconcile_after, attempt.created_at, quote.pay_to,
+                            quote.network, quote.asset, quote.deposit_atomic,
+                            attempt.payer_wallet, attempt.signed_transaction_base64,
+                            attempt.recent_blockhash, attempt.absence_observed_at
+                     FROM chain_payment_attempts attempt
+                     JOIN payment_bundle_quotes quote ON quote.id = attempt.quote_id
+                     WHERE attempt.settlement_kind = 'bundle'
+                     UNION ALL
+                     SELECT attempt.settlement_kind, attempt.quote_id, attempt.attempt_id,
+                            attempt.reconcile_after, attempt.created_at, quote.pay_to,
+                            quote.network, quote.asset, quote.amount_atomic,
+                            attempt.payer_wallet, attempt.signed_transaction_base64,
+                            attempt.recent_blockhash, attempt.absence_observed_at
+                     FROM chain_payment_attempts attempt
+                     JOIN open_call_funding_quotes quote ON quote.id = attempt.quote_id
+                     WHERE attempt.settlement_kind = 'open_call'
+                 ) attempt
+                 WHERE attempt_id = ?1",
+                [attempt_id],
+                payment_attempt_reconciliation_from_row,
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("payment attempt"))
+    }
+
+    pub fn defer_payment_attempt_reconciliation(
+        &self,
+        request: &ClaimPaymentAttemptRequest,
+    ) -> Result<PaymentAttemptFence, StoreError> {
+        validate_payment_attempt_request(request)?;
+        let reconcile_after = now_ms().saturating_add(PAYMENT_ATTEMPT_RETRY_AFTER_MS);
+        let changed = self.connection()?.execute(
+            "UPDATE chain_payment_attempts SET reconcile_after = ?1,
+                    absence_observed_at = CASE
+                      WHEN ?2 THEN COALESCE(absence_observed_at, ?3)
+                      ELSE absence_observed_at
+                    END
+             WHERE settlement_kind = ?4 AND quote_id = ?5 AND attempt_id = ?6",
+            params![
+                as_i64(reconcile_after)?,
+                request.absence_observed,
+                as_i64(now_ms())?,
+                request.settlement_kind,
+                request.quote_id.trim(),
+                request.attempt_id,
+            ],
+        )?;
+        if changed != 1 {
+            return Err(StoreError::NotFound("payment attempt"));
+        }
+        Ok(PaymentAttemptFence {
+            settlement_kind: request.settlement_kind.clone(),
+            quote_id: request.quote_id.trim().to_owned(),
+            attempt_id: request.attempt_id.clone(),
+            reconcile_after,
+        })
+    }
+
+    pub fn release_reconciled_payment_attempt(
+        &self,
+        request: &ClaimPaymentAttemptRequest,
+    ) -> Result<PaymentAttemptRelease, StoreError> {
+        validate_payment_attempt_request(request)?;
+        let now = now_ms();
+        let released = self.connection()?.execute(
+            "DELETE FROM chain_payment_attempts
+             WHERE settlement_kind = ?1 AND quote_id = ?2 AND attempt_id = ?3
+               AND absence_observed_at IS NOT NULL
+               AND absence_observed_at >= created_at
+               AND absence_observed_at <= ?5
+               AND absence_observed_at + ?4 <= ?5",
+            params![
+                request.settlement_kind,
+                request.quote_id.trim(),
+                request.attempt_id,
+                as_i64(PAYMENT_ATTEMPT_RETRY_AFTER_MS)?,
+                as_i64(now)?,
+            ],
+        )? > 0;
+        if !released {
+            return Err(StoreError::Conflict(
+                "payment attempt needs two separated absence proofs before release".to_owned(),
+            ));
+        }
+        Ok(PaymentAttemptRelease { released })
+    }
+
     pub fn record_open_call_chain_settlement(
         &self,
         request: &RecordChainSettlementRequest,
@@ -2721,6 +4191,16 @@ impl Store {
                 && existing.amount_atomic == request.amount_atomic
                 && existing.network == request.network.trim()
             {
+                lock_chain_payment_quote(&transaction, "open_call", request.quote_id.trim())?;
+                verify_chain_payment_attempt(
+                    &transaction,
+                    "open_call",
+                    request.quote_id.trim(),
+                    request.attempt_id.as_deref(),
+                    false,
+                )?;
+                clear_payment_attempt(&transaction, "open_call", request.quote_id.trim())?;
+                transaction.commit()?;
                 return Ok(existing);
             }
             return Err(StoreError::Conflict(
@@ -2728,46 +4208,33 @@ impl Store {
             ));
         }
         let signature = request.transaction_signature.trim();
-        let signature_used = transaction
-            .query_row(
-                "SELECT 1 FROM chain_settlements WHERE transaction_signature = ?1
-                 UNION ALL SELECT 1 FROM bundle_chain_settlements WHERE transaction_signature = ?1
-                 UNION ALL SELECT 1 FROM open_call_chain_settlements WHERE transaction_signature = ?1
-                 LIMIT 1",
-                [signature],
-                |_| Ok(()),
-            )
-            .optional()?
-            .is_some();
-        if signature_used {
-            return Err(StoreError::Conflict(
-                "this transaction signature has already been recorded".to_owned(),
-            ));
-        }
-        let (
-            owner_id,
-            request_json,
-            pay_to,
-            network,
-            asset,
-            quoted_atomic,
-            total_krw,
-            expiry,
-            status,
-        ): (
+        lock_chain_payment_quote(&transaction, "open_call", request.quote_id.trim())?;
+        let prepared_transaction = verify_chain_payment_attempt(
+            &transaction,
+            "open_call",
+            request.quote_id.trim(),
+            request.attempt_id.as_deref(),
+            true,
+        )?;
+        claim_chain_transaction(
+            &transaction,
+            signature,
+            "open_call",
+            request.quote_id.trim(),
+        )?;
+        let (owner_id, request_json, pay_to, network, asset, quoted_atomic, total_krw, status): (
             String,
             String,
             String,
             String,
             String,
-            u64,
             u64,
             u64,
             String,
         ) = transaction
             .query_row(
                 "SELECT owner_id, request_json, pay_to, network, asset, amount_atomic,
-                        total_price_krw, expires_at, status
+                        total_price_krw, status
                  FROM open_call_funding_quotes WHERE id = ?1",
                 [request.quote_id.trim()],
                 |row| {
@@ -2779,8 +4246,7 @@ impl Store {
                         row.get(4)?,
                         as_u64(row.get(5)?)?,
                         as_u64(row.get(6)?)?,
-                        as_u64(row.get(7)?)?,
-                        row.get(8)?,
+                        row.get(7)?,
                     ))
                 },
             )
@@ -2791,11 +4257,9 @@ impl Store {
                 "this funding quote is no longer payable".to_owned(),
             ));
         }
-        if expiry <= now_ms() {
-            return Err(StoreError::Conflict(
-                "this funding quote has expired".to_owned(),
-            ));
-        }
+        // The public gateway enforces expiry before verification. Once a
+        // facilitator has moved funds, durable delivery may arrive after that
+        // deadline and must still be recorded instead of orphaning the payer.
         if pay_to != request.pay_to.trim()
             || network != request.network.trim()
             || quoted_atomic != amount_atomic
@@ -2847,8 +4311,9 @@ impl Store {
         transaction.execute(
             "INSERT INTO open_call_chain_settlements
              (id, quote_id, open_call_id, transaction_signature, payer, pay_to,
-              amount_atomic, network, raw_response_json, confirmed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+              amount_atomic, network, prepared_transaction_base64,
+              raw_response_json, confirmed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 settlement_id,
                 request.quote_id.trim(),
@@ -2858,6 +4323,7 @@ impl Store {
                 request.pay_to.trim(),
                 as_i64(amount_atomic)?,
                 request.network.trim(),
+                prepared_transaction,
                 raw_response_json,
                 as_i64(confirmed_at)?,
             ],
@@ -2885,6 +4351,7 @@ impl Store {
                 as_i64(confirmed_at)?
             ],
         )?;
+        clear_payment_attempt(&transaction, "open_call", request.quote_id.trim())?;
         transaction.commit()?;
         drop(connection);
         if let Err(error) = self.run_call_agents(&call_id) {
@@ -3059,22 +4526,127 @@ impl Store {
             .collect::<Result<Vec<_>, _>>()?)
     }
 
-    pub fn mark_email_delivered(&self, id: &str) -> Result<(), StoreError> {
-        self.connection()?.execute(
-            "UPDATE email_outbox SET status = 'delivered', delivered_at = ?1,
-                    attempts = attempts + 1, last_error = NULL WHERE id = ?2",
-            params![as_i64(now_ms())?, id],
+    pub fn lease_pending_emails(
+        &self,
+        worker_id: &str,
+        limit: usize,
+        lease_ms: u64,
+    ) -> Result<Vec<PendingEmail>, StoreError> {
+        let worker_id = worker_id.trim();
+        if !(16..=128).contains(&worker_id.len())
+            || !(1..=100).contains(&limit)
+            || !(30_000..=EMAIL_MAX_LEASE_MS).contains(&lease_ms)
+        {
+            return Err(StoreError::Validation(
+                "email lease requires workerId 16..128, limit 1..100, and leaseMs 30000..1800000"
+                    .to_owned(),
+            ));
+        }
+        let now = now_ms();
+        let lease_expires_at = now.saturating_add(lease_ms);
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "UPDATE email_outbox
+             SET status = 'retry', lease_owner = NULL, lease_expires_at = NULL,
+                 last_error = 'email worker lease expired'
+             WHERE status = 'sending'
+               AND (lease_expires_at IS NULL OR lease_expires_at <= ?1)",
+            [as_i64(now)?],
         )?;
+        let ids = {
+            let mut statement = transaction.prepare(
+                "SELECT id FROM email_outbox
+                 WHERE status IN ('pending', 'retry') AND attempts < 5
+                   AND (lease_expires_at IS NULL OR lease_expires_at <= ?1)
+                 ORDER BY created_at, id LIMIT ?2",
+            )?;
+            statement
+                .query_map(params![as_i64(now)?, limit as i64], |row| {
+                    row.get::<_, String>(0)
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let mut leased = Vec::with_capacity(ids.len());
+        for id in ids {
+            let changed = transaction.execute(
+                "UPDATE email_outbox
+                 SET status = 'sending', lease_owner = ?1, lease_expires_at = ?2,
+                     attempts = attempts + 1, last_error = NULL
+                 WHERE id = ?3 AND status IN ('pending', 'retry') AND attempts < 5
+                   AND (lease_expires_at IS NULL OR lease_expires_at <= ?4)",
+                params![worker_id, as_i64(lease_expires_at)?, id, as_i64(now)?,],
+            )?;
+            if changed == 1 {
+                leased.push(transaction.query_row(
+                    "SELECT id, recipient, subject, body FROM email_outbox WHERE id = ?1",
+                    [&id],
+                    |row| {
+                        Ok(PendingEmail {
+                            id: row.get(0)?,
+                            recipient: row.get(1)?,
+                            subject: row.get(2)?,
+                            body: row.get(3)?,
+                        })
+                    },
+                )?);
+            }
+        }
+        transaction.commit()?;
+        Ok(leased)
+    }
+
+    pub fn mark_email_delivered(&self, id: &str, worker_id: &str) -> Result<(), StoreError> {
+        let changed = self.connection()?.execute(
+            "UPDATE email_outbox SET status = 'delivered', delivered_at = ?1,
+                    recipient = '', subject = '', body = '',
+                    lease_owner = NULL, lease_expires_at = NULL,
+                    last_error = NULL
+              WHERE id = ?2 AND status = 'sending' AND lease_owner = ?3",
+            params![as_i64(now_ms())?, id, worker_id.trim()],
+        )?;
+        if changed != 1 {
+            return Err(StoreError::Conflict(
+                "email delivery lease is no longer owned by this worker".to_owned(),
+            ));
+        }
         Ok(())
     }
 
-    pub fn mark_email_failed(&self, id: &str, error: &str) -> Result<(), StoreError> {
-        self.connection()?.execute(
-            "UPDATE email_outbox SET status = 'retry', attempts = attempts + 1,
-                    last_error = ?1 WHERE id = ?2",
-            params![error.chars().take(500).collect::<String>(), id],
+    pub fn mark_email_failed(
+        &self,
+        id: &str,
+        worker_id: &str,
+        error: &str,
+    ) -> Result<bool, StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let changed = transaction.execute(
+            "UPDATE email_outbox
+             SET status = CASE WHEN attempts >= 5 THEN 'exhausted' ELSE 'retry' END,
+                    recipient = CASE WHEN attempts >= 5 THEN '' ELSE recipient END,
+                    subject = CASE WHEN attempts >= 5 THEN '' ELSE subject END,
+                    body = CASE WHEN attempts >= 5 THEN '' ELSE body END,
+                    lease_owner = NULL, lease_expires_at = NULL, last_error = ?1
+              WHERE id = ?2 AND status = 'sending' AND lease_owner = ?3",
+            params![
+                error.chars().take(500).collect::<String>(),
+                id,
+                worker_id.trim()
+            ],
         )?;
-        Ok(())
+        if changed != 1 {
+            return Err(StoreError::Conflict(
+                "email failure lease is no longer owned by this worker".to_owned(),
+            ));
+        }
+        let exhausted = transaction.query_row(
+            "SELECT status = 'exhausted' FROM email_outbox WHERE id = ?1",
+            [id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        transaction.commit()?;
+        Ok(exhausted)
     }
 
     fn create_notifications_for_call(&self, open_call_id: &str) -> Result<(), StoreError> {
@@ -3334,13 +4906,19 @@ impl Store {
                     ));
                 }
             } else {
-                transaction.execute(
+                let changed = transaction.execute(
                     "UPDATE open_calls SET answered = answered + 1,
                         escrow_remaining_krw = escrow_remaining_krw - unit_price_krw,
                         status = CASE WHEN answered + 1 >= target THEN 'filled' ELSE status END
-                     WHERE id = ?1",
+                     WHERE id = ?1 AND status = 'open' AND answered < target
+                       AND escrow_remaining_krw >= unit_price_krw",
                     [open_call_id],
                 )?;
+                if changed != 1 {
+                    return Err(StoreError::Conflict(
+                        "this open call is already full or its escrow is exhausted".to_owned(),
+                    ));
+                }
                 let changed = transaction.execute(
                     "UPDATE balances SET reserved_krw = reserved_krw - ?1, updated_at = ?2
                      WHERE user_id = ?3 AND reserved_krw >= ?1",
@@ -3884,13 +5462,30 @@ impl Store {
                     "this anonymous handle is already in use".to_owned(),
                 ));
             }
+            // Wallet sign-in already proved control of this key. Choosing the
+            // same key for contributor payouts needs no second challenge. A
+            // different payout key still requires the dedicated challenge or
+            // SIWX flow before it can receive a funded-call claim.
+            let identity_owned = if let Some(wallet) = wallet {
+                transaction
+                    .query_row(
+                        "SELECT 1 FROM wallet_identities WHERE wallet = ?1 AND user_id = ?2",
+                        params![wallet, user_id],
+                        |_| Ok(()),
+                    )
+                    .optional()?
+                    .is_some()
+            } else {
+                false
+            };
+            let wallet_verified_at = identity_owned.then_some(as_i64(now)?);
             transaction.execute(
                 "INSERT INTO profiles
                  (user_id, handle, age_band, region, household, field, years,
                   speaks_to_json, wallet, wallet_verified_at, agreed_at, consent_version,
                   auto_match, agents, browser_alerts, email_alerts,
                   created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11, ?12, ?13, ?14, ?15, ?10, ?10)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?11, ?11)
                  ON CONFLICT(user_id) DO UPDATE SET
                    handle = excluded.handle,
                    age_band = excluded.age_band,
@@ -3901,8 +5496,9 @@ impl Store {
                    speaks_to_json = excluded.speaks_to_json,
                    wallet = excluded.wallet,
                    wallet_verified_at = CASE
-                     WHEN profiles.wallet = excluded.wallet THEN profiles.wallet_verified_at
-                     ELSE NULL
+                     WHEN profiles.wallet = excluded.wallet
+                       THEN COALESCE(profiles.wallet_verified_at, excluded.wallet_verified_at)
+                     ELSE excluded.wallet_verified_at
                    END,
                    consent_version = excluded.consent_version,
                    auto_match = excluded.auto_match,
@@ -3921,6 +5517,7 @@ impl Store {
                     serde_json::to_string(&request.speaks_to)
                         .expect("profile categories are serialisable"),
                     wallet,
+                    wallet_verified_at,
                     as_i64(now)?,
                     CURRENT_CONSENT_VERSION,
                     i64::from(request.auto_match),
@@ -3976,6 +5573,280 @@ impl Store {
         }
         self.get_profile(user_id)?
             .ok_or(StoreError::NotFound("profile"))
+    }
+
+    pub fn create_wallet_auth_challenge(
+        &self,
+        wallet: &str,
+        nonce: &str,
+        origin: &str,
+        ttl_ms: u64,
+    ) -> Result<WalletChallenge, StoreError> {
+        let wallet = wallet.trim();
+        let nonce = nonce.trim();
+        let origin = origin.trim();
+        if !valid_solana_address(wallet) {
+            return Err(StoreError::Validation(
+                "wallet must be a base58 Solana public key".to_owned(),
+            ));
+        }
+        if nonce.len() != 64 || !nonce.chars().all(|character| character.is_ascii_hexdigit()) {
+            return Err(StoreError::Validation(
+                "wallet challenge nonce must be 32 bytes of hex".to_owned(),
+            ));
+        }
+        if origin.is_empty()
+            || origin.len() > 512
+            || origin.chars().any(char::is_control)
+            || origin.contains(char::is_whitespace)
+        {
+            return Err(StoreError::Validation(
+                "wallet challenge origin is invalid".to_owned(),
+            ));
+        }
+        if !(60_000..=10 * 60_000).contains(&ttl_ms) {
+            return Err(StoreError::Validation(
+                "wallet challenge ttl must be between one and ten minutes".to_owned(),
+            ));
+        }
+
+        let now = now_ms();
+        let expires_at = now.saturating_add(ttl_ms);
+        let id = new_id("wallet_auth_challenge");
+        let message = format!(
+            "OBOLUS wallet sign in\nOrigin: {origin}\nWallet: {wallet}\nChallenge: {id}\nNonce: {nonce}\nExpires: {expires_at}"
+        );
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM wallet_auth_challenges WHERE expires_at < ?1",
+            [as_i64(now.saturating_sub(24 * 60 * 60 * 1_000))?],
+        )?;
+        transaction.execute(
+            "INSERT INTO wallet_auth_challenges
+             (id, wallet, message, expires_at, consumed_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, NULL, ?5)",
+            params![id, wallet, message, as_i64(expires_at)?, as_i64(now)?],
+        )?;
+        transaction.commit()?;
+        Ok(WalletChallenge {
+            id,
+            wallet: wallet.to_owned(),
+            message,
+            expires_at,
+        })
+    }
+
+    pub fn consume_wallet_auth_challenge(
+        &self,
+        wallet: &str,
+        challenge_id: &str,
+        signature: &str,
+    ) -> Result<(), StoreError> {
+        let wallet = wallet.trim();
+        let challenge_id = challenge_id.trim();
+        if !valid_solana_address(wallet) || challenge_id.is_empty() {
+            return Err(StoreError::Validation(
+                "wallet and challengeId are required".to_owned(),
+            ));
+        }
+
+        let now = now_ms();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let (message, expires_at, consumed_at) = transaction
+            .query_row(
+                "SELECT message, expires_at, consumed_at
+                 FROM wallet_auth_challenges WHERE id = ?1 AND wallet = ?2",
+                params![challenge_id, wallet],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        as_u64(row.get(1)?)?,
+                        row.get::<_, Option<i64>>(2)?.map(as_u64).transpose()?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("wallet sign-in challenge"))?;
+        if consumed_at.is_some() {
+            return Err(StoreError::Conflict(
+                "this wallet sign-in challenge has already been used".to_owned(),
+            ));
+        }
+        if expires_at < now {
+            return Err(StoreError::Conflict(
+                "this wallet sign-in challenge has expired".to_owned(),
+            ));
+        }
+        verify_solana_signature(wallet, message.as_bytes(), signature)?;
+        let changed = transaction.execute(
+            "UPDATE wallet_auth_challenges SET consumed_at = ?1
+             WHERE id = ?2 AND wallet = ?3 AND consumed_at IS NULL",
+            params![as_i64(now)?, challenge_id, wallet],
+        )?;
+        if changed != 1 {
+            return Err(StoreError::Conflict(
+                "this wallet sign-in challenge has already been used".to_owned(),
+            ));
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn wallet_identity(&self, wallet: &str) -> Result<Option<UserAccount>, StoreError> {
+        let connection = self.connection()?;
+        load_wallet_identity(&connection, wallet.trim())
+    }
+
+    /// Atomically creates the synthetic wallet-only user, signup ledger, and
+    /// wallet binding. The deterministic reserved email is also a database
+    /// serialization key across API processes.
+    pub fn create_wallet_identity_user(
+        &self,
+        wallet: &str,
+        synthetic_email: &str,
+        password_hash: &str,
+    ) -> Result<(UserAccount, bool), StoreError> {
+        let wallet = wallet.trim();
+        let email = synthetic_email.trim().to_lowercase();
+        if !valid_solana_address(wallet)
+            || !valid_email(&email)
+            || !email.ends_with("@wallet.obolus.local")
+        {
+            return Err(StoreError::Validation(
+                "wallet identity requires a valid wallet and reserved synthetic email".to_owned(),
+            ));
+        }
+        let created_at = now_ms();
+        let id = new_id("user");
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        if let Some(existing) = load_wallet_identity(&transaction, wallet)? {
+            return Ok((existing, false));
+        }
+        let inserted = transaction.execute(
+            "INSERT OR IGNORE INTO users
+             (id, email, password_hash, role, created_at)
+             VALUES (?1, ?2, ?3, 'user', ?4)",
+            params![id, email, password_hash, as_i64(created_at)?],
+        )?;
+        if inserted == 0 {
+            if let Some(existing) = load_wallet_identity(&transaction, wallet)? {
+                return Ok((existing, false));
+            }
+            return Err(StoreError::Conflict(
+                "the reserved wallet identity namespace contains an unbound account; operator reconciliation is required"
+                    .to_owned(),
+            ));
+        }
+        transaction.execute(
+            "INSERT INTO balances
+             (user_id, available_krw, reserved_krw, held_krw, updated_at)
+             VALUES (?1, ?2, 0, 0, ?3)",
+            params![id, as_i64(SIGNUP_CREDIT_KRW)?, as_i64(created_at)?],
+        )?;
+        transaction.execute(
+            "INSERT INTO funding_events
+             (id, user_id, kind, amount_krw, created_at)
+             VALUES (?1, ?2, 'sandbox_signup_credit', ?3, ?4)",
+            params![
+                new_id("fund"),
+                id,
+                as_i64(SIGNUP_CREDIT_KRW)?,
+                as_i64(created_at)?
+            ],
+        )?;
+        let bound = transaction.execute(
+            "INSERT OR IGNORE INTO wallet_identities (wallet, user_id, created_at)
+             VALUES (?1, ?2, ?3)",
+            params![wallet, id, as_i64(created_at)?],
+        )?;
+        if bound != 1 {
+            return Err(StoreError::Conflict(
+                "wallet identity changed during account creation; retry sign in".to_owned(),
+            ));
+        }
+        transaction.commit()?;
+        Ok((
+            UserAccount {
+                id,
+                email,
+                role: "user".to_owned(),
+                created_at,
+            },
+            true,
+        ))
+    }
+
+    pub fn identity_wallet(&self, user_id: &str) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .connection()?
+            .query_row(
+                "SELECT wallet FROM wallet_identities WHERE user_id = ?1",
+                [user_id.trim()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?)
+    }
+
+    pub fn verified_profile_owner(&self, wallet: &str) -> Result<Option<UserAccount>, StoreError> {
+        Ok(self
+            .connection()?
+            .query_row(
+                "SELECT u.id, u.email, u.role, u.created_at
+                 FROM profiles p JOIN users u ON u.id = p.user_id
+                 WHERE p.wallet = ?1 AND p.wallet_verified_at IS NOT NULL
+                   AND u.deleted_at IS NULL",
+                [wallet.trim()],
+                |row| {
+                    Ok(UserAccount {
+                        id: row.get(0)?,
+                        email: row.get(1)?,
+                        role: row.get(2)?,
+                        created_at: as_u64(row.get(3)?)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    pub fn bind_wallet_identity(&self, user_id: &str, wallet: &str) -> Result<(), StoreError> {
+        let user_id = user_id.trim();
+        let wallet = wallet.trim();
+        if user_id.is_empty() || !valid_solana_address(wallet) {
+            return Err(StoreError::Validation(
+                "user id and a valid wallet are required".to_owned(),
+            ));
+        }
+        let connection = self.connection()?;
+        let inserted = connection.execute(
+            "INSERT OR IGNORE INTO wallet_identities (wallet, user_id, created_at)
+             VALUES (?1, ?2, ?3)",
+            params![wallet, user_id, as_i64(now_ms())?],
+        )?;
+        if inserted == 1 {
+            return Ok(());
+        }
+        let existing = connection
+            .query_row(
+                "SELECT wallet, user_id FROM wallet_identities WHERE wallet = ?1 OR user_id = ?2",
+                params![wallet, user_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        if existing
+            .as_ref()
+            .is_some_and(|(existing_wallet, existing_user)| {
+                existing_wallet == wallet && existing_user == user_id
+            })
+        {
+            Ok(())
+        } else {
+            Err(StoreError::Conflict(
+                "this wallet or account is already bound to another identity".to_owned(),
+            ))
+        }
     }
 
     pub fn create_wallet_challenge(
@@ -4121,6 +5992,17 @@ impl Store {
         verifying_key
             .verify_strict(message.as_bytes(), &signature)
             .map_err(|_| StoreError::Unauthorized("wallet signature is invalid".to_owned()))?;
+
+        transaction
+            .query_row(
+                "SELECT id FROM users
+                 WHERE id = ?1 AND deleted_at IS NULL /*FOR_UPDATE*/",
+                [user_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("user"))?;
+        prepare_verified_wallet_rotation(&transaction, user_id, &wallet)?;
 
         let owner = transaction
             .query_row(
@@ -4368,6 +6250,17 @@ impl Store {
             .verify_strict(siwx_message(payload)?.as_bytes(), &signature)
             .map_err(|_| StoreError::Unauthorized("wallet SIWX signature is invalid".to_owned()))?;
 
+        transaction
+            .query_row(
+                "SELECT id FROM users
+                 WHERE id = ?1 AND deleted_at IS NULL /*FOR_UPDATE*/",
+                [&challenge.user_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("user"))?;
+        prepare_verified_wallet_rotation(&transaction, &challenge.user_id, payload.address.trim())?;
+
         let owner = transaction
             .query_row(
                 "SELECT user_id FROM profiles
@@ -4460,12 +6353,76 @@ impl Store {
                     escrow_wallet, recipient_wallet, asset, network, amount_atomic,
                     amount_krw, status, transaction_signature, NULL, recent_blockhash,
                     last_valid_block_height, attempt_count, last_error, created_at,
-                    updated_at, confirmed_at
+                    updated_at, confirmed_at, absence_observed_at
              FROM payout_claims WHERE beneficiary_user_id = ?1
              ORDER BY created_at DESC, id DESC",
         )?;
         statement
             .query_map([user_id.trim()], payout_claim_from_row)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
+    }
+
+    pub fn payout_claim_backlogs(&self) -> Result<Vec<PayoutClaimBacklog>, StoreError> {
+        let connection = self.connection()?;
+        let maximum_lease_expiry = now_ms()
+            .saturating_add(PAYOUT_MAX_LEASE_MS)
+            .saturating_add(RECOVERY_SCHEDULE_CLOCK_SKEW_MS);
+        let maximum_observation_time = now_ms().saturating_add(RECOVERY_SCHEDULE_CLOCK_SKEW_MS);
+        let mut statement = connection.prepare(
+            "SELECT escrow_wallet, network, COUNT(*),
+                    SUM(CASE WHEN signed_transaction_base64 IS NOT NULL THEN 1 ELSE 0 END),
+                    SUM(CASE
+                          WHEN attempt_count >= 10
+                            OR status NOT IN ('pending', 'failed', 'leased', 'prepared')
+                            OR (status = 'prepared' AND (
+                                  transaction_signature IS NULL
+                                  OR signed_transaction_base64 IS NULL
+                                  OR recent_blockhash IS NULL
+                                  OR last_valid_block_height IS NULL
+                                  OR attempt_count = 0
+                                ))
+                            OR (status IN ('pending', 'failed', 'leased') AND (
+                                  transaction_signature IS NOT NULL
+                                  OR signed_transaction_base64 IS NOT NULL
+                                  OR recent_blockhash IS NOT NULL
+                                  OR last_valid_block_height IS NOT NULL
+                                  OR absence_observed_at IS NOT NULL
+                                ))
+                            OR (status = 'leased' AND (
+                                  lease_owner IS NULL OR lease_expires_at IS NULL
+                                ))
+                            OR (status IN ('leased', 'prepared')
+                                AND lease_expires_at > ?1)
+                            OR created_at <= 0 OR created_at > ?2
+                            OR (absence_observed_at IS NOT NULL AND (
+                                  absence_observed_at < COALESCE(prepared_at, created_at)
+                                  OR absence_observed_at > ?2
+                                ))
+                          THEN 1 ELSE 0 END),
+                    MIN(created_at)
+             FROM payout_claims
+             WHERE confirmed_at IS NULL OR status != 'confirmed'
+             GROUP BY escrow_wallet, network
+             ORDER BY MIN(created_at), escrow_wallet, network",
+        )?;
+        statement
+            .query_map(
+                params![
+                    as_i64(maximum_lease_expiry)?,
+                    as_i64(maximum_observation_time)?
+                ],
+                |row| {
+                    Ok(PayoutClaimBacklog {
+                        escrow_wallet: row.get(0)?,
+                        network: row.get(1)?,
+                        claim_count: as_u64(row.get(2)?)?,
+                        prepared_count: as_u64(row.get(3)?)?,
+                        blocked_count: as_u64(row.get(4)?)?,
+                        oldest_created_at: as_u64(row.get(5)?)?,
+                    })
+                },
+            )?
             .collect::<Result<Vec<_>, _>>()
             .map_err(StoreError::from)
     }
@@ -4484,7 +6441,7 @@ impl Store {
                 "workerId must be between 3 and 128 characters".to_owned(),
             ));
         }
-        if !(1..=100).contains(&limit) || !(10_000..=600_000).contains(&lease_ms) {
+        if !(1..=100).contains(&limit) || !(10_000..=PAYOUT_MAX_LEASE_MS).contains(&lease_ms) {
             return Err(StoreError::Validation(
                 "payout lease requires limit 1..100 and leaseMs 10000..600000".to_owned(),
             ));
@@ -4512,6 +6469,21 @@ impl Store {
                    AND escrow_wallet = ?2 AND network = ?3
                    AND status IN ('pending', 'failed', 'prepared')
                    AND (lease_expires_at IS NULL OR lease_expires_at <= ?1)
+                   AND (
+                     (status IN ('pending', 'failed')
+                       AND transaction_signature IS NULL
+                       AND signed_transaction_base64 IS NULL
+                       AND recent_blockhash IS NULL
+                       AND last_valid_block_height IS NULL
+                       AND absence_observed_at IS NULL)
+                     OR
+                     (status = 'prepared'
+                       AND transaction_signature IS NOT NULL
+                       AND signed_transaction_base64 IS NOT NULL
+                       AND recent_blockhash IS NOT NULL
+                       AND last_valid_block_height IS NOT NULL
+                       AND attempt_count > 0)
+                   )
                  ORDER BY CASE status WHEN 'prepared' THEN 0 ELSE 1 END, created_at, id
                  LIMIT ?4",
             )?;
@@ -4575,6 +6547,21 @@ impl Store {
                 "signedTransactionBase64 must be a bounded base64 transaction".to_owned(),
             ));
         }
+        let signed_transaction =
+            BASE64_STANDARD
+                .decode(signed_transaction_base64)
+                .map_err(|_| {
+                    StoreError::Validation(
+                        "signedTransactionBase64 must be canonical base64".to_owned(),
+                    )
+                })?;
+        if fully_signed_solana_transaction_signature(&signed_transaction).as_deref()
+            != Some(transaction_signature)
+        {
+            return Err(StoreError::Validation(
+                "payout transactionSignature must match the exact signed transaction".to_owned(),
+            ));
+        }
         if !valid_solana_address(recent_blockhash) || last_valid_block_height == 0 {
             return Err(StoreError::Validation(
                 "recentBlockhash and lastValidBlockHeight are required".to_owned(),
@@ -4617,11 +6604,13 @@ impl Store {
                 "payout claim must be leased before preparation".to_owned(),
             ));
         }
+        require_no_rollback_recovery_holds(&transaction)?;
         transaction.execute(
             "UPDATE payout_claims
              SET status = 'prepared', transaction_signature = ?1,
                  signed_transaction_base64 = ?2, recent_blockhash = ?3,
                  last_valid_block_height = ?4, attempt_count = attempt_count + 1,
+                 prepared_at = ?5, absence_observed_at = NULL,
                  last_error = NULL, updated_at = ?5
              WHERE id = ?6",
             params![
@@ -4650,7 +6639,10 @@ impl Store {
         let claim = load_payout_claim(&transaction, claim_id.trim())?;
         if claim.status == "confirmed" {
             if claim.transaction_signature.as_deref() == Some(transaction_signature.trim()) {
-                return Ok(claim);
+                finalize_research_refund_job(&transaction, &claim, now)?;
+                let completed = load_payout_claim(&transaction, claim_id.trim())?;
+                transaction.commit()?;
+                return Ok(completed);
             }
             return Err(StoreError::Conflict(
                 "payout claim was confirmed with another signature".to_owned(),
@@ -4678,6 +6670,7 @@ impl Store {
             "UPDATE payout_claims
              SET status = 'confirmed', signed_transaction_base64 = NULL,
                  lease_owner = NULL, lease_expires_at = NULL, last_error = NULL,
+                 absence_observed_at = NULL,
                  confirmed_at = ?1, updated_at = ?1 WHERE id = ?2",
             params![as_i64(now)?, claim_id.trim()],
         )?;
@@ -4687,6 +6680,7 @@ impl Store {
                 [earning_event_id],
             )?;
         }
+        finalize_research_refund_job(&transaction, &claim, now)?;
         let completed = load_payout_claim(&transaction, claim_id.trim())?;
         transaction.commit()?;
         Ok(completed)
@@ -4709,13 +6703,16 @@ impl Store {
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
         let claim = load_payout_claim(&transaction, claim_id.trim())?;
-        let (lease_owner, lease_expires_at) = transaction.query_row(
-            "SELECT lease_owner, lease_expires_at FROM payout_claims WHERE id = ?1",
+        let (lease_owner, lease_expires_at, prepared_at) = transaction.query_row(
+            "SELECT lease_owner, lease_expires_at,
+                    COALESCE(prepared_at, created_at)
+             FROM payout_claims WHERE id = ?1",
             [claim_id.trim()],
             |row| {
                 Ok((
                     row.get::<_, Option<String>>(0)?,
                     row.get::<_, Option<i64>>(1)?.map(as_u64).transpose()?,
+                    as_u64(row.get(2)?)?,
                 ))
             },
         )?;
@@ -4724,20 +6721,56 @@ impl Store {
             return Ok(claim);
         }
         if abandon_prepared_transaction {
-            transaction.execute(
-                "UPDATE payout_claims
-                 SET status = 'failed', transaction_signature = NULL,
-                     signed_transaction_base64 = NULL, recent_blockhash = NULL,
-                     last_valid_block_height = NULL, lease_owner = NULL,
-                     lease_expires_at = NULL, last_error = ?1, updated_at = ?2
-                 WHERE id = ?3",
-                params![error, as_i64(now)?, claim_id.trim()],
-            )?;
+            if claim.status != "prepared"
+                || claim.transaction_signature.is_none()
+                || claim.signed_transaction_base64.is_none()
+            {
+                return Err(StoreError::Conflict(
+                    "only an exact prepared payout can enter absence confirmation".to_owned(),
+                ));
+            }
+            if let Some(observed_at) = claim.absence_observed_at
+                && (observed_at < prepared_at || observed_at > now)
+            {
+                return Err(StoreError::Conflict(
+                    "payout absence observation is outside the prepared transaction lifetime"
+                        .to_owned(),
+                ));
+            }
+            let confirmed_absence = claim.absence_observed_at.is_some_and(|observed_at| {
+                observed_at.saturating_add(PAYOUT_ABSENCE_CONFIRMATION_MS) <= now
+            });
+            if confirmed_absence {
+                transaction.execute(
+                    "UPDATE payout_claims
+                     SET status = 'failed', transaction_signature = NULL,
+                         signed_transaction_base64 = NULL, recent_blockhash = NULL,
+                         last_valid_block_height = NULL, prepared_at = NULL,
+                         absence_observed_at = NULL,
+                         lease_owner = NULL, lease_expires_at = NULL,
+                         last_error = ?1, updated_at = ?2
+                     WHERE id = ?3",
+                    params![error, as_i64(now)?, claim_id.trim()],
+                )?;
+            } else {
+                transaction.execute(
+                    "UPDATE payout_claims
+                     SET status = 'prepared',
+                         absence_observed_at = COALESCE(absence_observed_at, ?1),
+                         lease_owner = NULL, lease_expires_at = NULL,
+                         last_error = ?2, updated_at = ?1
+                     WHERE id = ?3",
+                    params![as_i64(now)?, error, claim_id.trim()],
+                )?;
+            }
         } else {
             transaction.execute(
                 "UPDATE payout_claims
                  SET status = CASE WHEN signed_transaction_base64 IS NULL THEN 'failed' ELSE 'prepared' END,
                      lease_owner = NULL, lease_expires_at = NULL,
+                     absence_observed_at = NULL,
+                     attempt_count = attempt_count
+                       + CASE WHEN signed_transaction_base64 IS NULL THEN 1 ELSE 0 END,
                      last_error = ?1, updated_at = ?2 WHERE id = ?3",
                 params![error, as_i64(now)?, claim_id.trim()],
             )?;
@@ -4939,7 +6972,7 @@ impl Store {
         let dispute = transaction
             .query_row(
                 "SELECT memory_id, user_id, status, reason, review_note, created_at, reviewed_at
-                 FROM dispute_events WHERE memory_id = ?1",
+                 FROM dispute_events WHERE memory_id = ?1 /*FOR_UPDATE*/",
                 [memory_id],
                 dispute_from_row,
             )
@@ -4978,7 +7011,7 @@ impl Store {
                 .optional()?
                 .ok_or(StoreError::NotFound("memory entry"))?;
             let call = load_call(&transaction, &call_id)?;
-            if memory.status != "voided" || call.answered >= call.target {
+            if memory.status != "voided" || call.status != "open" || call.answered >= call.target {
                 return Err(StoreError::Conflict(
                     "the original answer can no longer fill this call".to_owned(),
                 ));
@@ -4990,6 +7023,23 @@ impl Store {
             }
             let profile = load_profile(&transaction, &dispute.user_id)?
                 .ok_or(StoreError::NotFound("profile"))?;
+            let onchain_payout = if call.escrow_mode == "x402_solana_escrow" {
+                let recipient_wallet = profile
+                    .wallet
+                    .as_deref()
+                    .filter(|_| profile.wallet_verified)
+                    .filter(|wallet| valid_solana_address(wallet))
+                    .ok_or_else(|| {
+                        StoreError::Conflict(
+                            "verify a Devnet payout wallet before restoring this funded answer"
+                                .to_owned(),
+                        )
+                    })?
+                    .to_owned();
+                Some((recipient_wallet, open_call_answer_atomic(&call)?))
+            } else {
+                None
+            };
             let document_id = new_id("md");
             let document = Document {
                 id: document_id.clone(),
@@ -5023,33 +7073,91 @@ impl Store {
                  WHERE id = ?3",
                 params![document_id, as_i64(price)?, memory_id],
             )?;
-            transaction.execute(
-                "UPDATE open_calls SET answered = answered + 1,
-                    escrow_remaining_krw = escrow_remaining_krw - unit_price_krw,
-                    status = CASE WHEN answered + 1 >= target THEN 'filled' ELSE status END
-                 WHERE id = ?1",
-                [call_id.as_str()],
-            )?;
-            transaction.execute(
-                "UPDATE balances SET reserved_krw = reserved_krw - ?1, updated_at = ?2
-                 WHERE user_id = ?3 AND reserved_krw >= ?1",
-                params![as_i64(price)?, as_i64(reviewed_at)?, owner_id],
-            )?;
-            insert_earning_event(
-                &transaction,
-                None,
-                Some(memory_id),
-                Some(&document_id),
-                &dispute.user_id,
-                "dispute_restored",
-                price,
-                reviewed_at,
-            )?;
+            if let Some((recipient_wallet, payout_atomic)) = onchain_payout {
+                let changed = transaction.execute(
+                    "UPDATE open_calls SET answered = answered + 1,
+                        escrow_remaining_krw = escrow_remaining_krw - unit_price_krw,
+                        escrow_remaining_atomic = escrow_remaining_atomic - ?1,
+                        status = CASE WHEN answered + 1 >= target THEN 'filled' ELSE status END
+                     WHERE id = ?2 AND status = 'open' AND answered < target
+                       AND escrow_remaining_krw >= unit_price_krw
+                       AND escrow_remaining_atomic >= ?1",
+                    params![as_i64(payout_atomic)?, call_id],
+                )?;
+                if changed != 1 {
+                    return Err(StoreError::Conflict(
+                        "the funded call no longer has enough escrow".to_owned(),
+                    ));
+                }
+                let earning_id = insert_open_call_onchain_earning_event(
+                    &transaction,
+                    Some(memory_id),
+                    Some(&document_id),
+                    &dispute.user_id,
+                    price,
+                    &recipient_wallet,
+                    reviewed_at,
+                )?;
+                insert_payout_claim(
+                    &transaction,
+                    Some(&earning_id),
+                    Some(&call_id),
+                    &dispute.user_id,
+                    "open_call_dispute_restored",
+                    call.escrow_wallet.as_deref().ok_or_else(|| {
+                        StoreError::Conflict("funded call has no escrow wallet".to_owned())
+                    })?,
+                    &recipient_wallet,
+                    call.escrow_asset.as_deref().ok_or_else(|| {
+                        StoreError::Conflict("funded call has no escrow asset".to_owned())
+                    })?,
+                    call.escrow_network.as_deref().ok_or_else(|| {
+                        StoreError::Conflict("funded call has no escrow network".to_owned())
+                    })?,
+                    payout_atomic,
+                    price,
+                    reviewed_at,
+                )?;
+            } else {
+                let changed = transaction.execute(
+                    "UPDATE open_calls SET answered = answered + 1,
+                        escrow_remaining_krw = escrow_remaining_krw - unit_price_krw,
+                        status = CASE WHEN answered + 1 >= target THEN 'filled' ELSE status END
+                     WHERE id = ?1 AND status = 'open' AND answered < target
+                       AND escrow_remaining_krw >= unit_price_krw",
+                    [call_id.as_str()],
+                )?;
+                if changed != 1 {
+                    return Err(StoreError::Conflict(
+                        "the original call no longer has enough escrow".to_owned(),
+                    ));
+                }
+                let changed = transaction.execute(
+                    "UPDATE balances SET reserved_krw = reserved_krw - ?1, updated_at = ?2
+                     WHERE user_id = ?3 AND reserved_krw >= ?1",
+                    params![as_i64(price)?, as_i64(reviewed_at)?, owner_id],
+                )?;
+                if changed != 1 {
+                    return Err(StoreError::Conflict(
+                        "reserved balance is inconsistent with this call".to_owned(),
+                    ));
+                }
+                insert_earning_event(
+                    &transaction,
+                    None,
+                    Some(memory_id),
+                    Some(&document_id),
+                    &dispute.user_id,
+                    "dispute_restored",
+                    price,
+                    reviewed_at,
+                )?;
+            }
         }
-        transaction.execute(
+        let reviewed = transaction.execute(
             "UPDATE dispute_events
              SET status = ?1, reviewer_id = ?2, review_note = ?3, reviewed_at = ?4
-             WHERE memory_id = ?5",
+             WHERE memory_id = ?5 AND status = 'pending'",
             params![
                 request.decision,
                 reviewer_id,
@@ -5058,6 +7166,11 @@ impl Store {
                 memory_id
             ],
         )?;
+        if reviewed != 1 {
+            return Err(StoreError::Conflict(
+                "this dispute has already been reviewed".to_owned(),
+            ));
+        }
         transaction.commit()?;
         Ok(DisputeCase {
             status: request.decision.clone(),
@@ -5386,7 +7499,7 @@ impl Store {
         let transaction = connection.transaction()?;
         let exists = transaction
             .query_row(
-                "SELECT 1 FROM users WHERE id = ?1 AND deleted_at IS NULL",
+                "SELECT 1 FROM users WHERE id = ?1 AND deleted_at IS NULL /*FOR_UPDATE*/",
                 [user_id],
                 |_| Ok(()),
             )
@@ -5395,19 +7508,106 @@ impl Store {
         if !exists {
             return Err(StoreError::NotFound("user"));
         }
-        let verified_wallet = transaction
-            .query_row(
-                "SELECT wallet FROM profiles
-                 WHERE user_id = ?1 AND wallet_verified_at IS NOT NULL",
-                [user_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?;
-        if let Some(wallet) = verified_wallet.as_deref() {
+        let deletion_started_at = now_ms();
+        let locked_seller_documents = {
+            let mut statement = transaction.prepare(
+                "SELECT id FROM documents WHERE author_id = ?1
+                 ORDER BY id /*FOR_UPDATE*/",
+            )?;
+            statement
+                .query_map([user_id], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let active_ai_generation = transaction.query_row(
+            "SELECT COUNT(*) FROM ai_generation_attempts attempt
+             JOIN ai_generation_documents document
+               ON document.artifact_kind = attempt.artifact_kind
+              AND document.scope_id = attempt.scope_id
+              AND document.input_hash = attempt.input_hash
+             WHERE document.author_id = ?1 AND attempt.status = 'started'
+               AND attempt.claimed_at > ?2",
+            params![
+                user_id,
+                as_i64(deletion_started_at.saturating_sub(AI_GENERATION_IN_FLIGHT_MAX_MS))?,
+            ],
+            |row| as_u64(row.get(0)?),
+        )?;
+        if active_ai_generation > 0 {
+            return Err(StoreError::Conflict(
+                "wait for active paid synthesis before deleting the contributor account".to_owned(),
+            ));
+        }
+        let ai_generation_cleanup = {
+            let mut statement = transaction.prepare(
+                "SELECT DISTINCT attempt.artifact_kind, attempt.scope_id,
+                        attempt.input_hash, attempt.window_started_at
+                 FROM ai_generation_attempts attempt
+                 JOIN ai_generation_documents document
+                   ON document.artifact_kind = attempt.artifact_kind
+                  AND document.scope_id = attempt.scope_id
+                  AND document.input_hash = attempt.input_hash
+                 WHERE document.author_id = ?1",
+            )?;
+            statement
+                .query_map([user_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        as_u64(row.get(3)?)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let prepaid_wallets = {
+            let mut statement = transaction.prepare(
+                "SELECT identity.wallet FROM wallet_identities identity
+                 WHERE identity.user_id = ?1 AND NOT EXISTS (
+                   SELECT 1 FROM prepaid_wallet_owners owner
+                   WHERE owner.wallet = identity.wallet AND owner.user_id <> ?1
+                 )
+                 UNION
+                 SELECT profile.wallet FROM profiles profile
+                 WHERE profile.user_id = ?1 AND profile.wallet_verified_at IS NOT NULL
+                   AND NOT EXISTS (
+                     SELECT 1 FROM prepaid_wallet_owners owner
+                     WHERE owner.wallet = profile.wallet AND owner.user_id <> ?1
+                   )
+                 UNION
+                 SELECT session.wallet FROM prepaid_wallet_sessions session
+                 WHERE session.user_id = ?1 AND NOT EXISTS (
+                   SELECT 1 FROM prepaid_wallet_owners owner
+                   WHERE owner.wallet = session.wallet AND owner.user_id <> ?1
+                 )
+                 UNION
+                 SELECT wallet FROM prepaid_wallet_owners WHERE user_id = ?1",
+            )?;
+            statement
+                .query_map([user_id], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let mut locked_buyer_bundle_quotes = Vec::new();
+        for wallet in &prepaid_wallets {
+            let mut statement = transaction.prepare(
+                "SELECT id FROM payment_bundle_quotes
+                 WHERE payer_wallet = ?1 AND funding_source = 'prepaid'
+                 /*FOR_UPDATE*/",
+            )?;
+            locked_buyer_bundle_quotes.extend(
+                statement
+                    .query_map([wallet], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
             let active_jobs = transaction.query_row(
                 "SELECT COUNT(*) FROM payment_bundle_quotes
                  WHERE payer_wallet = ?1 AND funding_source = 'prepaid'
-                   AND status IN ('funded', 'processing')",
+                   AND (status IN (
+                     'funded', 'processing', 'payment_in_progress', 'payment_reconciliation'
+                   ) OR EXISTS (
+                     SELECT 1 FROM chain_payment_attempts attempt
+                     WHERE attempt.settlement_kind = 'bundle'
+                       AND attempt.quote_id = payment_bundle_quotes.id
+                   ))",
                 [wallet],
                 |row| as_u64(row.get(0)?),
             )?;
@@ -5416,7 +7616,122 @@ impl Store {
                     "wait for active prepaid research jobs before deleting the account".to_owned(),
                 ));
             }
+            transaction.execute(
+                "UPDATE payment_bundle_quotes
+                 SET status = 'deleted', failure_reason = 'buyer account deleted'
+                 WHERE payer_wallet = ?1 AND funding_source = 'prepaid'
+                   AND status = 'quoted' AND NOT EXISTS (
+                     SELECT 1 FROM chain_payment_attempts attempt
+                     WHERE attempt.settlement_kind = 'bundle'
+                       AND attempt.quote_id = payment_bundle_quotes.id
+                   )",
+                [wallet],
+            )?;
         }
+
+        let locked_open_call_quotes = {
+            let mut statement = transaction.prepare(
+                "SELECT id FROM open_call_funding_quotes
+                 WHERE owner_id = ?1 /*FOR_UPDATE*/",
+            )?;
+            statement
+                .query_map([user_id], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let active_open_call_payment = transaction.query_row(
+            "SELECT COUNT(*) FROM open_call_funding_quotes quote
+             WHERE quote.owner_id = ?1 AND EXISTS (
+               SELECT 1 FROM chain_payment_attempts attempt
+               WHERE attempt.settlement_kind = 'open_call'
+                 AND attempt.quote_id = quote.id
+             )",
+            [user_id],
+            |row| as_u64(row.get(0)?),
+        )?;
+        if active_open_call_payment > 0 {
+            return Err(StoreError::Conflict(
+                "wait for active open-call funding payments before deleting the account".to_owned(),
+            ));
+        }
+
+        // Lock every payment resource containing this seller's writing before
+        // checking its state. A concurrent x402/MPP prepare locks the same
+        // quote row, so either deletion wins and makes the resource unpayable,
+        // or the external-payment fence wins and deletion waits/fails closed.
+        let locked_document_quotes = {
+            let mut statement = transaction.prepare(
+                "SELECT pq.id FROM payment_quotes pq
+                 WHERE pq.document_id IN (
+                   SELECT id FROM documents WHERE author_id = ?1
+                 ) /*FOR_UPDATE*/",
+            )?;
+            statement
+                .query_map([user_id], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let locked_bundle_quotes = {
+            let mut statement = transaction.prepare(
+                "SELECT pbq.id FROM payment_bundle_quotes pbq
+                 WHERE EXISTS (
+                   SELECT 1 FROM payment_bundle_documents pbd
+                   WHERE pbd.quote_id = pbq.id AND pbd.author_id = ?1
+                 ) /*FOR_UPDATE*/",
+            )?;
+            statement
+                .query_map([user_id], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let active_document_payment = transaction.query_row(
+            "SELECT COUNT(*) FROM payment_quotes pq
+             WHERE pq.document_id IN (
+               SELECT id FROM documents WHERE author_id = ?1
+             ) AND (
+               EXISTS (
+                 SELECT 1 FROM chain_payment_attempts cpa
+                 WHERE cpa.settlement_kind = 'document' AND cpa.quote_id = pq.id
+               ) OR EXISTS (
+                 SELECT 1 FROM direct_pay_sh_attempts dpa
+                 WHERE dpa.quote_id = pq.id AND dpa.status IN ('prepared', 'ambiguous')
+               ) OR EXISTS (
+                 SELECT 1 FROM research_payment_attempts rpa
+                 WHERE rpa.quote_id = pq.id
+                   AND rpa.status IN ('claimed', 'prepared', 'ambiguous')
+               )
+             )",
+            [user_id],
+            |row| as_u64(row.get(0)?),
+        )?;
+        let active_bundle_payment = transaction.query_row(
+            "SELECT COUNT(*) FROM payment_bundle_quotes pbq
+             WHERE EXISTS (
+               SELECT 1 FROM payment_bundle_documents pbd
+               WHERE pbd.quote_id = pbq.id AND pbd.author_id = ?1
+             ) AND (
+               pbq.status IN (
+                 'funded', 'processing', 'payment_in_progress', 'payment_reconciliation'
+               ) OR EXISTS (
+                 SELECT 1 FROM chain_payment_attempts cpa
+                 WHERE cpa.settlement_kind = 'bundle' AND cpa.quote_id = pbq.id
+               )
+             )",
+            [user_id],
+            |row| as_u64(row.get(0)?),
+        )?;
+        if active_document_payment > 0 || active_bundle_payment > 0 {
+            return Err(StoreError::Conflict(
+                "wait for active document payments before deleting the account".to_owned(),
+            ));
+        }
+        // Keep the locks alive until commit even when a future backend changes
+        // row materialization to release a prepared statement eagerly.
+        let _payment_resource_locks = (
+            locked_seller_documents,
+            locked_open_call_quotes.clone(),
+            locked_document_quotes,
+            locked_bundle_quotes,
+            locked_buyer_bundle_quotes,
+        );
+
         let refund = transaction.query_row(
             "SELECT COALESCE(CAST(SUM(escrow_remaining_krw) AS BIGINT), 0)
              FROM open_calls WHERE owner_id = ?1 AND status = 'open' AND escrow_mode = 'sandbox'",
@@ -5444,13 +7759,14 @@ impl Store {
                 })?
                 .collect::<Result<Vec<_>, _>>()?
         };
-        let now = now_ms();
-        if let Some(wallet) = verified_wallet.as_deref() {
+        let now = deletion_started_at;
+        for wallet in &prepaid_wallets {
             #[allow(clippy::type_complexity)]
             let prepaid = {
                 let mut statement = transaction.prepare(
                     "SELECT pay_to, network, asset, available_atomic
-                     FROM prepaid_accounts WHERE wallet = ?1 AND available_atomic > 0",
+                     FROM prepaid_accounts WHERE wallet = ?1 AND available_atomic > 0
+                     /*FOR_UPDATE*/",
                 )?;
                 statement
                     .query_map([wallet], |row| {
@@ -5478,11 +7794,25 @@ impl Store {
                     0,
                     now,
                 )?;
-                transaction.execute(
+                let withdrawn = transaction.execute(
                     "UPDATE prepaid_accounts SET available_atomic = 0, updated_at = ?1
-                     WHERE wallet = ?2 AND pay_to = ?3 AND network = ?4 AND asset = ?5",
-                    params![as_i64(now)?, wallet, pay_to, network, asset],
+                     WHERE wallet = ?2 AND pay_to = ?3 AND network = ?4 AND asset = ?5
+                       AND available_atomic = ?6",
+                    params![
+                        as_i64(now)?,
+                        wallet,
+                        pay_to,
+                        network,
+                        asset,
+                        as_i64(amount_atomic)?
+                    ],
                 )?;
+                if withdrawn != 1 {
+                    return Err(StoreError::Conflict(
+                        "prepaid balance changed during account deletion; retry after reconciliation"
+                            .to_owned(),
+                    ));
+                }
                 transaction.execute(
                     "INSERT INTO prepaid_ledger
                      (id, wallet, pay_to, network, asset, kind, reference_id,
@@ -5535,6 +7865,117 @@ impl Store {
         }
 
         let anonymous = format!("deleted:{}", new_id("account"));
+        if !locked_open_call_quotes.is_empty() {
+            transaction.execute(
+                "INSERT INTO users
+                 (id, email, password_hash, role, created_at, deleted_at)
+                 VALUES (?1, ?2, 'deleted', 'user', ?3, ?3)",
+                params![
+                    anonymous,
+                    format!("{anonymous}@deleted.invalid"),
+                    as_i64(now)?,
+                ],
+            )?;
+            transaction.execute(
+                "UPDATE open_call_funding_quotes
+                 SET owner_id = ?1, request_json = '{}', payload_hash = 'deleted',
+                     status = CASE WHEN status = 'quoted' THEN 'deleted' ELSE status END
+                 WHERE owner_id = ?2",
+                params![anonymous, user_id],
+            )?;
+        }
+        let deleted_handles = {
+            let mut statement =
+                transaction.prepare("SELECT handle FROM documents WHERE author_id = ?1")?;
+            statement
+                .query_map([user_id], |row| row.get::<_, String>(0))?
+                .collect::<Result<HashSet<_>, _>>()?
+        };
+        let settlement_handle_rows = {
+            let mut statement =
+                transaction.prepare("SELECT id, document_handles_json FROM settlements")?;
+            statement
+                .query_map(params![], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        for (settlement_id, handles_json) in settlement_handle_rows {
+            let mut handles =
+                serde_json::from_str::<Vec<String>>(&handles_json).unwrap_or_default();
+            let original_len = handles.len();
+            handles.retain(|handle| !deleted_handles.contains(handle));
+            if handles_json != "[]" && (handles.len() != original_len || original_len == 0) {
+                transaction.execute(
+                    "UPDATE settlements SET document_handles_json = ?1 WHERE id = ?2",
+                    params![
+                        serde_json::to_string(&handles).expect("handles are serialisable"),
+                        settlement_id,
+                    ],
+                )?;
+            }
+        }
+        transaction.execute(
+            "UPDATE payment_bundle_quotes
+             SET status = 'deleted', failure_reason = 'seller account deleted'
+             WHERE status = 'quoted' AND EXISTS (
+               SELECT 1 FROM payment_bundle_documents pbd
+               WHERE pbd.quote_id = payment_bundle_quotes.id AND pbd.author_id = ?1
+             )",
+            [user_id],
+        )?;
+        for (artifact_kind, scope_id, input_hash, window_started_at) in ai_generation_cleanup {
+            transaction.execute(
+                "DELETE FROM ai_generation_documents
+                 WHERE artifact_kind = ?1 AND scope_id = ?2 AND input_hash = ?3",
+                params![artifact_kind, scope_id, input_hash],
+            )?;
+            transaction.execute(
+                "DELETE FROM ai_generation_attempts
+                 WHERE artifact_kind = ?1 AND scope_id = ?2 AND input_hash = ?3
+                   AND window_started_at = ?4",
+                params![
+                    artifact_kind,
+                    scope_id,
+                    input_hash,
+                    as_i64(window_started_at)?,
+                ],
+            )?;
+            transaction.execute(
+                "UPDATE ai_generation_budgets
+                 SET attempts_used = (
+                   SELECT COUNT(*) FROM ai_generation_attempts attempt
+                   WHERE attempt.artifact_kind = ?1 AND attempt.scope_id = ?2
+                     AND attempt.window_started_at = ?3
+                 )
+                 WHERE artifact_kind = ?1 AND scope_id = ?2 AND window_started_at = ?3",
+                params![artifact_kind, scope_id, as_i64(window_started_at)?],
+            )?;
+            transaction.execute(
+                "DELETE FROM ai_generation_budgets
+                 WHERE artifact_kind = ?1 AND scope_id = ?2 AND window_started_at = ?3
+                   AND attempts_used = 0",
+                params![artifact_kind, scope_id, as_i64(window_started_at)?],
+            )?;
+        }
+        transaction.execute(
+            "DELETE FROM document_feedback WHERE document_id IN
+             (SELECT id FROM documents WHERE author_id = ?1)",
+            [user_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM payment_bundle_documents WHERE author_id = ?1",
+            [user_id],
+        )?;
+        transaction.execute(
+            "UPDATE payment_quotes
+             SET document_id = 'deleted:' || id,
+                 document_handle = 'deleted:' || id,
+                 pay_to = '', content_snapshot = '', shelf_snapshot = '', content_hash = '',
+                 status = 'deleted', consent_version = 'deleted'
+             WHERE document_id IN (SELECT id FROM documents WHERE author_id = ?1)",
+            [user_id],
+        )?;
         transaction.execute(
             "DELETE FROM query_matches WHERE document_handle IN
              (SELECT handle FROM documents WHERE author_id = ?1)",
@@ -5568,6 +8009,33 @@ impl Store {
             "UPDATE funding_events SET user_id = ?1 WHERE user_id = ?2",
             params![anonymous, user_id],
         )?;
+        transaction.execute(
+            "UPDATE payout_claims SET beneficiary_user_id = ?1
+             WHERE beneficiary_user_id = ?2",
+            params![anonymous, user_id],
+        )?;
+        transaction.execute(
+            "UPDATE settlements SET payer = ?1 WHERE payer = ?2",
+            params![anonymous, user_id],
+        )?;
+        transaction.execute(
+            "UPDATE dispute_events SET reviewer_id = ?1 WHERE reviewer_id = ?2",
+            params![anonymous, user_id],
+        )?;
+        transaction.execute(
+            "UPDATE document_feedback SET reviewer_id = ?1 WHERE reviewer_id = ?2",
+            params![anonymous, user_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM ai_generation_attempts
+             WHERE artifact_kind = 'shelf_starters' AND scope_id = ?1",
+            [user_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM ai_generation_budgets
+             WHERE artifact_kind = 'shelf_starters' AND scope_id = ?1",
+            [user_id],
+        )?;
         transaction.execute("DELETE FROM sessions WHERE user_id = ?1", [user_id])?;
         transaction.execute("DELETE FROM balances WHERE user_id = ?1", [user_id])?;
         transaction.execute("DELETE FROM users WHERE id = ?1", [user_id])?;
@@ -5580,6 +8048,16 @@ impl Store {
         query_id: &str,
         handle: &str,
         policy: &PaymentQuotePolicy,
+    ) -> Result<PaymentQuote, StoreError> {
+        self.payment_quote_with_bundle_owner(query_id, handle, policy, None)
+    }
+
+    fn payment_quote_with_bundle_owner(
+        &self,
+        query_id: &str,
+        handle: &str,
+        policy: &PaymentQuotePolicy,
+        allowed_bundle_id: Option<&str>,
     ) -> Result<PaymentQuote, StoreError> {
         if policy.krw_per_usdc == 0 {
             return Err(StoreError::Validation(
@@ -5600,6 +8078,82 @@ impl Store {
         let now = now_ms();
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
+        // Serialise quote creation for one search. Without this row lock, two
+        // PostgreSQL transactions could both observe no current quote and
+        // create separate Pay.sh and x402 quotes for the same purchase.
+        let query_exists = transaction
+            .query_row(
+                "SELECT id FROM queries WHERE id = ?1 /*FOR_UPDATE*/",
+                [query_id.trim()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if query_exists.is_none() {
+            return Err(StoreError::DocumentNotQuoted);
+        }
+        // A query/document pair is purchased once. Return its immutable paid
+        // quote, or an actively settling quote, before consulting the current
+        // mutable document row. A correction, lock, or quote expiry must not
+        // turn recovery from an in-flight transfer into another charge.
+        if let Some(quote) = transaction
+            .query_row(
+                "SELECT id, query_id, document_handle, pay_to, network, asset,
+                        amount_atomic, price_krw, krw_per_usdc, expires_at,
+                        content_hash, document_version,
+                        CASE WHEN settled_at IS NULL THEN 'settling' ELSE status END,
+                        consent_version
+                 FROM payment_quotes pq
+                 WHERE query_id = ?1 AND document_handle = ?2
+                   AND (status = 'delivered' OR EXISTS (
+                       SELECT 1 FROM chain_payment_attempts attempt
+                       WHERE attempt.settlement_kind = 'document'
+                         AND attempt.quote_id = pq.id
+                   ) OR EXISTS (
+                       SELECT 1 FROM pay_sh_quote_fences fence
+                       WHERE fence.quote_id = pq.id
+                   ))
+                 ORDER BY CASE WHEN status = 'delivered' THEN 0 ELSE 1 END,
+                          COALESCE(settled_at, created_at) DESC LIMIT 1",
+                params![query_id.trim(), handle.trim()],
+                |row| {
+                    let query_id: String = row.get(1)?;
+                    let document_handle: String = row.get(2)?;
+                    Ok(PaymentQuote {
+                        resource_path: format!(
+                            "/api/v1/paid-documents/{query_id}/{document_handle}"
+                        ),
+                        canonical_url: format!("/api/v1/documents/{document_handle}"),
+                        id: row.get(0)?,
+                        query_id,
+                        document_handle,
+                        pay_to: row.get(3)?,
+                        network: row.get(4)?,
+                        asset: row.get(5)?,
+                        amount_atomic: as_u64(row.get(6)?)?.to_string(),
+                        price_krw: as_u64(row.get(7)?)?,
+                        krw_per_usdc: as_u64(row.get(8)?)?,
+                        expires_at: as_u64(row.get(9)?)?,
+                        content_hash: row.get(10)?,
+                        document_version: as_u64(row.get(11)?)?.min(u32::MAX as u64) as u32,
+                        status: row.get(12)?,
+                        consent_version: row.get(13)?,
+                    })
+                },
+            )
+            .optional()?
+        {
+            return Ok(quote);
+        }
+        if let Some(bundle_id) = active_bundle_reservation(
+            &transaction,
+            query_id.trim(),
+            handle.trim(),
+            allowed_bundle_id,
+        )? {
+            return Err(StoreError::Conflict(format!(
+                "this document purchase is reserved by research bundle {bundle_id}"
+            )));
+        }
         let (
             document_id,
             document_handle,
@@ -5649,6 +8203,23 @@ impl Store {
             .optional()?
             .ok_or(StoreError::DocumentNotQuoted)?;
 
+        // Coordinate quote creation with account deletion. Real contributors
+        // have a user row; seeded demo authors intentionally do not. If
+        // deletion committed while the document lookup was in flight, this
+        // second read observes the missing user and refuses to mint a stale
+        // payable URL from the already-read passage snapshot.
+        let registered_author = transaction
+            .query_row(
+                "SELECT id FROM users
+                 WHERE id = ?1 AND deleted_at IS NULL /*FOR_UPDATE*/",
+                [&author_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if registered_author.is_none() && !author_id.starts_with("author_") {
+            return Err(StoreError::DocumentNotQuoted);
+        }
+
         let pay_to = if wallet_verified_at.is_some() {
             profile_wallet.filter(|wallet| !wallet.trim().is_empty())
         } else if author_id.starts_with("author_") {
@@ -5681,14 +8252,16 @@ impl Store {
 
         let existing = transaction
             .query_row(
-                "SELECT id, expires_at FROM payment_quotes
+                "SELECT id, expires_at, status FROM payment_quotes
                  WHERE query_id = ?1 AND document_id = ?2 AND pay_to = ?3
                    AND network = ?4 AND asset = ?5 AND amount_atomic = ?6
                    AND price_krw = ?7 AND krw_per_usdc = ?8
-                   AND expires_at > ?9 AND settled_at IS NULL
+                   AND ((settled_at IS NOT NULL AND status = 'delivered')
+                        OR (status = 'quoted' AND expires_at > ?9))
                    AND content_hash = ?10 AND document_version = ?11
                    AND consent_version = ?12
-                 ORDER BY created_at DESC LIMIT 1",
+                 ORDER BY CASE WHEN status = 'delivered' THEN 0 ELSE 1 END,
+                          created_at DESC LIMIT 1",
                 params![
                     query_id.trim(),
                     document_id,
@@ -5703,10 +8276,16 @@ impl Store {
                     document_version as i64,
                     consent_version,
                 ],
-                |row| Ok((row.get::<_, String>(0)?, as_u64(row.get(1)?)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        as_u64(row.get(1)?)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             )
             .optional()?;
-        let (id, expires_at) = if let Some(existing) = existing {
+        let (id, expires_at, status) = if let Some(existing) = existing {
             existing
         } else {
             let id = new_id("quote");
@@ -5739,7 +8318,7 @@ impl Store {
                     consent_version,
                 ],
             )?;
-            (id, expires_at)
+            (id, expires_at, "quoted".to_owned())
         };
         transaction.commit()?;
 
@@ -5762,9 +8341,73 @@ impl Store {
             expires_at,
             content_hash,
             document_version,
-            status: "quoted".to_owned(),
+            status,
             consent_version,
         })
+    }
+
+    /// Returns a document quote reserved for the browser/facilitator x402
+    /// path. The first payment rail to prepare a quote wins; callers must use a
+    /// fresh search after an abandoned quote expires instead of switching a
+    /// live quote between payment systems.
+    pub fn x402_payment_quote(
+        &self,
+        query_id: &str,
+        handle: &str,
+        policy: &PaymentQuotePolicy,
+    ) -> Result<PaymentQuote, StoreError> {
+        let quote = self.payment_quote(query_id, handle, policy)?;
+        self.bind_document_payment_rail(&quote.id, "x402")?;
+        Ok(quote)
+    }
+
+    pub fn payment_quote_by_id(&self, quote_id: &str) -> Result<PaymentQuote, StoreError> {
+        self.connection()?
+            .query_row(
+                "SELECT id, query_id, document_handle, pay_to, network, asset,
+                        amount_atomic, price_krw, krw_per_usdc, expires_at,
+                        content_hash, document_version, status, consent_version
+                 FROM payment_quotes WHERE id = ?1",
+                [quote_id.trim()],
+                |row| {
+                    let query_id = row.get::<_, String>(1)?;
+                    let document_handle = row.get::<_, String>(2)?;
+                    Ok(PaymentQuote {
+                        id: row.get(0)?,
+                        resource_path: format!(
+                            "/api/v1/paid-documents/{query_id}/{document_handle}"
+                        ),
+                        canonical_url: format!("/api/v1/documents/{document_handle}"),
+                        query_id,
+                        document_handle,
+                        pay_to: row.get(3)?,
+                        network: row.get(4)?,
+                        asset: row.get(5)?,
+                        amount_atomic: as_u64(row.get(6)?)?.to_string(),
+                        price_krw: as_u64(row.get(7)?)?,
+                        krw_per_usdc: as_u64(row.get(8)?)?,
+                        expires_at: as_u64(row.get(9)?)?,
+                        content_hash: row.get(10)?,
+                        document_version: as_u64(row.get(11)?)?.min(u32::MAX as u64) as u32,
+                        status: row.get(12)?,
+                        consent_version: row.get(13)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::DocumentNotQuoted)
+    }
+
+    fn bind_document_payment_rail(
+        &self,
+        quote_id: &str,
+        payment_rail: &str,
+    ) -> Result<(), StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        bind_document_payment_rail(&transaction, quote_id, payment_rail)?;
+        transaction.commit()?;
+        Ok(())
     }
 
     /// Prepare one Pay.sh-native document URL without exposing passage text.
@@ -5802,13 +8445,14 @@ impl Store {
                 "Pay.sh direct split requires at least two atomic units".to_owned(),
             ));
         }
+        self.bind_document_payment_rail(&quote.id, "pay_sh")?;
         let resource_path = format!(
-            "/api/v1/pay-sh/documents/{}/{}/{}?owner_wallet={}&quote_id={}",
+            "/api/v2/pay-sh/documents/{}/{}/{}?owner_wallet={}&quote_id={}",
             quote.price_krw, quote.query_id, quote.document_handle, quote.pay_to, quote.id
         );
-        let delivered = {
+        let (delivered, settling) = {
             let connection = self.connection()?;
-            connection
+            let delivered = connection
                 .query_row(
                     "SELECT 1 FROM settlements s
                      JOIN payment_quotes pq
@@ -5816,7 +8460,7 @@ impl Store {
                      WHERE s.query_id = ?1 AND s.payer = 'pay.sh'
                        AND s.mode = 'pay_sh_mpp_direct'
                        AND pq.document_handle = ?2 AND s.document_handles_json = ?3
-                       AND pq.settled_at IS NOT NULL
+                       AND pq.status = 'delivered' AND pq.settled_at IS NOT NULL
                      LIMIT 1",
                     params![
                         quote.query_id,
@@ -5827,7 +8471,17 @@ impl Store {
                     |_| Ok(()),
                 )
                 .optional()?
-                .is_some()
+                .is_some();
+            let settling = connection
+                .query_row(
+                    "SELECT 1 FROM pay_sh_quote_fences
+                     WHERE quote_id = ?1 LIMIT 1",
+                    [&quote.id],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            (delivered, settling)
         };
         Ok(PayShResource {
             quote_id: quote.id.clone(),
@@ -5842,7 +8496,14 @@ impl Store {
             price_krw: quote.price_krw,
             krw_per_usdc: quote.krw_per_usdc,
             expires_at: quote.expires_at,
-            status: if delivered { "delivered" } else { "quoted" }.to_owned(),
+            status: if delivered {
+                "delivered"
+            } else if settling {
+                "settling"
+            } else {
+                "quoted"
+            }
+            .to_owned(),
             resource_path,
             recovery_path: format!(
                 "/api/v1/questions/{}/pay-sh-documents/{}",
@@ -5867,6 +8528,8 @@ impl Store {
             quote_id,
             payment_token_hash,
             research_job_id,
+            payment_attempt_id,
+            direct_payment_attempt_id,
             policy,
         } = request;
         if policy.krw_per_usdc == 0 {
@@ -5875,23 +8538,66 @@ impl Store {
             ));
         }
         let connection = self.connection()?;
-        if let Some(token_hash) = payment_token_hash {
-            require_query_access(&connection, query_id.trim(), token_hash)?;
+        if let Some(attempt_id) = direct_payment_attempt_id {
+            let token_hash = payment_token_hash.ok_or_else(|| {
+                StoreError::Unauthorized(
+                    "direct Pay.sh callbacks require the prepared query capability".to_owned(),
+                )
+            })?;
+            let authorized = connection
+                .query_row(
+                    "SELECT 1 FROM direct_pay_sh_attempts
+                     WHERE attempt_id = ?1 AND quote_id = ?2
+                       AND query_token_hash = ?3
+                       AND status IN ('prepared', 'ambiguous', 'settled')
+                       AND (status = 'settled' OR EXISTS (
+                           SELECT 1 FROM pay_sh_quote_fences fence
+                           WHERE fence.quote_id = direct_pay_sh_attempts.quote_id
+                             AND fence.attempt_kind = 'direct'
+                             AND fence.attempt_id = direct_pay_sh_attempts.attempt_id
+                       ))
+                     LIMIT 1",
+                    params![attempt_id.trim(), quote_id.trim(), token_hash],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if !authorized {
+                return Err(StoreError::Conflict(
+                    "Pay.sh callback does not match the durable direct payment attempt".to_owned(),
+                ));
+            }
+        } else if payment_token_hash.is_some() {
+            return Err(StoreError::Conflict(
+                "direct Pay.sh callbacks require a durable proxy payment attempt".to_owned(),
+            ));
         } else if let Some(job_id) = research_job_id {
+            let attempt_id = payment_attempt_id.ok_or_else(|| {
+                StoreError::Conflict(
+                    "funded research Pay.sh callbacks require a durable payment attempt".to_owned(),
+                )
+            })?;
             let authorized = connection
                 .query_row(
                     "SELECT 1
                      FROM payment_bundle_quotes pbq
                      JOIN payment_bundle_documents pbd ON pbd.quote_id = pbq.id
+                     JOIN pay_sh_quote_fences fence
+                       ON fence.quote_id = pbd.pay_sh_quote_id
+                      AND fence.attempt_kind = 'research'
+                      AND fence.attempt_id = pbq.payment_attempt_id
                      WHERE pbq.id = ?1 AND pbq.query_id = ?2
                        AND pbd.document_handle = ?3 AND pbd.pay_sh_quote_id = ?4
-                       AND pbq.status IN ('funded', 'processing')
+                       AND pbq.status IN ('payment_in_progress', 'payment_reconciliation')
+                       AND pbq.payment_attempt_quote_id = ?4
+                       AND pbq.payment_attempt_id = ?5
                      LIMIT 1",
                     params![
                         job_id.trim(),
                         query_id.trim(),
                         handle.trim(),
-                        quote_id.trim()
+                        quote_id.trim(),
+                        attempt_id.trim()
                     ],
                     |_| Ok(()),
                 )
@@ -5972,7 +8678,63 @@ impl Store {
                 "Pay.sh quote no longer matches the configured payment policy".to_owned(),
             ));
         }
-        self.deliver_pay_sh_quote(&resource)
+        // The private Pay.sh gate invokes this callback after accepting the
+        // charge but before its final fee-payer receipt is available to the
+        // public proxy. Return only the immutable quoted snapshot here. The
+        // proxy buffers this body and calls the attempt settlement endpoint
+        // with the cryptographically matching receipt before releasing it.
+        // A proxy crash therefore leaves earnings and entitlement uncommitted
+        // while the exact prepared transaction remains recoverable.
+        self.preview_pay_sh_quote(&resource)
+    }
+
+    fn preview_pay_sh_quote(
+        &self,
+        resource: &PayShResource,
+    ) -> Result<OpenDocumentsResponse, StoreError> {
+        let connection = self.connection()?;
+        let citation = connection
+            .query_row(
+                "SELECT document_handle, shelf_snapshot, content_snapshot, price_krw
+                 FROM payment_quotes
+                 WHERE id = ?1 AND query_id = ?2 AND document_handle = ?3",
+                params![
+                    resource.quote_id,
+                    resource.query_id,
+                    resource.document_handle
+                ],
+                |row| {
+                    Ok(Citation {
+                        handle: row.get(0)?,
+                        shelf: row.get(1)?,
+                        excerpt: row.get(2)?,
+                        price: as_u64(row.get(3)?)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::DocumentNotQuoted)?;
+        let existing = connection
+            .query_row(
+                "SELECT id, total_krw FROM settlements
+                 WHERE mode = 'pay_sh_mpp_direct'
+                   AND transaction_signature = 'pay.sh:' || ?1",
+                [&resource.quote_id],
+                |row| Ok((row.get::<_, String>(0)?, as_u64(row.get(1)?)?)),
+            )
+            .optional()?;
+        let (settlement_id, total) =
+            existing.unwrap_or_else(|| (pay_sh_settlement_id(&resource.quote_id), citation.price));
+        Ok(OpenDocumentsResponse {
+            citations: vec![citation],
+            settlement: Settlement {
+                id: settlement_id,
+                count: 1,
+                total,
+                tx_sig: None,
+                network: Some(resource.network.clone()),
+            },
+        })
     }
 
     /// Recover a previously delivered Pay.sh document without another charge.
@@ -5995,7 +8757,8 @@ impl Store {
                    ON s.transaction_signature = 'pay.sh:' || pq.id
                  WHERE s.query_id = ?1 AND s.document_handles_json = ?3
                    AND s.payer = 'pay.sh' AND s.mode = 'pay_sh_mpp_direct'
-                   AND pq.document_handle = ?2 AND pq.settled_at IS NOT NULL
+                   AND pq.document_handle = ?2 AND pq.status = 'delivered'
+                   AND pq.settled_at IS NOT NULL
                  ORDER BY s.created_at DESC LIMIT 1",
                 params![query_id.trim(), handle.trim(), canonical_handles],
                 |row| {
@@ -6023,9 +8786,80 @@ impl Store {
     fn deliver_pay_sh_quote(
         &self,
         resource: &PayShResource,
+        payment_attempt: Option<PayShPaymentAttempt<'_>>,
     ) -> Result<OpenDocumentsResponse, StoreError> {
+        if matches!(
+            &payment_attempt,
+            Some(PayShPaymentAttempt::Research {
+                transaction_signature: None,
+                ..
+            }) | Some(PayShPaymentAttempt::Direct {
+                transaction_signature: None,
+                ..
+            })
+        ) {
+            return Err(StoreError::Conflict(
+                "Pay.sh delivery requires a matching final transaction receipt".to_owned(),
+            ));
+        }
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
+        if let Some(PayShPaymentAttempt::Research {
+            job_id, attempt_id, ..
+        }) = &payment_attempt
+        {
+            let active = transaction
+                .query_row(
+                    "SELECT 1 FROM payment_bundle_quotes pbq
+                     JOIN payment_bundle_documents pbd ON pbd.quote_id = pbq.id
+                     JOIN research_payment_attempts rpa
+                       ON rpa.job_id = pbq.id AND rpa.quote_id = pbd.pay_sh_quote_id
+                      AND rpa.attempt_id = pbq.payment_attempt_id
+                     JOIN pay_sh_quote_fences fence
+                       ON fence.quote_id = rpa.quote_id
+                      AND fence.attempt_kind = 'research'
+                      AND fence.attempt_id = rpa.attempt_id
+                     WHERE pbq.id = ?1 AND pbd.pay_sh_quote_id = ?2
+                       AND pbq.status IN ('payment_in_progress', 'payment_reconciliation')
+                       AND pbq.payment_attempt_quote_id = ?2
+                       AND pbq.payment_attempt_id = ?3
+                       AND rpa.status IN ('prepared', 'ambiguous')
+                     LIMIT 1 /*FOR_UPDATE*/",
+                    params![job_id.trim(), resource.quote_id, attempt_id.trim()],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if !active {
+                return Err(StoreError::Conflict(
+                    "Pay.sh callback does not match the active research payment attempt".to_owned(),
+                ));
+            }
+        }
+        if let Some(PayShPaymentAttempt::Direct { attempt_id, .. }) = &payment_attempt {
+            let active = transaction
+                .query_row(
+                    "SELECT 1 FROM direct_pay_sh_attempts dpa
+                     WHERE attempt_id = ?1 AND quote_id = ?2
+                       AND status IN ('prepared', 'ambiguous', 'settled')
+                       AND (status = 'settled' OR EXISTS (
+                           SELECT 1 FROM pay_sh_quote_fences fence
+                           WHERE fence.quote_id = dpa.quote_id
+                             AND fence.attempt_kind = 'direct'
+                             AND fence.attempt_id = dpa.attempt_id
+                       ))
+                     LIMIT 1 /*FOR_UPDATE*/",
+                    params![attempt_id.trim(), resource.quote_id],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if !active {
+                return Err(StoreError::Conflict(
+                    "Pay.sh callback does not match the active direct payment attempt".to_owned(),
+                ));
+            }
+        }
         let canonical_handles = serde_json::to_string(&vec![resource.document_handle.clone()])
             .expect("one document handle is serialisable");
         let existing = transaction
@@ -6047,6 +8881,7 @@ impl Store {
             .as_ref()
             .and_then(|(_, _, reference)| reference.strip_prefix("pay.sh:"))
             .unwrap_or(&resource.quote_id);
+        bind_document_payment_rail(&transaction, effective_quote_id, "pay_sh")?;
         let (document_id, author_id, memory_id, citation) = transaction
             .query_row(
                 "SELECT pq.document_id, d.author_id,
@@ -6082,9 +8917,10 @@ impl Store {
             (id, total)
         } else {
             let created_at = now_ms();
-            let settlement_id = new_id("settlement");
-            transaction.execute(
-                "INSERT INTO settlements
+            let settlement_id = pay_sh_settlement_id(&resource.quote_id);
+            let pay_sh_reference = format!("pay.sh:{}", resource.quote_id);
+            let inserted = transaction.execute(
+                "INSERT OR IGNORE INTO settlements
                  (id, query_id, payer, document_handles_json, total_krw, mode,
                   transaction_signature, created_at)
                  VALUES (?1, ?2, 'pay.sh', ?3, ?4, 'pay_sh_mpp_direct', ?5, ?6)",
@@ -6093,45 +8929,179 @@ impl Store {
                     resource.query_id,
                     canonical_handles,
                     as_i64(citation.price)?,
-                    format!("pay.sh:{}", resource.quote_id),
+                    pay_sh_reference,
                     as_i64(created_at)?,
                 ],
             )?;
-            transaction.execute(
-                "UPDATE payment_quotes SET settled_at = ?1, delivered_at = ?1,
+            if inserted == 0 {
+                transaction.query_row(
+                    "SELECT id, total_krw FROM settlements
+                     WHERE mode = 'pay_sh_mpp_direct' AND transaction_signature = ?1",
+                    [&pay_sh_reference],
+                    |row| Ok((row.get::<_, String>(0)?, as_u64(row.get(1)?)?)),
+                )?
+            } else {
+                transaction.execute(
+                    "UPDATE payment_quotes SET settled_at = ?1, delivered_at = ?1,
                     status = 'delivered' WHERE id = ?2",
-                params![as_i64(created_at)?, resource.quote_id],
-            )?;
-            transaction.execute(
-                "UPDATE memory_entries SET earned_krw = earned_krw + ?1,
+                    params![as_i64(created_at)?, resource.quote_id],
+                )?;
+                transaction.execute(
+                    "UPDATE memory_entries SET earned_krw = earned_krw + ?1,
                     access_count = access_count + 1, last_accessed_at = ?2
                  WHERE document_id = ?3 AND status = 'settled'",
-                params![as_i64(citation.price)?, as_i64(created_at)?, document_id],
-            )?;
-            transaction.execute(
-                "INSERT INTO memory_access_events
+                    params![as_i64(citation.price)?, as_i64(created_at)?, document_id],
+                )?;
+                transaction.execute(
+                    "INSERT INTO memory_access_events
                  (id, memory_id, document_id, quote_id, actor, purpose, created_at)
                  VALUES (?1, ?2, ?3, ?4, 'pay.sh', 'pay_sh_paid_evidence', ?5)",
-                params![
-                    new_id("access"),
-                    memory_id,
-                    document_id,
-                    resource.quote_id,
-                    as_i64(created_at)?,
-                ],
-            )?;
-            insert_onchain_earning_event(
-                &transaction,
-                &settlement_id,
-                memory_id.as_deref(),
-                &document_id,
-                &author_id,
-                citation.price,
-                &resource.recipient_wallet,
-                created_at,
-            )?;
-            (settlement_id, citation.price)
+                    params![
+                        new_id("access"),
+                        memory_id,
+                        document_id,
+                        resource.quote_id,
+                        as_i64(created_at)?,
+                    ],
+                )?;
+                insert_onchain_earning_event(
+                    &transaction,
+                    &settlement_id,
+                    memory_id.as_deref(),
+                    &document_id,
+                    &author_id,
+                    citation.price,
+                    &resource.recipient_wallet,
+                    created_at,
+                )?;
+                (settlement_id, citation.price)
+            }
         };
+        match payment_attempt {
+            Some(PayShPaymentAttempt::Research {
+                job_id,
+                attempt_id,
+                transaction_signature,
+            }) => {
+                let completed_at = now_ms();
+                let settled = transaction.execute(
+                    "UPDATE research_payment_attempts
+                     SET status = 'settled',
+                         transaction_signature = COALESCE(CAST(?1 AS TEXT), transaction_signature),
+                         failure_reason = NULL, completed_at = ?2
+                     WHERE attempt_id = ?3 AND job_id = ?4 AND quote_id = ?5
+                       AND status IN ('prepared', 'ambiguous')
+                       AND EXISTS (
+                           SELECT 1 FROM pay_sh_quote_fences fence
+                           WHERE fence.quote_id = research_payment_attempts.quote_id
+                             AND fence.attempt_kind = 'research'
+                             AND fence.attempt_id = research_payment_attempts.attempt_id
+                       )
+                       AND (transaction_signature IS NULL OR CAST(?1 AS TEXT) IS NULL
+                            OR transaction_signature = CAST(?1 AS TEXT))",
+                    params![
+                        transaction_signature,
+                        as_i64(completed_at)?,
+                        attempt_id.trim(),
+                        job_id.trim(),
+                        resource.quote_id,
+                    ],
+                )?;
+                if settled != 1 {
+                    return Err(StoreError::Conflict(
+                        "research payment attempt changed before delivery committed".to_owned(),
+                    ));
+                }
+                let recorded_signature = transaction.query_row(
+                    "SELECT transaction_signature FROM research_payment_attempts
+                     WHERE attempt_id = ?1",
+                    [attempt_id.trim()],
+                    |row| row.get::<_, Option<String>>(0),
+                )?;
+                if let Some(signature) = recorded_signature {
+                    claim_chain_transaction(
+                        &transaction,
+                        &signature,
+                        "pay_sh_document",
+                        &resource.quote_id,
+                    )?;
+                }
+                let cleared = transaction.execute(
+                    "UPDATE payment_bundle_quotes
+                     SET status = 'processing', payment_attempt_quote_id = NULL,
+                         payment_attempt_id = NULL, failure_reason = NULL
+                     WHERE id = ?1
+                       AND status IN ('payment_in_progress', 'payment_reconciliation')
+                       AND payment_attempt_quote_id = ?2 AND payment_attempt_id = ?3",
+                    params![job_id.trim(), resource.quote_id, attempt_id.trim()],
+                )?;
+                if cleared != 1 {
+                    return Err(StoreError::Conflict(
+                        "research payment attempt changed before delivery committed".to_owned(),
+                    ));
+                }
+            }
+            Some(PayShPaymentAttempt::Direct {
+                attempt_id,
+                transaction_signature,
+            }) => {
+                let completed_at = now_ms();
+                let settled = transaction.execute(
+                    "UPDATE direct_pay_sh_attempts
+                     SET status = CASE
+                           WHEN status = 'settled' OR CAST(?1 AS TEXT) IS NOT NULL THEN 'settled'
+                           ELSE 'ambiguous'
+                         END,
+                         transaction_signature = COALESCE(CAST(?1 AS TEXT), transaction_signature),
+                         reconcile_after = CASE
+                           WHEN CAST(?1 AS TEXT) IS NULL THEN ?2 ELSE reconcile_after
+                         END,
+                         failure_reason = NULL,
+                         completed_at = CASE
+                           WHEN status = 'settled' OR CAST(?1 AS TEXT) IS NOT NULL
+                           THEN COALESCE(completed_at, ?3)
+                           ELSE completed_at
+                         END
+                     WHERE attempt_id = ?4 AND quote_id = ?5
+                       AND status IN ('prepared', 'ambiguous', 'settled')
+                       AND (status = 'settled' OR EXISTS (
+                           SELECT 1 FROM pay_sh_quote_fences fence
+                           WHERE fence.quote_id = direct_pay_sh_attempts.quote_id
+                             AND fence.attempt_kind = 'direct'
+                             AND fence.attempt_id = direct_pay_sh_attempts.attempt_id
+                       ))
+                       AND (transaction_signature IS NULL OR CAST(?1 AS TEXT) IS NULL
+                            OR transaction_signature = CAST(?1 AS TEXT))",
+                    params![
+                        transaction_signature,
+                        as_i64(completed_at.saturating_add(PAYMENT_ATTEMPT_RECONCILE_AFTER_MS))?,
+                        as_i64(completed_at)?,
+                        attempt_id.trim(),
+                        resource.quote_id,
+                    ],
+                )?;
+                if settled != 1 {
+                    return Err(StoreError::Conflict(
+                        "direct payment attempt changed before delivery committed".to_owned(),
+                    ));
+                }
+                let recorded_signature = transaction.query_row(
+                    "SELECT transaction_signature FROM direct_pay_sh_attempts
+                     WHERE attempt_id = ?1",
+                    [attempt_id.trim()],
+                    |row| row.get::<_, Option<String>>(0),
+                )?;
+                if let Some(signature) = recorded_signature {
+                    claim_chain_transaction(
+                        &transaction,
+                        &signature,
+                        "pay_sh_direct",
+                        &resource.quote_id,
+                    )?;
+                }
+            }
+            None => {}
+        }
         transaction.commit()?;
         Ok(OpenDocumentsResponse {
             citations: vec![citation],
@@ -6143,6 +9113,595 @@ impl Store {
                 network: Some(resource.network.clone()),
             },
         })
+    }
+
+    /// Atomically binds one exact public-agent MPP credential to one quote
+    /// before the official Pay.sh gate can verify or broadcast it. Repeating
+    /// the byte-identical credential is safe; a different credential for the
+    /// same quote is rejected until finalized-chain reconciliation releases it.
+    pub fn bind_pay_sh_challenges(
+        &self,
+        request: &BindPayShChallengesRequest,
+        direct_token_hash: Option<&str>,
+    ) -> Result<(), StoreError> {
+        let quote_id = request.quote_id.trim();
+        let query_id = request.query_id.trim();
+        let document_handle = request.document_handle.trim();
+        let owner_wallet = request.owner_wallet.trim();
+        if quote_id.is_empty()
+            || query_id.is_empty()
+            || document_handle.is_empty()
+            || !valid_solana_address(owner_wallet)
+            || request.challenges.is_empty()
+            || request.challenges.len() > MAX_PAY_SH_CHALLENGES_PER_RESPONSE
+        {
+            return Err(StoreError::Validation(
+                "Pay.sh challenge binding metadata is invalid".to_owned(),
+            ));
+        }
+        let (binding_kind, binding_owner) = match (
+            request.research_job_id.as_deref().map(str::trim),
+            request.payment_attempt_id.as_deref().map(str::trim),
+            direct_token_hash.map(str::trim),
+        ) {
+            (Some(job_id), Some(attempt_id), None)
+                if !job_id.is_empty() && validate_research_attempt_id(attempt_id).is_ok() =>
+            {
+                ("research", attempt_id)
+            }
+            (None, None, Some(token_hash))
+                if token_hash.len() == 64
+                    && token_hash.chars().all(|value| value.is_ascii_hexdigit()) =>
+            {
+                ("direct", token_hash)
+            }
+            _ => {
+                return Err(StoreError::Validation(
+                    "Pay.sh challenge binding authority is invalid".to_owned(),
+                ));
+            }
+        };
+        let expected_external_id = format!("human-document-krw-{}#", request.path_price_krw);
+        let now = now_ms();
+        for challenge in &request.challenges {
+            let challenge_id = challenge.challenge_id.trim();
+            let external_id = challenge.external_id.trim();
+            if challenge_id.is_empty()
+                || challenge_id.len() > 256
+                || !external_id.starts_with(&expected_external_id)
+                || external_id.len() <= expected_external_id.len()
+                || external_id.len() > expected_external_id.len() + 32
+                || challenge.challenge_expires_at <= now
+                || challenge.challenge_expires_at > now.saturating_add(15 * 60 * 1_000)
+            {
+                return Err(StoreError::Validation(
+                    "Pay.sh challenge evidence is invalid".to_owned(),
+                ));
+            }
+        }
+
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        if binding_kind == "direct" {
+            require_query_access(&transaction, query_id, binding_owner)?;
+        } else {
+            let research_job_id = request
+                .research_job_id
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default();
+            let active = transaction
+                .query_row(
+                    "SELECT 1 FROM research_payment_attempts
+                     WHERE attempt_id = ?1 AND job_id = ?2 AND quote_id = ?3
+                       AND status IN ('claimed', 'prepared', 'ambiguous')
+                     LIMIT 1",
+                    params![binding_owner, research_job_id, quote_id],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if !active {
+                return Err(StoreError::Conflict(
+                    "research payment attempt does not own this Pay.sh quote".to_owned(),
+                ));
+            }
+        }
+        let quote = transaction
+            .query_row(
+                "SELECT query_id, document_handle, price_krw, pay_to, status,
+                        expires_at, payment_rail
+                 FROM payment_quotes WHERE id = ?1 /*FOR_UPDATE*/",
+                [quote_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        as_u64(row.get(2)?)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        as_u64(row.get(5)?)?,
+                        row.get::<_, Option<String>>(6)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::DocumentNotQuoted)?;
+        if quote.0 != query_id
+            || quote.1 != document_handle
+            || quote.2 != request.path_price_krw
+            || quote.3 != owner_wallet
+        {
+            return Err(StoreError::Conflict(
+                "Pay.sh challenge does not match its immutable quote".to_owned(),
+            ));
+        }
+        if quote.4 != "quoted" || quote.5 <= now || quote.6.as_deref() != Some("pay_sh") {
+            return Err(StoreError::Conflict(
+                "Pay.sh challenge quote is expired, delivered, or reserved for another rail"
+                    .to_owned(),
+            ));
+        }
+        transaction.execute(
+            "DELETE FROM pay_sh_challenge_bindings WHERE challenge_expires_at <= ?1",
+            [as_i64(now)?],
+        )?;
+        let mut active_binding_count = transaction.query_row(
+            "SELECT COUNT(*) FROM pay_sh_challenge_bindings WHERE quote_id = ?1",
+            [quote_id],
+            |row| as_u64(row.get(0)?),
+        )?;
+        for challenge in &request.challenges {
+            let challenge_id = challenge.challenge_id.trim();
+            let external_id = challenge.external_id.trim();
+            if let Some(existing) = transaction
+                .query_row(
+                    "SELECT quote_id, external_id, challenge_expires_at,
+                            binding_kind, binding_owner
+                     FROM pay_sh_challenge_bindings WHERE challenge_id = ?1 /*FOR_UPDATE*/",
+                    [challenge_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            as_u64(row.get(2)?)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                        ))
+                    },
+                )
+                .optional()?
+            {
+                if existing
+                    != (
+                        quote_id.to_owned(),
+                        external_id.to_owned(),
+                        challenge.challenge_expires_at,
+                        binding_kind.to_owned(),
+                        binding_owner.to_owned(),
+                    )
+                {
+                    return Err(StoreError::Conflict(
+                        "Pay.sh challenge is already bound to different state".to_owned(),
+                    ));
+                }
+                continue;
+            }
+            if active_binding_count >= MAX_ACTIVE_PAY_SH_CHALLENGES_PER_QUOTE {
+                return Err(StoreError::Conflict(
+                    "too many active Pay.sh challenges exist for this quote".to_owned(),
+                ));
+            }
+            transaction.execute(
+                "INSERT INTO pay_sh_challenge_bindings
+                 (challenge_id, quote_id, external_id, challenge_expires_at,
+                  binding_kind, binding_owner, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    challenge_id,
+                    quote_id,
+                    external_id,
+                    as_i64(challenge.challenge_expires_at)?,
+                    binding_kind,
+                    binding_owner,
+                    as_i64(now)?,
+                ],
+            )?;
+            active_binding_count = active_binding_count.saturating_add(1);
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn prepare_direct_pay_sh_payment(
+        &self,
+        attempt_id: &str,
+        request: &PrepareDirectPayShPaymentRequest,
+        payment_token_hash: &str,
+    ) -> Result<DirectPayShPaymentReconciliation, StoreError> {
+        let attempt_id = attempt_id.trim();
+        let quote_id = request.quote_id.trim();
+        let payer = request.payer.trim();
+        let challenge_id = request.challenge_id.trim();
+        let external_id = request.external_id.trim();
+        let signed_transaction = request.signed_transaction_base64.trim();
+        let recent_blockhash = request.recent_blockhash.trim();
+        let platform_recipient_wallet = request.platform_recipient_wallet.trim();
+        validate_attempt_id(attempt_id)?;
+        if quote_id.is_empty()
+            || request.query_id.trim().is_empty()
+            || request.document_handle.trim().is_empty()
+            || challenge_id.is_empty()
+            || challenge_id.len() > 256
+            || external_id.is_empty()
+            || external_id.len() > 566
+            || !valid_solana_address(payer)
+            || !valid_solana_address(recent_blockhash)
+            || !valid_solana_address(request.owner_wallet.trim())
+            || !valid_solana_address(platform_recipient_wallet)
+        {
+            return Err(StoreError::Validation(
+                "direct Pay.sh payment preparation metadata is invalid".to_owned(),
+            ));
+        }
+        let transaction_bytes = BASE64_STANDARD.decode(signed_transaction).map_err(|_| {
+            StoreError::Validation("direct Pay.sh transaction must be valid base64".to_owned())
+        })?;
+        if !(100..=2_048).contains(&transaction_bytes.len()) {
+            return Err(StoreError::Validation(
+                "direct Pay.sh transaction has an invalid size".to_owned(),
+            ));
+        }
+        if hex_digest(&transaction_bytes) != attempt_id {
+            return Err(StoreError::Validation(
+                "direct Pay.sh attempt id must hash the exact signed transaction".to_owned(),
+            ));
+        }
+        let prepared_transaction_signature =
+            fully_signed_solana_transaction_signature(&transaction_bytes);
+        let now = now_ms();
+        if request.challenge_expires_at <= now
+            || request.challenge_expires_at > now.saturating_add(15 * 60 * 1_000)
+        {
+            return Err(StoreError::Validation(
+                "direct Pay.sh challenge expiry is invalid".to_owned(),
+            ));
+        }
+
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        require_query_access(&transaction, request.query_id.trim(), payment_token_hash)?;
+        transaction.query_row(
+            "SELECT id FROM queries WHERE id = ?1 /*FOR_UPDATE*/",
+            [request.query_id.trim()],
+            |row| row.get::<_, String>(0),
+        )?;
+        if let Some(bundle_id) = active_bundle_reservation(
+            &transaction,
+            request.query_id.trim(),
+            request.document_handle.trim(),
+            None,
+        )? {
+            return Err(StoreError::Conflict(format!(
+                "this document purchase is reserved by research bundle {bundle_id}"
+            )));
+        }
+        let quote = transaction
+            .query_row(
+                "SELECT query_id, document_handle, price_krw, pay_to, status,
+                        expires_at, payment_rail
+                 FROM payment_quotes WHERE id = ?1 /*FOR_UPDATE*/",
+                [quote_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        as_u64(row.get(2)?)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        as_u64(row.get(5)?)?,
+                        row.get::<_, Option<String>>(6)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::DocumentNotQuoted)?;
+        if quote.0 != request.query_id.trim()
+            || quote.1 != request.document_handle.trim()
+            || quote.2 != request.path_price_krw
+            || quote.3 != request.owner_wallet.trim()
+        {
+            return Err(StoreError::Conflict(
+                "direct Pay.sh attempt does not match its immutable quote".to_owned(),
+            ));
+        }
+        if quote.4 != "quoted" || quote.5 <= now || quote.6.as_deref() != Some("pay_sh") {
+            return Err(StoreError::Conflict(
+                "direct Pay.sh quote is expired, delivered, or reserved for another rail"
+                    .to_owned(),
+            ));
+        }
+        require_pay_sh_challenge_binding(
+            &transaction,
+            quote_id,
+            challenge_id,
+            external_id,
+            request.challenge_expires_at,
+            "direct",
+            payment_token_hash,
+        )?;
+
+        if let Some(current) = transaction
+            .query_row(
+                "SELECT quote_id, query_token_hash, status, challenge_id, external_id,
+                        payer_wallet, platform_recipient_wallet,
+                        signed_transaction_base64, recent_blockhash, challenge_expires_at
+                 FROM direct_pay_sh_attempts WHERE attempt_id = ?1 /*FOR_UPDATE*/",
+                [attempt_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, String>(8)?,
+                        as_u64(row.get(9)?)?,
+                    ))
+                },
+            )
+            .optional()?
+        {
+            if current.0 == quote_id
+                && current.1 == payment_token_hash
+                && matches!(current.2.as_str(), "prepared" | "ambiguous")
+                && current.3 == challenge_id
+                && current.4 == external_id
+                && current.5 == payer
+                && current.6.as_deref() == Some(platform_recipient_wallet)
+                && current.7 == signed_transaction
+                && current.8 == recent_blockhash
+                && current.9 == request.challenge_expires_at
+            {
+                transaction.commit()?;
+                drop(connection);
+                return self.direct_pay_sh_payment_attempt(attempt_id);
+            }
+            return Err(StoreError::Conflict(
+                "direct Pay.sh attempt id is already bound to different state".to_owned(),
+            ));
+        }
+        let competing = transaction
+            .query_row(
+                "SELECT attempt_id FROM pay_sh_quote_fences
+                 WHERE quote_id = ?1 LIMIT 1",
+                [quote_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if competing.is_some() {
+            return Err(StoreError::Conflict(
+                "another Pay.sh credential already owns this quote".to_owned(),
+            ));
+        }
+        require_no_rollback_recovery_holds(&transaction)?;
+        transaction.execute(
+            "INSERT INTO direct_pay_sh_attempts
+             (attempt_id, quote_id, query_token_hash, status, challenge_id, external_id,
+              payer_wallet, platform_recipient_wallet, signed_transaction_base64, recent_blockhash,
+              challenge_expires_at, transaction_signature, reconcile_after, created_at,
+              prepared_at)
+             VALUES (?1, ?2, ?3, 'prepared', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
+            params![
+                attempt_id,
+                quote_id,
+                payment_token_hash,
+                challenge_id,
+                external_id,
+                payer,
+                platform_recipient_wallet,
+                signed_transaction,
+                recent_blockhash,
+                as_i64(request.challenge_expires_at)?,
+                prepared_transaction_signature,
+                as_i64(now.saturating_add(PAYMENT_ATTEMPT_RECONCILE_AFTER_MS))?,
+                as_i64(now)?,
+            ],
+        )?;
+        transaction.commit()?;
+        drop(connection);
+        self.direct_pay_sh_payment_attempt(attempt_id)
+    }
+
+    pub fn direct_pay_sh_payment_reconciliations(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<DirectPayShPaymentReconciliation>, StoreError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT dpa.quote_id, dpa.attempt_id, dpa.status, dpa.reconcile_after,
+                    dpa.created_at, dpa.prepared_at, dpa.payer_wallet, pq.network,
+                    pq.asset, pq.amount_atomic, pq.pay_to,
+                    dpa.platform_recipient_wallet,
+                    dpa.signed_transaction_base64, dpa.recent_blockhash,
+                    dpa.challenge_id, dpa.external_id, dpa.challenge_expires_at,
+                    dpa.absence_observed_at
+             FROM direct_pay_sh_attempts dpa
+             JOIN payment_quotes pq ON pq.id = dpa.quote_id
+             WHERE dpa.status IN ('prepared', 'ambiguous')
+               AND dpa.reconcile_after <= ?1
+             ORDER BY dpa.reconcile_after ASC LIMIT ?2",
+        )?;
+        Ok(statement
+            .query_map(params![as_i64(now_ms())?, limit.clamp(1, 100)], |row| {
+                direct_pay_sh_payment_reconciliation_from_row(row)
+            })?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    fn direct_pay_sh_payment_attempt(
+        &self,
+        attempt_id: &str,
+    ) -> Result<DirectPayShPaymentReconciliation, StoreError> {
+        validate_attempt_id(attempt_id)?;
+        self.connection()?
+            .query_row(
+                "SELECT dpa.quote_id, dpa.attempt_id, dpa.status, dpa.reconcile_after,
+                        dpa.created_at, dpa.prepared_at, dpa.payer_wallet, pq.network,
+                        pq.asset, pq.amount_atomic, pq.pay_to,
+                        dpa.platform_recipient_wallet,
+                        dpa.signed_transaction_base64, dpa.recent_blockhash,
+                        dpa.challenge_id, dpa.external_id, dpa.challenge_expires_at,
+                        dpa.absence_observed_at
+                 FROM direct_pay_sh_attempts dpa
+                 JOIN payment_quotes pq ON pq.id = dpa.quote_id
+                 WHERE dpa.attempt_id = ?1",
+                [attempt_id.trim()],
+                direct_pay_sh_payment_reconciliation_from_row,
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("direct Pay.sh payment attempt"))
+    }
+
+    pub fn defer_direct_pay_sh_payment_reconciliation(
+        &self,
+        attempt_id: &str,
+        absence_observed: bool,
+    ) -> Result<DirectPayShPaymentReconciliation, StoreError> {
+        validate_attempt_id(attempt_id.trim())?;
+        let connection = self.connection()?;
+        let updated = connection.execute(
+            "UPDATE direct_pay_sh_attempts
+             SET status = 'ambiguous', reconcile_after = ?1,
+                 absence_observed_at = CASE
+                   WHEN ?2 THEN COALESCE(absence_observed_at, ?3)
+                   ELSE absence_observed_at
+                 END
+             WHERE attempt_id = ?4 AND status IN ('prepared', 'ambiguous')",
+            params![
+                as_i64(now_ms().saturating_add(RESEARCH_PAYMENT_RETRY_AFTER_MS))?,
+                absence_observed,
+                as_i64(now_ms())?,
+                attempt_id.trim(),
+            ],
+        )?;
+        if updated != 1 {
+            return Err(StoreError::Conflict(
+                "direct Pay.sh payment attempt is no longer reconcilable".to_owned(),
+            ));
+        }
+        drop(connection);
+        self.direct_pay_sh_payment_attempt(attempt_id.trim())
+    }
+
+    pub fn release_direct_pay_sh_payment(
+        &self,
+        attempt_id: &str,
+        request: &ReleaseResearchPaymentRequest,
+    ) -> Result<DirectPayShPaymentReconciliation, StoreError> {
+        let attempt_id = attempt_id.trim();
+        let expected_status = request.expected_status.trim();
+        let reason = request.reason.trim();
+        validate_attempt_id(attempt_id)?;
+        if !matches!(expected_status, "prepared" | "ambiguous") {
+            return Err(StoreError::Validation(
+                "direct Pay.sh release status is invalid".to_owned(),
+            ));
+        }
+        if reason.is_empty() || reason.len() > 1_000 {
+            return Err(StoreError::Validation(
+                "direct Pay.sh release reason must be between 1 and 1000 characters".to_owned(),
+            ));
+        }
+        let connection = self.connection()?;
+        let (status, observed_at, prepared_at) = connection
+            .query_row(
+                "SELECT status, absence_observed_at, prepared_at
+                 FROM direct_pay_sh_attempts
+                 WHERE attempt_id = ?1 /*FOR_UPDATE*/",
+                [attempt_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<i64>>(1)?.map(as_u64).transpose()?,
+                        as_u64(row.get(2)?)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("direct Pay.sh payment attempt"))?;
+        if status != expected_status {
+            return Err(StoreError::Conflict(format!(
+                "direct Pay.sh release expected {expected_status} but found {status}"
+            )));
+        }
+        let observed_at = observed_at.ok_or_else(|| {
+            StoreError::Conflict(
+                "direct Pay.sh release requires a prior finalized absence observation".to_owned(),
+            )
+        })?;
+        let now = now_ms();
+        if observed_at < prepared_at || observed_at > now {
+            return Err(StoreError::Conflict(
+                "direct Pay.sh absence observation is outside the prepared transaction lifetime"
+                    .to_owned(),
+            ));
+        }
+        if observed_at.saturating_add(RESEARCH_PAYMENT_ABSENCE_CONFIRMATION_MS) > now {
+            return Err(StoreError::Conflict(
+                "direct Pay.sh absence must be confirmed in a later reconciliation pass".to_owned(),
+            ));
+        }
+        let updated = connection.execute(
+            "UPDATE direct_pay_sh_attempts
+             SET status = 'released', failure_reason = ?1, completed_at = ?2
+             WHERE attempt_id = ?3 AND status = ?4",
+            params![reason, as_i64(now_ms())?, attempt_id, expected_status],
+        )?;
+        if updated != 1 {
+            return Err(StoreError::Conflict(
+                "direct Pay.sh payment attempt changed before release".to_owned(),
+            ));
+        }
+        drop(connection);
+        self.direct_pay_sh_payment_attempt(attempt_id)
+    }
+
+    pub fn settle_direct_pay_sh_payment(
+        &self,
+        attempt_id: &str,
+        transaction_signature: &str,
+    ) -> Result<OpenDocumentsResponse, StoreError> {
+        let attempt_id = attempt_id.trim();
+        let transaction_signature = transaction_signature.trim();
+        validate_attempt_id(attempt_id)?;
+        if !(64..=128).contains(&transaction_signature.len()) || !is_base58(transaction_signature) {
+            return Err(StoreError::Validation(
+                "transactionSignature must be a base58 Solana signature".to_owned(),
+            ));
+        }
+        let attempt = self.direct_pay_sh_payment_attempt(attempt_id)?;
+        if !matches!(
+            attempt.status.as_str(),
+            "prepared" | "ambiguous" | "settled"
+        ) {
+            return Err(StoreError::Conflict(format!(
+                "direct Pay.sh payment cannot settle from status {}",
+                attempt.status
+            )));
+        }
+        let quote = self.payment_quote_by_id(&attempt.quote_id)?;
+        let resource = self.build_pay_sh_resource(&quote)?;
+        self.deliver_pay_sh_quote(
+            &resource,
+            Some(PayShPaymentAttempt::Direct {
+                attempt_id,
+                transaction_signature: Some(transaction_signature),
+            }),
+        )
     }
 
     /// Issues a revocable, expiring capability for spending only the verified
@@ -6186,10 +9745,26 @@ impl Store {
         let token_hash = hex_digest(session_token.as_bytes());
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
+        let active_user = transaction
+            .query_row(
+                "SELECT id FROM users
+                 WHERE id = ?1 AND deleted_at IS NULL /*FOR_UPDATE*/",
+                [user_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if active_user.is_none() {
+            return Err(StoreError::Unauthorized(
+                "sign in again before enabling prepaid spending".to_owned(),
+            ));
+        }
         let verified = transaction
             .query_row(
-                "SELECT 1 FROM profiles
-                 WHERE user_id = ?1 AND wallet = ?2 AND wallet_verified_at IS NOT NULL",
+                "SELECT 1 FROM wallet_identities WHERE user_id = ?1 AND wallet = ?2
+                 UNION ALL
+                 SELECT 1 FROM profiles
+                 WHERE user_id = ?1 AND wallet = ?2 AND wallet_verified_at IS NOT NULL
+                 LIMIT 1",
                 params![user_id, wallet],
                 |_| Ok(()),
             )
@@ -6197,13 +9772,29 @@ impl Store {
             .is_some();
         if !verified {
             return Err(StoreError::Unauthorized(
-                "verify this Phantom wallet before enabling prepaid spending".to_owned(),
+                "sign in with this Phantom wallet before enabling prepaid spending".to_owned(),
             ));
         }
         transaction.execute(
+            "INSERT OR IGNORE INTO prepaid_wallet_owners (wallet, user_id, created_at)
+             VALUES (?1, ?2, ?3)",
+            params![wallet, user_id, as_i64(now)?],
+        )?;
+        let owner = transaction.query_row(
+            "SELECT user_id FROM prepaid_wallet_owners WHERE wallet = ?1",
+            [wallet],
+            |row| row.get::<_, String>(0),
+        )?;
+        if owner != user_id {
+            return Err(StoreError::Conflict(
+                "this wallet already owns prepaid value for another account".to_owned(),
+            ));
+        }
+        prepare_prepaid_wallet_switch(&transaction, user_id, wallet)?;
+        transaction.execute(
             "UPDATE prepaid_wallet_sessions SET revoked_at = ?1
-             WHERE user_id = ?2 AND wallet = ?3 AND revoked_at IS NULL",
-            params![as_i64(now)?, user_id, wallet],
+             WHERE user_id = ?2 AND revoked_at IS NULL",
+            params![as_i64(now)?, user_id],
         )?;
         transaction.execute(
             "INSERT INTO prepaid_wallet_sessions
@@ -6256,17 +9847,10 @@ impl Store {
             StoreError::Conflict("prepaid payments require OPENSHELF_BUNDLE_RECEIVER".to_owned())
         })?;
         let connection = self.connection()?;
-        let wallet = connection
-            .query_row(
-                "SELECT wallet FROM profiles
-                 WHERE user_id = ?1 AND wallet_verified_at IS NOT NULL",
-                [user_id.trim()],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
-            .ok_or_else(|| {
+        let wallet =
+            user_prepaid_wallet(&connection, user_id.trim(), now_ms())?.ok_or_else(|| {
                 StoreError::Conflict(
-                    "verify a Phantom wallet before reading prepaid balance".to_owned(),
+                    "sign in with a Phantom wallet before reading prepaid balance".to_owned(),
                 )
             })?;
         let available_atomic = prepaid_available(
@@ -6298,17 +9882,22 @@ impl Store {
         let now = now_ms();
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
-        let wallet = transaction
+        let active_user = transaction
             .query_row(
-                "SELECT wallet FROM profiles
-                 WHERE user_id = ?1 AND wallet_verified_at IS NOT NULL",
+                "SELECT id FROM users
+                 WHERE id = ?1 AND deleted_at IS NULL /*FOR_UPDATE*/",
                 [user_id.trim()],
                 |row| row.get::<_, String>(0),
             )
-            .optional()?
-            .ok_or_else(|| {
-                StoreError::Conflict("verify a Phantom wallet before withdrawing".to_owned())
-            })?;
+            .optional()?;
+        if active_user.is_none() {
+            return Err(StoreError::Unauthorized(
+                "sign in again before withdrawing prepaid balance".to_owned(),
+            ));
+        }
+        let wallet = user_prepaid_wallet(&transaction, user_id.trim(), now)?.ok_or_else(|| {
+            StoreError::Conflict("sign in with a Phantom wallet before withdrawing".to_owned())
+        })?;
         let available = prepaid_available(
             &transaction,
             &wallet,
@@ -6400,6 +9989,47 @@ impl Store {
         wallet_session_hash: &str,
         policy: &PaymentQuotePolicy,
     ) -> Result<PaymentBundleQuote, StoreError> {
+        self.create_payment_bundle_with_funding(
+            request,
+            payment_token_hash,
+            Some(wallet_session_hash),
+            BUNDLE_FUNDING_PREPAID,
+            policy,
+        )
+    }
+
+    /// Creates the one-shot aggregate quote used by a local agent. Unlike the
+    /// browser flow this does not require or create a reusable prepaid balance:
+    /// the x402 payer is learned from the finalized settlement and the exact
+    /// research budget is either spent or returned to that same wallet.
+    pub fn create_agent_payment_bundle(
+        &self,
+        request: &CreatePaymentBundleRequest,
+        payment_token_hash: &str,
+        policy: &PaymentQuotePolicy,
+    ) -> Result<PaymentBundleQuote, StoreError> {
+        if request.top_up_atomic.is_some() {
+            return Err(StoreError::Validation(
+                "agent-direct bundles cannot request a prepaid top-up".to_owned(),
+            ));
+        }
+        self.create_payment_bundle_with_funding(
+            request,
+            payment_token_hash,
+            None,
+            BUNDLE_FUNDING_AGENT_DIRECT,
+            policy,
+        )
+    }
+
+    fn create_payment_bundle_with_funding(
+        &self,
+        request: &CreatePaymentBundleRequest,
+        payment_token_hash: &str,
+        wallet_session_hash: Option<&str>,
+        funding_source: &str,
+        policy: &PaymentQuotePolicy,
+    ) -> Result<PaymentBundleQuote, StoreError> {
         let query_id = request.query_id.trim();
         if request.handles.is_empty() || request.handles.len() > 100 {
             return Err(StoreError::Validation(
@@ -6447,20 +10077,31 @@ impl Store {
         let mut connection = self.connection()?;
         require_query_access(&connection, query_id, payment_token_hash)?;
         let transaction = connection.transaction()?;
-        let (_, payer_wallet) = require_prepaid_session(&transaction, wallet_session_hash, now)?;
-        transaction.execute(
-            "UPDATE prepaid_wallet_sessions SET last_used_at = ?1
-             WHERE token_hash = ?2",
-            params![as_i64(now)?, wallet_session_hash],
+        transaction.query_row(
+            "SELECT id FROM queries WHERE id = ?1 /*FOR_UPDATE*/",
+            [query_id],
+            |row| row.get::<_, String>(0),
         )?;
-        ensure_prepaid_account(
-            &transaction,
-            &payer_wallet,
-            pay_to,
-            policy.network.trim(),
-            policy.asset.trim(),
-            now,
-        )?;
+        let payer_wallet = if let Some(wallet_session_hash) = wallet_session_hash {
+            let (_, payer_wallet) =
+                require_prepaid_session(&transaction, wallet_session_hash, now)?;
+            transaction.execute(
+                "UPDATE prepaid_wallet_sessions SET last_used_at = ?1
+                 WHERE token_hash = ?2",
+                params![as_i64(now)?, wallet_session_hash],
+            )?;
+            ensure_prepaid_account(
+                &transaction,
+                &payer_wallet,
+                pay_to,
+                policy.network.trim(),
+                policy.asset.trim(),
+                now,
+            )?;
+            Some(payer_wallet)
+        } else {
+            None
+        };
         for handle in &handles {
             let row = transaction
                 .query_row(
@@ -6494,6 +10135,17 @@ impl Store {
                 )
                 .optional()?
                 .ok_or(StoreError::DocumentNotQuoted)?;
+            let registered_author = transaction
+                .query_row(
+                    "SELECT id FROM users
+                     WHERE id = ?1 AND deleted_at IS NULL /*FOR_UPDATE*/",
+                    [&row.2],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            if registered_author.is_none() && !row.2.starts_with("author_") {
+                return Err(StoreError::DocumentNotQuoted);
+            }
             let recipient_wallet = if row.10.is_some() {
                 row.3.filter(|wallet| !wallet.trim().is_empty())
             } else if row.2.starts_with("author_") {
@@ -6560,11 +10212,22 @@ impl Store {
         );
         let existing = transaction
             .query_row(
-                "SELECT id, expires_at, status FROM payment_bundle_quotes
+                "SELECT id, expires_at,
+                        CASE WHEN status = 'quoted' AND EXISTS (
+                            SELECT 1 FROM chain_payment_attempts attempt
+                            WHERE attempt.settlement_kind = 'bundle'
+                              AND attempt.quote_id = payment_bundle_quotes.id
+                        ) THEN 'settling' ELSE status END
+                 FROM payment_bundle_quotes
                  WHERE query_id = ?1 AND pay_to = ?2 AND network = ?3 AND asset = ?4
                    AND amount_atomic = ?5 AND total_price_krw = ?6 AND krw_per_usdc = ?7
-                   AND ((status = 'quoted' AND expires_at > ?8) OR status <> 'quoted')
-                   AND bundle_hash = ?9 AND payer_wallet = ?10
+                   AND ((status = 'quoted' AND (expires_at > ?8 OR EXISTS (
+                       SELECT 1 FROM chain_payment_attempts attempt
+                       WHERE attempt.settlement_kind = 'bundle'
+                         AND attempt.quote_id = payment_bundle_quotes.id
+                   ))) OR status <> 'quoted')
+                   AND bundle_hash = ?9 AND funding_source = ?11
+                   AND (?11 = 'agent_chain_direct' OR payer_wallet = ?10)
                  ORDER BY created_at DESC LIMIT 1",
                 params![
                     query_id,
@@ -6576,7 +10239,8 @@ impl Store {
                     as_i64(policy.krw_per_usdc)?,
                     as_i64(now)?,
                     bundle_hash,
-                    payer_wallet,
+                    payer_wallet.as_deref(),
+                    funding_source,
                 ],
                 |row| {
                     Ok((
@@ -6590,42 +10254,104 @@ impl Store {
         let (id, expires_at, status) = if let Some(existing) = existing {
             existing
         } else {
-            let id = new_id("bundle");
-            let expires_at = now.saturating_add(policy.ttl_ms);
-            let available_atomic = prepaid_available(
-                &transaction,
-                &payer_wallet,
-                pay_to,
-                policy.network.trim(),
-                policy.asset.trim(),
-            )?;
-            let deficit_atomic = amount_atomic.saturating_sub(available_atomic);
-            let preferred_top_up = request
-                .top_up_atomic
-                .as_deref()
-                .unwrap_or("0")
-                .parse::<u64>()
-                .map_err(|_| {
-                    StoreError::Validation("topUpAtomic must be an unsigned integer".to_owned())
-                })?;
-            let deposit_atomic = if deficit_atomic == 0 {
-                0
-            } else {
-                preferred_top_up.max(deficit_atomic)
-            };
-            if deposit_atomic > MAX_PREPAID_TOP_UP_ATOMIC {
-                return Err(StoreError::Validation(
-                    "prepaid top-up exceeds the supported limit".to_owned(),
+            let conflicting_funding = transaction
+                .query_row(
+                    "SELECT funding_source FROM payment_bundle_quotes
+                     WHERE query_id = ?1 AND pay_to = ?2 AND network = ?3 AND asset = ?4
+                       AND amount_atomic = ?5 AND total_price_krw = ?6 AND krw_per_usdc = ?7
+                       AND bundle_hash = ?8 AND funding_source <> ?9
+                       AND ((status = 'quoted' AND (expires_at > ?10 OR EXISTS (
+                           SELECT 1 FROM chain_payment_attempts attempt
+                           WHERE attempt.settlement_kind = 'bundle'
+                             AND attempt.quote_id = payment_bundle_quotes.id
+                       ))) OR status <> 'quoted')
+                       AND status NOT IN ('balance_refunded', 'deleted')
+                     ORDER BY created_at DESC LIMIT 1",
+                    params![
+                        query_id,
+                        pay_to,
+                        policy.network.trim(),
+                        policy.asset.trim(),
+                        as_i64(amount_atomic)?,
+                        as_i64(total_price_krw)?,
+                        as_i64(policy.krw_per_usdc)?,
+                        bundle_hash,
+                        funding_source,
+                        as_i64(now)?,
+                    ],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            if conflicting_funding.is_some() {
+                return Err(StoreError::Conflict(
+                    "this research purchase is already reserved on another funding mode".to_owned(),
                 ));
             }
-            let immediately_funded = deficit_atomic == 0;
+            for document in &documents {
+                if let Some(bundle_id) =
+                    active_bundle_reservation(&transaction, query_id, &document.1, None)?
+                {
+                    return Err(StoreError::Conflict(format!(
+                        "document {} is already reserved by research bundle {bundle_id}",
+                        document.1
+                    )));
+                }
+                if let Some(quote_id) =
+                    active_document_quote(&transaction, query_id, &document.1, now)?
+                {
+                    return Err(StoreError::Conflict(format!(
+                        "document {} already has a direct payment reservation {quote_id}",
+                        document.1
+                    )));
+                }
+            }
+            let id = new_id("bundle");
+            let expires_at = now.saturating_add(policy.ttl_ms);
+            let (deposit_atomic, minimum_deposit_atomic, immediately_funded) = if funding_source
+                == BUNDLE_FUNDING_AGENT_DIRECT
+            {
+                (amount_atomic, amount_atomic, false)
+            } else {
+                let payer_wallet = payer_wallet.as_deref().ok_or_else(|| {
+                    StoreError::Unauthorized(
+                        "prepaid wallet session is required for this funding mode".to_owned(),
+                    )
+                })?;
+                let available_atomic = prepaid_available(
+                    &transaction,
+                    payer_wallet,
+                    pay_to,
+                    policy.network.trim(),
+                    policy.asset.trim(),
+                )?;
+                let deficit_atomic = amount_atomic.saturating_sub(available_atomic);
+                let preferred_top_up = request
+                    .top_up_atomic
+                    .as_deref()
+                    .unwrap_or("0")
+                    .parse::<u64>()
+                    .map_err(|_| {
+                        StoreError::Validation("topUpAtomic must be an unsigned integer".to_owned())
+                    })?;
+                let deposit_atomic = if deficit_atomic == 0 {
+                    0
+                } else {
+                    preferred_top_up.max(deficit_atomic)
+                };
+                if deposit_atomic > MAX_PREPAID_TOP_UP_ATOMIC {
+                    return Err(StoreError::Validation(
+                        "prepaid top-up exceeds the supported limit".to_owned(),
+                    ));
+                }
+                (deposit_atomic, deficit_atomic, deficit_atomic == 0)
+            };
             transaction.execute(
                 "INSERT INTO payment_bundle_quotes
                  (id, query_id, pay_to, network, asset, amount_atomic, total_price_krw,
                   krw_per_usdc, expires_at, settled_at, created_at, bundle_hash, status,
-                  payer_wallet, deposit_atomic, funding_source)
+                  payer_wallet, deposit_atomic, minimum_deposit_atomic, funding_source)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                         ?13, ?14, ?15, 'prepaid')",
+                         ?13, ?14, ?15, ?16, ?17)",
                 params![
                     id,
                     query_id,
@@ -6644,8 +10370,10 @@ impl Store {
                     } else {
                         "quoted"
                     },
-                    payer_wallet,
+                    payer_wallet.as_deref(),
                     as_i64(deposit_atomic)?,
+                    as_i64(minimum_deposit_atomic)?,
+                    funding_source,
                 ],
             )?;
             for (rank, doc) in documents.iter().enumerate() {
@@ -6672,9 +10400,12 @@ impl Store {
                 )?;
             }
             if immediately_funded {
+                let payer_wallet = payer_wallet.as_deref().ok_or_else(|| {
+                    StoreError::Conflict("funded prepaid bundle has no payer wallet".to_owned())
+                })?;
                 reserve_prepaid_budget(
                     &transaction,
-                    &payer_wallet,
+                    payer_wallet,
                     pay_to,
                     policy.network.trim(),
                     policy.asset.trim(),
@@ -6721,12 +10452,21 @@ impl Store {
             String,
             String,
             u64,
+            u64,
             Option<String>,
         ) = connection
             .query_row(
                 "SELECT id, query_id, pay_to, network, asset, amount_atomic,
-                        total_price_krw, krw_per_usdc, expires_at, bundle_hash, status,
-                        deposit_atomic, payer_wallet
+                        total_price_krw, krw_per_usdc, expires_at, bundle_hash,
+                        CASE WHEN status = 'quoted' AND EXISTS (
+                            SELECT 1 FROM chain_payment_attempts attempt
+                            WHERE attempt.settlement_kind = 'bundle'
+                              AND attempt.quote_id = payment_bundle_quotes.id
+                        ) THEN 'settling' ELSE status END,
+                        deposit_atomic,
+                        CASE WHEN minimum_deposit_atomic = 0 AND deposit_atomic > 0
+                             THEN deposit_atomic ELSE minimum_deposit_atomic END,
+                        payer_wallet
                  FROM payment_bundle_quotes WHERE id = ?1",
                 [quote_id.trim()],
                 |row| {
@@ -6743,14 +10483,15 @@ impl Store {
                         row.get(9)?,
                         row.get(10)?,
                         as_u64(row.get(11)?)?,
-                        row.get(12)?,
+                        as_u64(row.get(12)?)?,
+                        row.get(13)?,
                     ))
                 },
             )
             .optional()?
             .ok_or(StoreError::NotFound("payment bundle quote"))?;
         let available_balance_atomic = row
-            .12
+            .13
             .as_deref()
             .map(|wallet| prepaid_available(&connection, wallet, &row.2, &row.3, &row.4))
             .transpose()?
@@ -6765,6 +10506,7 @@ impl Store {
             asset: row.4,
             amount_atomic: row.11.to_string(),
             budget_atomic: row.5.to_string(),
+            minimum_deposit_atomic: row.12.to_string(),
             requires_payment: row.10 == "quoted" && row.11 > 0,
             available_balance_atomic: available_balance_atomic.to_string(),
             total_price_krw: row.6,
@@ -6783,6 +10525,63 @@ impl Store {
         Ok(quote)
     }
 
+    /// Return the browser's canonical payment contract through a trust path
+    /// independent from the x402 gateway. Both capabilities are required so a
+    /// guessed quote id cannot reveal another payer's bundle economics.
+    pub fn payment_bundle_quote_for_payer(
+        &self,
+        quote_id: &str,
+        payment_token_hash: &str,
+        wallet_session_hash: &str,
+    ) -> Result<PaymentBundleQuote, StoreError> {
+        let connection = self.connection()?;
+        let (query_id, payer_wallet) = connection
+            .query_row(
+                "SELECT query_id, payer_wallet FROM payment_bundle_quotes WHERE id = ?1",
+                [quote_id.trim()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("payment bundle quote"))?;
+        require_query_access(&connection, &query_id, payment_token_hash)?;
+        let (_, session_wallet) =
+            require_prepaid_session(&connection, wallet_session_hash, now_ms())?;
+        if payer_wallet.as_deref() != Some(session_wallet.as_str()) {
+            return Err(StoreError::Unauthorized(
+                "payment bundle does not belong to this wallet session".to_owned(),
+            ));
+        }
+        drop(connection);
+        self.payment_bundle_quote(quote_id)
+    }
+
+    /// Canonical trust path for a one-shot agent bundle. The query capability
+    /// is sufficient because this quote creates no reusable wallet balance;
+    /// the eventual payer identity is taken only from finalized settlement.
+    pub fn payment_bundle_quote_for_agent(
+        &self,
+        quote_id: &str,
+        payment_token_hash: &str,
+    ) -> Result<PaymentBundleQuote, StoreError> {
+        let connection = self.connection()?;
+        let (query_id, funding_source) = connection
+            .query_row(
+                "SELECT query_id, funding_source FROM payment_bundle_quotes WHERE id = ?1",
+                [quote_id.trim()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("payment bundle quote"))?;
+        require_query_access(&connection, &query_id, payment_token_hash)?;
+        if funding_source != BUNDLE_FUNDING_AGENT_DIRECT {
+            return Err(StoreError::Unauthorized(
+                "payment bundle is not an agent-direct quote".to_owned(),
+            ));
+        }
+        drop(connection);
+        self.payment_bundle_quote(quote_id)
+    }
+
     pub fn payment_bundle_snapshot(
         &self,
         quote_id: &str,
@@ -6790,7 +10589,8 @@ impl Store {
         let connection = self.connection()?;
         let bundle_hash = connection
             .query_row(
-                "SELECT bundle_hash FROM payment_bundle_quotes WHERE id = ?1",
+                "SELECT bundle_hash FROM payment_bundle_quotes
+                 WHERE id = ?1 AND status <> 'deleted'",
                 [quote_id.trim()],
                 |row| row.get::<_, String>(0),
             )
@@ -6895,7 +10695,12 @@ impl Store {
         let query_id = self.payment_bundle_quote(job_id)?.query_id;
         let mut resources = Vec::with_capacity(handles.len());
         for handle in handles {
-            let quote = self.payment_quote(&query_id, &handle, policy)?;
+            let quote = self.payment_quote_with_bundle_owner(
+                &query_id,
+                &handle,
+                policy,
+                Some(job_id.trim()),
+            )?;
             let connection = self.connection()?;
             connection.execute(
                 "UPDATE payment_bundle_documents SET pay_sh_quote_id = ?1
@@ -6924,6 +10729,573 @@ impl Store {
             status: "processing".to_owned(),
             resources,
         })
+    }
+
+    /// Durably fences one exact Pay.sh charge before the worker invokes the
+    /// paid URL. A process crash after this commit leaves the job out of the
+    /// runnable queue, so another worker cannot charge the same quote again.
+    pub fn begin_research_payment(
+        &self,
+        job_id: &str,
+        request: &BeginResearchPaymentRequest,
+    ) -> Result<ResearchJobStatus, StoreError> {
+        let job_id = job_id.trim();
+        let quote_id = request.quote_id.trim();
+        let attempt_id = request.attempt_id.trim();
+        if job_id.is_empty() || quote_id.is_empty() {
+            return Err(StoreError::Validation(
+                "research job and quote ids are required".to_owned(),
+            ));
+        }
+        if attempt_id.len() != 64
+            || !attempt_id
+                .chars()
+                .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase())
+        {
+            return Err(StoreError::Validation(
+                "research payment attempt id must be 32 bytes of lowercase hex".to_owned(),
+            ));
+        }
+
+        let now = now_ms();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let query_id = transaction
+            .query_row(
+                "SELECT query_id FROM payment_bundle_quotes WHERE id = ?1",
+                [job_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("research job"))?;
+        transaction.query_row(
+            "SELECT id FROM queries WHERE id = ?1 /*FOR_UPDATE*/",
+            [&query_id],
+            |row| row.get::<_, String>(0),
+        )?;
+        let (status, active_quote, active_attempt) = transaction
+            .query_row(
+                "SELECT status, payment_attempt_quote_id, payment_attempt_id
+                 FROM payment_bundle_quotes WHERE id = ?1 /*FOR_UPDATE*/",
+                [job_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("research job"))?;
+        if status == "payment_in_progress"
+            && active_quote.as_deref() == Some(quote_id)
+            && active_attempt.as_deref() == Some(attempt_id)
+        {
+            let attempt_exists = transaction
+                .query_row(
+                    "SELECT 1 FROM research_payment_attempts
+                     WHERE attempt_id = ?1 AND job_id = ?2 AND quote_id = ?3
+                       AND status IN ('claimed', 'prepared', 'ambiguous')",
+                    params![attempt_id, job_id, quote_id],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if !attempt_exists {
+                return Err(StoreError::Conflict(
+                    "research job fence has no matching durable payment attempt".to_owned(),
+                ));
+            }
+            transaction.commit()?;
+            drop(connection);
+            let connection = self.connection()?;
+            return load_research_job_status(&connection, job_id);
+        }
+        if status != "processing" {
+            return Err(StoreError::Conflict(format!(
+                "research payment cannot begin from status {status}"
+            )));
+        }
+        let payable = transaction
+            .query_row(
+                "SELECT 1 FROM payment_bundle_documents pbd
+                 JOIN payment_quotes pq ON pq.id = pbd.pay_sh_quote_id
+                 WHERE pbd.quote_id = ?1 AND pbd.pay_sh_quote_id = ?2
+                   AND pq.status = 'quoted' AND pq.payment_rail = 'pay_sh'
+                   AND pq.expires_at > ?3
+                 LIMIT 1",
+                params![job_id, quote_id, as_i64(now)?],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !payable {
+            return Err(StoreError::Conflict(
+                "research payment quote is not pending for this job".to_owned(),
+            ));
+        }
+        let competing = transaction
+            .query_row(
+                "SELECT attempt_id FROM pay_sh_quote_fences
+                 WHERE quote_id = ?1 LIMIT 1",
+                [quote_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if competing.is_some() {
+            return Err(StoreError::Conflict(
+                "another Pay.sh credential already owns this quote".to_owned(),
+            ));
+        }
+        transaction.execute(
+            "INSERT INTO research_payment_attempts
+             (attempt_id, job_id, quote_id, status, reconcile_after, created_at)
+             VALUES (?1, ?2, ?3, 'claimed', ?4, ?5)",
+            params![
+                attempt_id,
+                job_id,
+                quote_id,
+                as_i64(now.saturating_add(RESEARCH_PAYMENT_PREPARE_DEADLINE_MS))?,
+                as_i64(now)?,
+            ],
+        )?;
+        let updated = transaction.execute(
+            "UPDATE payment_bundle_quotes
+             SET status = 'payment_in_progress', payment_attempt_quote_id = ?1,
+                 payment_attempt_id = ?2, failure_reason = NULL
+             WHERE id = ?3 AND status = 'processing'
+               AND payment_attempt_quote_id IS NULL AND payment_attempt_id IS NULL",
+            params![quote_id, attempt_id, job_id],
+        )?;
+        if updated != 1 {
+            return Err(StoreError::Conflict(
+                "another research payment attempt already owns this job".to_owned(),
+            ));
+        }
+        transaction.commit()?;
+        drop(connection);
+        let connection = self.connection()?;
+        load_research_job_status(&connection, job_id)
+    }
+
+    /// Persists the exact MPP challenge and payer-signed transaction before
+    /// the HTTP transport is allowed to send the paid request to Pay.sh.
+    pub fn prepare_research_payment(
+        &self,
+        job_id: &str,
+        attempt_id: &str,
+        request: &PrepareResearchPaymentRequest,
+    ) -> Result<ResearchPaymentReconciliation, StoreError> {
+        let job_id = job_id.trim();
+        let attempt_id = attempt_id.trim();
+        let quote_id = request.quote_id.trim();
+        let payer = request.payer.trim();
+        let challenge_id = request.challenge_id.trim();
+        let external_id = request.external_id.trim();
+        let signed_transaction = request.signed_transaction_base64.trim();
+        let recent_blockhash = request.recent_blockhash.trim();
+        let platform_recipient_wallet = request.platform_recipient_wallet.trim();
+        validate_research_attempt_id(attempt_id)?;
+        if quote_id.is_empty()
+            || challenge_id.is_empty()
+            || challenge_id.len() > 256
+            || external_id.is_empty()
+            || external_id.len() > 566
+            || !valid_solana_address(payer)
+            || !valid_solana_address(recent_blockhash)
+            || !valid_solana_address(platform_recipient_wallet)
+        {
+            return Err(StoreError::Validation(
+                "research payment preparation metadata is invalid".to_owned(),
+            ));
+        }
+        let transaction_bytes = BASE64_STANDARD.decode(signed_transaction).map_err(|_| {
+            StoreError::Validation("research payment transaction must be valid base64".to_owned())
+        })?;
+        if !(100..=2_048).contains(&transaction_bytes.len()) {
+            return Err(StoreError::Validation(
+                "research payment transaction has an invalid size".to_owned(),
+            ));
+        }
+        let prepared_transaction_signature =
+            fully_signed_solana_transaction_signature(&transaction_bytes);
+        let now = now_ms();
+        if request.challenge_expires_at <= now
+            || request.challenge_expires_at > now.saturating_add(15 * 60 * 1_000)
+        {
+            return Err(StoreError::Validation(
+                "research payment challenge expiry is invalid".to_owned(),
+            ));
+        }
+
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let current = transaction
+            .query_row(
+                "SELECT status, job_id, quote_id, challenge_id, external_id,
+                        signed_transaction_base64, recent_blockhash, challenge_expires_at,
+                        payer_wallet, platform_recipient_wallet
+                 FROM research_payment_attempts WHERE attempt_id = ?1 /*FOR_UPDATE*/",
+                [attempt_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, Option<i64>>(7)?,
+                        row.get::<_, Option<String>>(8)?,
+                        row.get::<_, Option<String>>(9)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("research payment attempt"))?;
+        if current.1 != job_id || current.2 != quote_id {
+            return Err(StoreError::Conflict(
+                "research payment preparation does not match its fenced job and quote".to_owned(),
+            ));
+        }
+        require_pay_sh_challenge_binding(
+            &transaction,
+            quote_id,
+            challenge_id,
+            external_id,
+            request.challenge_expires_at,
+            "research",
+            attempt_id,
+        )?;
+        if current.0 == "prepared"
+            && current.3.as_deref() == Some(challenge_id)
+            && current.4.as_deref() == Some(external_id)
+            && current.5.as_deref() == Some(signed_transaction)
+            && current.6.as_deref() == Some(recent_blockhash)
+            && current.7 == Some(as_i64(request.challenge_expires_at)?)
+            && current.8.as_deref() == Some(payer)
+            && current.9.as_deref() == Some(platform_recipient_wallet)
+        {
+            transaction.commit()?;
+            drop(connection);
+            return self.research_payment_attempt(attempt_id);
+        }
+        if current.0 != "claimed" {
+            return Err(StoreError::Conflict(format!(
+                "research payment cannot be prepared from status {}",
+                current.0
+            )));
+        }
+        let active = transaction
+            .query_row(
+                "SELECT 1 FROM payment_bundle_quotes
+                 WHERE id = ?1 AND status = 'payment_in_progress'
+                   AND payment_attempt_quote_id = ?2 AND payment_attempt_id = ?3
+                 LIMIT 1",
+                params![job_id, quote_id, attempt_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !active {
+            return Err(StoreError::Conflict(
+                "research payment attempt no longer owns the job".to_owned(),
+            ));
+        }
+        require_no_rollback_recovery_holds(&transaction)?;
+        transaction.execute(
+            "UPDATE research_payment_attempts
+             SET status = 'prepared', challenge_id = ?1, external_id = ?2,
+                 payer_wallet = ?3, signed_transaction_base64 = ?4,
+                 recent_blockhash = ?5, challenge_expires_at = ?6,
+                 platform_recipient_wallet = ?7, prepared_at = ?8, reconcile_after = ?9,
+                 transaction_signature = ?10
+             WHERE attempt_id = ?11 AND status = 'claimed'",
+            params![
+                challenge_id,
+                external_id,
+                payer,
+                signed_transaction,
+                recent_blockhash,
+                as_i64(request.challenge_expires_at)?,
+                platform_recipient_wallet,
+                as_i64(now)?,
+                as_i64(now.saturating_add(PAYMENT_ATTEMPT_RECONCILE_AFTER_MS))?,
+                prepared_transaction_signature,
+                attempt_id,
+            ],
+        )?;
+        transaction.commit()?;
+        drop(connection);
+        self.research_payment_attempt(attempt_id)
+    }
+
+    pub fn research_payment_reconciliations(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<ResearchPaymentReconciliation>, StoreError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT rpa.job_id, rpa.quote_id, rpa.attempt_id, rpa.status,
+                    rpa.reconcile_after, rpa.created_at, rpa.prepared_at,
+                    COALESCE(rpa.payer_wallet, ''), pq.network, pq.asset,
+                    pq.amount_atomic, pq.pay_to,
+                    rpa.platform_recipient_wallet,
+                    rpa.signed_transaction_base64, rpa.recent_blockhash,
+                    rpa.challenge_id, rpa.external_id, rpa.challenge_expires_at,
+                    rpa.absence_observed_at
+             FROM research_payment_attempts rpa
+             JOIN payment_bundle_quotes pbq ON pbq.id = rpa.job_id
+             JOIN payment_quotes pq ON pq.id = rpa.quote_id
+             WHERE rpa.status IN ('claimed', 'prepared', 'ambiguous')
+               AND rpa.reconcile_after <= ?1
+               AND pbq.payment_attempt_id = rpa.attempt_id
+               AND pbq.payment_attempt_quote_id = rpa.quote_id
+             ORDER BY rpa.reconcile_after ASC LIMIT ?2",
+        )?;
+        Ok(statement
+            .query_map(params![as_i64(now_ms())?, limit.clamp(1, 100)], |row| {
+                research_payment_reconciliation_from_row(row)
+            })?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    fn research_payment_attempt(
+        &self,
+        attempt_id: &str,
+    ) -> Result<ResearchPaymentReconciliation, StoreError> {
+        validate_research_attempt_id(attempt_id)?;
+        self.connection()?
+            .query_row(
+                "SELECT rpa.job_id, rpa.quote_id, rpa.attempt_id, rpa.status,
+                        rpa.reconcile_after, rpa.created_at, rpa.prepared_at,
+                        COALESCE(rpa.payer_wallet, ''), pq.network, pq.asset,
+                        pq.amount_atomic, pq.pay_to,
+                        rpa.platform_recipient_wallet,
+                        rpa.signed_transaction_base64, rpa.recent_blockhash,
+                        rpa.challenge_id, rpa.external_id, rpa.challenge_expires_at,
+                        rpa.absence_observed_at
+                 FROM research_payment_attempts rpa
+                 JOIN payment_bundle_quotes pbq ON pbq.id = rpa.job_id
+                 JOIN payment_quotes pq ON pq.id = rpa.quote_id
+                 WHERE rpa.attempt_id = ?1",
+                [attempt_id],
+                research_payment_reconciliation_from_row,
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("research payment attempt"))
+    }
+
+    pub fn defer_research_payment_reconciliation(
+        &self,
+        job_id: &str,
+        attempt_id: &str,
+        absence_observed: bool,
+    ) -> Result<ResearchPaymentReconciliation, StoreError> {
+        validate_research_attempt_id(attempt_id.trim())?;
+        let connection = self.connection()?;
+        let updated = connection.execute(
+            "UPDATE research_payment_attempts
+             SET reconcile_after = ?1,
+                 absence_observed_at = CASE
+                   WHEN ?2 THEN COALESCE(absence_observed_at, ?3)
+                   ELSE absence_observed_at
+                 END
+             WHERE attempt_id = ?4 AND job_id = ?5
+               AND status IN ('claimed', 'prepared', 'ambiguous')",
+            params![
+                as_i64(now_ms().saturating_add(RESEARCH_PAYMENT_RETRY_AFTER_MS))?,
+                absence_observed,
+                as_i64(now_ms())?,
+                attempt_id.trim(),
+                job_id.trim(),
+            ],
+        )?;
+        if updated != 1 {
+            return Err(StoreError::Conflict(
+                "research payment attempt is no longer reconcilable".to_owned(),
+            ));
+        }
+        // `Store` serializes access to the shared connection. Release the
+        // guard before loading the updated row or this path deadlocks itself.
+        drop(connection);
+        self.research_payment_attempt(attempt_id.trim())
+    }
+
+    /// Releases only the exact state observed by the reconciler. `claimed`
+    /// proves no paid HTTP request could start because no signed credential was
+    /// durably prepared. `prepared`/`ambiguous` callers must first prove the
+    /// exact transaction's blockhash is invalid and no matching chain record
+    /// exists.
+    pub fn release_research_payment(
+        &self,
+        job_id: &str,
+        attempt_id: &str,
+        request: &ReleaseResearchPaymentRequest,
+    ) -> Result<ResearchJobStatus, StoreError> {
+        let job_id = job_id.trim();
+        let attempt_id = attempt_id.trim();
+        let expected_status = request.expected_status.trim();
+        let reason = request.reason.trim();
+        validate_research_attempt_id(attempt_id)?;
+        if !matches!(expected_status, "claimed" | "prepared" | "ambiguous") {
+            return Err(StoreError::Validation(
+                "research payment release status is invalid".to_owned(),
+            ));
+        }
+        if reason.is_empty() || reason.len() > 1_000 {
+            return Err(StoreError::Validation(
+                "research payment release reason must be between 1 and 1000 characters".to_owned(),
+            ));
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let (status, quote_id, absence_observed_at, has_prepared_evidence, prepared_at) =
+            transaction
+                .query_row(
+                    "SELECT status, quote_id, absence_observed_at,
+                        (challenge_id IS NOT NULL OR external_id IS NOT NULL
+                         OR payer_wallet IS NOT NULL OR platform_recipient_wallet IS NOT NULL
+                         OR signed_transaction_base64 IS NOT NULL
+                         OR recent_blockhash IS NOT NULL OR challenge_expires_at IS NOT NULL
+                         OR transaction_signature IS NOT NULL OR prepared_at IS NOT NULL),
+                        COALESCE(prepared_at, created_at)
+                 FROM research_payment_attempts
+                 WHERE attempt_id = ?1 AND job_id = ?2 /*FOR_UPDATE*/",
+                    params![attempt_id, job_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<i64>>(2)?,
+                            row.get::<_, bool>(3)?,
+                            as_u64(row.get(4)?)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(StoreError::NotFound("research payment attempt"))?;
+        if status != expected_status {
+            return Err(StoreError::Conflict(format!(
+                "research payment release expected {expected_status} but found {status}"
+            )));
+        }
+        if expected_status == "claimed" && has_prepared_evidence {
+            return Err(StoreError::Conflict(
+                "claimed research payment contains prepared evidence and cannot be released"
+                    .to_owned(),
+            ));
+        }
+        if expected_status != "claimed" {
+            let now = now_ms();
+            let observed_at = absence_observed_at
+                .map(as_u64)
+                .transpose()?
+                .ok_or_else(|| {
+                    StoreError::Conflict(
+                        "research payment release requires a prior finalized absence observation"
+                            .to_owned(),
+                    )
+                })?;
+            if observed_at < prepared_at || observed_at > now {
+                return Err(StoreError::Conflict(
+                    "research payment absence observation is outside the prepared transaction lifetime"
+                        .to_owned(),
+                ));
+            }
+            if observed_at.saturating_add(RESEARCH_PAYMENT_ABSENCE_CONFIRMATION_MS) > now {
+                return Err(StoreError::Conflict(
+                    "research payment absence must be confirmed in a later reconciliation pass"
+                        .to_owned(),
+                ));
+            }
+        }
+        let released = transaction.execute(
+            "UPDATE payment_bundle_quotes
+             SET status = 'processing', payment_attempt_quote_id = NULL,
+                 payment_attempt_id = NULL, failure_reason = NULL
+             WHERE id = ?1 AND payment_attempt_quote_id = ?2
+               AND payment_attempt_id = ?3
+               AND status IN ('payment_in_progress', 'payment_reconciliation')",
+            params![job_id, quote_id, attempt_id],
+        )?;
+        if released != 1 {
+            return Err(StoreError::Conflict(
+                "research payment attempt no longer owns the job".to_owned(),
+            ));
+        }
+        transaction.execute(
+            "UPDATE research_payment_attempts
+             SET status = 'released', failure_reason = ?1, completed_at = ?2
+             WHERE attempt_id = ?3 AND status = ?4",
+            params![reason, as_i64(now_ms())?, attempt_id, expected_status],
+        )?;
+        transaction.commit()?;
+        drop(connection);
+        let connection = self.connection()?;
+        load_research_job_status(&connection, job_id)
+    }
+
+    /// Completes a Pay.sh document from an exact finalized transaction found
+    /// by the reconciler. Delivery, earnings, attempt completion, and removal
+    /// of the job fence commit atomically.
+    pub fn settle_research_payment(
+        &self,
+        job_id: &str,
+        attempt_id: &str,
+        transaction_signature: &str,
+    ) -> Result<ResearchJobStatus, StoreError> {
+        let job_id = job_id.trim();
+        let attempt_id = attempt_id.trim();
+        let transaction_signature = transaction_signature.trim();
+        validate_research_attempt_id(attempt_id)?;
+        if !(64..=128).contains(&transaction_signature.len()) || !is_base58(transaction_signature) {
+            return Err(StoreError::Validation(
+                "transactionSignature must be a base58 Solana signature".to_owned(),
+            ));
+        }
+
+        let attempt = self.research_payment_attempt(attempt_id)?;
+        if attempt.job_id != job_id {
+            return Err(StoreError::Conflict(
+                "research payment settlement does not match its fenced job".to_owned(),
+            ));
+        }
+        if attempt.status == "settled" {
+            let connection = self.connection()?;
+            let recorded_signature = connection.query_row(
+                "SELECT transaction_signature FROM research_payment_attempts
+                 WHERE attempt_id = ?1 AND job_id = ?2",
+                params![attempt_id, job_id],
+                |row| row.get::<_, Option<String>>(0),
+            )?;
+            if recorded_signature.as_deref() == Some(transaction_signature) {
+                return load_research_job_status(&connection, job_id);
+            }
+            return Err(StoreError::Conflict(
+                "research payment was already settled with different evidence".to_owned(),
+            ));
+        }
+        if !matches!(attempt.status.as_str(), "prepared" | "ambiguous") {
+            return Err(StoreError::Conflict(format!(
+                "research payment cannot settle from status {}",
+                attempt.status
+            )));
+        }
+        let quote = self.payment_quote_by_id(&attempt.quote_id)?;
+        let resource = self.build_pay_sh_resource(&quote)?;
+        self.deliver_pay_sh_quote(
+            &resource,
+            Some(PayShPaymentAttempt::Research {
+                job_id,
+                attempt_id,
+                transaction_signature: Some(transaction_signature),
+            }),
+        )?;
+        let connection = self.connection()?;
+        load_research_job_status(&connection, job_id)
     }
 
     pub fn runnable_research_jobs(&self, limit: usize) -> Result<Vec<String>, StoreError> {
@@ -7081,6 +11453,155 @@ impl Store {
         load_research_job_status(&connection, job_id.trim())
     }
 
+    /// Stops automatic Pay.sh retries without releasing any reserved balance.
+    /// Once a paid HTTP attempt begins, a transport/upstream failure cannot
+    /// prove whether the MPP charge landed, so refunding or paying again would
+    /// both risk moving funds twice. An operator must reconcile the Pay.sh
+    /// receipt before transitioning this job again.
+    pub fn hold_research_job(
+        &self,
+        job_id: &str,
+        error: &str,
+    ) -> Result<ResearchJobStatus, StoreError> {
+        let reason = error.trim();
+        if reason.is_empty() || reason.len() > 1_000 {
+            return Err(StoreError::Validation(
+                "research job error must be between 1 and 1000 characters".to_owned(),
+            ));
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let (status, active_quote_id, active_attempt_id) = transaction
+            .query_row(
+                "SELECT status, payment_attempt_quote_id, payment_attempt_id
+                 FROM payment_bundle_quotes
+                 WHERE id = ?1 /*FOR_UPDATE*/",
+                [job_id.trim()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("research job"))?;
+        if status == "payment_reconciliation" {
+            let owns_active_attempt = if let Some((quote_id, attempt_id)) =
+                active_quote_id.as_deref().zip(active_attempt_id.as_deref())
+            {
+                transaction
+                    .query_row(
+                        "SELECT 1 FROM research_payment_attempts
+                         WHERE job_id = ?1 AND quote_id = ?2 AND attempt_id = ?3
+                           AND status IN ('claimed', 'prepared', 'ambiguous')",
+                        params![job_id.trim(), quote_id, attempt_id],
+                        |_| Ok(()),
+                    )
+                    .optional()?
+                    .is_some()
+            } else {
+                false
+            };
+            if !owns_active_attempt {
+                return Err(StoreError::Conflict(
+                    "research reconciliation state has no matching durable payment attempt"
+                        .to_owned(),
+                ));
+            }
+            transaction.execute(
+                "UPDATE research_payment_attempts
+                 SET status = 'ambiguous', failure_reason = ?1,
+                     reconcile_after = CASE
+                       WHEN reconcile_after < ?2 THEN reconcile_after ELSE ?2
+                     END
+                 WHERE job_id = ?3 AND status = 'prepared'
+                   AND attempt_id = (
+                     SELECT payment_attempt_id FROM payment_bundle_quotes WHERE id = ?3
+                   )",
+                params![reason, as_i64(now_ms())?, job_id.trim()],
+            )?;
+            transaction.commit()?;
+            drop(connection);
+            let connection = self.connection()?;
+            return load_research_job_status(&connection, job_id.trim());
+        }
+        if matches!(status.as_str(), "funded" | "processing") {
+            // The worker may time out reloading the plan after the callback
+            // already committed delivery and cleared the exact attempt. In
+            // that state there is nothing ambiguous in the ledger: leave the
+            // job runnable so a replacement can observe the committed result.
+            transaction.execute(
+                "UPDATE payment_bundle_quotes SET failure_reason = ?1 WHERE id = ?2",
+                params![reason, job_id.trim()],
+            )?;
+            transaction.commit()?;
+            drop(connection);
+            let connection = self.connection()?;
+            return load_research_job_status(&connection, job_id.trim());
+        }
+        if status != "payment_in_progress" {
+            return Err(StoreError::Conflict(format!(
+                "research job cannot be held from status {status}"
+            )));
+        }
+        let (Some(active_quote_id), Some(active_attempt_id)) =
+            (active_quote_id.as_deref(), active_attempt_id.as_deref())
+        else {
+            return Err(StoreError::Conflict(
+                "research payment state has no durable attempt owner".to_owned(),
+            ));
+        };
+        let owns_active_attempt = transaction
+            .query_row(
+                "SELECT 1 FROM research_payment_attempts
+                 WHERE job_id = ?1 AND quote_id = ?2 AND attempt_id = ?3
+                   AND status IN ('claimed', 'prepared', 'ambiguous')",
+                params![job_id.trim(), active_quote_id, active_attempt_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !owns_active_attempt {
+            return Err(StoreError::Conflict(
+                "research payment state has no matching durable attempt".to_owned(),
+            ));
+        }
+        let held = transaction.execute(
+            "UPDATE payment_bundle_quotes
+             SET status = 'payment_reconciliation', failure_reason = ?1
+             WHERE id = ?2 AND status = 'payment_in_progress'
+               AND payment_attempt_quote_id = ?3 AND payment_attempt_id = ?4",
+            params![reason, job_id.trim(), active_quote_id, active_attempt_id],
+        )?;
+        if held != 1 {
+            return Err(StoreError::Conflict(
+                "research payment state changed before it could be held".to_owned(),
+            ));
+        }
+        transaction.execute(
+            "UPDATE research_payment_attempts
+             SET status = 'ambiguous', failure_reason = ?1,
+                 reconcile_after = CASE
+                   WHEN reconcile_after < ?2 THEN reconcile_after ELSE ?2
+                 END
+             WHERE job_id = ?3 AND quote_id = ?4 AND attempt_id = ?5
+               AND status = 'prepared'",
+            params![
+                reason,
+                as_i64(now_ms())?,
+                job_id.trim(),
+                active_quote_id,
+                active_attempt_id
+            ],
+        )?;
+        transaction.commit()?;
+        drop(connection);
+        let connection = self.connection()?;
+        load_research_job_status(&connection, job_id.trim())
+    }
+
     pub fn record_bundle_chain_settlement(
         &self,
         request: &RecordChainSettlementRequest,
@@ -7108,6 +11629,16 @@ impl Store {
                 && existing.amount_atomic == request.amount_atomic
                 && existing.network == request.network.trim()
             {
+                lock_chain_payment_quote(&transaction, "bundle", request.quote_id.trim())?;
+                verify_chain_payment_attempt(
+                    &transaction,
+                    "bundle",
+                    request.quote_id.trim(),
+                    request.attempt_id.as_deref(),
+                    false,
+                )?;
+                clear_payment_attempt(&transaction, "bundle", request.quote_id.trim())?;
+                transaction.commit()?;
                 return Ok(existing);
             }
             return Err(StoreError::Conflict(
@@ -7115,22 +11646,15 @@ impl Store {
             ));
         }
         let signature = request.transaction_signature.trim();
-        let signature_used = transaction
-            .query_row(
-                "SELECT 1 FROM chain_settlements WHERE transaction_signature = ?1
-                 UNION ALL
-                 SELECT 1 FROM bundle_chain_settlements WHERE transaction_signature = ?1
-                 LIMIT 1",
-                [signature],
-                |_| Ok(()),
-            )
-            .optional()?
-            .is_some();
-        if signature_used {
-            return Err(StoreError::Conflict(
-                "this transaction signature has already been recorded".to_owned(),
-            ));
-        }
+        lock_chain_payment_quote(&transaction, "bundle", request.quote_id.trim())?;
+        let prepared_transaction = verify_chain_payment_attempt(
+            &transaction,
+            "bundle",
+            request.quote_id.trim(),
+            request.attempt_id.as_deref(),
+            true,
+        )?;
+        claim_chain_transaction(&transaction, signature, "bundle", request.quote_id.trim())?;
         let (
             query_id,
             pay_to,
@@ -7165,9 +11689,15 @@ impl Store {
             )
             .optional()?
             .ok_or(StoreError::NotFound("payment bundle quote"))?;
+        let payer_matches_funding = match funding_source.as_str() {
+            BUNDLE_FUNDING_PREPAID => expected_payer.as_deref() == Some(request.payer.trim()),
+            BUNDLE_FUNDING_AGENT_DIRECT => {
+                expected_payer.is_none() && deposit_atomic == budget_atomic
+            }
+            _ => false,
+        };
         if quote_status != "quoted"
-            || funding_source != "prepaid"
-            || expected_payer.as_deref() != Some(request.payer.trim())
+            || !payer_matches_funding
             || pay_to != request.pay_to.trim()
             || network != request.network.trim()
             || deposit_atomic != amount_atomic
@@ -7225,31 +11755,34 @@ impl Store {
                 as_i64(confirmed_at)?,
             ],
         )?;
-        credit_prepaid_deposit(
-            &transaction,
-            request.payer.trim(),
-            &pay_to,
-            &network,
-            &asset,
-            signature,
-            deposit_atomic,
-            confirmed_at,
-        )?;
-        reserve_prepaid_budget(
-            &transaction,
-            request.payer.trim(),
-            &pay_to,
-            &network,
-            &asset,
-            request.quote_id.trim(),
-            budget_atomic,
-            confirmed_at,
-        )?;
+        if funding_source == BUNDLE_FUNDING_PREPAID {
+            credit_prepaid_deposit(
+                &transaction,
+                request.payer.trim(),
+                &pay_to,
+                &network,
+                &asset,
+                signature,
+                deposit_atomic,
+                confirmed_at,
+            )?;
+            reserve_prepaid_budget(
+                &transaction,
+                request.payer.trim(),
+                &pay_to,
+                &network,
+                &asset,
+                request.quote_id.trim(),
+                budget_atomic,
+                confirmed_at,
+            )?;
+        }
         transaction.execute(
             "INSERT INTO bundle_chain_settlements
              (id, quote_id, settlement_id, transaction_signature, payer, pay_to,
-              amount_atomic, network, raw_response_json, confirmed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+              amount_atomic, network, prepared_transaction_base64,
+              raw_response_json, confirmed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 chain_id,
                 request.quote_id.trim(),
@@ -7259,6 +11792,7 @@ impl Store {
                 request.pay_to.trim(),
                 as_i64(amount_atomic)?,
                 request.network.trim(),
+                prepared_transaction,
                 raw_response_json,
                 as_i64(confirmed_at)?,
             ],
@@ -7268,10 +11802,15 @@ impl Store {
         // official Pay.sh resource, which is the only delivery boundary.
         transaction.execute(
             "UPDATE payment_bundle_quotes
-             SET settled_at = ?1, status = 'funded'
+             SET settled_at = ?1, status = 'funded', payer_wallet = ?3
              WHERE id = ?2",
-            params![as_i64(confirmed_at)?, request.quote_id.trim()],
+            params![
+                as_i64(confirmed_at)?,
+                request.quote_id.trim(),
+                request.payer.trim()
+            ],
         )?;
+        clear_payment_attempt(&transaction, "bundle", request.quote_id.trim())?;
         transaction.commit()?;
         Ok(ChainSettlementReceipt {
             id: chain_id,
@@ -7293,7 +11832,8 @@ impl Store {
                 .query_row(
                     "SELECT id, document_handle, shelf_snapshot, content_snapshot, price_krw,
                             content_hash, document_version, delivered_at, document_id
-                     FROM payment_quotes WHERE id = ?1 AND settled_at IS NOT NULL",
+                     FROM payment_quotes
+                     WHERE id = ?1 AND status = 'delivered' AND settled_at IS NOT NULL",
                     [quote_id.trim()],
                     |row| {
                         Ok((
@@ -7371,7 +11911,7 @@ impl Store {
             .query_row(
                 "SELECT id, document_handle, shelf_snapshot, content_snapshot, price_krw,
                         content_hash, document_version
-                 FROM payment_quotes WHERE id = ?1",
+                 FROM payment_quotes WHERE id = ?1 AND status = 'quoted'",
                 [quote_id.trim()],
                 |row| {
                     Ok(PaymentDocumentSnapshot {
@@ -7437,25 +11977,31 @@ impl Store {
                 && existing.amount_atomic == request.amount_atomic
                 && existing.network == request.network.trim()
             {
+                bind_document_payment_rail(&transaction, request.quote_id.trim(), "x402")?;
+                verify_chain_payment_attempt(
+                    &transaction,
+                    "document",
+                    request.quote_id.trim(),
+                    request.attempt_id.as_deref(),
+                    false,
+                )?;
+                clear_payment_attempt(&transaction, "document", request.quote_id.trim())?;
+                transaction.commit()?;
                 return Ok(existing);
             }
             return Err(StoreError::Conflict(
                 "this payment quote has already been settled".to_owned(),
             ));
         }
-        if transaction
-            .query_row(
-                "SELECT 1 FROM bundle_chain_settlements WHERE transaction_signature = ?1",
-                [signature],
-                |_| Ok(()),
-            )
-            .optional()?
-            .is_some()
-        {
-            return Err(StoreError::Conflict(
-                "this transaction signature has already been recorded".to_owned(),
-            ));
-        }
+        bind_document_payment_rail(&transaction, request.quote_id.trim(), "x402")?;
+        let prepared_transaction = verify_chain_payment_attempt(
+            &transaction,
+            "document",
+            request.quote_id.trim(),
+            request.attempt_id.as_deref(),
+            true,
+        )?;
+        claim_chain_transaction(&transaction, signature, "document", request.quote_id.trim())?;
 
         let (
             query_id,
@@ -7526,8 +12072,9 @@ impl Store {
         transaction.execute(
             "INSERT INTO chain_settlements
              (id, quote_id, settlement_id, transaction_signature, payer, pay_to,
-              amount_atomic, network, raw_response_json, confirmed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+              amount_atomic, network, prepared_transaction_base64,
+              raw_response_json, confirmed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 chain_id,
                 request.quote_id.trim(),
@@ -7537,6 +12084,7 @@ impl Store {
                 request.pay_to.trim(),
                 as_i64(amount_atomic)?,
                 request.network.trim(),
+                prepared_transaction,
                 raw_response_json,
                 as_i64(confirmed_at)?,
             ],
@@ -7575,6 +12123,7 @@ impl Store {
             &pay_to,
             confirmed_at,
         )?;
+        clear_payment_attempt(&transaction, "document", request.quote_id.trim())?;
         transaction.commit()?;
 
         Ok(ChainSettlementReceipt {
@@ -7762,6 +12311,43 @@ fn require_query_access(
     Ok(())
 }
 
+fn require_pay_sh_challenge_binding(
+    transaction: &Transaction<'_>,
+    quote_id: &str,
+    challenge_id: &str,
+    external_id: &str,
+    challenge_expires_at: u64,
+    binding_kind: &str,
+    binding_owner: &str,
+) -> Result<(), StoreError> {
+    let bound = transaction
+        .query_row(
+            "SELECT 1 FROM pay_sh_challenge_bindings
+             WHERE challenge_id = ?1 AND quote_id = ?2 AND external_id = ?3
+               AND challenge_expires_at = ?4 AND binding_kind = ?5
+               AND binding_owner = ?6
+             LIMIT 1",
+            params![
+                challenge_id,
+                quote_id,
+                external_id,
+                as_i64(challenge_expires_at)?,
+                binding_kind,
+                binding_owner,
+            ],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if bound {
+        Ok(())
+    } else {
+        Err(StoreError::Conflict(
+            "Pay.sh credential challenge was not issued for this quote".to_owned(),
+        ))
+    }
+}
+
 fn liquidity_state_name(state: LiquidityState) -> &'static str {
     match state {
         LiquidityState::AiLiquidityOnly => "ai_liquidity_only",
@@ -7849,25 +12435,15 @@ fn load_ai_baseline(
     }))
 }
 
-fn production_environment() -> bool {
-    std::env::var("OPENSHELF_ENV").ok().is_some_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "production" | "prod"
-        )
-    })
+fn production_environment() -> Result<bool, StoreError> {
+    let value = std::env::var("OPENSHELF_ENV").unwrap_or_else(|_| "development".to_owned());
+    managed_runtime_environment(&value).map_err(|error| StoreError::Validation(error.to_owned()))
 }
 
-fn env_flag(name: &str, fallback: bool) -> bool {
-    match std::env::var(name)
-        .ok()
-        .map(|value| value.trim().to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("1" | "true" | "yes" | "on") => true,
-        Some("0" | "false" | "no" | "off") => false,
-        _ => fallback,
-    }
+fn env_flag(name: &str, fallback: bool) -> Result<bool, StoreError> {
+    let value = std::env::var(name).ok();
+    boolean_value(name, value.as_deref(), fallback)
+        .map_err(|error| StoreError::Validation(error.to_owned()))
 }
 
 fn validate_profile(request: &UpsertProfileRequest) -> Result<(), StoreError> {
@@ -8208,13 +12784,19 @@ fn settle_agent_match(
             ));
         }
     } else {
-        transaction.execute(
+        let changed = transaction.execute(
             "UPDATE open_calls SET answered = answered + 1,
                 escrow_remaining_krw = escrow_remaining_krw - unit_price_krw,
                 status = CASE WHEN answered + 1 >= target THEN 'filled' ELSE status END
-             WHERE id = ?1 AND status = 'open' AND answered < target",
+             WHERE id = ?1 AND status = 'open' AND answered < target
+               AND escrow_remaining_krw >= unit_price_krw",
             [call.id.as_str()],
         )?;
+        if changed != 1 {
+            return Err(StoreError::Conflict(
+                "this open call is already full or its escrow is exhausted".to_owned(),
+            ));
+        }
         let changed = transaction.execute(
             "UPDATE balances SET reserved_krw = reserved_krw - ?1, updated_at = ?2
              WHERE user_id = ?3 AND reserved_krw >= ?1",
@@ -8368,7 +12950,9 @@ fn insert_notification(
     let email = transaction
         .query_row(
             "SELECT u.email FROM users u JOIN profiles p ON p.user_id = u.id
-             WHERE u.id = ?1 AND u.deleted_at IS NULL AND p.email_alerts = 1",
+             WHERE u.id = ?1 AND u.deleted_at IS NULL AND p.email_alerts = 1
+               AND LOWER(u.email) NOT LIKE '%@wallet.obolus.local'
+               AND LOWER(u.email) NOT LIKE '%@wallet.openshelf.local'",
             [user_id],
             |row| row.get::<_, String>(0),
         )
@@ -8758,6 +13342,7 @@ fn payout_claim_from_row(row: &db::Row) -> db::Result<PayoutClaim> {
         created_at: as_u64(row.get(18)?)?,
         updated_at: as_u64(row.get(19)?)?,
         confirmed_at: row.get::<_, Option<i64>>(20)?.map(as_u64).transpose()?,
+        absence_observed_at: row.get::<_, Option<i64>>(21)?.map(as_u64).transpose()?,
     })
 }
 
@@ -8768,13 +13353,63 @@ fn load_payout_claim(connection: &Connection, claim_id: &str) -> Result<PayoutCl
                     escrow_wallet, recipient_wallet, asset, network, amount_atomic,
                     amount_krw, status, transaction_signature, signed_transaction_base64,
                     recent_blockhash, last_valid_block_height, attempt_count, last_error,
-                    created_at, updated_at, confirmed_at
+                    created_at, updated_at, confirmed_at, absence_observed_at
              FROM payout_claims WHERE id = ?1",
             [claim_id.trim()],
             payout_claim_from_row,
         )
         .optional()?
         .ok_or(StoreError::NotFound("payout claim"))
+}
+
+fn finalize_research_refund_job(
+    transaction: &Transaction<'_>,
+    claim: &PayoutClaim,
+    confirmed_at: u64,
+) -> Result<(), StoreError> {
+    if claim.kind != "research_refund" {
+        return Ok(());
+    }
+    let job_id = claim
+        .beneficiary_user_id
+        .strip_prefix("research-refund:")
+        .filter(|job_id| !job_id.is_empty())
+        .ok_or_else(|| {
+            StoreError::Conflict(
+                "research refund claim has no immutable parent job reference".to_owned(),
+            )
+        })?;
+    let status = transaction
+        .query_row(
+            "SELECT status FROM payment_bundle_quotes
+             WHERE id = ?1 AND refund_claim_id = ?2 /*FOR_UPDATE*/",
+            params![job_id, claim.id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .ok_or_else(|| {
+            StoreError::Conflict("research refund claim does not match its parent job".to_owned())
+        })?;
+    if status == "balance_refunded" {
+        return Ok(());
+    }
+    if status != "refund_pending" {
+        return Err(StoreError::Conflict(format!(
+            "research refund cannot complete parent job from status {status}"
+        )));
+    }
+    let updated = transaction.execute(
+        "UPDATE payment_bundle_quotes
+         SET status = 'balance_refunded', delivered_at = COALESCE(delivered_at, ?1)
+         WHERE id = ?2 AND refund_claim_id = ?3 AND status = 'refund_pending'",
+        params![as_i64(confirmed_at)?, job_id, claim.id],
+    )?;
+    if updated != 1 {
+        return Err(StoreError::Conflict(
+            "research refund parent changed before completion".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn require_active_payout_lease(
@@ -8792,6 +13427,28 @@ fn require_active_payout_lease(
     Ok(())
 }
 
+fn load_wallet_identity(
+    connection: &Connection,
+    wallet: &str,
+) -> Result<Option<UserAccount>, StoreError> {
+    Ok(connection
+        .query_row(
+            "SELECT u.id, u.email, u.role, u.created_at
+             FROM wallet_identities w JOIN users u ON u.id = w.user_id
+             WHERE w.wallet = ?1 AND u.deleted_at IS NULL",
+            [wallet.trim()],
+            |row| {
+                Ok(UserAccount {
+                    id: row.get(0)?,
+                    email: row.get(1)?,
+                    role: row.get(2)?,
+                    created_at: as_u64(row.get(3)?)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
 fn chain_settlement_from_row(row: &db::Row) -> db::Result<ChainSettlementReceipt> {
     Ok(ChainSettlementReceipt {
         id: row.get(0)?,
@@ -8802,6 +13459,93 @@ fn chain_settlement_from_row(row: &db::Row) -> db::Result<ChainSettlementReceipt
         amount_atomic: as_u64(row.get(5)?)?.to_string(),
         network: row.get(6)?,
         confirmed_at: as_u64(row.get(7)?)?,
+    })
+}
+
+fn research_payment_reconciliation_from_row(
+    row: &db::Row,
+) -> db::Result<ResearchPaymentReconciliation> {
+    let amount_atomic = as_u64(row.get(10)?)?;
+    if amount_atomic < 2 {
+        return Err(db::Error::Conversion(
+            "research Pay.sh amount must contain owner and platform shares".to_owned(),
+        ));
+    }
+    Ok(ResearchPaymentReconciliation {
+        job_id: row.get(0)?,
+        quote_id: row.get(1)?,
+        attempt_id: row.get(2)?,
+        status: row.get(3)?,
+        reconcile_after: as_u64(row.get(4)?)?,
+        created_at: as_u64(row.get(5)?)?,
+        prepared_at: row.get::<_, Option<i64>>(6)?.map(as_u64).transpose()?,
+        payer: row.get(7)?,
+        network: row.get(8)?,
+        asset: row.get(9)?,
+        amount_atomic: amount_atomic.to_string(),
+        owner_amount_atomic: amount_atomic.saturating_sub(1).to_string(),
+        platform_amount_atomic: "1".to_owned(),
+        recipient_wallet: row.get(11)?,
+        platform_recipient_wallet: row.get(12)?,
+        signed_transaction_base64: row.get(13)?,
+        recent_blockhash: row.get(14)?,
+        challenge_id: row.get(15)?,
+        external_id: row.get(16)?,
+        challenge_expires_at: row.get::<_, Option<i64>>(17)?.map(as_u64).transpose()?,
+        absence_observed_at: row.get::<_, Option<i64>>(18)?.map(as_u64).transpose()?,
+    })
+}
+
+fn payment_attempt_reconciliation_from_row(
+    row: &db::Row,
+) -> db::Result<PaymentAttemptReconciliation> {
+    Ok(PaymentAttemptReconciliation {
+        settlement_kind: row.get(0)?,
+        quote_id: row.get(1)?,
+        attempt_id: row.get(2)?,
+        reconcile_after: as_u64(row.get(3)?)?,
+        created_at: as_u64(row.get(4)?)?,
+        pay_to: row.get(5)?,
+        network: row.get(6)?,
+        asset: row.get(7)?,
+        amount_atomic: as_u64(row.get(8)?)?.to_string(),
+        payer: row.get(9)?,
+        signed_transaction_base64: row.get(10)?,
+        recent_blockhash: row.get(11)?,
+        absence_observed_at: row.get::<_, Option<i64>>(12)?.map(as_u64).transpose()?,
+    })
+}
+
+fn direct_pay_sh_payment_reconciliation_from_row(
+    row: &db::Row,
+) -> db::Result<DirectPayShPaymentReconciliation> {
+    let amount_atomic = as_u64(row.get(9)?)?;
+    if amount_atomic < 2 {
+        return Err(db::Error::Conversion(
+            "direct Pay.sh amount must contain owner and platform shares".to_owned(),
+        ));
+    }
+    Ok(DirectPayShPaymentReconciliation {
+        quote_id: row.get(0)?,
+        attempt_id: row.get(1)?,
+        status: row.get(2)?,
+        reconcile_after: as_u64(row.get(3)?)?,
+        created_at: as_u64(row.get(4)?)?,
+        prepared_at: as_u64(row.get(5)?)?,
+        payer: row.get(6)?,
+        network: row.get(7)?,
+        asset: row.get(8)?,
+        amount_atomic: amount_atomic.to_string(),
+        owner_amount_atomic: amount_atomic.saturating_sub(1).to_string(),
+        platform_amount_atomic: "1".to_owned(),
+        recipient_wallet: row.get(10)?,
+        platform_recipient_wallet: row.get(11)?,
+        signed_transaction_base64: row.get(12)?,
+        recent_blockhash: row.get(13)?,
+        challenge_id: row.get(14)?,
+        external_id: row.get(15)?,
+        challenge_expires_at: as_u64(row.get(16)?)?,
+        absence_observed_at: row.get::<_, Option<i64>>(17)?.map(as_u64).transpose()?,
     })
 }
 
@@ -8854,13 +13598,152 @@ fn require_prepaid_session(
     }
     connection
         .query_row(
-            "SELECT user_id, wallet FROM prepaid_wallet_sessions
-             WHERE token_hash = ?1 AND revoked_at IS NULL AND expires_at > ?2",
+            "SELECT session.user_id, session.wallet
+             FROM prepaid_wallet_sessions session
+             JOIN users active_user ON active_user.id = session.user_id
+             JOIN prepaid_wallet_owners owner
+               ON owner.wallet = session.wallet AND owner.user_id = session.user_id
+             WHERE session.token_hash = ?1 AND session.revoked_at IS NULL
+               AND session.expires_at > ?2 AND active_user.deleted_at IS NULL
+             /*FOR_UPDATE*/",
             params![token_hash, as_i64(now)?],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?
         .ok_or_else(|| StoreError::Unauthorized("prepaid wallet session has expired".to_owned()))
+}
+
+fn prepare_prepaid_wallet_switch(
+    connection: &Connection,
+    user_id: &str,
+    wallet: &str,
+) -> Result<(), StoreError> {
+    let funded_other_wallet = connection
+        .query_row(
+            "SELECT owner.wallet
+             FROM prepaid_wallet_owners owner
+             JOIN prepaid_accounts account ON account.wallet = owner.wallet
+             WHERE owner.user_id = ?1 AND owner.wallet <> ?2
+               AND account.available_atomic > 0
+             LIMIT 1",
+            params![user_id, wallet],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(other_wallet) = funded_other_wallet {
+        return Err(StoreError::Conflict(format!(
+            "withdraw prepaid balance from wallet {other_wallet} before switching wallets"
+        )));
+    }
+    let active_other_wallet = connection
+        .query_row(
+            "SELECT quote.payer_wallet
+             FROM payment_bundle_quotes quote
+             WHERE quote.funding_source = 'prepaid' AND quote.payer_wallet <> ?2
+               AND quote.payer_wallet IN (
+                 SELECT wallet FROM prepaid_wallet_owners WHERE user_id = ?1
+               )
+               AND (quote.status IN (
+                    'funded', 'processing', 'payment_in_progress', 'payment_reconciliation'
+               ) OR EXISTS (
+                    SELECT 1 FROM chain_payment_attempts attempt
+                    WHERE attempt.settlement_kind = 'bundle'
+                      AND attempt.quote_id = quote.id
+               ))
+             LIMIT 1",
+            params![user_id, wallet],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(other_wallet) = active_other_wallet {
+        return Err(StoreError::Conflict(format!(
+            "wait for the prepaid research job funded by wallet {other_wallet} before switching wallets"
+        )));
+    }
+    connection.execute(
+        "UPDATE payment_bundle_quotes
+         SET status = 'deleted', failure_reason = 'prepaid wallet switched'
+         WHERE funding_source = 'prepaid' AND payer_wallet <> ?2
+           AND payer_wallet IN (
+             SELECT wallet FROM prepaid_wallet_owners WHERE user_id = ?1
+           )
+           AND status = 'quoted' AND NOT EXISTS (
+             SELECT 1 FROM chain_payment_attempts attempt
+             WHERE attempt.settlement_kind = 'bundle'
+               AND attempt.quote_id = payment_bundle_quotes.id
+           )",
+        params![user_id, wallet],
+    )?;
+    Ok(())
+}
+
+fn prepare_verified_wallet_rotation(
+    connection: &Connection,
+    user_id: &str,
+    new_wallet: &str,
+) -> Result<(), StoreError> {
+    let current_wallet = connection
+        .query_row(
+            "SELECT wallet FROM profiles
+             WHERE user_id = ?1 AND wallet_verified_at IS NOT NULL",
+            [user_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten();
+    let Some(current_wallet) = current_wallet.filter(|wallet| wallet != new_wallet) else {
+        return Ok(());
+    };
+    prepare_prepaid_wallet_switch(connection, user_id, new_wallet)?;
+    let current_balance = connection.query_row(
+        "SELECT COALESCE(CAST(SUM(available_atomic) AS BIGINT), 0)
+         FROM prepaid_accounts WHERE wallet = ?1 AND NOT EXISTS (
+           SELECT 1 FROM prepaid_wallet_owners owner
+           WHERE owner.wallet = ?1 AND owner.user_id <> ?2
+         )",
+        params![current_wallet, user_id],
+        |row| as_u64(row.get(0)?),
+    )?;
+    if current_balance > 0 {
+        return Err(StoreError::Conflict(
+            "withdraw prepaid balance before changing the verified wallet".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn user_prepaid_wallet(
+    connection: &Connection,
+    user_id: &str,
+    now: u64,
+) -> Result<Option<String>, StoreError> {
+    connection
+        .query_row(
+            "SELECT COALESCE(
+               (SELECT wallet FROM prepaid_wallet_sessions
+                WHERE user_id = ?1 AND revoked_at IS NULL AND expires_at > ?2
+                  AND EXISTS (
+                    SELECT 1 FROM prepaid_wallet_owners owner
+                    WHERE owner.wallet = prepaid_wallet_sessions.wallet
+                      AND owner.user_id = ?1
+                  )
+                ORDER BY created_at DESC LIMIT 1),
+               (SELECT identity.wallet FROM wallet_identities identity
+                WHERE identity.user_id = ?1 AND NOT EXISTS (
+                  SELECT 1 FROM prepaid_wallet_owners owner
+                  WHERE owner.wallet = identity.wallet AND owner.user_id <> ?1
+                )),
+               (SELECT profile.wallet FROM profiles profile
+                WHERE profile.user_id = ?1 AND profile.wallet_verified_at IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM prepaid_wallet_owners owner
+                    WHERE owner.wallet = profile.wallet AND owner.user_id <> ?1
+                  ))
+             )",
+            params![user_id, as_i64(now)?],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .map_err(StoreError::from)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -9104,6 +13987,72 @@ fn load_research_job_status(
     })
 }
 
+/// A bundle owns each query/document purchase until its funding is fully
+/// released. The query row must be locked before this check so PostgreSQL
+/// callers cannot both observe an empty cross-rail reservation set.
+fn active_bundle_reservation(
+    transaction: &Transaction<'_>,
+    query_id: &str,
+    document_handle: &str,
+    allowed_bundle_id: Option<&str>,
+) -> Result<Option<String>, StoreError> {
+    Ok(transaction
+        .query_row(
+            "SELECT pbq.id
+             FROM payment_bundle_quotes pbq
+             JOIN payment_bundle_documents pbd ON pbd.quote_id = pbq.id
+             WHERE pbq.query_id = ?1 AND pbd.document_handle = ?2
+               AND (CAST(?3 AS TEXT) IS NULL OR pbq.id <> CAST(?3 AS TEXT))
+               AND (
+                    EXISTS (
+                        SELECT 1 FROM chain_payment_attempts attempt
+                        WHERE attempt.settlement_kind = 'bundle'
+                          AND attempt.quote_id = pbq.id
+                    )
+                    OR pbq.status NOT IN ('balance_refunded', 'deleted')
+               )
+             ORDER BY pbq.created_at DESC LIMIT 1",
+            params![query_id, document_handle, allowed_bundle_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?)
+}
+
+/// Returns a document quote whose money can already be in motion or whose
+/// public credential can still be prepared. Only expired, unfenced, unbound
+/// quotes are safe to replace; a rail-bound quote keeps the database's
+/// one-reserved-quote invariant and requires a fresh query to switch products.
+fn active_document_quote(
+    transaction: &Transaction<'_>,
+    query_id: &str,
+    document_handle: &str,
+    now: u64,
+) -> Result<Option<String>, StoreError> {
+    Ok(transaction
+        .query_row(
+            "SELECT pq.id FROM payment_quotes pq
+             WHERE pq.query_id = ?1 AND pq.document_handle = ?2
+               AND (
+                    EXISTS (
+                        SELECT 1 FROM chain_payment_attempts attempt
+                        WHERE attempt.settlement_kind = 'document'
+                          AND attempt.quote_id = pq.id
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM pay_sh_quote_fences fence
+                        WHERE fence.quote_id = pq.id
+                    )
+                    OR pq.payment_rail IS NOT NULL
+                    OR (pq.status = 'quoted' AND pq.expires_at > ?3)
+                    OR pq.status NOT IN ('quoted', 'deleted')
+               )
+             ORDER BY pq.created_at DESC LIMIT 1",
+            params![query_id, document_handle, as_i64(now)?],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?)
+}
+
 fn open_call_funding_quote_from_row(row: &db::Row) -> db::Result<OpenCallFundingQuote> {
     let id: String = row.get(0)?;
     Ok(OpenCallFundingQuote {
@@ -9133,6 +14082,30 @@ fn valid_solana_address(value: &str) -> bool {
         && bs58::decode(value)
             .into_vec()
             .is_ok_and(|decoded| decoded.len() == 32)
+}
+
+fn verify_solana_signature(
+    wallet: &str,
+    message: &[u8],
+    signature: &str,
+) -> Result<(), StoreError> {
+    let public_key = bs58::decode(wallet)
+        .into_vec()
+        .map_err(|_| StoreError::Validation("wallet is not valid base58".to_owned()))?;
+    let public_key: [u8; 32] = public_key
+        .try_into()
+        .map_err(|_| StoreError::Validation("wallet must decode to 32 bytes".to_owned()))?;
+    let verifying_key = VerifyingKey::from_bytes(&public_key).map_err(|_| {
+        StoreError::Validation("wallet is not a valid Ed25519 public key".to_owned())
+    })?;
+    let signature = bs58::decode(signature.trim())
+        .into_vec()
+        .map_err(|_| StoreError::Unauthorized("wallet signature is invalid".to_owned()))?;
+    let signature = Signature::from_slice(&signature)
+        .map_err(|_| StoreError::Unauthorized("wallet signature is invalid".to_owned()))?;
+    verifying_key
+        .verify_strict(message, &signature)
+        .map_err(|_| StoreError::Unauthorized("wallet signature is invalid".to_owned()))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -9377,6 +14350,2323 @@ fn allocate_atomic_by_weight(total_atomic: u64, weights: &[u64]) -> Result<Vec<u
     Ok(allocated)
 }
 
+fn install_chain_transaction_guards(connection: &Connection) -> Result<(), StoreError> {
+    let ledgers = [
+        ("chain_settlements", "document"),
+        ("bundle_chain_settlements", "bundle"),
+        ("open_call_chain_settlements", "open_call"),
+    ];
+    if connection.is_sqlite() {
+        for (table, kind) in ledgers {
+            let trigger = format!("guard_{table}_transaction_registry");
+            let immutable_trigger = format!("guard_{table}_immutable");
+            let immutable_delete_trigger = format!("guard_{table}_immutable_delete");
+            connection.execute_batch(&format!(
+                "DROP TRIGGER IF EXISTS {trigger};
+                 CREATE TRIGGER {trigger}
+                 BEFORE INSERT ON {table}
+                 BEGIN
+                     INSERT OR IGNORE INTO chain_transaction_registry
+                     (transaction_signature, settlement_kind, quote_id, created_at)
+                     VALUES (NEW.transaction_signature, '{kind}', NEW.quote_id, NEW.confirmed_at);
+                     SELECT CASE WHEN NOT EXISTS (
+                         SELECT 1 FROM chain_transaction_registry
+                         WHERE transaction_signature = NEW.transaction_signature
+                           AND settlement_kind = '{kind}' AND quote_id = NEW.quote_id
+                     ) THEN RAISE(ABORT, 'chain transaction registry conflict') END;
+                 END;
+                 DROP TRIGGER IF EXISTS {immutable_trigger};
+                 CREATE TRIGGER {immutable_trigger}
+                 BEFORE UPDATE ON {table}
+                 BEGIN
+                     SELECT RAISE(ABORT, 'chain settlement history is immutable');
+                 END;
+                 DROP TRIGGER IF EXISTS {immutable_delete_trigger};
+                 CREATE TRIGGER {immutable_delete_trigger}
+                 BEFORE DELETE ON {table}
+                 BEGIN
+                     SELECT RAISE(ABORT, 'chain settlement history is immutable');
+                 END;",
+            ))?;
+        }
+        return Ok(());
+    }
+
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_guard_chain_transaction_registry()
+         RETURNS trigger
+         LANGUAGE plpgsql
+         AS $body$
+         BEGIN
+             INSERT INTO chain_transaction_registry
+                 (transaction_signature, settlement_kind, quote_id, created_at)
+             VALUES (NEW.transaction_signature, TG_ARGV[0], NEW.quote_id, NEW.confirmed_at)
+             ON CONFLICT DO NOTHING;
+             IF NOT EXISTS (
+                 SELECT 1 FROM chain_transaction_registry
+                 WHERE transaction_signature = NEW.transaction_signature
+                   AND settlement_kind = TG_ARGV[0] AND quote_id = NEW.quote_id
+             ) THEN
+                 RAISE EXCEPTION 'chain transaction registry conflict'
+                     USING ERRCODE = '23505';
+             END IF;
+             RETURN NEW;
+         END
+         $body$",
+        params![],
+    )?;
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_guard_immutable_chain_settlement()
+         RETURNS trigger
+         LANGUAGE plpgsql
+         AS $body$
+         BEGIN
+             RAISE EXCEPTION 'chain settlement history is immutable'
+                 USING ERRCODE = '23514';
+         END
+         $body$",
+        params![],
+    )?;
+    for (table, kind) in ledgers {
+        let trigger = format!("guard_{table}_transaction_registry");
+        connection.execute(
+            &format!("DROP TRIGGER IF EXISTS {trigger} ON {table}"),
+            params![],
+        )?;
+        connection.execute(
+            &format!(
+                "CREATE TRIGGER {trigger}
+                 BEFORE INSERT ON {table}
+                 FOR EACH ROW EXECUTE FUNCTION
+                 openshelf_guard_chain_transaction_registry('{kind}')"
+            ),
+            params![],
+        )?;
+        let immutable_trigger = format!("guard_{table}_immutable");
+        connection.execute(
+            &format!("DROP TRIGGER IF EXISTS {immutable_trigger} ON {table}"),
+            params![],
+        )?;
+        connection.execute(
+            &format!(
+                "CREATE TRIGGER {immutable_trigger}
+                 BEFORE UPDATE OR DELETE ON {table}
+                 FOR EACH ROW EXECUTE FUNCTION openshelf_guard_immutable_chain_settlement()"
+            ),
+            params![],
+        )?;
+    }
+    Ok(())
+}
+
+pub(crate) fn ensure_chain_attempt_evidence_schema(
+    connection: &Connection,
+) -> Result<(), StoreError> {
+    let needs_legacy_backfill =
+        !connection.column_exists("chain_payment_attempts", "legacy_evidence")?;
+    add_column_if_missing(
+        connection,
+        "chain_payment_attempts",
+        "legacy_evidence",
+        "INTEGER NOT NULL DEFAULT 0 CHECK (legacy_evidence IN (0, 1))",
+    )?;
+    if needs_legacy_backfill {
+        connection.execute(
+            "UPDATE chain_payment_attempts SET legacy_evidence = 1",
+            params![],
+        )?;
+    }
+    install_chain_attempt_evidence_guards(connection)
+}
+
+pub(crate) fn ensure_chain_settlement_snapshot_columns(
+    connection: &Connection,
+) -> Result<(), StoreError> {
+    for table in [
+        "chain_settlements",
+        "bundle_chain_settlements",
+        "open_call_chain_settlements",
+    ] {
+        add_column_if_missing(connection, table, "prepared_transaction_base64", "TEXT")?;
+    }
+    Ok(())
+}
+
+fn install_chain_attempt_evidence_guards(connection: &Connection) -> Result<(), StoreError> {
+    if connection.is_sqlite() {
+        connection.execute_batch(
+            "DROP TRIGGER IF EXISTS guard_chain_attempt_exact_evidence_insert;
+             CREATE TRIGGER guard_chain_attempt_exact_evidence_insert
+             BEFORE INSERT ON chain_payment_attempts
+             WHEN NEW.legacy_evidence <> 0
+               OR NEW.payer_wallet IS NULL OR NEW.payer_wallet = ''
+               OR NEW.signed_transaction_base64 IS NULL
+               OR NEW.signed_transaction_base64 = ''
+               OR NEW.recent_blockhash IS NULL OR NEW.recent_blockhash = ''
+             BEGIN
+                 SELECT RAISE(ABORT, 'new chain attempt requires exact evidence');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_chain_attempt_exact_evidence_update;
+             CREATE TRIGGER guard_chain_attempt_exact_evidence_update
+             BEFORE UPDATE OF settlement_kind, quote_id, attempt_id, payer_wallet,
+                              signed_transaction_base64, recent_blockhash, legacy_evidence
+             ON chain_payment_attempts
+             WHEN NEW.settlement_kind IS NOT OLD.settlement_kind
+               OR NEW.quote_id IS NOT OLD.quote_id
+               OR NEW.attempt_id IS NOT OLD.attempt_id
+               OR NEW.payer_wallet IS NOT OLD.payer_wallet
+               OR NEW.signed_transaction_base64 IS NOT OLD.signed_transaction_base64
+               OR NEW.recent_blockhash IS NOT OLD.recent_blockhash
+               OR NEW.legacy_evidence IS NOT OLD.legacy_evidence
+             BEGIN
+                 SELECT RAISE(ABORT, 'chain attempt evidence is immutable');
+             END;",
+        )?;
+        return Ok(());
+    }
+
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_guard_chain_attempt_exact_evidence()
+         RETURNS trigger
+         LANGUAGE plpgsql
+         AS $body$
+         BEGIN
+             IF TG_OP = 'INSERT' THEN
+                 IF NEW.legacy_evidence <> 0
+                    OR NEW.payer_wallet IS NULL OR NEW.payer_wallet = ''
+                    OR NEW.signed_transaction_base64 IS NULL
+                    OR NEW.signed_transaction_base64 = ''
+                    OR NEW.recent_blockhash IS NULL OR NEW.recent_blockhash = ''
+                 THEN
+                     RAISE EXCEPTION 'new chain attempt requires exact evidence'
+                         USING ERRCODE = '23514';
+                 END IF;
+             ELSIF NEW.settlement_kind IS DISTINCT FROM OLD.settlement_kind
+                OR NEW.quote_id IS DISTINCT FROM OLD.quote_id
+                OR NEW.attempt_id IS DISTINCT FROM OLD.attempt_id
+                OR NEW.payer_wallet IS DISTINCT FROM OLD.payer_wallet
+                OR NEW.signed_transaction_base64 IS DISTINCT FROM OLD.signed_transaction_base64
+                OR NEW.recent_blockhash IS DISTINCT FROM OLD.recent_blockhash
+                OR NEW.legacy_evidence IS DISTINCT FROM OLD.legacy_evidence
+             THEN
+                 RAISE EXCEPTION 'chain attempt evidence is immutable'
+                     USING ERRCODE = '23514';
+             END IF;
+             RETURN NEW;
+         END
+         $body$",
+        params![],
+    )?;
+    connection.execute(
+        "DROP TRIGGER IF EXISTS guard_chain_attempt_exact_evidence ON chain_payment_attempts",
+        params![],
+    )?;
+    connection.execute(
+        "CREATE TRIGGER guard_chain_attempt_exact_evidence
+         BEFORE INSERT OR UPDATE OF settlement_kind, quote_id, attempt_id,
+             payer_wallet, signed_transaction_base64, recent_blockhash, legacy_evidence
+         ON chain_payment_attempts
+         FOR EACH ROW EXECUTE FUNCTION openshelf_guard_chain_attempt_exact_evidence()",
+        params![],
+    )?;
+    Ok(())
+}
+
+fn install_active_pay_sh_attempt_guards(connection: &Connection) -> Result<(), StoreError> {
+    backfill_active_pay_sh_quote_fences(connection)?;
+    if connection.is_sqlite() {
+        connection.execute_batch(
+            "DROP TRIGGER IF EXISTS guard_active_research_payment_attempt_delete;
+             CREATE TRIGGER guard_active_research_payment_attempt_delete
+             BEFORE DELETE ON research_payment_attempts
+             WHEN OLD.status IN ('claimed', 'prepared', 'ambiguous')
+             BEGIN
+                 SELECT RAISE(ABORT, 'active research payment attempt cannot be deleted');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_active_direct_pay_sh_attempt_delete;
+             CREATE TRIGGER guard_active_direct_pay_sh_attempt_delete
+             BEFORE DELETE ON direct_pay_sh_attempts
+             WHEN OLD.status IN ('prepared', 'ambiguous')
+             BEGIN
+                 SELECT RAISE(ABORT, 'active direct Pay.sh attempt cannot be deleted');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_research_pay_sh_attempt_identity;
+             CREATE TRIGGER guard_research_pay_sh_attempt_identity
+             BEFORE UPDATE OF attempt_id, job_id, quote_id, created_at
+             ON research_payment_attempts
+             WHEN NEW.attempt_id <> OLD.attempt_id OR NEW.job_id <> OLD.job_id
+               OR NEW.quote_id <> OLD.quote_id OR NEW.created_at <> OLD.created_at
+             BEGIN
+                 SELECT RAISE(ABORT, 'Pay.sh payment attempt identity is immutable');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_direct_pay_sh_attempt_identity;
+             CREATE TRIGGER guard_direct_pay_sh_attempt_identity
+             BEFORE UPDATE OF attempt_id, quote_id, query_token_hash, created_at
+             ON direct_pay_sh_attempts
+             WHEN NEW.attempt_id <> OLD.attempt_id OR NEW.quote_id <> OLD.quote_id
+               OR NEW.query_token_hash <> OLD.query_token_hash
+               OR NEW.created_at <> OLD.created_at
+             BEGIN
+                 SELECT RAISE(ABORT, 'Pay.sh payment attempt identity is immutable');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_research_pay_sh_attempt_insert_shape;
+             CREATE TRIGGER guard_research_pay_sh_attempt_insert_shape
+             BEFORE INSERT ON research_payment_attempts
+             WHEN NEW.status <> 'claimed'
+               OR NEW.challenge_id IS NOT NULL OR NEW.external_id IS NOT NULL
+               OR NEW.payer_wallet IS NOT NULL
+               OR NEW.platform_recipient_wallet IS NOT NULL
+               OR NEW.signed_transaction_base64 IS NOT NULL
+               OR NEW.recent_blockhash IS NOT NULL
+               OR NEW.challenge_expires_at IS NOT NULL
+               OR NEW.transaction_signature IS NOT NULL
+               OR NEW.prepared_at IS NOT NULL OR NEW.completed_at IS NOT NULL
+             BEGIN
+                 SELECT RAISE(ABORT, 'research Pay.sh attempt has an invalid initial state');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_direct_pay_sh_attempt_insert_shape;
+             CREATE TRIGGER guard_direct_pay_sh_attempt_insert_shape
+             BEFORE INSERT ON direct_pay_sh_attempts
+             WHEN NEW.status <> 'prepared'
+               OR NEW.query_token_hash = '' OR NEW.challenge_id = '' OR NEW.external_id = ''
+               OR NEW.payer_wallet = '' OR NEW.platform_recipient_wallet = ''
+               OR NEW.signed_transaction_base64 = '' OR NEW.recent_blockhash = ''
+               OR NEW.challenge_expires_at <= NEW.prepared_at
+               OR NEW.created_at <= 0 OR NEW.prepared_at < NEW.created_at
+               OR NEW.transaction_signature = '' OR NEW.completed_at IS NOT NULL
+             BEGIN
+                 SELECT RAISE(ABORT, 'direct Pay.sh attempt has an invalid initial state');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_research_pay_sh_attempt_state;
+             CREATE TRIGGER guard_research_pay_sh_attempt_state
+             BEFORE UPDATE ON research_payment_attempts
+             WHEN NOT (
+                 (NEW.status = OLD.status)
+                 OR (OLD.status = 'claimed' AND NEW.status IN ('prepared', 'released'))
+                 OR (OLD.status = 'prepared' AND NEW.status IN ('ambiguous', 'settled', 'released'))
+                 OR (OLD.status = 'ambiguous' AND NEW.status IN ('settled', 'released'))
+             ) OR NOT (
+                 (NEW.status = 'claimed'
+                  AND NEW.challenge_id IS NULL AND NEW.external_id IS NULL
+                  AND NEW.payer_wallet IS NULL AND NEW.platform_recipient_wallet IS NULL
+                  AND NEW.signed_transaction_base64 IS NULL
+                  AND NEW.recent_blockhash IS NULL AND NEW.challenge_expires_at IS NULL
+                  AND NEW.transaction_signature IS NULL
+                  AND NEW.prepared_at IS NULL AND NEW.completed_at IS NULL)
+                 OR
+                 (NEW.status IN ('prepared', 'ambiguous', 'settled')
+                  AND NEW.challenge_id IS NOT NULL AND NEW.challenge_id <> ''
+                  AND NEW.external_id IS NOT NULL AND NEW.external_id <> ''
+                  AND NEW.payer_wallet IS NOT NULL AND NEW.payer_wallet <> ''
+                  AND NEW.platform_recipient_wallet IS NOT NULL
+                  AND NEW.platform_recipient_wallet <> ''
+                  AND NEW.signed_transaction_base64 IS NOT NULL
+                  AND NEW.signed_transaction_base64 <> ''
+                  AND NEW.recent_blockhash IS NOT NULL AND NEW.recent_blockhash <> ''
+                  AND NEW.challenge_expires_at IS NOT NULL
+                  AND NEW.prepared_at IS NOT NULL
+                  AND NEW.challenge_expires_at > NEW.prepared_at
+                  AND NEW.prepared_at >= NEW.created_at
+                  AND (NEW.transaction_signature IS NULL
+                       OR NEW.transaction_signature <> '')
+                  AND ((NEW.status IN ('prepared', 'ambiguous')
+                        AND NEW.completed_at IS NULL)
+                       OR (NEW.status = 'settled' AND NEW.completed_at IS NOT NULL
+                           AND NEW.transaction_signature IS NOT NULL
+                           AND NEW.completed_at >= NEW.created_at)))
+                 OR
+                 (NEW.status = 'released' AND NEW.completed_at IS NOT NULL
+                  AND NEW.completed_at >= NEW.created_at
+                  AND (
+                    (NEW.challenge_id IS NULL AND NEW.external_id IS NULL
+                     AND NEW.payer_wallet IS NULL
+                     AND NEW.platform_recipient_wallet IS NULL
+                     AND NEW.signed_transaction_base64 IS NULL
+                     AND NEW.recent_blockhash IS NULL
+                     AND NEW.challenge_expires_at IS NULL
+                     AND NEW.transaction_signature IS NULL
+                     AND NEW.prepared_at IS NULL)
+                    OR
+                    (NEW.challenge_id IS NOT NULL AND NEW.challenge_id <> ''
+                     AND NEW.external_id IS NOT NULL AND NEW.external_id <> ''
+                     AND NEW.payer_wallet IS NOT NULL AND NEW.payer_wallet <> ''
+                     AND NEW.platform_recipient_wallet IS NOT NULL
+                     AND NEW.platform_recipient_wallet <> ''
+                     AND NEW.signed_transaction_base64 IS NOT NULL
+                     AND NEW.signed_transaction_base64 <> ''
+                     AND NEW.recent_blockhash IS NOT NULL AND NEW.recent_blockhash <> ''
+                     AND NEW.challenge_expires_at IS NOT NULL
+                     AND NEW.prepared_at IS NOT NULL
+                     AND NEW.challenge_expires_at > NEW.prepared_at
+                     AND NEW.prepared_at >= NEW.created_at
+                     AND (NEW.transaction_signature IS NULL
+                          OR NEW.transaction_signature <> ''))
+                  ))
+             ) OR (NEW.status = 'settled' AND NOT EXISTS (
+                 SELECT 1 FROM payment_quotes quote
+                 WHERE quote.id = NEW.quote_id AND quote.status = 'delivered'
+                   AND quote.payment_rail = 'pay_sh'
+                   AND EXISTS (
+                     SELECT 1 FROM settlements settlement
+                     WHERE settlement.transaction_signature = 'pay.sh:' || NEW.quote_id
+                   )
+             ))
+             BEGIN
+                 SELECT RAISE(ABORT, 'research Pay.sh attempt state is invalid');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_direct_pay_sh_attempt_state;
+             CREATE TRIGGER guard_direct_pay_sh_attempt_state
+             BEFORE UPDATE ON direct_pay_sh_attempts
+             WHEN NOT (
+                 (NEW.status = OLD.status)
+                 OR (OLD.status = 'prepared' AND NEW.status IN ('ambiguous', 'settled', 'released'))
+                 OR (OLD.status = 'ambiguous' AND NEW.status IN ('settled', 'released'))
+             ) OR NEW.query_token_hash = '' OR NEW.challenge_id = '' OR NEW.external_id = ''
+               OR NEW.payer_wallet = '' OR NEW.platform_recipient_wallet = ''
+               OR NEW.signed_transaction_base64 = '' OR NEW.recent_blockhash = ''
+               OR NEW.challenge_expires_at <= NEW.prepared_at
+               OR NEW.created_at <= 0 OR NEW.prepared_at < NEW.created_at
+               OR NEW.transaction_signature = ''
+               OR (NEW.status IN ('prepared', 'ambiguous')
+                   AND NEW.completed_at IS NOT NULL)
+               OR (NEW.status IN ('settled', 'released')
+                   AND (NEW.completed_at IS NULL OR NEW.completed_at < NEW.created_at))
+               OR (NEW.status = 'settled' AND NEW.transaction_signature IS NULL)
+               OR (NEW.status = 'settled' AND NOT EXISTS (
+                   SELECT 1 FROM payment_quotes quote
+                   WHERE quote.id = NEW.quote_id AND quote.status = 'delivered'
+                     AND quote.payment_rail = 'pay_sh'
+                     AND EXISTS (
+                       SELECT 1 FROM settlements settlement
+                       WHERE settlement.transaction_signature = 'pay.sh:' || NEW.quote_id
+                     )
+               ))
+             BEGIN
+                 SELECT RAISE(ABORT, 'direct Pay.sh attempt state is invalid');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_research_pay_sh_attempt_receipt;
+             CREATE TRIGGER guard_research_pay_sh_attempt_receipt
+             BEFORE UPDATE OF transaction_signature ON research_payment_attempts
+             WHEN NEW.transaction_signature IS NOT OLD.transaction_signature
+               AND NOT (OLD.status = 'claimed' AND NEW.status = 'prepared'
+                        AND OLD.transaction_signature IS NULL)
+               AND NOT (NEW.status = 'settled' AND OLD.transaction_signature IS NULL
+                        AND NEW.transaction_signature IS NOT NULL
+                        AND NEW.transaction_signature <> '')
+             BEGIN
+                 SELECT RAISE(ABORT, 'Pay.sh transaction receipt is immutable');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_direct_pay_sh_attempt_receipt;
+             CREATE TRIGGER guard_direct_pay_sh_attempt_receipt
+             BEFORE UPDATE OF transaction_signature ON direct_pay_sh_attempts
+             WHEN NEW.transaction_signature IS NOT OLD.transaction_signature
+               AND NOT (NEW.status = 'settled' AND OLD.transaction_signature IS NULL
+                        AND NEW.transaction_signature IS NOT NULL
+                        AND NEW.transaction_signature <> '')
+             BEGIN
+                 SELECT RAISE(ABORT, 'Pay.sh transaction receipt is immutable');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_direct_pay_sh_attempt_evidence;
+             CREATE TRIGGER guard_direct_pay_sh_attempt_evidence
+             BEFORE UPDATE OF challenge_id, external_id, payer_wallet,
+                              platform_recipient_wallet, signed_transaction_base64,
+                              recent_blockhash, challenge_expires_at, prepared_at
+             ON direct_pay_sh_attempts
+             WHEN NEW.challenge_id IS NOT OLD.challenge_id
+               OR NEW.external_id IS NOT OLD.external_id
+               OR NEW.payer_wallet IS NOT OLD.payer_wallet
+               OR NEW.platform_recipient_wallet IS NOT OLD.platform_recipient_wallet
+               OR NEW.signed_transaction_base64 IS NOT OLD.signed_transaction_base64
+               OR NEW.recent_blockhash IS NOT OLD.recent_blockhash
+               OR NEW.challenge_expires_at IS NOT OLD.challenge_expires_at
+               OR NEW.prepared_at IS NOT OLD.prepared_at
+             BEGIN
+                 SELECT RAISE(ABORT, 'prepared Pay.sh evidence is immutable');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_research_pay_sh_attempt_evidence;
+             CREATE TRIGGER guard_research_pay_sh_attempt_evidence
+             BEFORE UPDATE OF challenge_id, external_id, payer_wallet,
+                              platform_recipient_wallet, signed_transaction_base64,
+                              recent_blockhash, challenge_expires_at, prepared_at
+             ON research_payment_attempts
+             WHEN NOT (OLD.status = 'claimed' AND NEW.status = 'prepared')
+               AND (NEW.challenge_id IS NOT OLD.challenge_id
+                    OR NEW.external_id IS NOT OLD.external_id
+                    OR NEW.payer_wallet IS NOT OLD.payer_wallet
+                    OR NEW.platform_recipient_wallet IS NOT OLD.platform_recipient_wallet
+                    OR NEW.signed_transaction_base64 IS NOT OLD.signed_transaction_base64
+                    OR NEW.recent_blockhash IS NOT OLD.recent_blockhash
+                    OR NEW.challenge_expires_at IS NOT OLD.challenge_expires_at
+                    OR NEW.prepared_at IS NOT OLD.prepared_at)
+             BEGIN
+                 SELECT RAISE(ABORT, 'prepared Pay.sh evidence is immutable');
+             END;
+
+             DROP TRIGGER IF EXISTS claim_research_pay_sh_quote_fence;
+             CREATE TRIGGER claim_research_pay_sh_quote_fence
+             BEFORE INSERT ON research_payment_attempts
+             WHEN NEW.status IN ('claimed', 'prepared', 'ambiguous')
+             BEGIN
+                 SELECT CASE WHEN NOT EXISTS (
+                     SELECT 1 FROM payment_quotes
+                     WHERE id = NEW.quote_id AND status = 'quoted'
+                       AND payment_rail = 'pay_sh'
+                       AND NEW.status = 'claimed'
+                       AND EXISTS (
+                           SELECT 1 FROM payment_bundle_documents pbd
+                           JOIN payment_bundle_quotes pbq ON pbq.id = pbd.quote_id
+                           WHERE pbd.pay_sh_quote_id = NEW.quote_id
+                             AND pbq.id = NEW.job_id
+                             AND pbq.status = 'processing'
+                       )
+                 ) THEN RAISE(ABORT, 'Pay.sh quote is not payable') END;
+                 INSERT OR IGNORE INTO pay_sh_quote_fences
+                 (quote_id, attempt_kind, attempt_id, created_at)
+                 VALUES (NEW.quote_id, 'research', NEW.attempt_id, NEW.created_at);
+                 SELECT CASE WHEN NOT EXISTS (
+                     SELECT 1 FROM pay_sh_quote_fences fence
+                     JOIN payment_quotes quote ON quote.id = fence.quote_id
+                     WHERE fence.quote_id = NEW.quote_id
+                       AND fence.attempt_kind = 'research'
+                       AND fence.attempt_id = NEW.attempt_id
+                       AND quote.status = 'quoted' AND quote.payment_rail = 'pay_sh'
+                 ) THEN RAISE(ABORT, 'Pay.sh quote already has another active attempt') END;
+             END;
+
+             DROP TRIGGER IF EXISTS reclaim_research_pay_sh_quote_fence;
+             CREATE TRIGGER reclaim_research_pay_sh_quote_fence
+             BEFORE UPDATE OF status ON research_payment_attempts
+             WHEN NEW.status IN ('claimed', 'prepared', 'ambiguous')
+             BEGIN
+                 SELECT CASE WHEN NOT EXISTS (
+                     SELECT 1 FROM pay_sh_quote_fences fence
+                     JOIN payment_quotes quote ON quote.id = fence.quote_id
+                     WHERE fence.quote_id = NEW.quote_id
+                       AND fence.attempt_kind = 'research'
+                       AND fence.attempt_id = NEW.attempt_id
+                       AND quote.status = 'quoted' AND quote.payment_rail = 'pay_sh'
+                       AND EXISTS (
+                           SELECT 1 FROM payment_bundle_quotes job
+                           WHERE job.id = NEW.job_id
+                             AND job.status IN
+                                 ('payment_in_progress', 'payment_reconciliation')
+                             AND job.payment_attempt_quote_id = NEW.quote_id
+                             AND job.payment_attempt_id = NEW.attempt_id
+                       )
+                 ) AND NOT EXISTS (
+                     SELECT 1 FROM payment_quotes
+                     WHERE id = NEW.quote_id AND status = 'quoted'
+                       AND payment_rail = 'pay_sh'
+                       AND EXISTS (
+                           SELECT 1 FROM payment_bundle_documents pbd
+                           JOIN payment_bundle_quotes pbq ON pbq.id = pbd.quote_id
+                           WHERE pbd.pay_sh_quote_id = NEW.quote_id
+                             AND pbq.id = NEW.job_id
+                             AND pbq.status IN
+                                 ('payment_in_progress', 'payment_reconciliation')
+                             AND pbq.payment_attempt_quote_id = NEW.quote_id
+                             AND pbq.payment_attempt_id = NEW.attempt_id
+                       )
+                 ) THEN RAISE(ABORT, 'Pay.sh quote is not payable') END;
+                 INSERT OR IGNORE INTO pay_sh_quote_fences
+                 (quote_id, attempt_kind, attempt_id, created_at)
+                 VALUES (NEW.quote_id, 'research', NEW.attempt_id, NEW.created_at);
+                 SELECT CASE WHEN NOT EXISTS (
+                     SELECT 1 FROM pay_sh_quote_fences
+                     WHERE quote_id = NEW.quote_id AND attempt_kind = 'research'
+                       AND attempt_id = NEW.attempt_id
+                 ) THEN RAISE(ABORT, 'Pay.sh quote already has another active attempt') END;
+             END;
+
+             DROP TRIGGER IF EXISTS claim_direct_pay_sh_quote_fence;
+             CREATE TRIGGER claim_direct_pay_sh_quote_fence
+             BEFORE INSERT ON direct_pay_sh_attempts
+             WHEN NEW.status IN ('prepared', 'ambiguous')
+             BEGIN
+                 SELECT CASE WHEN NOT EXISTS (
+                     SELECT 1 FROM payment_quotes quote
+                     WHERE quote.id = NEW.quote_id AND quote.status = 'quoted'
+                       AND quote.payment_rail = 'pay_sh'
+                       AND NOT EXISTS (
+                           SELECT 1 FROM payment_bundle_quotes pbq
+                           JOIN payment_bundle_documents pbd ON pbd.quote_id = pbq.id
+                           WHERE pbq.query_id = quote.query_id
+                             AND pbd.document_handle = quote.document_handle
+                             AND (
+                                 EXISTS (
+                                     SELECT 1 FROM chain_payment_attempts attempt
+                                     WHERE attempt.settlement_kind = 'bundle'
+                                       AND attempt.quote_id = pbq.id
+                                 )
+                                 OR pbq.status NOT IN ('balance_refunded', 'deleted')
+                             )
+                       )
+                 ) THEN RAISE(ABORT, 'Pay.sh quote is not payable') END;
+                 INSERT OR IGNORE INTO pay_sh_quote_fences
+                 (quote_id, attempt_kind, attempt_id, created_at)
+                 VALUES (NEW.quote_id, 'direct', NEW.attempt_id, NEW.created_at);
+                 SELECT CASE WHEN NOT EXISTS (
+                     SELECT 1 FROM pay_sh_quote_fences fence
+                     JOIN payment_quotes quote ON quote.id = fence.quote_id
+                     WHERE fence.quote_id = NEW.quote_id
+                       AND fence.attempt_kind = 'direct'
+                       AND fence.attempt_id = NEW.attempt_id
+                       AND quote.status IN ('quoted', 'delivered')
+                       AND quote.payment_rail = 'pay_sh'
+                 ) THEN RAISE(ABORT, 'Pay.sh quote already has another active attempt') END;
+             END;
+
+             DROP TRIGGER IF EXISTS reclaim_direct_pay_sh_quote_fence;
+             CREATE TRIGGER reclaim_direct_pay_sh_quote_fence
+             BEFORE UPDATE OF status ON direct_pay_sh_attempts
+             WHEN NEW.status IN ('prepared', 'ambiguous')
+             BEGIN
+                 SELECT CASE WHEN NOT EXISTS (
+                     SELECT 1 FROM pay_sh_quote_fences fence
+                     JOIN payment_quotes quote ON quote.id = fence.quote_id
+                     WHERE fence.quote_id = NEW.quote_id
+                       AND fence.attempt_kind = 'direct'
+                       AND fence.attempt_id = NEW.attempt_id
+                       AND quote.status IN ('quoted', 'delivered')
+                       AND quote.payment_rail = 'pay_sh'
+                 ) AND NOT EXISTS (
+                     SELECT 1 FROM payment_quotes quote
+                     WHERE quote.id = NEW.quote_id AND quote.status = 'quoted'
+                       AND quote.payment_rail = 'pay_sh'
+                       AND NOT EXISTS (
+                           SELECT 1 FROM payment_bundle_quotes pbq
+                           JOIN payment_bundle_documents pbd ON pbd.quote_id = pbq.id
+                           WHERE pbq.query_id = quote.query_id
+                             AND pbd.document_handle = quote.document_handle
+                             AND (
+                                 EXISTS (
+                                     SELECT 1 FROM chain_payment_attempts attempt
+                                     WHERE attempt.settlement_kind = 'bundle'
+                                       AND attempt.quote_id = pbq.id
+                                 )
+                                 OR pbq.status NOT IN ('balance_refunded', 'deleted')
+                             )
+                       )
+                 ) THEN RAISE(ABORT, 'Pay.sh quote is not payable') END;
+                 INSERT OR IGNORE INTO pay_sh_quote_fences
+                 (quote_id, attempt_kind, attempt_id, created_at)
+                 VALUES (NEW.quote_id, 'direct', NEW.attempt_id, NEW.created_at);
+                 SELECT CASE WHEN NOT EXISTS (
+                     SELECT 1 FROM pay_sh_quote_fences
+                     WHERE quote_id = NEW.quote_id AND attempt_kind = 'direct'
+                       AND attempt_id = NEW.attempt_id
+                 ) THEN RAISE(ABORT, 'Pay.sh quote already has another active attempt') END;
+             END;
+
+             DROP TRIGGER IF EXISTS release_research_pay_sh_quote_fence;
+             CREATE TRIGGER release_research_pay_sh_quote_fence
+             AFTER UPDATE OF status ON research_payment_attempts
+             WHEN NEW.status IN ('settled', 'released')
+             BEGIN
+                 DELETE FROM pay_sh_quote_fences
+                 WHERE quote_id = NEW.quote_id AND attempt_kind = 'research'
+                   AND attempt_id = NEW.attempt_id;
+             END;
+
+             DROP TRIGGER IF EXISTS release_direct_pay_sh_quote_fence;
+             CREATE TRIGGER release_direct_pay_sh_quote_fence
+             AFTER UPDATE OF status ON direct_pay_sh_attempts
+             WHEN NEW.status IN ('settled', 'released')
+             BEGIN
+                 DELETE FROM pay_sh_quote_fences
+                 WHERE quote_id = NEW.quote_id AND attempt_kind = 'direct'
+                   AND attempt_id = NEW.attempt_id;
+             END;",
+        )?;
+        return Ok(());
+    }
+
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_guard_active_pay_sh_attempt_delete()
+         RETURNS trigger LANGUAGE plpgsql AS $body$
+         BEGIN
+             IF (TG_TABLE_NAME = 'research_payment_attempts'
+                 AND OLD.status IN ('claimed', 'prepared', 'ambiguous'))
+                OR (TG_TABLE_NAME = 'direct_pay_sh_attempts'
+                    AND OLD.status IN ('prepared', 'ambiguous')) THEN
+                 RAISE EXCEPTION 'active Pay.sh payment attempt cannot be deleted'
+                     USING ERRCODE = '23503';
+             END IF;
+             RETURN OLD;
+         END
+         $body$",
+        params![],
+    )?;
+    for table in ["research_payment_attempts", "direct_pay_sh_attempts"] {
+        let trigger = format!("guard_active_{table}_delete");
+        connection.execute(
+            &format!("DROP TRIGGER IF EXISTS {trigger} ON {table}"),
+            params![],
+        )?;
+        connection.execute(
+            &format!(
+                "CREATE TRIGGER {trigger}
+                 BEFORE DELETE ON {table}
+                 FOR EACH ROW EXECUTE FUNCTION
+                 openshelf_guard_active_pay_sh_attempt_delete()"
+            ),
+            params![],
+        )?;
+    }
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_guard_pay_sh_attempt_identity()
+         RETURNS trigger LANGUAGE plpgsql AS $body$
+         BEGIN
+             IF NEW.attempt_id <> OLD.attempt_id OR NEW.quote_id <> OLD.quote_id
+                OR NEW.created_at <> OLD.created_at
+                OR (TG_TABLE_NAME = 'research_payment_attempts'
+                    AND to_jsonb(NEW)->>'job_id' <> to_jsonb(OLD)->>'job_id')
+                OR (TG_TABLE_NAME = 'direct_pay_sh_attempts'
+                    AND to_jsonb(NEW)->>'query_token_hash'
+                        <> to_jsonb(OLD)->>'query_token_hash') THEN
+                 RAISE EXCEPTION 'Pay.sh payment attempt identity is immutable'
+                     USING ERRCODE = '23514';
+             END IF;
+             RETURN NEW;
+         END
+         $body$",
+        params![],
+    )?;
+    for (table, columns) in [
+        (
+            "research_payment_attempts",
+            "attempt_id, job_id, quote_id, created_at",
+        ),
+        (
+            "direct_pay_sh_attempts",
+            "attempt_id, quote_id, query_token_hash, created_at",
+        ),
+    ] {
+        let trigger = format!("guard_{table}_identity");
+        connection.execute(
+            &format!("DROP TRIGGER IF EXISTS {trigger} ON {table}"),
+            params![],
+        )?;
+        connection.execute(
+            &format!(
+                "CREATE TRIGGER {trigger}
+                 BEFORE UPDATE OF {columns} ON {table}
+                 FOR EACH ROW EXECUTE FUNCTION openshelf_guard_pay_sh_attempt_identity()"
+            ),
+            params![],
+        )?;
+    }
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_guard_pay_sh_attempt_state()
+         RETURNS trigger LANGUAGE plpgsql AS $body$
+         DECLARE
+             core_empty BOOLEAN;
+             core_complete BOOLEAN;
+             transition_valid BOOLEAN;
+             shape_valid BOOLEAN;
+         BEGIN
+             core_empty := to_jsonb(NEW)->>'challenge_id' IS NULL
+                 AND to_jsonb(NEW)->>'external_id' IS NULL
+                 AND to_jsonb(NEW)->>'payer_wallet' IS NULL
+                 AND to_jsonb(NEW)->>'platform_recipient_wallet' IS NULL
+                 AND to_jsonb(NEW)->>'signed_transaction_base64' IS NULL
+                 AND to_jsonb(NEW)->>'recent_blockhash' IS NULL
+                 AND to_jsonb(NEW)->>'challenge_expires_at' IS NULL
+                 AND to_jsonb(NEW)->>'transaction_signature' IS NULL
+                 AND to_jsonb(NEW)->>'prepared_at' IS NULL;
+             core_complete := NULLIF(to_jsonb(NEW)->>'challenge_id', '') IS NOT NULL
+                 AND NULLIF(to_jsonb(NEW)->>'external_id', '') IS NOT NULL
+                 AND NULLIF(to_jsonb(NEW)->>'payer_wallet', '') IS NOT NULL
+                 AND NULLIF(to_jsonb(NEW)->>'platform_recipient_wallet', '') IS NOT NULL
+                 AND NULLIF(to_jsonb(NEW)->>'signed_transaction_base64', '') IS NOT NULL
+                 AND NULLIF(to_jsonb(NEW)->>'recent_blockhash', '') IS NOT NULL
+                 AND to_jsonb(NEW)->>'challenge_expires_at' IS NOT NULL
+                 AND to_jsonb(NEW)->>'prepared_at' IS NOT NULL
+                 AND NEW.challenge_expires_at > NEW.prepared_at
+                 AND NEW.prepared_at >= NEW.created_at
+                 AND (NEW.transaction_signature IS NULL OR NEW.transaction_signature <> '');
+
+             IF TG_OP = 'INSERT' THEN
+                 IF TG_TABLE_NAME = 'research_payment_attempts' THEN
+                     shape_valid := NEW.status = 'claimed' AND core_empty
+                         AND NEW.completed_at IS NULL;
+                 ELSE
+                     shape_valid := NEW.status = 'prepared' AND core_complete
+                         AND NULLIF(to_jsonb(NEW)->>'query_token_hash', '') IS NOT NULL
+                         AND NEW.created_at > 0 AND NEW.completed_at IS NULL;
+                 END IF;
+                 IF NOT shape_valid THEN
+                     RAISE EXCEPTION 'Pay.sh attempt has an invalid initial state'
+                         USING ERRCODE = '23514';
+                 END IF;
+                 RETURN NEW;
+             END IF;
+
+             IF TG_TABLE_NAME = 'research_payment_attempts' THEN
+                 transition_valid := NEW.status = OLD.status
+                     OR (OLD.status = 'claimed' AND NEW.status IN ('prepared', 'released'))
+                     OR (OLD.status = 'prepared'
+                         AND NEW.status IN ('ambiguous', 'settled', 'released'))
+                     OR (OLD.status = 'ambiguous' AND NEW.status IN ('settled', 'released'));
+                 shape_valid := (
+                     NEW.status = 'claimed' AND core_empty AND NEW.completed_at IS NULL
+                 ) OR (
+                     NEW.status IN ('prepared', 'ambiguous') AND core_complete
+                     AND NEW.completed_at IS NULL
+                 ) OR (
+                     NEW.status = 'settled' AND core_complete
+                     AND NEW.transaction_signature IS NOT NULL
+                     AND NEW.completed_at IS NOT NULL
+                     AND NEW.completed_at >= NEW.created_at
+                 ) OR (
+                     NEW.status = 'released' AND NEW.completed_at IS NOT NULL
+                     AND NEW.completed_at >= NEW.created_at
+                     AND (core_empty OR core_complete)
+                 );
+             ELSE
+                 transition_valid := NEW.status = OLD.status
+                     OR (OLD.status = 'prepared'
+                         AND NEW.status IN ('ambiguous', 'settled', 'released'))
+                     OR (OLD.status = 'ambiguous' AND NEW.status IN ('settled', 'released'));
+                 shape_valid := core_complete
+                     AND NULLIF(to_jsonb(NEW)->>'query_token_hash', '') IS NOT NULL
+                     AND NEW.created_at > 0
+                     AND (
+                         (NEW.status IN ('prepared', 'ambiguous')
+                          AND NEW.completed_at IS NULL)
+                         OR
+                         (NEW.status IN ('settled', 'released')
+                          AND NEW.completed_at IS NOT NULL
+                          AND NEW.completed_at >= NEW.created_at)
+                     )
+                     AND (NEW.status <> 'settled' OR NEW.transaction_signature IS NOT NULL);
+             END IF;
+             IF NEW.status = 'settled' AND NOT EXISTS (
+                 SELECT 1 FROM payment_quotes quote
+                 WHERE quote.id = NEW.quote_id AND quote.status = 'delivered'
+                   AND quote.payment_rail = 'pay_sh'
+                   AND EXISTS (
+                     SELECT 1 FROM settlements settlement
+                     WHERE settlement.transaction_signature = 'pay.sh:' || NEW.quote_id
+                   )
+             ) THEN
+                 shape_valid := FALSE;
+             END IF;
+             IF NOT transition_valid OR NOT shape_valid THEN
+                 RAISE EXCEPTION 'Pay.sh attempt state is invalid'
+                     USING ERRCODE = '23514';
+             END IF;
+             RETURN NEW;
+         END
+         $body$",
+        params![],
+    )?;
+    for table in ["research_payment_attempts", "direct_pay_sh_attempts"] {
+        let trigger = format!("guard_{table}_state");
+        connection.execute(
+            &format!("DROP TRIGGER IF EXISTS {trigger} ON {table}"),
+            params![],
+        )?;
+        connection.execute(
+            &format!(
+                "CREATE TRIGGER {trigger}
+                 BEFORE INSERT OR UPDATE ON {table}
+                 FOR EACH ROW EXECUTE FUNCTION openshelf_guard_pay_sh_attempt_state()"
+            ),
+            params![],
+        )?;
+    }
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_guard_pay_sh_attempt_receipt()
+         RETURNS trigger LANGUAGE plpgsql AS $body$
+         BEGIN
+             IF NEW.transaction_signature IS DISTINCT FROM OLD.transaction_signature
+                AND NOT (TG_TABLE_NAME = 'research_payment_attempts'
+                         AND OLD.status = 'claimed' AND NEW.status = 'prepared'
+                         AND OLD.transaction_signature IS NULL)
+                AND NOT (NEW.status = 'settled' AND OLD.transaction_signature IS NULL
+                         AND NEW.transaction_signature IS NOT NULL
+                         AND NEW.transaction_signature <> '') THEN
+                 RAISE EXCEPTION 'Pay.sh transaction receipt is immutable'
+                     USING ERRCODE = '23514';
+             END IF;
+             RETURN NEW;
+         END
+         $body$",
+        params![],
+    )?;
+    for table in ["research_payment_attempts", "direct_pay_sh_attempts"] {
+        let trigger = format!("guard_{table}_receipt");
+        connection.execute(
+            &format!("DROP TRIGGER IF EXISTS {trigger} ON {table}"),
+            params![],
+        )?;
+        connection.execute(
+            &format!(
+                "CREATE TRIGGER {trigger}
+                 BEFORE UPDATE OF transaction_signature ON {table}
+                 FOR EACH ROW EXECUTE FUNCTION openshelf_guard_pay_sh_attempt_receipt()"
+            ),
+            params![],
+        )?;
+    }
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_guard_pay_sh_attempt_evidence()
+         RETURNS trigger LANGUAGE plpgsql AS $body$
+         BEGIN
+             IF (TG_TABLE_NAME = 'direct_pay_sh_attempts'
+                 OR NOT (OLD.status = 'claimed' AND NEW.status = 'prepared'))
+                AND (
+                    to_jsonb(NEW)->'challenge_id' IS DISTINCT FROM to_jsonb(OLD)->'challenge_id'
+                    OR to_jsonb(NEW)->'external_id' IS DISTINCT FROM to_jsonb(OLD)->'external_id'
+                    OR to_jsonb(NEW)->'payer_wallet' IS DISTINCT FROM to_jsonb(OLD)->'payer_wallet'
+                    OR to_jsonb(NEW)->'platform_recipient_wallet'
+                       IS DISTINCT FROM to_jsonb(OLD)->'platform_recipient_wallet'
+                    OR to_jsonb(NEW)->'signed_transaction_base64'
+                       IS DISTINCT FROM to_jsonb(OLD)->'signed_transaction_base64'
+                    OR to_jsonb(NEW)->'recent_blockhash'
+                       IS DISTINCT FROM to_jsonb(OLD)->'recent_blockhash'
+                    OR to_jsonb(NEW)->'challenge_expires_at'
+                       IS DISTINCT FROM to_jsonb(OLD)->'challenge_expires_at'
+                    OR to_jsonb(NEW)->'prepared_at' IS DISTINCT FROM to_jsonb(OLD)->'prepared_at'
+                ) THEN
+                 RAISE EXCEPTION 'prepared Pay.sh evidence is immutable'
+                     USING ERRCODE = '23514';
+             END IF;
+             RETURN NEW;
+         END
+         $body$",
+        params![],
+    )?;
+    for table in ["research_payment_attempts", "direct_pay_sh_attempts"] {
+        let trigger = format!("guard_{table}_evidence");
+        connection.execute(
+            &format!("DROP TRIGGER IF EXISTS {trigger} ON {table}"),
+            params![],
+        )?;
+        connection.execute(
+            &format!(
+                "CREATE TRIGGER {trigger}
+                 BEFORE UPDATE OF challenge_id, external_id, payer_wallet,
+                     platform_recipient_wallet, signed_transaction_base64,
+                     recent_blockhash, challenge_expires_at, prepared_at
+                 ON {table}
+                 FOR EACH ROW EXECUTE FUNCTION openshelf_guard_pay_sh_attempt_evidence()"
+            ),
+            params![],
+        )?;
+    }
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_claim_pay_sh_quote_fence()
+         RETURNS trigger LANGUAGE plpgsql AS $body$
+         DECLARE attempt_kind_value TEXT; active_attempt BOOLEAN;
+         BEGIN
+             attempt_kind_value := CASE
+                 WHEN TG_TABLE_NAME = 'research_payment_attempts' THEN 'research'
+                 ELSE 'direct'
+             END;
+             active_attempt := CASE
+                 WHEN TG_TABLE_NAME = 'research_payment_attempts'
+                 THEN NEW.status IN ('claimed', 'prepared', 'ambiguous')
+                 ELSE NEW.status IN ('prepared', 'ambiguous')
+             END;
+             IF NOT active_attempt THEN
+                 RETURN NEW;
+             END IF;
+             IF TG_OP = 'UPDATE' AND EXISTS (
+                 SELECT 1 FROM pay_sh_quote_fences fence
+                 JOIN payment_quotes quote ON quote.id = fence.quote_id
+                 WHERE fence.quote_id = NEW.quote_id
+                   AND fence.attempt_kind = attempt_kind_value
+                   AND fence.attempt_id = NEW.attempt_id
+                   AND quote.payment_rail = 'pay_sh'
+                   AND (quote.status = 'quoted'
+                        OR (attempt_kind_value = 'direct'
+                            AND quote.status = 'delivered'))
+                   AND (attempt_kind_value = 'direct' OR EXISTS (
+                       SELECT 1 FROM payment_bundle_quotes job
+                       WHERE job.id = to_jsonb(NEW)->>'job_id'
+                         AND job.status IN
+                             ('payment_in_progress', 'payment_reconciliation')
+                         AND job.payment_attempt_quote_id = NEW.quote_id
+                         AND job.payment_attempt_id = NEW.attempt_id
+                   ))
+             ) THEN
+                 RETURN NEW;
+             END IF;
+             IF NOT EXISTS (
+                 SELECT 1 FROM payment_quotes quote
+                 WHERE quote.id = NEW.quote_id AND quote.status = 'quoted'
+                   AND quote.payment_rail = 'pay_sh'
+             ) THEN
+                 RAISE EXCEPTION 'Pay.sh quote is not payable'
+                     USING ERRCODE = '23514';
+             END IF;
+             IF attempt_kind_value = 'research' AND NOT EXISTS (
+                 SELECT 1 FROM payment_bundle_documents pbd
+                 JOIN payment_bundle_quotes pbq ON pbq.id = pbd.quote_id
+                 WHERE pbd.pay_sh_quote_id = NEW.quote_id
+                   AND pbq.id = to_jsonb(NEW)->>'job_id'
+                   AND (
+                       (TG_OP = 'INSERT' AND NEW.status = 'claimed'
+                        AND pbq.status = 'processing')
+                       OR (TG_OP = 'UPDATE' AND pbq.status IN
+                           ('payment_in_progress', 'payment_reconciliation')
+                           AND pbq.payment_attempt_quote_id = NEW.quote_id
+                           AND pbq.payment_attempt_id = NEW.attempt_id)
+                   )
+             ) THEN
+                 RAISE EXCEPTION 'Pay.sh quote is not payable'
+                     USING ERRCODE = '23514';
+             END IF;
+             IF attempt_kind_value = 'direct' AND EXISTS (
+                 SELECT 1 FROM payment_quotes quote
+                 JOIN payment_bundle_quotes pbq ON pbq.query_id = quote.query_id
+                 JOIN payment_bundle_documents pbd
+                   ON pbd.quote_id = pbq.id
+                  AND pbd.document_handle = quote.document_handle
+                 WHERE quote.id = NEW.quote_id
+                   AND (
+                       EXISTS (
+                           SELECT 1 FROM chain_payment_attempts attempt
+                           WHERE attempt.settlement_kind = 'bundle'
+                             AND attempt.quote_id = pbq.id
+                       )
+                       OR pbq.status NOT IN ('balance_refunded', 'deleted')
+                   )
+             ) THEN
+                 RAISE EXCEPTION 'Pay.sh quote is reserved by a research bundle'
+                     USING ERRCODE = '23514';
+             END IF;
+             INSERT INTO pay_sh_quote_fences
+                 (quote_id, attempt_kind, attempt_id, created_at)
+             VALUES (NEW.quote_id, attempt_kind_value, NEW.attempt_id, NEW.created_at)
+             ON CONFLICT DO NOTHING;
+             IF NOT EXISTS (
+                 SELECT 1 FROM pay_sh_quote_fences
+                 WHERE quote_id = NEW.quote_id
+                   AND attempt_kind = attempt_kind_value
+                   AND attempt_id = NEW.attempt_id
+             ) THEN
+                 RAISE EXCEPTION 'Pay.sh quote already has another active attempt'
+                     USING ERRCODE = '23505';
+             END IF;
+             RETURN NEW;
+         END
+         $body$",
+        params![],
+    )?;
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_release_pay_sh_quote_fence()
+         RETURNS trigger LANGUAGE plpgsql AS $body$
+         DECLARE attempt_kind_value TEXT;
+         BEGIN
+             attempt_kind_value := CASE
+                 WHEN TG_TABLE_NAME = 'research_payment_attempts' THEN 'research'
+                 ELSE 'direct'
+             END;
+             IF NEW.status IN ('settled', 'released') THEN
+                 DELETE FROM pay_sh_quote_fences
+                 WHERE quote_id = NEW.quote_id
+                   AND attempt_kind = attempt_kind_value
+                   AND attempt_id = NEW.attempt_id;
+             END IF;
+             RETURN NEW;
+         END
+         $body$",
+        params![],
+    )?;
+    for (table, kind) in [
+        ("research_payment_attempts", "research"),
+        ("direct_pay_sh_attempts", "direct"),
+    ] {
+        let claim_trigger = format!("claim_{kind}_pay_sh_quote_fence");
+        connection.execute(
+            &format!("DROP TRIGGER IF EXISTS {claim_trigger} ON {table}"),
+            params![],
+        )?;
+        connection.execute(
+            &format!(
+                "CREATE TRIGGER {claim_trigger}
+                 BEFORE INSERT OR UPDATE OF status ON {table}
+                 FOR EACH ROW EXECUTE FUNCTION openshelf_claim_pay_sh_quote_fence()"
+            ),
+            params![],
+        )?;
+        let release_trigger = format!("release_{kind}_pay_sh_quote_fence");
+        connection.execute(
+            &format!("DROP TRIGGER IF EXISTS {release_trigger} ON {table}"),
+            params![],
+        )?;
+        connection.execute(
+            &format!(
+                "CREATE TRIGGER {release_trigger}
+                 AFTER UPDATE OF status ON {table}
+                 FOR EACH ROW EXECUTE FUNCTION openshelf_release_pay_sh_quote_fence()"
+            ),
+            params![],
+        )?;
+    }
+    Ok(())
+}
+
+fn backfill_active_pay_sh_quote_fences(connection: &Connection) -> Result<(), StoreError> {
+    let collision = connection
+        .query_row(
+            "SELECT quote_id FROM (
+                 SELECT quote_id FROM research_payment_attempts
+                 WHERE status IN ('claimed', 'prepared', 'ambiguous')
+                 UNION ALL
+                 SELECT quote_id FROM direct_pay_sh_attempts
+                 WHERE status IN ('prepared', 'ambiguous')
+             ) active_attempts
+             GROUP BY quote_id HAVING COUNT(*) > 1 LIMIT 1",
+            params![],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if collision.is_some() {
+        return Err(StoreError::Conflict(
+            "a Pay.sh quote already has multiple active payment attempts".to_owned(),
+        ));
+    }
+    connection.execute(
+        "INSERT OR IGNORE INTO pay_sh_quote_fences
+         (quote_id, attempt_kind, attempt_id, created_at)
+         SELECT quote_id, 'research', attempt_id, created_at
+         FROM research_payment_attempts
+         WHERE status IN ('claimed', 'prepared', 'ambiguous')",
+        params![],
+    )?;
+    connection.execute(
+        "INSERT OR IGNORE INTO pay_sh_quote_fences
+         (quote_id, attempt_kind, attempt_id, created_at)
+         SELECT quote_id, 'direct', attempt_id, created_at
+         FROM direct_pay_sh_attempts
+         WHERE status IN ('prepared', 'ambiguous')",
+        params![],
+    )?;
+    let invalid = connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM pay_sh_quote_fences fence
+             WHERE NOT EXISTS (
+                      SELECT 1 FROM payment_quotes quote
+                      WHERE quote.id = fence.quote_id
+                        AND quote.payment_rail = 'pay_sh'
+                        AND (quote.status = 'quoted'
+                             OR (fence.attempt_kind = 'direct'
+                                 AND quote.status = 'delivered'))
+                   )
+                OR (fence.attempt_kind = 'research' AND NOT EXISTS (
+                      SELECT 1 FROM research_payment_attempts attempt
+                      WHERE attempt.quote_id = fence.quote_id
+                        AND attempt.attempt_id = fence.attempt_id
+                        AND attempt.status IN ('claimed', 'prepared', 'ambiguous')
+                   ))
+                OR (fence.attempt_kind = 'direct' AND NOT EXISTS (
+                      SELECT 1 FROM direct_pay_sh_attempts attempt
+                      WHERE attempt.quote_id = fence.quote_id
+                        AND attempt.attempt_id = fence.attempt_id
+                        AND attempt.status IN ('prepared', 'ambiguous')
+                   ))
+             UNION ALL
+             SELECT 1 FROM research_payment_attempts attempt
+             WHERE attempt.status IN ('claimed', 'prepared', 'ambiguous')
+               AND NOT EXISTS (
+                   SELECT 1 FROM pay_sh_quote_fences fence
+                   WHERE fence.quote_id = attempt.quote_id
+                     AND fence.attempt_kind = 'research'
+                     AND fence.attempt_id = attempt.attempt_id
+               )
+             UNION ALL
+             SELECT 1 FROM direct_pay_sh_attempts attempt
+             WHERE attempt.status IN ('prepared', 'ambiguous')
+               AND NOT EXISTS (
+                   SELECT 1 FROM pay_sh_quote_fences fence
+                   WHERE fence.quote_id = attempt.quote_id
+                     AND fence.attempt_kind = 'direct'
+                     AND fence.attempt_id = attempt.attempt_id
+               )
+         )",
+        params![],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if invalid {
+        return Err(StoreError::Conflict(
+            "Pay.sh quote fence does not match its active payment attempt".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn backfill_chain_transaction_registry(connection: &Connection) -> Result<(), StoreError> {
+    let historical_collision = connection
+        .query_row(
+            "SELECT transaction_signature FROM (
+                 SELECT transaction_signature FROM chain_settlements
+                 UNION ALL
+                 SELECT transaction_signature FROM bundle_chain_settlements
+                 UNION ALL
+                 SELECT transaction_signature FROM open_call_chain_settlements
+                 UNION ALL
+                 SELECT transaction_signature FROM research_payment_attempts
+                 WHERE status = 'settled' AND transaction_signature IS NOT NULL
+                 UNION ALL
+                 SELECT transaction_signature FROM direct_pay_sh_attempts
+                 WHERE status = 'settled' AND transaction_signature IS NOT NULL
+             ) historical
+             GROUP BY transaction_signature
+             HAVING COUNT(*) > 1
+             LIMIT 1",
+            params![],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(signature) = historical_collision {
+        return Err(StoreError::Conflict(format!(
+            "historical settlement ledgers reuse transaction signature {signature}; manual reconciliation is required"
+        )));
+    }
+    for statement in [
+        "INSERT OR IGNORE INTO chain_transaction_registry
+         (transaction_signature, settlement_kind, quote_id, created_at)
+         SELECT transaction_signature, 'document', quote_id, confirmed_at
+         FROM chain_settlements",
+        "INSERT OR IGNORE INTO chain_transaction_registry
+         (transaction_signature, settlement_kind, quote_id, created_at)
+         SELECT transaction_signature, 'bundle', quote_id, confirmed_at
+         FROM bundle_chain_settlements",
+        "INSERT OR IGNORE INTO chain_transaction_registry
+         (transaction_signature, settlement_kind, quote_id, created_at)
+         SELECT transaction_signature, 'open_call', quote_id, confirmed_at
+         FROM open_call_chain_settlements",
+        "INSERT OR IGNORE INTO chain_transaction_registry
+         (transaction_signature, settlement_kind, quote_id, created_at)
+         SELECT transaction_signature, 'pay_sh_document', quote_id,
+                COALESCE(completed_at, created_at)
+         FROM research_payment_attempts
+         WHERE status = 'settled' AND transaction_signature IS NOT NULL",
+        "INSERT OR IGNORE INTO chain_transaction_registry
+         (transaction_signature, settlement_kind, quote_id, created_at)
+         SELECT transaction_signature, 'pay_sh_direct', quote_id,
+                COALESCE(completed_at, created_at)
+         FROM direct_pay_sh_attempts
+         WHERE status = 'settled' AND transaction_signature IS NOT NULL",
+    ] {
+        connection.execute(statement, params![])?;
+    }
+    let omitted = connection
+        .query_row(
+            "SELECT source.transaction_signature FROM (
+                 SELECT transaction_signature, 'document' AS settlement_kind, quote_id
+                 FROM chain_settlements
+                 UNION ALL
+                 SELECT transaction_signature, 'bundle', quote_id
+                 FROM bundle_chain_settlements
+                 UNION ALL
+                 SELECT transaction_signature, 'open_call', quote_id
+                 FROM open_call_chain_settlements
+                 UNION ALL
+                 SELECT transaction_signature, 'pay_sh_document', quote_id
+                 FROM research_payment_attempts
+                 WHERE status = 'settled' AND transaction_signature IS NOT NULL
+                 UNION ALL
+                 SELECT transaction_signature, 'pay_sh_direct', quote_id
+                 FROM direct_pay_sh_attempts
+                 WHERE status = 'settled' AND transaction_signature IS NOT NULL
+             ) source
+             LEFT JOIN chain_transaction_registry registry
+               ON registry.transaction_signature = source.transaction_signature
+              AND registry.settlement_kind = source.settlement_kind
+              AND registry.quote_id = source.quote_id
+             WHERE registry.transaction_signature IS NULL
+             LIMIT 1",
+            params![],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(signature) = omitted {
+        return Err(StoreError::Conflict(format!(
+            "settlement registry omitted historical transaction signature {signature}; stop writes and reconcile before retrying migration"
+        )));
+    }
+    Ok(())
+}
+
+fn backfill_document_payment_rails(connection: &Connection) -> Result<(), StoreError> {
+    let conflicting_quote = connection
+        .query_row(
+            "SELECT pq.id FROM payment_quotes pq
+             WHERE (pq.payment_rail IS NOT NULL
+                    AND pq.payment_rail NOT IN ('x402', 'pay_sh'))
+                OR (
+                    (pq.payment_rail = 'x402' OR EXISTS (
+                        SELECT 1 FROM chain_settlements cs WHERE cs.quote_id = pq.id
+                    ) OR EXISTS (
+                        SELECT 1 FROM chain_payment_attempts attempt
+                        WHERE attempt.settlement_kind = 'document'
+                          AND attempt.quote_id = pq.id
+                    ))
+                    AND
+                    (pq.payment_rail = 'pay_sh' OR EXISTS (
+                        SELECT 1 FROM settlements settlement
+                        WHERE settlement.mode = 'pay_sh_mpp_direct'
+                          AND settlement.transaction_signature = 'pay.sh:' || pq.id
+                    ) OR EXISTS (
+                        SELECT 1 FROM direct_pay_sh_attempts attempt
+                        WHERE attempt.quote_id = pq.id
+                    ))
+                )
+             LIMIT 1",
+            params![],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(quote_id) = conflicting_quote {
+        return Err(StoreError::Conflict(format!(
+            "document quote {quote_id} has conflicting payment rails; manual reconciliation is required"
+        )));
+    }
+
+    connection.execute(
+        "UPDATE payment_quotes SET payment_rail = 'x402'
+         WHERE payment_rail IS NULL AND (
+             EXISTS (SELECT 1 FROM chain_settlements cs WHERE cs.quote_id = payment_quotes.id)
+             OR EXISTS (
+                 SELECT 1 FROM chain_payment_attempts attempt
+                 WHERE attempt.settlement_kind = 'document'
+                   AND attempt.quote_id = payment_quotes.id
+             )
+         )",
+        params![],
+    )?;
+    connection.execute(
+        "UPDATE payment_quotes SET payment_rail = 'pay_sh'
+         WHERE payment_rail IS NULL AND (EXISTS (
+             SELECT 1 FROM settlements settlement
+             WHERE settlement.mode = 'pay_sh_mpp_direct'
+               AND settlement.transaction_signature = 'pay.sh:' || payment_quotes.id
+         ) OR EXISTS (
+             SELECT 1 FROM direct_pay_sh_attempts attempt
+             WHERE attempt.quote_id = payment_quotes.id
+         ))",
+        params![],
+    )?;
+    let omitted = connection
+        .query_row(
+            "SELECT pq.id FROM payment_quotes pq
+             WHERE pq.payment_rail IS NULL AND (
+                 EXISTS (SELECT 1 FROM chain_settlements cs WHERE cs.quote_id = pq.id)
+                 OR EXISTS (
+                     SELECT 1 FROM chain_payment_attempts attempt
+                     WHERE attempt.settlement_kind = 'document'
+                       AND attempt.quote_id = pq.id
+                 )
+                 OR EXISTS (
+                     SELECT 1 FROM settlements settlement
+                     WHERE settlement.mode = 'pay_sh_mpp_direct'
+                       AND settlement.transaction_signature = 'pay.sh:' || pq.id
+                 )
+                 OR EXISTS (
+                     SELECT 1 FROM direct_pay_sh_attempts attempt
+                     WHERE attempt.quote_id = pq.id
+                 )
+             ) LIMIT 1",
+            params![],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(quote_id) = omitted {
+        return Err(StoreError::Conflict(format!(
+            "document quote {quote_id} was omitted from payment-rail backfill"
+        )));
+    }
+    let duplicate_purchase = connection
+        .query_row(
+            "SELECT query_id || ':' || document_id
+             FROM payment_quotes WHERE payment_rail IS NOT NULL
+             GROUP BY query_id, document_id HAVING COUNT(*) > 1 LIMIT 1",
+            params![],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(purchase) = duplicate_purchase {
+        return Err(StoreError::Conflict(format!(
+            "document purchase {purchase} has more than one reserved quote; manual reconciliation is required"
+        )));
+    }
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_quotes_reserved_purchase
+         ON payment_quotes(query_id, document_id) WHERE payment_rail IS NOT NULL",
+        params![],
+    )?;
+    Ok(())
+}
+
+/// Refuse to start or report ready when the same query/document is owned by
+/// both an aggregate budget and an independently payable document rail. A
+/// quote linked to its own research bundle is expected; direct attempts,
+/// x402 reservations, and delivered rows without a settled research attempt
+/// are evidence that two buyer funding products overlapped.
+fn validate_bundle_document_payment_reservations(
+    connection: &Connection,
+) -> Result<(), StoreError> {
+    let now = now_ms();
+    let unbacked_legacy_delivery = connection
+        .query_row(
+            "SELECT pbq.id FROM payment_bundle_quotes pbq
+             WHERE pbq.status = 'delivered' AND NOT EXISTS (
+               SELECT 1 FROM bundle_chain_settlements settlement
+               WHERE settlement.quote_id = pbq.id
+             ) LIMIT 1",
+            params![],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(bundle_id) = unbacked_legacy_delivery {
+        return Err(StoreError::Conflict(format!(
+            "legacy delivered research bundle {bundle_id} has no external funding receipt; stop traffic and reconcile"
+        )));
+    }
+    let duplicate_bundle = connection
+        .query_row(
+            "SELECT pbq.query_id, pbd.document_handle
+             FROM payment_bundle_quotes pbq
+             JOIN payment_bundle_documents pbd ON pbd.quote_id = pbq.id
+             WHERE EXISTS (
+                       SELECT 1 FROM chain_payment_attempts attempt
+                       WHERE attempt.settlement_kind = 'bundle'
+                         AND attempt.quote_id = pbq.id
+                   )
+                OR pbq.status NOT IN ('balance_refunded', 'deleted')
+             GROUP BY pbq.query_id, pbd.document_handle
+             HAVING COUNT(*) > 1 LIMIT 1",
+            params![],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    if let Some((query_id, document_handle)) = duplicate_bundle {
+        return Err(StoreError::Conflict(format!(
+            "query {query_id} document {document_handle} is reserved by multiple research bundles; stop payment writes and reconcile"
+        )));
+    }
+    let collision = connection
+        .query_row(
+            "SELECT pbq.id, pq.id
+             FROM payment_bundle_quotes pbq
+             JOIN payment_bundle_documents pbd ON pbd.quote_id = pbq.id
+             JOIN payment_quotes pq
+               ON pq.query_id = pbq.query_id
+              AND pq.document_handle = pbd.document_handle
+             WHERE (
+                    EXISTS (
+                        SELECT 1 FROM chain_payment_attempts attempt
+                        WHERE attempt.settlement_kind = 'bundle'
+                          AND attempt.quote_id = pbq.id
+                    )
+                    OR pbq.status NOT IN ('balance_refunded', 'deleted')
+               )
+               AND (
+                    EXISTS (
+                        SELECT 1 FROM chain_payment_attempts attempt
+                        WHERE attempt.settlement_kind = 'document'
+                          AND attempt.quote_id = pq.id
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM direct_pay_sh_attempts attempt
+                        WHERE attempt.quote_id = pq.id
+                    )
+                    OR pq.payment_rail = 'x402'
+                    OR (pq.status = 'quoted' AND pq.expires_at > ?1 AND (
+                        pbd.pay_sh_quote_id IS NULL OR pbd.pay_sh_quote_id <> pq.id
+                    ))
+                    OR (pq.payment_rail = 'pay_sh' AND (
+                        pbd.pay_sh_quote_id IS NULL OR pbd.pay_sh_quote_id <> pq.id
+                    ))
+                    OR (pq.status = 'delivered' AND (
+                        pbd.pay_sh_quote_id IS NULL OR pbd.pay_sh_quote_id <> pq.id
+                        OR NOT EXISTS (
+                            SELECT 1 FROM research_payment_attempts attempt
+                            WHERE attempt.job_id = pbq.id AND attempt.quote_id = pq.id
+                              AND attempt.status = 'settled'
+                        )
+                    ))
+               )
+             ORDER BY pbq.created_at DESC LIMIT 1",
+            [as_i64(now)?],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    if let Some((bundle_id, quote_id)) = collision {
+        return Err(StoreError::Conflict(format!(
+            "research bundle {bundle_id} and document quote {quote_id} reserve the same purchase; stop payment writes and reconcile"
+        )));
+    }
+    Ok(())
+}
+
+fn backfill_prepaid_wallet_owners(connection: &Connection) -> Result<(), StoreError> {
+    let shared_wallet = connection
+        .query_row(
+            "SELECT wallet FROM prepaid_wallet_sessions
+             GROUP BY wallet HAVING COUNT(DISTINCT user_id) > 1 LIMIT 1",
+            params![],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(wallet) = shared_wallet {
+        return Err(StoreError::Conflict(format!(
+            "prepaid wallet {wallet} has sessions owned by multiple users; stop payment writes and reconcile"
+        )));
+    }
+    let mismatched_owner = connection
+        .query_row(
+            "SELECT session.wallet
+             FROM prepaid_wallet_sessions session
+             JOIN prepaid_wallet_owners owner ON owner.wallet = session.wallet
+             WHERE owner.user_id <> session.user_id LIMIT 1",
+            params![],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(wallet) = mismatched_owner {
+        return Err(StoreError::Conflict(format!(
+            "prepaid wallet {wallet} conflicts with its canonical owner; stop payment writes and reconcile"
+        )));
+    }
+    connection.execute(
+        "INSERT OR IGNORE INTO prepaid_wallet_owners (wallet, user_id, created_at)
+         SELECT wallet, user_id, MIN(created_at)
+         FROM prepaid_wallet_sessions GROUP BY wallet, user_id",
+        params![],
+    )?;
+    let ownerless_balance = connection
+        .query_row(
+            "SELECT account.wallet FROM prepaid_accounts account
+             WHERE account.available_atomic > 0 AND NOT EXISTS (
+               SELECT 1 FROM prepaid_wallet_owners owner
+               WHERE owner.wallet = account.wallet
+             ) LIMIT 1",
+            params![],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(wallet) = ownerless_balance {
+        return Err(StoreError::Conflict(format!(
+            "prepaid wallet {wallet} has ownerless value; stop payment writes and reconcile"
+        )));
+    }
+    Ok(())
+}
+
+fn backfill_confirmed_research_refunds(connection: &Connection) -> Result<(), StoreError> {
+    let invalid = connection
+        .query_row(
+            "SELECT claim.id FROM payout_claims claim
+             LEFT JOIN payment_bundle_quotes job
+               ON job.refund_claim_id = claim.id
+              AND claim.beneficiary_user_id = 'research-refund:' || job.id
+             WHERE claim.kind = 'research_refund' AND claim.status = 'confirmed'
+               AND (claim.confirmed_at IS NULL OR job.id IS NULL
+                    OR job.status NOT IN ('refund_pending', 'balance_refunded'))
+             LIMIT 1",
+            params![],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(claim_id) = invalid {
+        return Err(StoreError::Conflict(format!(
+            "confirmed research refund {claim_id} does not match a refundable parent job"
+        )));
+    }
+    connection.execute(
+        "UPDATE payment_bundle_quotes
+         SET status = 'balance_refunded',
+             delivered_at = COALESCE(delivered_at, (
+                 SELECT claim.confirmed_at FROM payout_claims claim
+                 WHERE claim.id = payment_bundle_quotes.refund_claim_id
+             ))
+         WHERE status = 'refund_pending' AND EXISTS (
+             SELECT 1 FROM payout_claims claim
+             WHERE claim.id = payment_bundle_quotes.refund_claim_id
+               AND claim.kind = 'research_refund' AND claim.status = 'confirmed'
+               AND claim.confirmed_at IS NOT NULL
+               AND claim.beneficiary_user_id =
+                   'research-refund:' || payment_bundle_quotes.id
+         )",
+        params![],
+    )?;
+    validate_research_refund_completion(connection)
+}
+
+fn validate_research_refund_completion(connection: &Connection) -> Result<(), StoreError> {
+    let invalid = connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM payment_bundle_quotes job
+             LEFT JOIN payout_claims claim ON claim.id = job.refund_claim_id
+             WHERE (job.status = 'refund_pending' AND (
+                       job.refund_claim_id IS NULL OR claim.id IS NULL
+                       OR claim.kind <> 'research_refund'
+                       OR claim.beneficiary_user_id <> 'research-refund:' || job.id
+                       OR claim.status = 'confirmed'
+                   ))
+                OR (job.status = 'balance_refunded' AND job.refund_claim_id IS NOT NULL
+                    AND (claim.id IS NULL OR claim.kind <> 'research_refund'
+                         OR claim.status <> 'confirmed' OR claim.confirmed_at IS NULL
+                         OR claim.beneficiary_user_id <> 'research-refund:' || job.id))
+             UNION ALL
+             SELECT 1 FROM payout_claims claim
+             LEFT JOIN payment_bundle_quotes job
+               ON job.refund_claim_id = claim.id
+              AND claim.beneficiary_user_id = 'research-refund:' || job.id
+             WHERE claim.kind = 'research_refund' AND claim.status = 'confirmed'
+               AND (claim.confirmed_at IS NULL OR job.status <> 'balance_refunded')
+         )",
+        params![],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if invalid {
+        return Err(StoreError::Conflict(
+            "research refund payout and parent job completion do not match".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn install_pay_sh_challenge_binding_guards(connection: &Connection) -> Result<(), StoreError> {
+    if connection.is_sqlite() {
+        connection.execute_batch(
+            "DROP TRIGGER IF EXISTS guard_direct_pay_sh_challenge_binding;
+             CREATE TRIGGER guard_direct_pay_sh_challenge_binding
+             BEFORE INSERT ON direct_pay_sh_attempts
+             WHEN NOT EXISTS (
+                 SELECT 1 FROM pay_sh_challenge_bindings binding
+                 WHERE binding.challenge_id = NEW.challenge_id
+                   AND binding.quote_id = NEW.quote_id
+                   AND binding.external_id = NEW.external_id
+                   AND binding.challenge_expires_at = NEW.challenge_expires_at
+                   AND binding.binding_kind = 'direct'
+                   AND binding.binding_owner = NEW.query_token_hash
+             )
+             BEGIN
+                 SELECT RAISE(ABORT, 'direct Pay.sh challenge is not quote-bound');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_research_pay_sh_challenge_binding;
+             CREATE TRIGGER guard_research_pay_sh_challenge_binding
+             BEFORE UPDATE OF status ON research_payment_attempts
+             WHEN OLD.status = 'claimed' AND NEW.status = 'prepared'
+               AND NOT EXISTS (
+                   SELECT 1 FROM pay_sh_challenge_bindings binding
+                   WHERE binding.challenge_id = NEW.challenge_id
+                     AND binding.quote_id = NEW.quote_id
+                     AND binding.external_id = NEW.external_id
+                     AND binding.challenge_expires_at = NEW.challenge_expires_at
+                     AND binding.binding_kind = 'research'
+                     AND binding.binding_owner = NEW.attempt_id
+               )
+             BEGIN
+                 SELECT RAISE(ABORT, 'research Pay.sh challenge is not quote-bound');
+             END;",
+        )?;
+        return Ok(());
+    }
+
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_guard_pay_sh_challenge_binding()
+         RETURNS trigger LANGUAGE plpgsql AS $body$
+         DECLARE
+             expected_kind TEXT;
+             expected_owner TEXT;
+         BEGIN
+             IF TG_TABLE_NAME = 'direct_pay_sh_attempts' THEN
+                 expected_kind := 'direct';
+                 expected_owner := NEW.query_token_hash;
+             ELSE
+                 expected_kind := 'research';
+                 expected_owner := NEW.attempt_id;
+             END IF;
+             IF NOT EXISTS (
+                 SELECT 1 FROM pay_sh_challenge_bindings binding
+                 WHERE binding.challenge_id = NEW.challenge_id
+                   AND binding.quote_id = NEW.quote_id
+                   AND binding.external_id = NEW.external_id
+                   AND binding.challenge_expires_at = NEW.challenge_expires_at
+                   AND binding.binding_kind = expected_kind
+                   AND binding.binding_owner = expected_owner
+             ) THEN
+                 RAISE EXCEPTION 'Pay.sh challenge is not quote-bound'
+                     USING ERRCODE = '23514';
+             END IF;
+             RETURN NEW;
+         END
+         $body$",
+        params![],
+    )?;
+    connection.execute(
+        "DROP TRIGGER IF EXISTS guard_direct_pay_sh_challenge_binding
+         ON direct_pay_sh_attempts",
+        params![],
+    )?;
+    connection.execute(
+        "CREATE TRIGGER guard_direct_pay_sh_challenge_binding
+         BEFORE INSERT ON direct_pay_sh_attempts
+         FOR EACH ROW EXECUTE FUNCTION openshelf_guard_pay_sh_challenge_binding()",
+        params![],
+    )?;
+    connection.execute(
+        "DROP TRIGGER IF EXISTS guard_research_pay_sh_challenge_binding
+         ON research_payment_attempts",
+        params![],
+    )?;
+    connection.execute(
+        "CREATE TRIGGER guard_research_pay_sh_challenge_binding
+         BEFORE UPDATE OF status ON research_payment_attempts
+         FOR EACH ROW
+         WHEN (OLD.status = 'claimed' AND NEW.status = 'prepared')
+         EXECUTE FUNCTION openshelf_guard_pay_sh_challenge_binding()",
+        params![],
+    )?;
+    Ok(())
+}
+
+fn install_document_payment_rail_guards(connection: &Connection) -> Result<(), StoreError> {
+    if connection.is_sqlite() {
+        connection.execute_batch(
+            "DROP TRIGGER IF EXISTS guard_bundle_document_reservation;
+             CREATE TRIGGER guard_bundle_document_reservation
+             BEFORE INSERT ON payment_bundle_documents
+             BEGIN
+                 SELECT CASE WHEN EXISTS (
+                     SELECT 1 FROM payment_bundle_quotes incoming
+                     JOIN payment_bundle_quotes existing
+                       ON existing.query_id = incoming.query_id
+                     JOIN payment_bundle_documents document
+                       ON document.quote_id = existing.id
+                      AND document.document_handle = NEW.document_handle
+                     WHERE incoming.id = NEW.quote_id AND existing.id <> NEW.quote_id
+                       AND (
+                           EXISTS (
+                               SELECT 1 FROM chain_payment_attempts attempt
+                               WHERE attempt.settlement_kind = 'bundle'
+                                 AND attempt.quote_id = existing.id
+                           )
+                           OR existing.status NOT IN ('balance_refunded', 'deleted')
+                       )
+                 ) THEN RAISE(ABORT, 'document is reserved by another research bundle') END;
+                 SELECT CASE WHEN EXISTS (
+                     SELECT 1 FROM payment_bundle_quotes incoming
+                     JOIN payment_quotes quote ON quote.query_id = incoming.query_id
+                     WHERE incoming.id = NEW.quote_id
+                       AND quote.document_handle = NEW.document_handle
+                       AND (
+                           quote.payment_rail IS NOT NULL
+                           OR quote.status NOT IN ('quoted', 'deleted')
+                           OR (quote.status = 'quoted' AND quote.expires_at >
+                               CAST(strftime('%s', 'now') AS INTEGER) * 1000)
+                           OR EXISTS (
+                               SELECT 1 FROM chain_payment_attempts attempt
+                               WHERE attempt.settlement_kind = 'document'
+                                 AND attempt.quote_id = quote.id
+                           )
+                           OR EXISTS (
+                               SELECT 1 FROM pay_sh_quote_fences fence
+                               WHERE fence.quote_id = quote.id
+                           )
+                       )
+                 ) THEN RAISE(ABORT, 'document already has a direct payment reservation') END;
+             END;
+
+             DROP TRIGGER IF EXISTS guard_bundle_document_identity;
+             CREATE TRIGGER guard_bundle_document_identity
+             BEFORE UPDATE OF quote_id, document_id, document_handle
+             ON payment_bundle_documents
+             WHEN NEW.quote_id <> OLD.quote_id OR NEW.document_id <> OLD.document_id
+               OR NEW.document_handle <> OLD.document_handle
+             BEGIN
+                 SELECT RAISE(ABORT, 'bundle document identity is immutable');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_document_attempt_payment_rail;
+             CREATE TRIGGER guard_document_attempt_payment_rail
+             BEFORE INSERT ON chain_payment_attempts
+             WHEN NEW.settlement_kind = 'document'
+             BEGIN
+                 UPDATE payment_quotes SET payment_rail = 'x402'
+                 WHERE id = NEW.quote_id AND payment_rail IS NULL;
+                 SELECT CASE WHEN EXISTS (
+                     SELECT 1 FROM payment_quotes quote
+                     JOIN payment_bundle_quotes pbq ON pbq.query_id = quote.query_id
+                     JOIN payment_bundle_documents pbd
+                       ON pbd.quote_id = pbq.id
+                      AND pbd.document_handle = quote.document_handle
+                     WHERE quote.id = NEW.quote_id
+                       AND (
+                           EXISTS (
+                               SELECT 1 FROM chain_payment_attempts attempt
+                               WHERE attempt.settlement_kind = 'bundle'
+                                 AND attempt.quote_id = pbq.id
+                           )
+                           OR pbq.status NOT IN ('balance_refunded', 'deleted')
+                       )
+                 ) THEN RAISE(ABORT, 'document purchase is reserved by a research bundle') END;
+                 SELECT CASE WHEN NOT EXISTS (
+                     SELECT 1 FROM payment_quotes
+                     WHERE id = NEW.quote_id AND payment_rail = 'x402'
+                 ) THEN RAISE(ABORT, 'document payment rail conflict') END;
+             END;
+
+             DROP TRIGGER IF EXISTS guard_document_settlement_payment_rail;
+             CREATE TRIGGER guard_document_settlement_payment_rail
+             BEFORE INSERT ON chain_settlements
+             BEGIN
+                 UPDATE payment_quotes SET payment_rail = 'x402'
+                 WHERE id = NEW.quote_id AND payment_rail IS NULL;
+                 SELECT CASE WHEN EXISTS (
+                     SELECT 1 FROM payment_quotes quote
+                     JOIN payment_bundle_quotes pbq ON pbq.query_id = quote.query_id
+                     JOIN payment_bundle_documents pbd
+                       ON pbd.quote_id = pbq.id
+                      AND pbd.document_handle = quote.document_handle
+                     WHERE quote.id = NEW.quote_id
+                       AND (
+                           EXISTS (
+                               SELECT 1 FROM chain_payment_attempts attempt
+                               WHERE attempt.settlement_kind = 'bundle'
+                                 AND attempt.quote_id = pbq.id
+                           )
+                           OR pbq.status NOT IN ('balance_refunded', 'deleted')
+                       )
+                 ) THEN RAISE(ABORT, 'document purchase is reserved by a research bundle') END;
+                 SELECT CASE WHEN NOT EXISTS (
+                     SELECT 1 FROM payment_quotes
+                     WHERE id = NEW.quote_id AND payment_rail = 'x402'
+                 ) THEN RAISE(ABORT, 'document payment rail conflict') END;
+             END;
+
+             DROP TRIGGER IF EXISTS guard_pay_sh_settlement_payment_rail;
+             CREATE TRIGGER guard_pay_sh_settlement_payment_rail
+             BEFORE INSERT ON settlements
+             WHEN NEW.mode = 'pay_sh_mpp_direct'
+             BEGIN
+                 UPDATE payment_quotes SET payment_rail = 'pay_sh'
+                 WHERE id = substr(NEW.transaction_signature, 8)
+                   AND substr(NEW.transaction_signature, 1, 7) = 'pay.sh:'
+                   AND payment_rail IS NULL;
+                 SELECT CASE WHEN EXISTS (
+                     SELECT 1 FROM payment_quotes quote
+                     JOIN payment_bundle_quotes pbq ON pbq.query_id = quote.query_id
+                     JOIN payment_bundle_documents pbd
+                       ON pbd.quote_id = pbq.id
+                      AND pbd.document_handle = quote.document_handle
+                     WHERE quote.id = substr(NEW.transaction_signature, 8)
+                       AND (
+                           EXISTS (
+                               SELECT 1 FROM chain_payment_attempts attempt
+                               WHERE attempt.settlement_kind = 'bundle'
+                                 AND attempt.quote_id = pbq.id
+                           )
+                           OR pbq.status NOT IN ('balance_refunded', 'deleted')
+                       )
+                       AND NOT EXISTS (
+                           SELECT 1 FROM pay_sh_quote_fences fence
+                           WHERE fence.quote_id = quote.id
+                             AND fence.attempt_kind = 'research'
+                       )
+                 ) THEN RAISE(ABORT, 'document purchase is reserved by a research bundle') END;
+                 SELECT CASE WHEN NOT EXISTS (
+                     SELECT 1 FROM payment_quotes
+                     WHERE id = substr(NEW.transaction_signature, 8)
+                       AND substr(NEW.transaction_signature, 1, 7) = 'pay.sh:'
+                       AND payment_rail = 'pay_sh'
+                 ) THEN RAISE(ABORT, 'document payment rail conflict') END;
+             END;
+
+             DROP TRIGGER IF EXISTS guard_direct_pay_sh_attempt_payment_rail;
+             CREATE TRIGGER guard_direct_pay_sh_attempt_payment_rail
+             BEFORE INSERT ON direct_pay_sh_attempts
+             BEGIN
+                 UPDATE payment_quotes SET payment_rail = 'pay_sh'
+                 WHERE id = NEW.quote_id AND payment_rail IS NULL;
+                 SELECT CASE WHEN EXISTS (
+                     SELECT 1 FROM payment_quotes quote
+                     JOIN payment_bundle_quotes pbq ON pbq.query_id = quote.query_id
+                     JOIN payment_bundle_documents pbd
+                       ON pbd.quote_id = pbq.id
+                      AND pbd.document_handle = quote.document_handle
+                     WHERE quote.id = NEW.quote_id
+                       AND (
+                           EXISTS (
+                               SELECT 1 FROM chain_payment_attempts attempt
+                               WHERE attempt.settlement_kind = 'bundle'
+                                 AND attempt.quote_id = pbq.id
+                           )
+                           OR pbq.status NOT IN ('balance_refunded', 'deleted')
+                       )
+                 ) THEN RAISE(ABORT, 'document purchase is reserved by a research bundle') END;
+                 SELECT CASE WHEN NOT EXISTS (
+                     SELECT 1 FROM payment_quotes
+                     WHERE id = NEW.quote_id AND payment_rail = 'pay_sh'
+                 ) THEN RAISE(ABORT, 'document payment rail conflict') END;
+             END;",
+        )?;
+        return Ok(());
+    }
+
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_guard_bundle_document_reservation()
+         RETURNS trigger LANGUAGE plpgsql AS $body$
+         DECLARE target_query_id TEXT;
+         BEGIN
+             SELECT query_id INTO target_query_id
+             FROM payment_bundle_quotes WHERE id = NEW.quote_id;
+             PERFORM id FROM queries WHERE id = target_query_id FOR UPDATE;
+             IF EXISTS (
+                 SELECT 1 FROM payment_bundle_quotes existing
+                 JOIN payment_bundle_documents document
+                   ON document.quote_id = existing.id
+                  AND document.document_handle = NEW.document_handle
+                 WHERE existing.query_id = target_query_id
+                   AND existing.id <> NEW.quote_id
+                   AND (
+                       EXISTS (
+                           SELECT 1 FROM chain_payment_attempts attempt
+                           WHERE attempt.settlement_kind = 'bundle'
+                             AND attempt.quote_id = existing.id
+                       )
+                       OR existing.status NOT IN ('balance_refunded', 'deleted')
+                   )
+             ) THEN
+                 RAISE EXCEPTION 'document is reserved by another research bundle'
+                     USING ERRCODE = '23505';
+             END IF;
+             IF EXISTS (
+                 SELECT 1 FROM payment_quotes quote
+                 WHERE quote.query_id = target_query_id
+                   AND quote.document_handle = NEW.document_handle
+                   AND (
+                       quote.payment_rail IS NOT NULL
+                       OR quote.status NOT IN ('quoted', 'deleted')
+                       OR (quote.status = 'quoted' AND quote.expires_at >
+                           floor(extract(epoch from clock_timestamp()) * 1000)::bigint)
+                       OR EXISTS (
+                           SELECT 1 FROM chain_payment_attempts attempt
+                           WHERE attempt.settlement_kind = 'document'
+                             AND attempt.quote_id = quote.id
+                       )
+                       OR EXISTS (
+                           SELECT 1 FROM pay_sh_quote_fences fence
+                           WHERE fence.quote_id = quote.id
+                       )
+                   )
+             ) THEN
+                 RAISE EXCEPTION 'document already has a direct payment reservation'
+                     USING ERRCODE = '23505';
+             END IF;
+             RETURN NEW;
+         END
+         $body$",
+        params![],
+    )?;
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_guard_bundle_document_identity()
+         RETURNS trigger LANGUAGE plpgsql AS $body$
+         BEGIN
+             IF NEW.quote_id <> OLD.quote_id OR NEW.document_id <> OLD.document_id
+                OR NEW.document_handle <> OLD.document_handle THEN
+                 RAISE EXCEPTION 'bundle document identity is immutable'
+                     USING ERRCODE = '23514';
+             END IF;
+             RETURN NEW;
+         END
+         $body$",
+        params![],
+    )?;
+    connection.execute(
+        "DROP TRIGGER IF EXISTS guard_bundle_document_reservation
+         ON payment_bundle_documents",
+        params![],
+    )?;
+    connection.execute(
+        "CREATE TRIGGER guard_bundle_document_reservation
+         BEFORE INSERT ON payment_bundle_documents
+         FOR EACH ROW EXECUTE FUNCTION openshelf_guard_bundle_document_reservation()",
+        params![],
+    )?;
+    connection.execute(
+        "DROP TRIGGER IF EXISTS guard_bundle_document_identity
+         ON payment_bundle_documents",
+        params![],
+    )?;
+    connection.execute(
+        "CREATE TRIGGER guard_bundle_document_identity
+         BEFORE UPDATE OF quote_id, document_id, document_handle
+         ON payment_bundle_documents
+         FOR EACH ROW EXECUTE FUNCTION openshelf_guard_bundle_document_identity()",
+        params![],
+    )?;
+
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_guard_document_x402_payment_rail()
+         RETURNS trigger LANGUAGE plpgsql AS $body$
+         BEGIN
+             UPDATE payment_quotes SET payment_rail = 'x402'
+             WHERE id = NEW.quote_id AND payment_rail IS NULL;
+             IF EXISTS (
+                 SELECT 1 FROM payment_quotes quote
+                 JOIN payment_bundle_quotes pbq ON pbq.query_id = quote.query_id
+                 JOIN payment_bundle_documents pbd
+                   ON pbd.quote_id = pbq.id
+                  AND pbd.document_handle = quote.document_handle
+                 WHERE quote.id = NEW.quote_id
+                   AND (
+                       EXISTS (
+                           SELECT 1 FROM chain_payment_attempts attempt
+                           WHERE attempt.settlement_kind = 'bundle'
+                             AND attempt.quote_id = pbq.id
+                       )
+                       OR pbq.status NOT IN ('balance_refunded', 'deleted')
+                   )
+             ) THEN
+                 RAISE EXCEPTION 'document purchase is reserved by a research bundle'
+                     USING ERRCODE = '23505';
+             END IF;
+             IF NOT EXISTS (
+                 SELECT 1 FROM payment_quotes
+                 WHERE id = NEW.quote_id AND payment_rail = 'x402'
+             ) THEN
+                 RAISE EXCEPTION 'document payment rail conflict'
+                     USING ERRCODE = '23505';
+             END IF;
+             RETURN NEW;
+         END
+         $body$",
+        params![],
+    )?;
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_guard_pay_sh_payment_rail()
+         RETURNS trigger LANGUAGE plpgsql AS $body$
+         DECLARE target_quote_id TEXT;
+         BEGIN
+             IF NEW.mode <> 'pay_sh_mpp_direct' THEN
+                 RETURN NEW;
+             END IF;
+             IF left(NEW.transaction_signature, 7) <> 'pay.sh:' THEN
+                 RAISE EXCEPTION 'document payment rail conflict'
+                     USING ERRCODE = '23505';
+             END IF;
+             target_quote_id := substring(NEW.transaction_signature FROM 8);
+             UPDATE payment_quotes SET payment_rail = 'pay_sh'
+             WHERE id = target_quote_id AND payment_rail IS NULL;
+             IF EXISTS (
+                 SELECT 1 FROM payment_quotes quote
+                 JOIN payment_bundle_quotes pbq ON pbq.query_id = quote.query_id
+                 JOIN payment_bundle_documents pbd
+                   ON pbd.quote_id = pbq.id
+                  AND pbd.document_handle = quote.document_handle
+                 WHERE quote.id = target_quote_id
+                   AND (
+                       EXISTS (
+                           SELECT 1 FROM chain_payment_attempts attempt
+                           WHERE attempt.settlement_kind = 'bundle'
+                             AND attempt.quote_id = pbq.id
+                       )
+                       OR pbq.status NOT IN ('balance_refunded', 'deleted')
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM pay_sh_quote_fences fence
+                       WHERE fence.quote_id = quote.id
+                         AND fence.attempt_kind = 'research'
+                   )
+             ) THEN
+                 RAISE EXCEPTION 'document purchase is reserved by a research bundle'
+                     USING ERRCODE = '23505';
+             END IF;
+             IF NOT EXISTS (
+                 SELECT 1 FROM payment_quotes
+                 WHERE id = target_quote_id AND payment_rail = 'pay_sh'
+             ) THEN
+                 RAISE EXCEPTION 'document payment rail conflict'
+                     USING ERRCODE = '23505';
+             END IF;
+             RETURN NEW;
+         END
+         $body$",
+        params![],
+    )?;
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_guard_direct_pay_sh_payment_rail()
+         RETURNS trigger LANGUAGE plpgsql AS $body$
+         BEGIN
+             UPDATE payment_quotes SET payment_rail = 'pay_sh'
+             WHERE id = NEW.quote_id AND payment_rail IS NULL;
+             IF EXISTS (
+                 SELECT 1 FROM payment_quotes quote
+                 JOIN payment_bundle_quotes pbq ON pbq.query_id = quote.query_id
+                 JOIN payment_bundle_documents pbd
+                   ON pbd.quote_id = pbq.id
+                  AND pbd.document_handle = quote.document_handle
+                 WHERE quote.id = NEW.quote_id
+                   AND (
+                       EXISTS (
+                           SELECT 1 FROM chain_payment_attempts attempt
+                           WHERE attempt.settlement_kind = 'bundle'
+                             AND attempt.quote_id = pbq.id
+                       )
+                       OR pbq.status NOT IN ('balance_refunded', 'deleted')
+                   )
+             ) THEN
+                 RAISE EXCEPTION 'document purchase is reserved by a research bundle'
+                     USING ERRCODE = '23505';
+             END IF;
+             IF NOT EXISTS (
+                 SELECT 1 FROM payment_quotes
+                 WHERE id = NEW.quote_id AND payment_rail = 'pay_sh'
+             ) THEN
+                 RAISE EXCEPTION 'document payment rail conflict'
+                     USING ERRCODE = '23505';
+             END IF;
+             RETURN NEW;
+         END
+         $body$",
+        params![],
+    )?;
+    for table in ["chain_payment_attempts", "chain_settlements"] {
+        let trigger = format!("guard_{table}_payment_rail");
+        connection.execute(
+            &format!("DROP TRIGGER IF EXISTS {trigger} ON {table}"),
+            params![],
+        )?;
+        let when = if table == "chain_payment_attempts" {
+            " WHEN (NEW.settlement_kind = 'document')"
+        } else {
+            ""
+        };
+        connection.execute(
+            &format!(
+                "CREATE TRIGGER {trigger}
+                 BEFORE INSERT ON {table}
+                 FOR EACH ROW{when} EXECUTE FUNCTION
+                 openshelf_guard_document_x402_payment_rail()"
+            ),
+            params![],
+        )?;
+    }
+    connection.execute(
+        "DROP TRIGGER IF EXISTS guard_pay_sh_settlement_payment_rail ON settlements",
+        params![],
+    )?;
+    connection.execute(
+        "CREATE TRIGGER guard_pay_sh_settlement_payment_rail
+         BEFORE INSERT ON settlements
+         FOR EACH ROW WHEN (NEW.mode = 'pay_sh_mpp_direct')
+         EXECUTE FUNCTION openshelf_guard_pay_sh_payment_rail()",
+        params![],
+    )?;
+    connection.execute(
+        "DROP TRIGGER IF EXISTS guard_direct_pay_sh_attempt_payment_rail
+         ON direct_pay_sh_attempts",
+        params![],
+    )?;
+    connection.execute(
+        "CREATE TRIGGER guard_direct_pay_sh_attempt_payment_rail
+         BEFORE INSERT ON direct_pay_sh_attempts
+         FOR EACH ROW EXECUTE FUNCTION openshelf_guard_direct_pay_sh_payment_rail()",
+        params![],
+    )?;
+    Ok(())
+}
+
+fn require_no_rollback_recovery_holds(connection: &Connection) -> Result<(), StoreError> {
+    let blocked = connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM rollback_recovery_holds WHERE resolved_at IS NULL
+         )",
+        params![],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if blocked {
+        return Err(StoreError::Conflict(
+            "rollback recovery is holding new external side effects until receipt reconciliation"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// Keep the recovery stop durable in the restored database. Application checks
+/// provide a useful conflict response, while these triggers also stop an old
+/// revision that predates the hold feature or races the sweep transaction.
+/// Completion and reconciliation mutations are deliberately outside the
+/// trigger set so an already-started transfer can still converge while held.
+pub(crate) fn install_rollback_recovery_schema(connection: &Connection) -> Result<(), StoreError> {
+    ensure_rollback_recovery_table(connection)?;
+    install_rollback_recovery_guards(connection)
+}
+
+pub(crate) fn ensure_rollback_recovery_table(connection: &Connection) -> Result<(), StoreError> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS rollback_recovery_holds (
+             hold_id TEXT PRIMARY KEY,
+             recovery_id TEXT NOT NULL,
+             object_name TEXT NOT NULL,
+             intent_kind TEXT NOT NULL CHECK (
+                 intent_kind IN ('window', 'payment', 'model')
+             ),
+             rail TEXT NOT NULL,
+             operation TEXT NOT NULL,
+             event_id TEXT NOT NULL,
+             audit_created_at INTEGER NOT NULL,
+             reason TEXT NOT NULL,
+             created_at INTEGER NOT NULL,
+             resolved_at INTEGER,
+             resolution_evidence TEXT,
+             CHECK (
+                 (resolved_at IS NULL AND resolution_evidence IS NULL)
+                 OR (resolved_at IS NOT NULL AND resolution_evidence IS NOT NULL)
+             ),
+             UNIQUE(recovery_id, object_name)
+         );
+         CREATE INDEX IF NOT EXISTS idx_rollback_recovery_holds_unresolved
+             ON rollback_recovery_holds(resolved_at, recovery_id);",
+    )?;
+    Ok(())
+}
+
+pub(crate) fn install_rollback_recovery_guards(connection: &Connection) -> Result<(), StoreError> {
+    ensure_chain_attempt_evidence_schema(connection)?;
+    if connection.is_sqlite() {
+        connection.execute_batch(
+            "DROP TRIGGER IF EXISTS guard_chain_payment_rollback_recovery;
+             CREATE TRIGGER guard_chain_payment_rollback_recovery
+             BEFORE INSERT ON chain_payment_attempts
+             WHEN EXISTS (
+                 SELECT 1 FROM rollback_recovery_holds WHERE resolved_at IS NULL
+             )
+             BEGIN
+                 SELECT RAISE(ABORT, 'rollback recovery blocks new external side effects');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_direct_pay_sh_rollback_recovery;
+             CREATE TRIGGER guard_direct_pay_sh_rollback_recovery
+             BEFORE INSERT ON direct_pay_sh_attempts
+             WHEN EXISTS (
+                 SELECT 1 FROM rollback_recovery_holds WHERE resolved_at IS NULL
+             )
+             BEGIN
+                 SELECT RAISE(ABORT, 'rollback recovery blocks new external side effects');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_research_pay_sh_rollback_recovery;
+             CREATE TRIGGER guard_research_pay_sh_rollback_recovery
+             BEFORE UPDATE OF status ON research_payment_attempts
+             WHEN OLD.status <> 'prepared' AND NEW.status = 'prepared'
+               AND EXISTS (
+                   SELECT 1 FROM rollback_recovery_holds WHERE resolved_at IS NULL
+               )
+             BEGIN
+                 SELECT RAISE(ABORT, 'rollback recovery blocks new external side effects');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_payout_rollback_recovery;
+             CREATE TRIGGER guard_payout_rollback_recovery
+             BEFORE UPDATE OF status ON payout_claims
+             WHEN OLD.status <> 'prepared' AND NEW.status = 'prepared'
+               AND EXISTS (
+                   SELECT 1 FROM rollback_recovery_holds WHERE resolved_at IS NULL
+               )
+             BEGIN
+                 SELECT RAISE(ABORT, 'rollback recovery blocks new external side effects');
+             END;
+
+             DROP TRIGGER IF EXISTS guard_ai_generation_rollback_recovery;
+             CREATE TRIGGER guard_ai_generation_rollback_recovery
+             BEFORE INSERT ON ai_generation_attempts
+             WHEN EXISTS (
+                 SELECT 1 FROM rollback_recovery_holds WHERE resolved_at IS NULL
+             )
+             BEGIN
+                 SELECT RAISE(ABORT, 'rollback recovery blocks new external side effects');
+             END;",
+        )?;
+        return Ok(());
+    }
+
+    connection.execute(
+        "CREATE OR REPLACE FUNCTION openshelf_guard_rollback_recovery_hold()
+         RETURNS trigger LANGUAGE plpgsql AS $body$
+         BEGIN
+             IF EXISTS (
+                 SELECT 1 FROM rollback_recovery_holds WHERE resolved_at IS NULL
+             ) THEN
+                 RAISE EXCEPTION 'rollback recovery blocks new external side effects'
+                     USING ERRCODE = '55000';
+             END IF;
+             RETURN NEW;
+         END
+         $body$",
+        params![],
+    )?;
+    for (trigger, table, event, condition) in [
+        (
+            "guard_chain_payment_rollback_recovery",
+            "chain_payment_attempts",
+            "INSERT",
+            "",
+        ),
+        (
+            "guard_direct_pay_sh_rollback_recovery",
+            "direct_pay_sh_attempts",
+            "INSERT",
+            "",
+        ),
+        (
+            "guard_research_pay_sh_rollback_recovery",
+            "research_payment_attempts",
+            "UPDATE OF status",
+            " WHEN (OLD.status <> 'prepared' AND NEW.status = 'prepared')",
+        ),
+        (
+            "guard_payout_rollback_recovery",
+            "payout_claims",
+            "UPDATE OF status",
+            " WHEN (OLD.status <> 'prepared' AND NEW.status = 'prepared')",
+        ),
+        (
+            "guard_ai_generation_rollback_recovery",
+            "ai_generation_attempts",
+            "INSERT",
+            "",
+        ),
+    ] {
+        connection.execute(
+            &format!("DROP TRIGGER IF EXISTS {trigger} ON {table}"),
+            params![],
+        )?;
+        connection.execute(
+            &format!(
+                "CREATE TRIGGER {trigger} BEFORE {event} ON {table}
+                 FOR EACH ROW{condition}
+                 EXECUTE FUNCTION openshelf_guard_rollback_recovery_hold()"
+            ),
+            params![],
+        )?;
+    }
+    Ok(())
+}
+
 fn backfill_bundle_payout_claims(connection: &Connection) -> Result<(), StoreError> {
     #[allow(clippy::type_complexity)]
     let rows = {
@@ -9526,7 +16816,7 @@ fn load_call(transaction: &Transaction<'_>, id: &str) -> Result<StoredCall, Stor
                     escrow_remaining_krw, status, escrow_mode, escrow_wallet,
                     escrow_asset, escrow_network, escrow_total_atomic,
                     escrow_remaining_atomic, funding_transaction_signature, payer_wallet
-             FROM open_calls WHERE id = ?1",
+             FROM open_calls WHERE id = ?1 /*FOR_UPDATE*/",
             [id],
             stored_call_from_row,
         )
@@ -9819,9 +17109,22 @@ fn sha256_hex(value: &str) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+fn ai_generation_attempt_limit(artifact_kind: &str) -> Option<u64> {
+    match artifact_kind {
+        "baseline" => Some(AI_BASELINE_GENERATION_LIMIT),
+        "shelf_starters" => Some(AI_SHELF_STARTER_GENERATION_LIMIT),
+        "synthesis" => Some(AI_SYNTHESIS_GENERATION_LIMIT),
+        _ => None,
+    }
+}
+
 fn hex_digest(value: &[u8]) -> String {
     let digest = Sha256::digest(value);
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn pay_sh_settlement_id(quote_id: &str) -> String {
+    format!("settlement_pay_sh_{}", hex_digest(quote_id.as_bytes()))
 }
 
 fn validate_payment_policy(policy: &PaymentQuotePolicy) -> Result<(), StoreError> {
@@ -9872,6 +17175,434 @@ fn validate_chain_settlement_request(
             "payer and payTo must be base58 Solana public keys".to_owned(),
         ));
     }
+    Ok(())
+}
+
+fn matching_chain_payment_attempt(
+    transaction: &Transaction<'_>,
+    request: &ClaimPaymentAttemptRequest,
+) -> Result<Option<PaymentAttemptFence>, StoreError> {
+    let existing = transaction
+        .query_row(
+            "SELECT attempt_id, payer_wallet, signed_transaction_base64,
+                    recent_blockhash, reconcile_after
+             FROM chain_payment_attempts
+             WHERE settlement_kind = ?1 AND quote_id = ?2",
+            params![request.settlement_kind, request.quote_id.trim()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    as_u64(row.get(4)?)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((attempt_id, payer, signed_transaction, recent_blockhash, reconcile_after)) = existing
+    else {
+        return Ok(None);
+    };
+    if attempt_id != request.attempt_id
+        || payer.as_deref() != request.payer.as_deref()
+        || signed_transaction.as_deref() != request.signed_transaction_base64.as_deref()
+        || recent_blockhash.as_deref() != request.recent_blockhash.as_deref()
+    {
+        return Err(StoreError::Conflict(
+            "this payment resource already has a different verified payment in progress".to_owned(),
+        ));
+    }
+    Ok(Some(PaymentAttemptFence {
+        settlement_kind: request.settlement_kind.clone(),
+        quote_id: request.quote_id.trim().to_owned(),
+        attempt_id,
+        reconcile_after,
+    }))
+}
+
+fn validate_payment_attempt_request(
+    request: &ClaimPaymentAttemptRequest,
+) -> Result<(), StoreError> {
+    if !matches!(
+        request.settlement_kind.as_str(),
+        "document" | "bundle" | "open_call"
+    ) {
+        return Err(StoreError::Validation(
+            "settlementKind must be document, bundle, or open_call".to_owned(),
+        ));
+    }
+    if request.quote_id.trim().is_empty() || request.quote_id.len() > 160 {
+        return Err(StoreError::Validation(
+            "quoteId must be between 1 and 160 characters".to_owned(),
+        ));
+    }
+    validate_attempt_id(&request.attempt_id)?;
+    match (
+        request.payer.as_deref(),
+        request.signed_transaction_base64.as_deref(),
+        request.recent_blockhash.as_deref(),
+    ) {
+        (None, None, None) => {
+            return Err(StoreError::Validation(
+                "new payment attempts require exact x402 chain evidence".to_owned(),
+            ));
+        }
+        (Some(payer), Some(signed_transaction), Some(recent_blockhash)) => {
+            if !valid_solana_address(payer)
+                || !valid_solana_address(recent_blockhash)
+                || signed_transaction != signed_transaction.trim()
+            {
+                return Err(StoreError::Validation(
+                    "payment attempt chain evidence is invalid".to_owned(),
+                ));
+            }
+            let transaction = BASE64_STANDARD.decode(signed_transaction).map_err(|_| {
+                StoreError::Validation(
+                    "payment attempt transaction must be canonical base64".to_owned(),
+                )
+            })?;
+            if !(100..=2_048).contains(&transaction.len())
+                || hex_digest(signed_transaction.as_bytes()) != request.attempt_id
+                || !valid_x402_prepared_transaction(&transaction)
+            {
+                return Err(StoreError::Validation(
+                    "payment attempt transaction is not the exact partially signed x402 payload or does not match its attempt id"
+                        .to_owned(),
+                ));
+            }
+        }
+        _ => {
+            return Err(StoreError::Validation(
+                "payment attempt chain evidence must be complete".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_attempt_id(attempt_id: &str) -> Result<(), StoreError> {
+    if attempt_id.len() != 64
+        || !attempt_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(StoreError::Validation(
+            "attemptId must be a SHA-256 hex digest".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_research_attempt_id(attempt_id: &str) -> Result<(), StoreError> {
+    validate_attempt_id(attempt_id).map_err(|_| {
+        StoreError::Validation(
+            "research payment attempt id must be 32 bytes of lowercase hex".to_owned(),
+        )
+    })
+}
+
+fn solana_transaction_signatures(transaction: &[u8]) -> Option<&[u8]> {
+    let mut signature_count = 0_usize;
+    let mut shift = 0_u32;
+    let mut offset = 0_usize;
+    let mut terminated = false;
+    for byte in transaction.iter().copied().take(3) {
+        signature_count |= usize::from(byte & 0x7f).checked_shl(shift)?;
+        offset += 1;
+        if byte & 0x80 == 0 {
+            terminated = true;
+            break;
+        }
+        shift += 7;
+    }
+    if !terminated || signature_count == 0 || signature_count > 64 {
+        return None;
+    }
+    let signature_bytes = signature_count.checked_mul(64)?;
+    let message_offset = offset.checked_add(signature_bytes)?;
+    if message_offset >= transaction.len() {
+        return None;
+    }
+    transaction.get(offset..message_offset)
+}
+
+pub(crate) fn valid_x402_prepared_transaction(transaction: &[u8]) -> bool {
+    let Some(signatures) = solana_transaction_signatures(transaction) else {
+        return false;
+    };
+    let mut signatures = signatures.chunks_exact(64);
+    let Some(fee_payer) = signatures.next() else {
+        return false;
+    };
+    fee_payer.iter().all(|byte| *byte == 0)
+        && signatures.len() >= 1
+        && signatures.all(|signature| signature.iter().any(|byte| *byte != 0))
+}
+
+pub(crate) fn fully_signed_solana_transaction_signature(transaction: &[u8]) -> Option<String> {
+    let signatures = solana_transaction_signatures(transaction)?;
+    if signatures
+        .chunks_exact(64)
+        .any(|signature| signature.iter().all(|byte| *byte == 0))
+    {
+        return None;
+    }
+    Some(bs58::encode(signatures.get(..64)?).into_string())
+}
+
+fn verify_chain_payment_attempt(
+    transaction: &Transaction<'_>,
+    settlement_kind: &str,
+    quote_id: &str,
+    attempt_id: Option<&str>,
+    active_required: bool,
+) -> Result<Option<String>, StoreError> {
+    if let Some(attempt_id) = attempt_id {
+        validate_attempt_id(attempt_id)?;
+    }
+    let active_attempt = transaction
+        .query_row(
+            "SELECT attempt_id, signed_transaction_base64, legacy_evidence
+             FROM chain_payment_attempts
+             WHERE settlement_kind = ?1 AND quote_id = ?2",
+            params![settlement_kind, quote_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, i64>(2)? != 0,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((active_attempt_id, signed_transaction, legacy_evidence)) = active_attempt else {
+        if active_required {
+            return Err(StoreError::Conflict(
+                "settlement has no active signed payment attempt".to_owned(),
+            ));
+        }
+        return Ok(None);
+    };
+    if Some(active_attempt_id.as_str()) != attempt_id {
+        return Err(StoreError::Conflict(
+            "settlement does not match the active payment attempt".to_owned(),
+        ));
+    }
+    if legacy_evidence {
+        // Rows explicitly tagged during the one-time migration predate exact
+        // prepared-transaction persistence. A new/stale writer cannot create
+        // this shape because the database trigger requires legacy_evidence=0
+        // plus complete evidence. The trusted settlement endpoint may still
+        // converge an already-landed legacy transfer, but the restore sweep
+        // will require external reconciliation because no exact snapshot exists.
+        return Ok(None);
+    }
+    let Some(signed_transaction) = signed_transaction else {
+        if !active_required {
+            // An exact idempotent settlement replay may clean a stale fence
+            // written by a pre-evidence revision. It cannot authorize a new
+            // transfer because the settlement already exists.
+            return Ok(None);
+        }
+        return Err(StoreError::Conflict(
+            "active payment attempt has no signed transaction evidence".to_owned(),
+        ));
+    };
+    let bytes = BASE64_STANDARD.decode(&signed_transaction).map_err(|_| {
+        StoreError::Conflict("active payment attempt has invalid transaction evidence".to_owned())
+    })?;
+    if !valid_x402_prepared_transaction(&bytes)
+        || hex_digest(signed_transaction.as_bytes()) != active_attempt_id
+    {
+        return Err(StoreError::Conflict(
+            "active payment attempt does not contain the exact prepared x402 transaction"
+                .to_owned(),
+        ));
+    }
+    Ok(Some(signed_transaction))
+}
+
+fn lock_chain_payment_quote(
+    transaction: &Transaction<'_>,
+    settlement_kind: &str,
+    quote_id: &str,
+) -> Result<(), StoreError> {
+    let locked = match settlement_kind {
+        "document" => transaction
+            .query_row(
+                "SELECT id FROM payment_quotes WHERE id = ?1 /*FOR_UPDATE*/",
+                [quote_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?,
+        "bundle" => transaction
+            .query_row(
+                "SELECT id FROM payment_bundle_quotes WHERE id = ?1 /*FOR_UPDATE*/",
+                [quote_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?,
+        "open_call" => transaction
+            .query_row(
+                "SELECT id FROM open_call_funding_quotes WHERE id = ?1 /*FOR_UPDATE*/",
+                [quote_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?,
+        _ => {
+            return Err(StoreError::Validation("unknown settlement kind".to_owned()));
+        }
+    };
+    if locked.is_none() {
+        return Err(StoreError::NotFound("payment quote"));
+    }
+    Ok(())
+}
+
+fn bind_document_payment_rail(
+    transaction: &Transaction<'_>,
+    quote_id: &str,
+    payment_rail: &str,
+) -> Result<(), StoreError> {
+    if !matches!(payment_rail, "x402" | "pay_sh") {
+        return Err(StoreError::Validation(
+            "unknown document payment rail".to_owned(),
+        ));
+    }
+    let (query_id, document_id) = transaction
+        .query_row(
+            "SELECT query_id, document_id FROM payment_quotes WHERE id = ?1",
+            [quote_id.trim()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?
+        .ok_or(StoreError::NotFound("payment quote"))?;
+    // Use the parent search row as the purchase-level mutex. This also covers
+    // legacy databases that may already contain more than one unexpired quote
+    // row for the same query/document pair.
+    transaction.query_row(
+        "SELECT id FROM queries WHERE id = ?1 /*FOR_UPDATE*/",
+        [&query_id],
+        |row| row.get::<_, String>(0),
+    )?;
+    let current = transaction.query_row(
+        "SELECT payment_rail FROM payment_quotes
+         WHERE id = ?1 /*FOR_UPDATE*/",
+        [quote_id.trim()],
+        |row| row.get::<_, Option<String>>(0),
+    )?;
+    if let Some(current) = current.as_deref() {
+        if current != payment_rail {
+            return Err(StoreError::Conflict(format!(
+                "this document quote is already reserved for {current} payment"
+            )));
+        }
+        return Ok(());
+    }
+
+    let other_reserved_quote = transaction
+        .query_row(
+            "SELECT id FROM payment_quotes
+             WHERE query_id = ?1 AND document_id = ?2 AND id <> ?3
+               AND payment_rail IS NOT NULL LIMIT 1",
+            params![query_id, document_id, quote_id.trim()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if other_reserved_quote.is_some() {
+        return Err(StoreError::Conflict(
+            "this query/document purchase is already reserved by another quote".to_owned(),
+        ));
+    }
+
+    let opposite_payment_exists = if payment_rail == "x402" {
+        transaction
+            .query_row(
+                "SELECT 1 FROM settlements
+                 WHERE mode = 'pay_sh_mpp_direct'
+                   AND transaction_signature = 'pay.sh:' || ?1 LIMIT 1",
+                [quote_id.trim()],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some()
+    } else {
+        transaction
+            .query_row(
+                "SELECT 1
+                 WHERE EXISTS (
+                     SELECT 1 FROM chain_settlements WHERE quote_id = ?1
+                 ) OR EXISTS (
+                     SELECT 1 FROM chain_payment_attempts
+                     WHERE settlement_kind = 'document' AND quote_id = ?1
+                 )",
+                [quote_id.trim()],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some()
+    };
+    if opposite_payment_exists {
+        return Err(StoreError::Conflict(
+            "this document quote already has activity on the other payment rail".to_owned(),
+        ));
+    }
+
+    let changed = transaction.execute(
+        "UPDATE payment_quotes SET payment_rail = ?1
+         WHERE id = ?2 AND payment_rail IS NULL",
+        params![payment_rail, quote_id.trim()],
+    )?;
+    if changed != 1 {
+        return Err(StoreError::Conflict(
+            "this document quote was reserved by another payment rail".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn claim_chain_transaction(
+    transaction: &Transaction<'_>,
+    signature: &str,
+    settlement_kind: &str,
+    quote_id: &str,
+) -> Result<(), StoreError> {
+    let claimed = transaction.execute(
+        "INSERT OR IGNORE INTO chain_transaction_registry
+         (transaction_signature, settlement_kind, quote_id, created_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![signature, settlement_kind, quote_id, as_i64(now_ms())?],
+    )?;
+    if claimed == 0
+        && transaction
+            .query_row(
+                "SELECT 1 FROM chain_transaction_registry
+                 WHERE transaction_signature = ?1
+                   AND settlement_kind = ?2 AND quote_id = ?3",
+                params![signature, settlement_kind, quote_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_none()
+    {
+        return Err(StoreError::Conflict(
+            "this transaction signature has already been recorded".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn clear_payment_attempt(
+    transaction: &Transaction<'_>,
+    settlement_kind: &str,
+    quote_id: &str,
+) -> Result<(), StoreError> {
+    transaction.execute(
+        "DELETE FROM chain_payment_attempts
+         WHERE settlement_kind = ?1 AND quote_id = ?2",
+        params![settlement_kind, quote_id],
+    )?;
     Ok(())
 }
 
@@ -10078,8 +17809,13 @@ fn seed_memory(transaction: &Transaction<'_>) -> Result<(), StoreError> {
 }
 
 fn new_id(prefix: &str) -> String {
-    let counter = ID_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("{prefix}_{:x}_{counter:x}", now_ms())
+    let mut entropy = [0_u8; 16];
+    OsRng.fill_bytes(&mut entropy);
+    let suffix = entropy
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("{prefix}_{suffix}")
 }
 
 fn handle_from_id(id: &str) -> String {
@@ -10105,11 +17841,7 @@ fn slug(value: &str) -> String {
 }
 
 fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time is before the Unix epoch")
-        .as_millis()
-        .min(u64::MAX as u128) as u64
+    monotonic_unix_time_ms()
 }
 
 fn as_i64(value: u64) -> Result<i64, StoreError> {
@@ -10155,26 +17887,189 @@ fn valid_email(email: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{
+        collections::HashSet,
+        path::PathBuf,
+        sync::{Arc, Barrier},
+    };
 
+    use base64::Engine as _;
     use ed25519_dalek::{Signer, SigningKey};
 
     use crate::{
         domain::{
-            AiBaselineDraft, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
+            AiBaselineDraft, BeginResearchPaymentRequest, BindPayShChallengesRequest,
+            ClaimPaymentAttemptRequest, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
             CreateOpenCallRequest, CreatePaymentBundleRequest, Decision, EvidenceContribution,
-            InterviewResponse, LiquidityState, RecordChainSettlementRequest,
-            ResolveQuestionRequest, ReviewDisputeRequest, ReviewDocumentFeedbackRequest,
-            SearchFilters, ShelfStarterDraft, SiwxPayload, SubmitAnswerResponse,
-            SubmitDocumentFeedbackRequest, UpdatePreferencesRequest, UpsertProfileRequest,
+            InterviewResponse, LiquidityState, PayShChallengeBindingRequest,
+            PrepareDirectPayShPaymentRequest, PrepareResearchPaymentRequest,
+            RecordChainSettlementRequest, ReleaseResearchPaymentRequest, ResolveQuestionRequest,
+            ReviewDisputeRequest, ReviewDocumentFeedbackRequest, SearchFilters, ShelfStarterDraft,
+            SiwxPayload, SubmitAnswerResponse, SubmitDocumentFeedbackRequest,
+            UpdatePreferencesRequest, UpsertProfileRequest,
         },
-        params, search::Resolver,
+        params,
+        search::Resolver,
     };
 
     use super::{
-        AiArtifactMetadata, LOGIN_FAILURE_LIMIT, PayShDeliveryRequest, PaymentQuotePolicy, Store,
-        StoreError, now_ms, siwx_message,
+        AI_GENERATION_BUDGET_WINDOW_MS, AiArtifactMetadata, AiGenerationClaim, BASE64_STANDARD,
+        BUNDLE_FUNDING_AGENT_DIRECT, LOGIN_FAILURE_LIMIT, PayShDeliveryRequest, PaymentQuotePolicy,
+        Store, StoreError, as_i64, hex_digest, new_id, now_ms, siwx_message,
     };
+
+    #[test]
+    fn generated_ids_use_process_independent_entropy_under_parallel_load() {
+        let workers = (0..8)
+            .map(|_| {
+                std::thread::spawn(|| (0..2_000).map(|_| new_id("parallel")).collect::<Vec<_>>())
+            })
+            .collect::<Vec<_>>();
+        let ids = workers
+            .into_iter()
+            .flat_map(|worker| worker.join().expect("id worker should not panic"))
+            .collect::<Vec<_>>();
+        assert_eq!(ids.len(), 16_000);
+        assert_eq!(ids.iter().collect::<HashSet<_>>().len(), ids.len());
+        assert!(ids.iter().all(|id| {
+            id.strip_prefix("parallel_").is_some_and(|suffix| {
+                suffix.len() == 32
+                    && suffix
+                        .chars()
+                        .all(|character| character.is_ascii_hexdigit())
+            })
+        }));
+    }
+
+    fn prepare_research_attempt(
+        store: &Store,
+        job_id: &str,
+        resource: &crate::domain::PayShResource,
+        attempt_id: &str,
+    ) -> String {
+        let payer = bs58::encode(SigningKey::from_bytes(&[92; 32]).verifying_key().as_bytes())
+            .into_string();
+        let blockhash = bs58::encode(SigningKey::from_bytes(&[91; 32]).verifying_key().as_bytes())
+            .into_string();
+        let signature_byte = attempt_id.as_bytes()[0];
+        let mut transaction = vec![42_u8; 180];
+        transaction[0] = 1;
+        transaction[1..65].fill(signature_byte);
+        let transaction_signature = bs58::encode(&transaction[1..65]).into_string();
+        let challenge_id = format!("challenge-{attempt_id}");
+        let external_id = format!("human-document-krw-{}#9af", resource.price_krw);
+        let challenge_expires_at = now_ms() + 60_000;
+        store
+            .bind_pay_sh_challenges(
+                &BindPayShChallengesRequest {
+                    quote_id: resource.quote_id.clone(),
+                    query_id: resource.query_id.clone(),
+                    document_handle: resource.document_handle.clone(),
+                    path_price_krw: resource.price_krw,
+                    owner_wallet: resource.recipient_wallet.clone(),
+                    research_job_id: Some(job_id.to_owned()),
+                    payment_attempt_id: Some(attempt_id.to_owned()),
+                    challenges: vec![PayShChallengeBindingRequest {
+                        challenge_id: challenge_id.clone(),
+                        external_id: external_id.clone(),
+                        challenge_expires_at,
+                    }],
+                },
+                None,
+            )
+            .unwrap();
+        store
+            .prepare_research_payment(
+                job_id,
+                attempt_id,
+                &PrepareResearchPaymentRequest {
+                    quote_id: resource.quote_id.clone(),
+                    payer,
+                    platform_recipient_wallet: resource.recipient_wallet.clone(),
+                    challenge_id,
+                    external_id,
+                    signed_transaction_base64: BASE64_STANDARD.encode(transaction),
+                    recent_blockhash: blockhash,
+                    challenge_expires_at,
+                },
+            )
+            .unwrap();
+        transaction_signature
+    }
+
+    fn bind_direct_challenge(
+        store: &Store,
+        resource: &crate::domain::PayShResource,
+        token_hash: &str,
+        challenge_id: &str,
+        external_id: &str,
+        challenge_expires_at: u64,
+    ) {
+        store
+            .bind_pay_sh_challenges(
+                &BindPayShChallengesRequest {
+                    quote_id: resource.quote_id.clone(),
+                    query_id: resource.query_id.clone(),
+                    document_handle: resource.document_handle.clone(),
+                    path_price_krw: resource.price_krw,
+                    owner_wallet: resource.recipient_wallet.clone(),
+                    research_job_id: None,
+                    payment_attempt_id: None,
+                    challenges: vec![PayShChallengeBindingRequest {
+                        challenge_id: challenge_id.to_owned(),
+                        external_id: external_id.to_owned(),
+                        challenge_expires_at,
+                    }],
+                },
+                Some(token_hash),
+            )
+            .unwrap();
+    }
+
+    fn signed_transaction_fixture(
+        signature_byte: u8,
+        signature_count: usize,
+        length: usize,
+    ) -> Vec<u8> {
+        assert!((1..=64).contains(&signature_count));
+        assert!(length > 1 + signature_count * 64);
+        let mut transaction = vec![42_u8; length];
+        transaction[0] = signature_count as u8;
+        transaction[1..1 + signature_count * 64].fill(signature_byte);
+        transaction
+    }
+
+    fn prepared_x402_transaction_fixture(payer_signature_byte: u8, length: usize) -> Vec<u8> {
+        assert!(length > 1 + 2 * 64);
+        let mut transaction = vec![42_u8; length];
+        transaction[0] = 2;
+        transaction[1..65].fill(0);
+        transaction[65..129].fill(payer_signature_byte);
+        transaction
+    }
+
+    fn signed_chain_attempt_fixture(
+        settlement_kind: &str,
+        quote_id: &str,
+        payer: &str,
+        recent_blockhash: &str,
+        signature_byte: u8,
+    ) -> (ClaimPaymentAttemptRequest, String) {
+        let signed_transaction =
+            BASE64_STANDARD.encode(prepared_x402_transaction_fixture(signature_byte, 180));
+        (
+            ClaimPaymentAttemptRequest {
+                settlement_kind: settlement_kind.to_owned(),
+                quote_id: quote_id.to_owned(),
+                attempt_id: hex_digest(signed_transaction.as_bytes()),
+                payer: Some(payer.to_owned()),
+                signed_transaction_base64: Some(signed_transaction),
+                recent_blockhash: Some(recent_blockhash.to_owned()),
+                absence_observed: false,
+            },
+            bs58::encode([signature_byte; 64]).into_string(),
+        )
+    }
 
     fn create_svalbard_call(store: &Store, owner: &str, target: usize) -> crate::domain::OpenCall {
         ensure_user(store, owner);
@@ -10266,6 +18161,43 @@ mod tests {
         wallet
     }
 
+    fn user_document_payment_fixture(
+        store: &Store,
+        seller_id: &str,
+        wallet_secret: u8,
+    ) -> (String, String, String, PaymentQuotePolicy) {
+        let call = create_svalbard_call(store, "deletion-fixture-buyer", 1);
+        submit(store, &call.id, seller_id, strong_answer()).unwrap();
+        let question = "Which Svalbard winter boots stay warm during field research?";
+        let resolved = Resolver::new(store.documents().unwrap())
+            .resolve(ResolveQuestionRequest {
+                question: question.to_owned(),
+                requested_documents: 1,
+                budget_krw: None,
+                filters: SearchFilters::default(),
+            })
+            .unwrap();
+        let payment_token_hash = hex_digest(format!("{seller_id}-query-capability").as_bytes());
+        store
+            .record_resolution(question, &resolved, Some(&payment_token_hash))
+            .unwrap();
+        let seller_wallet = verify_wallet(store, seller_id, wallet_secret);
+        let policy = PaymentQuotePolicy {
+            fallback_recipient: None,
+            bundle_recipient: Some(seller_wallet),
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
+            krw_per_usdc: 1_350,
+            ttl_ms: 300_000,
+        };
+        (
+            resolved.query_id,
+            resolved.matches[0].handle.clone(),
+            payment_token_hash,
+            policy,
+        )
+    }
+
     fn submit(
         store: &Store,
         call_id: &str,
@@ -10278,7 +18210,12 @@ mod tests {
 
     #[test]
     fn pay_sh_resource_is_quote_bound_recoverable_and_idempotent() {
-        let store = Store::in_memory().unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "openshelf-pay-sh-response-loss-{}-{}.db",
+            std::process::id(),
+            new_id("restart")
+        ));
+        let store = Store::open(&path).unwrap();
         let question = "Where do people who live in Seongsu eat lunch on weekdays?";
         let resolved = Resolver::new(store.documents().unwrap())
             .resolve(ResolveQuestionRequest {
@@ -10318,6 +18255,138 @@ mod tests {
             resource.owner_amount_atomic.parse::<u64>().unwrap() + 1
         );
         assert!(resource.resource_path.contains(&resource.quote_id));
+        assert!(
+            resource
+                .resource_path
+                .starts_with("/api/v2/pay-sh/documents/")
+        );
+        let signed_transaction = {
+            let mut bytes = vec![0_u8; 192];
+            bytes[0] = 2;
+            bytes[65] = 7;
+            BASE64_STANDARD.encode(bytes)
+        };
+        let attempt_id = hex_digest(&BASE64_STANDARD.decode(&signed_transaction).unwrap());
+        let challenge_id = "direct-challenge-1";
+        let external_id = format!("human-document-krw-{}#abc", resource.price_krw);
+        let challenge_expires_at = now_ms() + 60_000;
+        let prepare_request = PrepareDirectPayShPaymentRequest {
+            quote_id: resource.quote_id.clone(),
+            query_id: resource.query_id.clone(),
+            document_handle: resource.document_handle.clone(),
+            path_price_krw: resource.price_krw,
+            owner_wallet: resource.recipient_wallet.clone(),
+            payer: resource.recipient_wallet.clone(),
+            platform_recipient_wallet: resource.recipient_wallet.clone(),
+            challenge_id: challenge_id.to_owned(),
+            external_id: external_id.clone(),
+            signed_transaction_base64: signed_transaction,
+            recent_blockhash: resource.recipient_wallet.clone(),
+            challenge_expires_at,
+        };
+        assert!(matches!(
+            store.prepare_direct_pay_sh_payment(&attempt_id, &prepare_request, &"0".repeat(64),),
+            Err(StoreError::Unauthorized(_))
+        ));
+        assert!(matches!(
+            store.direct_pay_sh_payment_attempt(&attempt_id),
+            Err(StoreError::NotFound("direct Pay.sh payment attempt"))
+        ));
+        assert!(matches!(
+            store.prepare_direct_pay_sh_payment(
+                &attempt_id,
+                &prepare_request,
+                &payment_token_hash,
+            ),
+            Err(StoreError::Conflict(message))
+                if message.contains("challenge was not issued for this quote")
+        ));
+        bind_direct_challenge(
+            &store,
+            &resource,
+            &payment_token_hash,
+            challenge_id,
+            &external_id,
+            challenge_expires_at,
+        );
+        let prepared = store
+            .prepare_direct_pay_sh_payment(&attempt_id, &prepare_request, &payment_token_hash)
+            .unwrap();
+        assert_eq!(prepared.status, "prepared");
+        assert_eq!(
+            prepared.platform_recipient_wallet.as_deref(),
+            Some(resource.recipient_wallet.as_str())
+        );
+        assert!(
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE direct_pay_sh_attempts
+                     SET signed_transaction_base64 = 'different-credential'
+                     WHERE attempt_id = ?1",
+                    [&attempt_id],
+                )
+                .is_err(),
+            "a rolling writer cannot replace externally authorized bytes"
+        );
+        assert!(
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE direct_pay_sh_attempts
+                     SET query_token_hash = ?1 WHERE attempt_id = ?2",
+                    params!["0".repeat(64), attempt_id],
+                )
+                .is_err(),
+            "the purchase capability cannot be rebound after preparation"
+        );
+        assert!(
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE direct_pay_sh_attempts
+                     SET status = 'settled', transaction_signature = ?1,
+                         completed_at = ?2 WHERE attempt_id = ?3",
+                    params!["5".repeat(88), super::as_i64(now_ms()).unwrap(), attempt_id],
+                )
+                .is_err(),
+            "a stale writer cannot hide a charge from reconciliation without the ledger commit"
+        );
+        assert_eq!(
+            store
+                .pay_sh_resource(&resolved.query_id, &handle, &payment_token_hash, &policy)
+                .unwrap()
+                .status,
+            "settling"
+        );
+        let (blocked_x402_attempt, _) = signed_chain_attempt_fixture(
+            "document",
+            &resource.quote_id,
+            "SysvarRent111111111111111111111111111111111",
+            "11111111111111111111111111111111",
+            3,
+        );
+        assert!(matches!(
+            store.claim_payment_attempt(&blocked_x402_attempt),
+            Err(StoreError::Conflict(_))
+        ));
+        // The database guard also fences an older API revision that writes a
+        // chain attempt without understanding payment_rail.
+        assert!(
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "INSERT INTO chain_payment_attempts
+                     (settlement_kind, quote_id, attempt_id, reconcile_after, created_at)
+                     VALUES ('document', ?1, ?2, 0, 0)",
+                    params![resource.quote_id, "c".repeat(64)],
+                )
+                .is_err()
+        );
         let original = store
             .payment_document_snapshot(&resource.quote_id)
             .unwrap()
@@ -10339,14 +18408,59 @@ mod tests {
                 query_id: &resolved.query_id,
                 handle: &handle,
                 path_price_krw: resource.price_krw,
+                owner_wallet: &resource.recipient_wallet,
+                quote_id: &resource.quote_id,
+                payment_token_hash: Some(&payment_token_hash),
+                research_job_id: None,
+                payment_attempt_id: None,
+                direct_payment_attempt_id: None,
+                policy: &policy,
+            }),
+            Err(StoreError::Conflict(_))
+        ));
+        assert!(matches!(
+            store.open_pay_sh_document(PayShDeliveryRequest {
+                query_id: &resolved.query_id,
+                handle: &handle,
+                path_price_krw: resource.price_krw,
                 owner_wallet: "11111111111111111111111111111111",
                 quote_id: &resource.quote_id,
                 payment_token_hash: Some(&payment_token_hash),
                 research_job_id: None,
+                payment_attempt_id: None,
+                direct_payment_attempt_id: Some(&attempt_id),
                 policy: &policy,
             }),
             Err(StoreError::Validation(_))
         ));
+        let wrong_callback_token = "0".repeat(64);
+        assert!(matches!(
+            store.open_pay_sh_document(PayShDeliveryRequest {
+                query_id: &resolved.query_id,
+                handle: &handle,
+                path_price_krw: resource.price_krw,
+                owner_wallet: &resource.recipient_wallet,
+                quote_id: &resource.quote_id,
+                payment_token_hash: Some(&wrong_callback_token),
+                research_job_id: None,
+                payment_attempt_id: None,
+                direct_payment_attempt_id: Some(&attempt_id),
+                policy: &policy,
+            }),
+            Err(StoreError::Conflict(_))
+        ));
+        // The capability was valid when the exact credential became durable,
+        // but expires while the external collector is completing the charge.
+        // The callback must match the pinned hash without reopening a TOCTOU
+        // window by re-checking the live expiry.
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE queries SET payment_token_expires_at = 0 WHERE id = ?1",
+                [&resolved.query_id],
+            )
+            .unwrap();
         let delivered = store
             .open_pay_sh_document(PayShDeliveryRequest {
                 query_id: &resolved.query_id,
@@ -10356,11 +18470,93 @@ mod tests {
                 quote_id: &resource.quote_id,
                 payment_token_hash: Some(&payment_token_hash),
                 research_job_id: None,
+                payment_attempt_id: None,
+                direct_payment_attempt_id: Some(&attempt_id),
                 policy: &policy,
             })
             .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE queries SET payment_token_expires_at = ?1 WHERE id = ?2",
+                params![super::as_i64(now_ms() + 60_000).unwrap(), resolved.query_id],
+            )
+            .unwrap();
         assert_eq!(delivered.citations[0].handle, original.handle);
         assert_eq!(delivered.citations[0].excerpt, original.excerpt);
+        assert_eq!(
+            store
+                .direct_pay_sh_payment_attempt(&attempt_id)
+                .unwrap()
+                .status,
+            "prepared",
+            "the callback cannot mutate the ledger before the final fee-payer receipt"
+        );
+        let (registry_entries_before_receipt, earnings_before_receipt, access_before_receipt): (
+            u64,
+            u64,
+            u64,
+        ) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT
+                    (SELECT COUNT(*) FROM chain_transaction_registry),
+                    (SELECT COUNT(*) FROM earning_events
+                     WHERE settlement_id = ?1),
+                    (SELECT COUNT(*) FROM memory_access_events
+                     WHERE quote_id = ?2)",
+                params![delivered.settlement.id, resource.quote_id],
+                |row| {
+                    Ok((
+                        super::as_u64(row.get(0)?)?,
+                        super::as_u64(row.get(1)?)?,
+                        super::as_u64(row.get(2)?)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (
+                registry_entries_before_receipt,
+                earnings_before_receipt,
+                access_before_receipt
+            ),
+            (0, 0, 0),
+        );
+        let quote_status_before_receipt: String = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT status FROM payment_quotes WHERE id = ?1",
+                [&resource.quote_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(quote_status_before_receipt, "quoted");
+        let receipt_signature = "5".repeat(88);
+        assert_eq!(
+            store
+                .settle_direct_pay_sh_payment(&attempt_id, &receipt_signature)
+                .unwrap()
+                .settlement
+                .id,
+            delivered.settlement.id
+        );
+        assert_eq!(
+            store
+                .direct_pay_sh_payment_attempt(&attempt_id)
+                .unwrap()
+                .status,
+            "settled"
+        );
+        // The durable receipt can commit immediately before the gateway dies
+        // and loses the entire response body. A new process must recover the
+        // immutable snapshot without another Pay.sh transport or ledger event.
+        drop(store);
+        let store = Store::open(&path).unwrap();
+        store.ready().unwrap();
         let replay = store
             .open_pay_sh_document(PayShDeliveryRequest {
                 query_id: &resolved.query_id,
@@ -10370,6 +18566,8 @@ mod tests {
                 quote_id: &resource.quote_id,
                 payment_token_hash: Some(&payment_token_hash),
                 research_job_id: None,
+                payment_attempt_id: None,
+                direct_payment_attempt_id: Some(&attempt_id),
                 policy: &policy,
             })
             .unwrap();
@@ -10397,8 +18595,8 @@ mod tests {
             .pay_sh_resource(&resolved.query_id, &handle, &payment_token_hash, &policy)
             .unwrap();
         assert_eq!(refreshed.status, "delivered");
-        assert_ne!(refreshed.quote_id, resource.quote_id);
-        let stale_client_retry = store
+        assert_eq!(refreshed.quote_id, resource.quote_id);
+        let recovered_client_retry = store
             .open_pay_sh_document(PayShDeliveryRequest {
                 query_id: &resolved.query_id,
                 handle: &handle,
@@ -10407,10 +18605,15 @@ mod tests {
                 quote_id: &refreshed.quote_id,
                 payment_token_hash: Some(&payment_token_hash),
                 research_job_id: None,
+                payment_attempt_id: None,
+                direct_payment_attempt_id: Some(&attempt_id),
                 policy: &policy,
             })
             .unwrap();
-        assert_eq!(stale_client_retry.citations[0].excerpt, original.excerpt);
+        assert_eq!(
+            recovered_client_retry.citations[0].excerpt,
+            original.excerpt
+        );
         let earnings_after_retry: u64 = store
             .connection()
             .unwrap()
@@ -10421,6 +18624,1058 @@ mod tests {
             )
             .unwrap();
         assert_eq!(earnings_after_retry, 1);
+        let blocked_chain_settlement = RecordChainSettlementRequest {
+            quote_id: resource.quote_id.clone(),
+            attempt_id: None,
+            transaction_signature: "4".repeat(88),
+            payer: bs58::encode(SigningKey::from_bytes(&[30; 32]).verifying_key().as_bytes())
+                .into_string(),
+            pay_to: resource.recipient_wallet.clone(),
+            amount_atomic: resource.amount_atomic.clone(),
+            network: resource.network.clone(),
+            raw_response: serde_json::json!({ "success": true }),
+        };
+        assert!(matches!(
+            store.record_chain_settlement(&blocked_chain_settlement),
+            Err(StoreError::Conflict(_))
+        ));
+        drop(store);
+        for suffix in ["", "-wal", "-shm"] {
+            let target = PathBuf::from(format!("{}{suffix}", path.display()));
+            if target.exists() {
+                std::fs::remove_file(target).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn finalized_direct_payment_recovers_when_pay_sh_callback_never_arrives() {
+        let store = Store::in_memory().unwrap();
+        let question = "Where do Seongsu residents actually eat a fast weekday lunch?";
+        let resolved = Resolver::new(store.documents().unwrap())
+            .resolve(ResolveQuestionRequest {
+                question: question.to_owned(),
+                requested_documents: 1,
+                budget_krw: None,
+                filters: SearchFilters::default(),
+            })
+            .unwrap();
+        let token_hash = "9".repeat(64);
+        store
+            .record_resolution(question, &resolved, Some(&token_hash))
+            .unwrap();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[61; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = PaymentQuotePolicy {
+            fallback_recipient: Some(receiver.clone()),
+            bundle_recipient: Some(receiver.clone()),
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
+            krw_per_usdc: 1_350,
+            ttl_ms: 300_000,
+        };
+        let resource = store
+            .pay_sh_resource(
+                &resolved.query_id,
+                &resolved.matches[0].handle,
+                &token_hash,
+                &policy,
+            )
+            .unwrap();
+        let mut bytes = vec![0_u8; 192];
+        bytes[0] = 2;
+        bytes[65..129].fill(7);
+        let attempt_id = hex_digest(&bytes);
+        let challenge_id = "lost-callback-challenge";
+        let external_id = format!("human-document-krw-{}#lost", resource.price_krw);
+        let challenge_expires_at = now_ms() + 60_000;
+        bind_direct_challenge(
+            &store,
+            &resource,
+            &token_hash,
+            challenge_id,
+            &external_id,
+            challenge_expires_at,
+        );
+        store
+            .prepare_direct_pay_sh_payment(
+                &attempt_id,
+                &PrepareDirectPayShPaymentRequest {
+                    quote_id: resource.quote_id.clone(),
+                    query_id: resource.query_id.clone(),
+                    document_handle: resource.document_handle.clone(),
+                    path_price_krw: resource.price_krw,
+                    owner_wallet: receiver.clone(),
+                    payer: receiver.clone(),
+                    platform_recipient_wallet: receiver.clone(),
+                    challenge_id: challenge_id.to_owned(),
+                    external_id,
+                    signed_transaction_base64: BASE64_STANDARD.encode(bytes),
+                    recent_blockhash: receiver,
+                    challenge_expires_at,
+                },
+                &token_hash,
+            )
+            .unwrap();
+        assert!(
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "DELETE FROM direct_pay_sh_attempts WHERE attempt_id = ?1",
+                    [&attempt_id],
+                )
+                .is_err(),
+            "a migration or cascade must not erase an attempt after signed bytes exist"
+        );
+
+        // A clock jump, manual incident edit, or torn migration can move an
+        // otherwise valid durable attempt beyond every normal retry horizon.
+        // The due scan then looks empty even though a charge may have landed.
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE direct_pay_sh_attempts SET reconcile_after = ?1
+                 WHERE attempt_id = ?2",
+                params![i64::MAX, attempt_id],
+            )
+            .unwrap();
+        assert!(
+            store
+                .direct_pay_sh_payment_reconciliations(25)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(matches!(
+            store.ready(),
+            Err(StoreError::Conflict(message))
+                if message.contains("direct Pay.sh recovery")
+        ));
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE direct_pay_sh_attempts SET reconcile_after = 0
+                 WHERE attempt_id = ?1",
+                [&attempt_id],
+            )
+            .unwrap();
+        let restored_due = store.direct_pay_sh_payment_reconciliations(25).unwrap();
+        assert_eq!(restored_due.len(), 1);
+        assert_eq!(restored_due[0].attempt_id, attempt_id);
+        store.ready().unwrap();
+        store
+            .defer_direct_pay_sh_payment_reconciliation(&attempt_id, true)
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE direct_pay_sh_attempts SET absence_observed_at = 0
+                 WHERE attempt_id = ?1",
+                [&attempt_id],
+            )
+            .unwrap();
+        assert!(matches!(
+            store.release_direct_pay_sh_payment(
+                &attempt_id,
+                &ReleaseResearchPaymentRequest {
+                    expected_status: "ambiguous".to_owned(),
+                    reason: "time-reversed absence fixture".to_owned(),
+                },
+            ),
+            Err(StoreError::Conflict(message))
+                if message.contains("outside the prepared transaction lifetime")
+        ));
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE direct_pay_sh_attempts SET absence_observed_at = NULL,
+                    reconcile_after = 0 WHERE attempt_id = ?1",
+                [&attempt_id],
+            )
+            .unwrap();
+        store.ready().unwrap();
+
+        assert!(matches!(
+            store.recover_pay_sh_document(
+                &resource.query_id,
+                &resource.document_handle,
+                &token_hash
+            ),
+            Err(StoreError::NotFound(_))
+        ));
+        let signature = bs58::encode([8_u8; 64]).into_string();
+        let recovered = store
+            .settle_direct_pay_sh_payment(&attempt_id, &signature)
+            .unwrap();
+        assert_eq!(recovered.citations.len(), 1);
+        assert_eq!(
+            store
+                .recover_pay_sh_document(
+                    &resource.query_id,
+                    &resource.document_handle,
+                    &token_hash,
+                )
+                .unwrap()
+                .settlement
+                .id,
+            recovered.settlement.id
+        );
+        let (status, earnings, registry): (String, u64, u64) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT dpa.status,
+                        (SELECT COUNT(*) FROM earning_events WHERE settlement_id = ?2),
+                        (SELECT COUNT(*) FROM chain_transaction_registry
+                         WHERE transaction_signature = ?3 AND settlement_kind = 'pay_sh_direct')
+                 FROM direct_pay_sh_attempts dpa WHERE dpa.attempt_id = ?1",
+                params![attempt_id, recovered.settlement.id, signature],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        super::as_u64(row.get(1)?)?,
+                        super::as_u64(row.get(2)?)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(status, "settled");
+        assert_eq!(earnings, 1);
+        assert_eq!(registry, 1);
+    }
+
+    #[test]
+    fn wallet_identity_can_authorize_prepaid_without_a_contributor_profile() {
+        let store = Store::in_memory().unwrap();
+        let user_id = "identity-only-buyer";
+        ensure_user(&store, user_id);
+        assert!(store.get_profile(user_id).unwrap().is_none());
+
+        let signing_key = SigningKey::from_bytes(&[81; 32]);
+        let wallet = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
+        store.bind_wallet_identity(user_id, &wallet).unwrap();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[82; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = PaymentQuotePolicy {
+            fallback_recipient: Some(receiver.clone()),
+            bundle_recipient: Some(receiver),
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
+            krw_per_usdc: 1_350,
+            ttl_ms: 300_000,
+        };
+        let session = store
+            .issue_prepaid_wallet_session(user_id, &wallet, &"f".repeat(64), 300_000, &policy)
+            .unwrap();
+        assert_eq!(session.wallet, wallet);
+        let balance = store.prepaid_balance(user_id, &policy).unwrap();
+        assert_eq!(balance.wallet, wallet);
+        assert_eq!(balance.available_atomic, "0");
+
+        let unrelated_wallet =
+            bs58::encode(SigningKey::from_bytes(&[83; 32]).verifying_key().as_bytes())
+                .into_string();
+        assert!(matches!(
+            store.issue_prepaid_wallet_session(
+                user_id,
+                &unrelated_wallet,
+                &"e".repeat(64),
+                300_000,
+                &policy,
+            ),
+            Err(StoreError::Unauthorized(_))
+        ));
+    }
+
+    #[test]
+    fn wallet_user_creation_is_atomic_and_concurrent_retries_converge() {
+        let store = Store::in_memory().unwrap();
+        let wallet = bs58::encode(SigningKey::from_bytes(&[84; 32]).verifying_key().as_bytes())
+            .into_string();
+        let email = format!("{}@wallet.obolus.local", "a".repeat(64));
+        let barrier = Arc::new(Barrier::new(2));
+        let workers = [store.clone(), store.clone()].map(|worker_store| {
+            let wallet = wallet.clone();
+            let email = email.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                worker_store.create_wallet_identity_user(
+                    &wallet,
+                    &email,
+                    "unusable-random-wallet-password-hash",
+                )
+            })
+        });
+        let outcomes = workers.map(|worker| worker.join().unwrap().unwrap());
+        assert_eq!(outcomes.iter().filter(|(_, created)| *created).count(), 1);
+        assert_eq!(outcomes[0].0.id, outcomes[1].0.id);
+        assert_eq!(
+            store.wallet_identity(&wallet).unwrap().unwrap().id,
+            outcomes[0].0.id
+        );
+        let cardinalities: (u64, u64, u64, u64) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT
+                   (SELECT COUNT(*) FROM users WHERE email = ?1),
+                   (SELECT COUNT(*) FROM balances WHERE user_id = ?2),
+                   (SELECT COUNT(*) FROM funding_events WHERE user_id = ?2),
+                   (SELECT COUNT(*) FROM wallet_identities WHERE wallet = ?3)",
+                params![&email, &outcomes[0].0.id, &wallet],
+                |row| {
+                    Ok((
+                        super::as_u64(row.get(0)?)?,
+                        super::as_u64(row.get(1)?)?,
+                        super::as_u64(row.get(2)?)?,
+                        super::as_u64(row.get(3)?)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(cardinalities, (1, 1, 1, 1));
+
+        let poisoned = Store::in_memory().unwrap();
+        poisoned
+            .register_user(&email, "attacker-password-hash")
+            .unwrap();
+        assert!(matches!(
+            poisoned
+                .create_wallet_identity_user(&wallet, &email, "wallet-generated-password-hash",),
+            Err(StoreError::Conflict(_))
+        ));
+        assert!(poisoned.wallet_identity(&wallet).unwrap().is_none());
+    }
+
+    #[test]
+    fn agent_bundle_is_one_shot_cross_rail_fenced_and_refunds_the_chain_payer() {
+        let store = Store::in_memory().unwrap();
+        let question =
+            "Which Seongsu lunch places work when two coworkers have only thirty minutes?";
+        let resolved = Resolver::new(store.documents().unwrap())
+            .resolve(ResolveQuestionRequest {
+                question: question.to_owned(),
+                requested_documents: 3,
+                budget_krw: None,
+                filters: SearchFilters::default(),
+            })
+            .unwrap();
+        let handles = resolved
+            .matches
+            .iter()
+            .take(2)
+            .map(|matched| matched.handle.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(handles.len(), 2);
+        let payment_token_hash = "6".repeat(64);
+        store
+            .record_resolution(question, &resolved, Some(&payment_token_hash))
+            .unwrap();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[86; 32]).verifying_key().as_bytes())
+            .into_string();
+        let payer = bs58::encode(SigningKey::from_bytes(&[87; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = PaymentQuotePolicy {
+            fallback_recipient: Some(receiver.clone()),
+            bundle_recipient: Some(receiver.clone()),
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
+            krw_per_usdc: 1_350,
+            ttl_ms: 300_000,
+        };
+        let create = CreatePaymentBundleRequest {
+            query_id: resolved.query_id.clone(),
+            handles: handles.clone(),
+            top_up_atomic: None,
+        };
+        assert!(matches!(
+            store.create_agent_payment_bundle(
+                &CreatePaymentBundleRequest {
+                    top_up_atomic: Some("1".to_owned()),
+                    ..create.clone()
+                },
+                &payment_token_hash,
+                &policy,
+            ),
+            Err(StoreError::Validation(_))
+        ));
+        let quote = store
+            .create_agent_payment_bundle(&create, &payment_token_hash, &policy)
+            .unwrap();
+        assert_eq!(quote.amount_atomic, quote.budget_atomic);
+        assert_eq!(quote.minimum_deposit_atomic, quote.budget_atomic);
+        assert_eq!(quote.available_balance_atomic, "0");
+        assert!(quote.requires_payment);
+        assert_eq!(
+            store
+                .payment_bundle_quote_for_agent(&quote.id, &payment_token_hash)
+                .unwrap(),
+            quote
+        );
+        assert!(matches!(
+            store.payment_bundle_quote_for_agent(&quote.id, &"0".repeat(64)),
+            Err(StoreError::Unauthorized(_))
+        ));
+        assert_eq!(
+            store
+                .create_agent_payment_bundle(&create, &payment_token_hash, &policy)
+                .unwrap()
+                .id,
+            quote.id,
+            "a retry before settlement must reuse the same payable resource"
+        );
+
+        onboard(&store, "cross-rail-browser");
+        let browser_wallet = verify_wallet(&store, "cross-rail-browser", 88);
+        let wallet_session = "7".repeat(64);
+        store
+            .issue_prepaid_wallet_session(
+                "cross-rail-browser",
+                &browser_wallet,
+                &wallet_session,
+                300_000,
+                &policy,
+            )
+            .unwrap();
+        assert!(matches!(
+            store.create_payment_bundle(
+                &CreatePaymentBundleRequest {
+                    top_up_atomic: Some("5000000".to_owned()),
+                    ..create.clone()
+                },
+                &payment_token_hash,
+                &hex_digest(wallet_session.as_bytes()),
+                &policy,
+            ),
+            Err(StoreError::Conflict(message)) if message.contains("another funding mode")
+        ));
+
+        let (payment_attempt, payment_signature) =
+            signed_chain_attempt_fixture("bundle", &quote.id, &payer, &quote.pay_to, 9);
+        store.claim_payment_attempt(&payment_attempt).unwrap();
+        let mut settlement = RecordChainSettlementRequest {
+            quote_id: quote.id.clone(),
+            attempt_id: Some(payment_attempt.attempt_id.clone()),
+            transaction_signature: payment_signature,
+            payer: payer.clone(),
+            pay_to: quote.pay_to.clone(),
+            amount_atomic: quote.amount_atomic.clone(),
+            network: quote.network.clone(),
+            raw_response: serde_json::json!({ "success": true }),
+        };
+        settlement.amount_atomic = (quote.amount_atomic.parse::<u64>().unwrap() - 1).to_string();
+        assert!(matches!(
+            store.record_bundle_chain_settlement(&settlement),
+            Err(StoreError::Conflict(_))
+        ));
+        settlement.amount_atomic = quote.amount_atomic.clone();
+        store.record_bundle_chain_settlement(&settlement).unwrap();
+
+        let (funding_source, stored_payer, prepaid_accounts, prepaid_entries): (
+            String,
+            Option<String>,
+            u64,
+            u64,
+        ) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT pbq.funding_source, pbq.payer_wallet,
+                        (SELECT COUNT(*) FROM prepaid_accounts WHERE wallet = ?2),
+                        (SELECT COUNT(*) FROM prepaid_ledger WHERE wallet = ?2)
+                 FROM payment_bundle_quotes pbq WHERE pbq.id = ?1",
+                params![quote.id, payer],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        super::as_u64(row.get(2)?)?,
+                        super::as_u64(row.get(3)?)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(funding_source, BUNDLE_FUNDING_AGENT_DIRECT);
+        assert_eq!(stored_payer.as_deref(), Some(payer.as_str()));
+        assert_eq!((prepaid_accounts, prepaid_entries), (0, 0));
+        assert_eq!(
+            store
+                .create_agent_payment_bundle(&create, &payment_token_hash, &policy)
+                .unwrap()
+                .id,
+            quote.id,
+            "a restart after settlement must recover the funded resource"
+        );
+
+        let failed = store
+            .fail_research_job(&quote.id, "upstream unavailable before the first document")
+            .unwrap();
+        assert_eq!(failed.status, "refund_pending");
+        assert_eq!(failed.refundable_atomic, quote.budget_atomic);
+        let (refund_recipient, refund_amount, refund_kind): (String, u64, String) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT pc.recipient_wallet, pc.amount_atomic, pc.kind
+                 FROM payment_bundle_quotes pbq
+                 JOIN payout_claims pc ON pc.id = pbq.refund_claim_id
+                 WHERE pbq.id = ?1",
+                [&quote.id],
+                |row| Ok((row.get(0)?, super::as_u64(row.get(1)?)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(refund_recipient, payer);
+        assert_eq!(refund_amount.to_string(), quote.budget_atomic);
+        assert_eq!(refund_kind, "research_refund");
+
+        let leased = store
+            .lease_payout_claims(
+                "research-refund-worker",
+                &receiver,
+                &policy.network,
+                10,
+                60_000,
+            )
+            .unwrap();
+        assert_eq!(leased.len(), 1);
+        let refund_claim_id = leased[0].id.clone();
+        let refund_signature = bs58::encode([98_u8; 64]).into_string();
+        let refund_transaction = signed_transaction_fixture(98, 1, 180);
+        store
+            .prepare_payout_claim(
+                &refund_claim_id,
+                "research-refund-worker",
+                &refund_signature,
+                &BASE64_STANDARD.encode(refund_transaction),
+                &bs58::encode([100_u8; 32]).into_string(),
+                42,
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .complete_payout_claim(
+                    &refund_claim_id,
+                    "research-refund-worker",
+                    &refund_signature,
+                )
+                .unwrap()
+                .status,
+            "confirmed"
+        );
+        let refunded = store
+            .research_job_status(&quote.id, &payment_token_hash)
+            .unwrap();
+        assert_eq!(refunded.status, "balance_refunded");
+        assert!(refunded.completed_at.is_some());
+        assert_eq!(refunded.refundable_atomic, quote.budget_atomic);
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE payment_bundle_quotes
+                 SET status = 'refund_pending', delivered_at = NULL WHERE id = ?1",
+                [&quote.id],
+            )
+            .unwrap();
+        assert!(matches!(
+            store.ready(),
+            Err(StoreError::Conflict(message)) if message.contains("research refund")
+        ));
+        {
+            let connection = store.connection().unwrap();
+            super::backfill_confirmed_research_refunds(&connection).unwrap();
+        }
+        assert_eq!(
+            store
+                .research_job_status(&quote.id, &payment_token_hash)
+                .unwrap()
+                .status,
+            "balance_refunded"
+        );
+        // A lost response after the payout transaction commits repairs the
+        // same parent transition instead of treating the confirmed claim as a
+        // no-op on retry.
+        assert_eq!(
+            store
+                .complete_payout_claim(
+                    &refund_claim_id,
+                    "different-restart-worker",
+                    &refund_signature,
+                )
+                .unwrap()
+                .status,
+            "confirmed"
+        );
+        store.ready().unwrap();
+    }
+
+    #[test]
+    fn document_and_bundle_products_cannot_fund_the_same_purchase_twice() {
+        let store = Store::in_memory().unwrap();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[96; 32]).verifying_key().as_bytes())
+            .into_string();
+        let payer = bs58::encode(SigningKey::from_bytes(&[97; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = PaymentQuotePolicy {
+            fallback_recipient: Some(receiver.clone()),
+            bundle_recipient: Some(receiver.clone()),
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
+            krw_per_usdc: 1_350,
+            ttl_ms: 300_000,
+        };
+
+        // A copied direct URL remains a distinct funding product even before
+        // an MPP credential is signed. Creating an outer research budget for
+        // the same query/document would expose the buyer to two charges.
+        let direct_question = "Which Seongsu lunch account should one direct buyer trust?";
+        let direct_resolution = Resolver::new(store.documents().unwrap())
+            .resolve(ResolveQuestionRequest {
+                question: direct_question.to_owned(),
+                requested_documents: 1,
+                budget_krw: None,
+                filters: SearchFilters::default(),
+            })
+            .unwrap();
+        let direct_token = "1".repeat(64);
+        store
+            .record_resolution(direct_question, &direct_resolution, Some(&direct_token))
+            .unwrap();
+        let direct_handle = direct_resolution.matches[0].handle.clone();
+        let direct_resource = store
+            .pay_sh_resource(
+                &direct_resolution.query_id,
+                &direct_handle,
+                &direct_token,
+                &policy,
+            )
+            .unwrap();
+        assert!(matches!(
+            store.create_agent_payment_bundle(
+                &CreatePaymentBundleRequest {
+                    query_id: direct_resolution.query_id.clone(),
+                    handles: vec![direct_handle],
+                    top_up_atomic: None,
+                },
+                &direct_token,
+                &policy,
+            ),
+            Err(StoreError::Conflict(message))
+                if message.contains("direct payment reservation")
+        ));
+        assert_eq!(direct_resource.status, "quoted");
+        let rolling_outer_id = new_id("rolling-direct-overlap");
+        {
+            let mut connection = store.connection().unwrap();
+            let transaction = connection.transaction().unwrap();
+            transaction
+                .execute(
+                    "INSERT INTO payment_bundle_quotes
+                     (id, query_id, pay_to, network, asset, amount_atomic,
+                      total_price_krw, krw_per_usdc, expires_at, created_at,
+                      bundle_hash, status, funding_source)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+                             ?11, 'quoted', 'legacy_direct')",
+                    params![
+                        rolling_outer_id,
+                        direct_resolution.query_id,
+                        receiver,
+                        policy.network,
+                        policy.asset,
+                        direct_resource.amount_atomic.parse::<u64>().unwrap() as i64,
+                        direct_resource.price_krw as i64,
+                        policy.krw_per_usdc as i64,
+                        super::as_i64(now_ms() + 60_000).unwrap(),
+                        super::as_i64(now_ms()).unwrap(),
+                        "rolling-direct-overlap",
+                    ],
+                )
+                .unwrap();
+            assert!(
+                transaction
+                    .execute(
+                        "INSERT INTO payment_bundle_documents
+                         (quote_id, rank, document_id, document_handle, author_id,
+                          recipient_wallet, price_krw, shelf_snapshot, content_snapshot,
+                          content_hash, document_version, consent_version)
+                         SELECT ?1, 0, pq.document_id, pq.document_handle, d.author_id,
+                                pq.pay_to, pq.price_krw, pq.shelf_snapshot,
+                                pq.content_snapshot, pq.content_hash,
+                                pq.document_version, pq.consent_version
+                         FROM payment_quotes pq JOIN documents d ON d.id = pq.document_id
+                         WHERE pq.id = ?2",
+                        params![rolling_outer_id, direct_resource.quote_id],
+                    )
+                    .is_err(),
+                "a rolling bundle writer must not overlap an issued direct URL"
+            );
+        }
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM payment_bundle_quotes WHERE id = ?1",
+                    [&rolling_outer_id],
+                    |row| super::as_u64(row.get(0)?),
+                )
+                .unwrap(),
+            0
+        );
+
+        // Reverse the order on a fresh purchase: once an aggregate budget is
+        // reserved, neither public direct rail may mint or prepare a second
+        // payment, while the bundle's own research worker remains usable.
+        let bundle_question =
+            "Which Seongsu lunch account should one aggregate buyer trust under a crash?";
+        let bundle_resolution = Resolver::new(store.documents().unwrap())
+            .resolve(ResolveQuestionRequest {
+                question: bundle_question.to_owned(),
+                requested_documents: 1,
+                budget_krw: None,
+                filters: SearchFilters::default(),
+            })
+            .unwrap();
+        let bundle_token = "2".repeat(64);
+        store
+            .record_resolution(bundle_question, &bundle_resolution, Some(&bundle_token))
+            .unwrap();
+        let bundle_handle = bundle_resolution.matches[0].handle.clone();
+        let bundle = store
+            .create_agent_payment_bundle(
+                &CreatePaymentBundleRequest {
+                    query_id: bundle_resolution.query_id.clone(),
+                    handles: vec![bundle_handle.clone()],
+                    top_up_atomic: None,
+                },
+                &bundle_token,
+                &policy,
+            )
+            .unwrap();
+
+        // Model a rolling writer that knows the old bundle tables but not the
+        // new overlap precheck. Its parent insert and document insert are one
+        // transaction, exactly like the production writer. The database row
+        // trigger must abort the whole candidate rather than leave two outer
+        // budgets for one purchase.
+        let rolling_bundle_id = new_id("rolling-bundle");
+        {
+            let mut connection = store.connection().unwrap();
+            let transaction = connection.transaction().unwrap();
+            transaction
+                .execute(
+                    "INSERT INTO payment_bundle_quotes
+                     (id, query_id, pay_to, network, asset, amount_atomic,
+                      total_price_krw, krw_per_usdc, expires_at, created_at,
+                      bundle_hash, status, funding_source)
+                     SELECT ?1, query_id, pay_to, network, asset, amount_atomic,
+                            total_price_krw, krw_per_usdc, expires_at, created_at,
+                            ?2, 'quoted', 'legacy_direct'
+                     FROM payment_bundle_quotes WHERE id = ?3",
+                    params![rolling_bundle_id, "rolling-overlap", bundle.id],
+                )
+                .unwrap();
+            assert!(
+                transaction
+                    .execute(
+                        "INSERT INTO payment_bundle_documents
+                         (quote_id, rank, document_id, document_handle, author_id,
+                          recipient_wallet, price_krw, shelf_snapshot, content_snapshot,
+                          content_hash, document_version, consent_version)
+                         SELECT ?1, rank, document_id, document_handle, author_id,
+                                recipient_wallet, price_krw, shelf_snapshot, content_snapshot,
+                                content_hash, document_version, consent_version
+                         FROM payment_bundle_documents WHERE quote_id = ?2",
+                        params![rolling_bundle_id, bundle.id],
+                    )
+                    .is_err(),
+                "a rolling bundle writer must not reserve an already owned document"
+            );
+        }
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM payment_bundle_quotes WHERE id = ?1",
+                    [&rolling_bundle_id],
+                    |row| super::as_u64(row.get(0)?),
+                )
+                .unwrap(),
+            0,
+            "the failed rolling transaction must not leave a payable parent"
+        );
+        assert!(matches!(
+            store.pay_sh_resource(
+                &bundle_resolution.query_id,
+                &bundle_handle,
+                &bundle_token,
+                &policy,
+            ),
+            Err(StoreError::Conflict(message)) if message.contains("research bundle")
+        ));
+        assert!(matches!(
+            store.x402_payment_quote(&bundle_resolution.query_id, &bundle_handle, &policy),
+            Err(StoreError::Conflict(message)) if message.contains("research bundle")
+        ));
+
+        let (bundle_attempt, bundle_signature) =
+            signed_chain_attempt_fixture("bundle", &bundle.id, &payer, &bundle.pay_to, 4);
+        store.claim_payment_attempt(&bundle_attempt).unwrap();
+        store
+            .record_bundle_chain_settlement(&RecordChainSettlementRequest {
+                quote_id: bundle.id.clone(),
+                attempt_id: Some(bundle_attempt.attempt_id),
+                transaction_signature: bundle_signature,
+                payer,
+                pay_to: bundle.pay_to.clone(),
+                amount_atomic: bundle.amount_atomic.clone(),
+                network: bundle.network.clone(),
+                raw_response: serde_json::json!({ "success": true }),
+            })
+            .unwrap();
+        let plan = store.research_job_plan(&bundle.id, &policy).unwrap();
+        assert_eq!(plan.resources.len(), 1);
+        let research_resource = &plan.resources[0];
+
+        let mut signed_transaction = vec![0_u8; 192];
+        signed_transaction[0] = 2;
+        signed_transaction[65..129].fill(12);
+        let direct_attempt_id = hex_digest(&signed_transaction);
+        assert!(matches!(
+            store.prepare_direct_pay_sh_payment(
+                &direct_attempt_id,
+                &PrepareDirectPayShPaymentRequest {
+                    quote_id: research_resource.quote_id.clone(),
+                    query_id: research_resource.query_id.clone(),
+                    document_handle: research_resource.document_handle.clone(),
+                    path_price_krw: research_resource.price_krw,
+                    owner_wallet: research_resource.recipient_wallet.clone(),
+                    payer: research_resource.recipient_wallet.clone(),
+                    platform_recipient_wallet: research_resource.recipient_wallet.clone(),
+                    challenge_id: "bundle-vs-direct".to_owned(),
+                    external_id: format!(
+                        "human-document-krw-{}#bundle",
+                        research_resource.price_krw
+                    ),
+                    signed_transaction_base64: BASE64_STANDARD.encode(&signed_transaction),
+                    recent_blockhash: research_resource.recipient_wallet.clone(),
+                    challenge_expires_at: now_ms() + 60_000,
+                },
+                &bundle_token,
+            ),
+            Err(StoreError::Conflict(message)) if message.contains("research bundle")
+        ));
+
+        let research_attempt_id = "5".repeat(64);
+        store
+            .begin_research_payment(
+                &bundle.id,
+                &BeginResearchPaymentRequest {
+                    quote_id: research_resource.quote_id.clone(),
+                    attempt_id: research_attempt_id.clone(),
+                },
+            )
+            .unwrap();
+        let fence: (String, String) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT attempt_kind, attempt_id FROM pay_sh_quote_fences
+                 WHERE quote_id = ?1",
+                [&research_resource.quote_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(fence, ("research".to_owned(), research_attempt_id));
+
+        // This is the old writer shape from a rolling deployment. It bypasses
+        // every Store precheck, so only the database can stop it before the
+        // external collector sees a second signed credential.
+        assert!(
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "INSERT INTO direct_pay_sh_attempts
+                     (attempt_id, quote_id, query_token_hash, status, challenge_id,
+                      external_id, payer_wallet, platform_recipient_wallet,
+                      signed_transaction_base64, recent_blockhash,
+                      challenge_expires_at, reconcile_after, created_at, prepared_at)
+                     VALUES (?1, ?2, ?3, 'prepared', 'rolling-direct',
+                             'human-document-krw-700#rolling', ?4, ?4, ?5, ?4,
+                             ?6, ?6, ?7, ?7)",
+                    params![
+                        direct_attempt_id,
+                        research_resource.quote_id,
+                        bundle_token,
+                        research_resource.recipient_wallet,
+                        BASE64_STANDARD.encode(signed_transaction),
+                        super::as_i64(now_ms() + 60_000).unwrap(),
+                        super::as_i64(now_ms()).unwrap(),
+                    ],
+                )
+                .is_err(),
+            "a rolling direct writer must fail before a second external charge"
+        );
+        let counts: (u64, u64) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT
+                    (SELECT COUNT(*) FROM pay_sh_quote_fences WHERE quote_id = ?1),
+                    (SELECT COUNT(*) FROM direct_pay_sh_attempts WHERE quote_id = ?1)",
+                [&research_resource.quote_id],
+                |row| Ok((super::as_u64(row.get(0)?)?, super::as_u64(row.get(1)?)?)),
+            )
+            .unwrap();
+        assert_eq!(counts, (1, 0));
+    }
+
+    #[test]
+    fn legacy_bundle_entitlement_needs_real_funding_and_uses_the_quoted_snapshot() {
+        let store = Store::in_memory().unwrap();
+        let question = "Where do people who live in Seongsu eat lunch on weekdays?";
+        let resolved = Resolver::new(store.documents().unwrap())
+            .resolve(ResolveQuestionRequest {
+                question: question.to_owned(),
+                requested_documents: 1,
+                budget_krw: None,
+                filters: SearchFilters::default(),
+            })
+            .unwrap();
+        let handle = resolved.matches[0].handle.clone();
+        let payment_token_hash = "9".repeat(64);
+        store
+            .record_resolution(question, &resolved, Some(&payment_token_hash))
+            .unwrap();
+
+        let receiver = bs58::encode(SigningKey::from_bytes(&[71; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = PaymentQuotePolicy {
+            fallback_recipient: Some(receiver.clone()),
+            bundle_recipient: Some(receiver),
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
+            krw_per_usdc: 1_350,
+            ttl_ms: 300_000,
+        };
+        onboard(&store, "legacy-bundle-buyer");
+        let payer = verify_wallet(&store, "legacy-bundle-buyer", 72);
+        let wallet_session = "a".repeat(64);
+        store
+            .issue_prepaid_wallet_session(
+                "legacy-bundle-buyer",
+                &payer,
+                &wallet_session,
+                300_000,
+                &policy,
+            )
+            .unwrap();
+        let quote = store
+            .create_payment_bundle(
+                &CreatePaymentBundleRequest {
+                    query_id: resolved.query_id.clone(),
+                    handles: vec![handle.clone()],
+                    top_up_atomic: Some("5000000".to_owned()),
+                },
+                &payment_token_hash,
+                &super::hex_digest(wallet_session.as_bytes()),
+                &policy,
+            )
+            .unwrap();
+        let committed = store
+            .payment_bundle_snapshot(&quote.id)
+            .unwrap()
+            .citations
+            .remove(0);
+
+        // A rolling legacy writer's status flag alone is not proof of payment.
+        // This is a real corruption boundary: without the receipt requirement,
+        // a holder of the query capability could synthesize private content
+        // after one bad UPDATE even though no external value moved.
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE payment_bundle_quotes SET status = 'delivered' WHERE id = ?1",
+                [&quote.id],
+            )
+            .unwrap();
+        assert!(matches!(store.ready(), Err(StoreError::Conflict(_))));
+        assert!(matches!(
+            store.opened_evidence(
+                &resolved.query_id,
+                std::slice::from_ref(&handle),
+                &payment_token_hash,
+            ),
+            Err(StoreError::DocumentNotQuoted)
+        ));
+
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE payment_bundle_quotes SET status = 'quoted' WHERE id = ?1",
+                [&quote.id],
+            )
+            .unwrap();
+        store.ready().unwrap();
+        let (payment_attempt, payment_signature) =
+            signed_chain_attempt_fixture("bundle", &quote.id, &payer, &quote.pay_to, 7);
+        store.claim_payment_attempt(&payment_attempt).unwrap();
+        store
+            .record_bundle_chain_settlement(&RecordChainSettlementRequest {
+                quote_id: quote.id.clone(),
+                attempt_id: Some(payment_attempt.attempt_id),
+                transaction_signature: payment_signature,
+                payer,
+                pay_to: quote.pay_to,
+                amount_atomic: quote.amount_atomic,
+                network: quote.network,
+                raw_response: serde_json::json!({"success": true}),
+            })
+            .unwrap();
+
+        // Old deployments treated the outer settlement as document delivery.
+        // If the seller locks or corrects the live row immediately afterward,
+        // recovery must return the exact purchased bundle snapshot rather than
+        // consulting mutable current content.
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE payment_bundle_quotes SET status = 'delivered', delivered_at = ?1
+                 WHERE id = ?2",
+                params![super::as_i64(now_ms()).unwrap(), quote.id],
+            )
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE documents SET locked = 1, content = 'post-payment replacement'
+                 WHERE handle = ?1",
+                [&handle],
+            )
+            .unwrap();
+        let (_, recovered) = store
+            .opened_evidence(
+                &resolved.query_id,
+                std::slice::from_ref(&handle),
+                &payment_token_hash,
+            )
+            .unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].handle, committed.handle);
+        assert_eq!(recovered[0].shelf, committed.shelf);
+        assert_eq!(recovered[0].excerpt, committed.excerpt);
+        assert_eq!(recovered[0].price, committed.price);
     }
 
     #[test]
@@ -10487,6 +19742,49 @@ mod tests {
             .unwrap();
         assert_eq!(quote.id, repeated_quote.id);
         assert_eq!(quote.document_handles, handles);
+        assert_eq!(quote.minimum_deposit_atomic, quote.budget_atomic);
+        assert_eq!(
+            store
+                .payment_bundle_quote_for_payer(
+                    &quote.id,
+                    &payment_token_hash,
+                    &wallet_session_hash,
+                )
+                .unwrap(),
+            quote
+        );
+        assert!(matches!(
+            store.payment_bundle_quote_for_payer(&quote.id, &"0".repeat(64), &wallet_session_hash,),
+            Err(StoreError::Unauthorized(_))
+        ));
+        assert!(matches!(
+            store.payment_bundle_quote_for_payer(
+                &quote.id,
+                &payment_token_hash,
+                &super::hex_digest("wrong-wallet-session".as_bytes()),
+            ),
+            Err(StoreError::Unauthorized(_))
+        ));
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE payment_bundle_quotes SET minimum_deposit_atomic = 0 WHERE id = ?1",
+                [&quote.id],
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .payment_bundle_quote_for_payer(
+                    &quote.id,
+                    &payment_token_hash,
+                    &wallet_session_hash,
+                )
+                .unwrap()
+                .minimum_deposit_atomic,
+            quote.amount_atomic,
+            "a rolling old writer is interpreted conservatively from its durable deposit",
+        );
         assert_eq!(
             store
                 .payment_bundle_snapshot(&quote.id)
@@ -10495,15 +19793,26 @@ mod tests {
                 .len(),
             2
         );
+        let (payment_attempt, payment_signature) =
+            signed_chain_attempt_fixture("bundle", &quote.id, &payer, &quote.pay_to, 3);
+        store.claim_payment_attempt(&payment_attempt).unwrap();
+        assert_eq!(
+            store.payment_bundle_quote(&quote.id).unwrap().status,
+            "settling"
+        );
 
         let request = RecordChainSettlementRequest {
             quote_id: quote.id.clone(),
-            transaction_signature: "3".repeat(88),
+            attempt_id: Some(payment_attempt.attempt_id.clone()),
+            transaction_signature: payment_signature.clone(),
             payer: payer.clone(),
             pay_to: quote.pay_to.clone(),
             amount_atomic: quote.amount_atomic.clone(),
             network: quote.network.clone(),
-            raw_response: serde_json::json!({ "success": true, "transaction": "3".repeat(88) }),
+            raw_response: serde_json::json!({
+                "success": true,
+                "transaction": payment_signature
+            }),
         };
         // The public gateway rejects an expired quote before payment. Once the
         // facilitator has settled, however, a delayed durable-outbox replay
@@ -10517,6 +19826,12 @@ mod tests {
             )
             .unwrap();
         let receipt = store.record_bundle_chain_settlement(&request).unwrap();
+        assert!(
+            !store
+                .release_payment_attempt(&payment_attempt)
+                .unwrap()
+                .released
+        );
         assert_eq!(
             store.record_bundle_chain_settlement(&request).unwrap(),
             receipt
@@ -10550,14 +19865,228 @@ mod tests {
                 .sum::<u64>(),
             quote.budget_atomic.parse::<u64>().unwrap()
         );
-        for resource in plan.resources {
+        for (index, resource) in plan.resources.into_iter().enumerate() {
             assert!(
                 resource
                     .resource_path
                     .contains(&format!("research_job_id={}", quote.id))
             );
-            store
-                .open_pay_sh_document(PayShDeliveryRequest {
+            let attempt_id = if index == 0 {
+                "a".repeat(64)
+            } else {
+                "b".repeat(64)
+            };
+            let begun = store
+                .begin_research_payment(
+                    &quote.id,
+                    &BeginResearchPaymentRequest {
+                        quote_id: resource.quote_id.clone(),
+                        attempt_id: attempt_id.clone(),
+                    },
+                )
+                .unwrap();
+            assert_eq!(begun.status, "payment_in_progress");
+            assert_eq!(
+                store
+                    .begin_research_payment(
+                        &quote.id,
+                        &BeginResearchPaymentRequest {
+                            quote_id: resource.quote_id.clone(),
+                            attempt_id: attempt_id.clone(),
+                        },
+                    )
+                    .unwrap()
+                    .status,
+                "payment_in_progress"
+            );
+            assert!(matches!(
+                store.begin_research_payment(
+                    &quote.id,
+                    &BeginResearchPaymentRequest {
+                        quote_id: resource.quote_id.clone(),
+                        attempt_id: "f".repeat(64),
+                    },
+                ),
+                Err(StoreError::Conflict(_))
+            ));
+            if index == 0 {
+                assert!(
+                    store
+                        .connection()
+                        .unwrap()
+                        .execute(
+                            "UPDATE research_payment_attempts
+                             SET status = 'prepared', signed_transaction_base64 = 'partial'
+                             WHERE attempt_id = ?1",
+                            [&attempt_id],
+                        )
+                        .is_err(),
+                    "an old worker cannot start paid transport with incomplete durable evidence"
+                );
+            }
+            assert!(
+                store
+                    .connection()
+                    .unwrap()
+                    .execute(
+                        "DELETE FROM research_payment_attempts WHERE attempt_id = ?1",
+                        [&attempt_id],
+                    )
+                    .is_err(),
+                "the durable pre-charge fence must survive accidental parent cleanup"
+            );
+            if index == 0 {
+                // Model storage restored from two different instants: the child
+                // is terminal but the parent fence is still active. Ordinary
+                // SQL cannot create this split state, so bypass only the state
+                // trigger while constructing the physical-restore fixture.
+                store
+                    .connection()
+                    .unwrap()
+                    .execute_batch("DROP TRIGGER guard_research_pay_sh_attempt_state;")
+                    .unwrap();
+                store
+                    .connection()
+                    .unwrap()
+                    .execute(
+                        "UPDATE research_payment_attempts SET status = 'released'
+                         WHERE attempt_id = ?1",
+                        [&attempt_id],
+                    )
+                    .unwrap();
+                assert!(
+                    store
+                        .research_payment_reconciliations(25)
+                        .unwrap()
+                        .is_empty()
+                );
+                assert!(
+                    !store
+                        .runnable_research_jobs(25)
+                        .unwrap()
+                        .contains(&quote.id)
+                );
+                assert!(matches!(
+                    store.ready(),
+                    Err(StoreError::Conflict(message))
+                        if message.contains("research payment recovery")
+                ));
+                store
+                    .connection()
+                    .unwrap()
+                    .execute(
+                        "UPDATE research_payment_attempts SET status = 'claimed'
+                         WHERE attempt_id = ?1",
+                        [&attempt_id],
+                    )
+                    .unwrap();
+                super::install_active_pay_sh_attempt_guards(&store.connection().unwrap()).unwrap();
+                store.ready().unwrap();
+                // Simulate bytes torn underneath SQLite rather than a normal
+                // SQL writer: production evidence triggers reject this update.
+                store
+                    .connection()
+                    .unwrap()
+                    .execute_batch(
+                        "DROP TRIGGER guard_research_pay_sh_attempt_evidence;
+                         DROP TRIGGER guard_research_pay_sh_attempt_state;",
+                    )
+                    .unwrap();
+                store
+                    .connection()
+                    .unwrap()
+                    .execute(
+                        "UPDATE research_payment_attempts
+                         SET signed_transaction_base64 = 'torn-signed-evidence'
+                         WHERE attempt_id = ?1",
+                        [&attempt_id],
+                    )
+                    .unwrap();
+                assert!(matches!(
+                    store.ready(),
+                    Err(StoreError::Conflict(message))
+                        if message.contains("research payment recovery")
+                ));
+                assert!(matches!(
+                    store.release_research_payment(
+                        &quote.id,
+                        &attempt_id,
+                        &ReleaseResearchPaymentRequest {
+                            expected_status: "claimed".to_owned(),
+                            reason: "claimed timeout observed by recovery".to_owned(),
+                        },
+                    ),
+                    Err(StoreError::Conflict(message))
+                        if message.contains("contains prepared evidence")
+                ));
+                store
+                    .connection()
+                    .unwrap()
+                    .execute(
+                        "UPDATE research_payment_attempts
+                         SET signed_transaction_base64 = NULL WHERE attempt_id = ?1",
+                        [&attempt_id],
+                    )
+                    .unwrap();
+                super::install_active_pay_sh_attempt_guards(&store.connection().unwrap()).unwrap();
+                store.ready().unwrap();
+            }
+            let prepared_signature =
+                prepare_research_attempt(&store, &quote.id, &resource, &attempt_id);
+            let durable_attempt = store.research_payment_attempt(&attempt_id).unwrap();
+            assert_eq!(
+                durable_attempt.payer,
+                bs58::encode(SigningKey::from_bytes(&[92; 32]).verifying_key().as_bytes())
+                    .into_string()
+            );
+            assert_ne!(durable_attempt.payer, quote.pay_to);
+            if index == 0 {
+                // Reproduce a hidden durable liability without inventing a
+                // synthetic queue: corrupt only the schedule of the exact
+                // signed PayKit attempt created above.
+                store
+                    .connection()
+                    .unwrap()
+                    .execute(
+                        "UPDATE research_payment_attempts SET reconcile_after = ?1
+                         WHERE attempt_id = ?2",
+                        params![i64::MAX, attempt_id],
+                    )
+                    .unwrap();
+                assert!(
+                    store
+                        .research_payment_reconciliations(25)
+                        .unwrap()
+                        .is_empty()
+                );
+                assert!(matches!(
+                    store.ready(),
+                    Err(StoreError::Conflict(message))
+                        if message.contains("research payment recovery")
+                ));
+                store
+                    .connection()
+                    .unwrap()
+                    .execute(
+                        "UPDATE research_payment_attempts SET reconcile_after = 0
+                         WHERE attempt_id = ?1",
+                        [&attempt_id],
+                    )
+                    .unwrap();
+                let restored_due = store.research_payment_reconciliations(25).unwrap();
+                assert_eq!(restored_due.len(), 1);
+                assert_eq!(restored_due[0].attempt_id, attempt_id);
+                store.ready().unwrap();
+                assert_eq!(
+                    store
+                        .hold_research_job(&quote.id, "response pending")
+                        .unwrap()
+                        .status,
+                    "payment_reconciliation"
+                );
+            }
+            assert!(matches!(
+                store.open_pay_sh_document(PayShDeliveryRequest {
                     query_id: &resource.query_id,
                     handle: &resource.document_handle,
                     path_price_krw: resource.price_krw,
@@ -10565,10 +20094,87 @@ mod tests {
                     quote_id: &resource.quote_id,
                     payment_token_hash: None,
                     research_job_id: Some(&quote.id),
+                    payment_attempt_id: Some(&"0".repeat(64)),
+                    direct_payment_attempt_id: None,
                     policy: &policy,
-                })
-                .unwrap();
+                }),
+                Err(StoreError::Conflict(_))
+            ));
+            if index == 0 {
+                let status_before_callback =
+                    store.research_payment_attempt(&attempt_id).unwrap().status;
+                let preview = store
+                    .open_pay_sh_document(PayShDeliveryRequest {
+                        query_id: &resource.query_id,
+                        handle: &resource.document_handle,
+                        path_price_krw: resource.price_krw,
+                        owner_wallet: &resource.recipient_wallet,
+                        quote_id: &resource.quote_id,
+                        payment_token_hash: None,
+                        research_job_id: Some(&quote.id),
+                        payment_attempt_id: Some(&attempt_id),
+                        direct_payment_attempt_id: None,
+                        policy: &policy,
+                    })
+                    .unwrap();
+                assert_eq!(preview.citations[0].handle, resource.document_handle);
+                assert_eq!(
+                    store.research_payment_attempt(&attempt_id).unwrap().status,
+                    status_before_callback,
+                    "the pre-receipt callback cannot advance durable payment state"
+                );
+                let pre_receipt_settlements: u64 = store
+                    .connection()
+                    .unwrap()
+                    .query_row(
+                        "SELECT COUNT(*) FROM settlements
+                         WHERE transaction_signature = 'pay.sh:' || ?1",
+                        [&resource.quote_id],
+                        |row| super::as_u64(row.get(0)?),
+                    )
+                    .unwrap();
+                assert_eq!(pre_receipt_settlements, 0);
+            }
+            assert_eq!(
+                store
+                    .settle_research_payment(&quote.id, &attempt_id, &prepared_signature)
+                    .unwrap()
+                    .status,
+                "processing"
+            );
+            // A lost settlement response is retried with the same receipt and
+            // converges without a second credit or transfer.
+            assert_eq!(
+                store
+                    .settle_research_payment(&quote.id, &attempt_id, &prepared_signature)
+                    .unwrap()
+                    .status,
+                "processing"
+            );
+            if index == 1 {
+                // The paid callback committed, but the worker timed out while
+                // reloading its plan and sent a stale hold. The ledger has no
+                // active attempt now, so creating `payment_reconciliation`
+                // would make the completed payment disappear from both queues.
+                let after_lost_plan_response = store
+                    .hold_research_job(&quote.id, "plan reload timed out after paid callback")
+                    .unwrap();
+                assert_eq!(after_lost_plan_response.status, "processing");
+                store.ready().unwrap();
+                continue;
+            }
         }
+        let registered_pay_sh_transactions: u64 = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM chain_transaction_registry
+                 WHERE settlement_kind = 'pay_sh_document'",
+                params![],
+                |row| super::as_u64(row.get(0)?),
+            )
+            .unwrap();
+        assert_eq!(registered_pay_sh_transactions, 2);
         let completed = store.complete_research_job(&quote.id).unwrap();
         assert_eq!(completed.status, "completed");
         assert_eq!(completed.citations.len(), 2);
@@ -10626,6 +20232,33 @@ mod tests {
         let partial_plan = store.research_job_plan(&partial_quote.id, &policy).unwrap();
         assert_eq!(partial_plan.resources.len(), 2);
         let first = &partial_plan.resources[0];
+        let partial_attempt_id = "d".repeat(64);
+        assert!(matches!(
+            store.open_pay_sh_document(PayShDeliveryRequest {
+                query_id: &first.query_id,
+                handle: &first.document_handle,
+                path_price_krw: first.price_krw,
+                owner_wallet: &first.recipient_wallet,
+                quote_id: &first.quote_id,
+                payment_token_hash: None,
+                research_job_id: Some(&partial_quote.id),
+                payment_attempt_id: Some(&partial_attempt_id),
+                direct_payment_attempt_id: None,
+                policy: &policy,
+            }),
+            Err(StoreError::Conflict(_))
+        ));
+        store
+            .begin_research_payment(
+                &partial_quote.id,
+                &BeginResearchPaymentRequest {
+                    quote_id: first.quote_id.clone(),
+                    attempt_id: partial_attempt_id.clone(),
+                },
+            )
+            .unwrap();
+        let partial_signature =
+            prepare_research_attempt(&store, &partial_quote.id, first, &partial_attempt_id);
         store
             .open_pay_sh_document(PayShDeliveryRequest {
                 query_id: &first.query_id,
@@ -10635,8 +20268,128 @@ mod tests {
                 quote_id: &first.quote_id,
                 payment_token_hash: None,
                 research_job_id: Some(&partial_quote.id),
+                payment_attempt_id: Some(&partial_attempt_id),
+                direct_payment_attempt_id: None,
                 policy: &policy,
             })
+            .unwrap();
+        store
+            .settle_research_payment(&partial_quote.id, &partial_attempt_id, &partial_signature)
+            .unwrap();
+        let second = &partial_plan.resources[1];
+        let ambiguous_attempt_id = "e".repeat(64);
+        let fenced = store
+            .begin_research_payment(
+                &partial_quote.id,
+                &BeginResearchPaymentRequest {
+                    quote_id: second.quote_id.clone(),
+                    attempt_id: ambiguous_attempt_id.clone(),
+                },
+            )
+            .unwrap();
+        let _ = prepare_research_attempt(&store, &partial_quote.id, second, &ambiguous_attempt_id);
+        assert_eq!(fenced.status, "payment_in_progress");
+        assert!(
+            !store
+                .runnable_research_jobs(100)
+                .unwrap()
+                .contains(&partial_quote.id)
+        );
+        let held = store
+            .hold_research_job(
+                &partial_quote.id,
+                "Pay.sh transport failed after the paid request began",
+            )
+            .unwrap();
+        assert_eq!(held.status, "payment_reconciliation");
+        assert_eq!(held.citations.len(), 1);
+        assert_eq!(held.pending_handles.len(), 1);
+        assert!(
+            !store
+                .runnable_research_jobs(100)
+                .unwrap()
+                .contains(&partial_quote.id)
+        );
+        assert!(matches!(
+            store.fail_research_job(&partial_quote.id, "must not refund an uncertain payment"),
+            Err(StoreError::Conflict(_))
+        ));
+        assert!(matches!(
+            store.release_research_payment(
+                &partial_quote.id,
+                &ambiguous_attempt_id,
+                &ReleaseResearchPaymentRequest {
+                    expected_status: "ambiguous".to_owned(),
+                    reason: "one RPC view reported no transaction".to_owned(),
+                },
+            ),
+            Err(StoreError::Conflict(_))
+        ));
+        store
+            .defer_research_payment_reconciliation(&partial_quote.id, &ambiguous_attempt_id, true)
+            .unwrap();
+        // A separate later finalized pass is mandatory; simulate the elapsed
+        // safety window without making the unit test sleep.
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE research_payment_attempts SET absence_observed_at = 0
+                 WHERE attempt_id = ?1",
+                [&ambiguous_attempt_id],
+            )
+            .unwrap();
+        assert!(matches!(
+            store.release_research_payment(
+                &partial_quote.id,
+                &ambiguous_attempt_id,
+                &ReleaseResearchPaymentRequest {
+                    expected_status: "ambiguous".to_owned(),
+                    reason: "time-reversed absence fixture".to_owned(),
+                },
+            ),
+            Err(StoreError::Conflict(message))
+                if message.contains("outside the prepared transaction lifetime")
+        ));
+        let later_pass = now_ms();
+        // Advance this exact durable attempt through its real absence window
+        // without sleeping for minutes. Production SQL cannot rewrite the
+        // prepared timestamp; the trigger is removed only around this test
+        // clock fixture and is restored before the release path runs.
+        store
+            .connection()
+            .unwrap()
+            .execute_batch(
+                "DROP TRIGGER guard_research_pay_sh_attempt_evidence;
+                 DROP TRIGGER guard_research_pay_sh_attempt_identity;
+                 DROP TRIGGER guard_research_pay_sh_attempt_state;",
+            )
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE research_payment_attempts
+                 SET created_at = ?1, prepared_at = ?2, absence_observed_at = ?3
+                 WHERE attempt_id = ?4",
+                params![
+                    super::as_i64(later_pass.saturating_sub(5 * 60_000)).unwrap(),
+                    super::as_i64(later_pass.saturating_sub(4 * 60_000)).unwrap(),
+                    super::as_i64(later_pass.saturating_sub(3 * 60_000)).unwrap(),
+                    ambiguous_attempt_id
+                ],
+            )
+            .unwrap();
+        super::install_active_pay_sh_attempt_guards(&store.connection().unwrap()).unwrap();
+        store
+            .release_research_payment(
+                &partial_quote.id,
+                &ambiguous_attempt_id,
+                &ReleaseResearchPaymentRequest {
+                    expected_status: "ambiguous".to_owned(),
+                    reason: "two finalized scans found no exact transaction".to_owned(),
+                },
+            )
             .unwrap();
         let failed = store
             .fail_research_job(&partial_quote.id, "second Pay.sh resource failed")
@@ -10671,6 +20424,221 @@ mod tests {
             .unwrap();
         assert_eq!(withdrawals.len(), 1);
         assert_eq!(withdrawals[0].recipient_wallet, payer);
+    }
+
+    #[test]
+    fn verified_wallet_rotation_cannot_orphan_prepaid_value_or_payable_quotes() {
+        let store = Store::in_memory().unwrap();
+        let buyer_id = "prepaid-wallet-rotation-buyer";
+        onboard(&store, buyer_id);
+        let wallet_a = verify_wallet(&store, buyer_id, 75);
+        let wallet_b_key = SigningKey::from_bytes(&[76; 32]);
+        let wallet_b = bs58::encode(wallet_b_key.verifying_key().as_bytes()).into_string();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[77; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = PaymentQuotePolicy {
+            fallback_recipient: Some(receiver.clone()),
+            bundle_recipient: Some(receiver),
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
+            krw_per_usdc: 1_350,
+            ttl_ms: 300_000,
+        };
+        let session_token = "d".repeat(64);
+        store
+            .issue_prepaid_wallet_session(buyer_id, &wallet_a, &session_token, 300_000, &policy)
+            .unwrap();
+        let session_hash = super::hex_digest(session_token.as_bytes());
+
+        let question = "Which Seongsu lunch survives a prepaid wallet rotation?";
+        let resolved = Resolver::new(store.documents().unwrap())
+            .resolve(ResolveQuestionRequest {
+                question: question.to_owned(),
+                requested_documents: 1,
+                budget_krw: None,
+                filters: SearchFilters::default(),
+            })
+            .unwrap();
+        let payment_token_hash = "a".repeat(64);
+        store
+            .record_resolution(question, &resolved, Some(&payment_token_hash))
+            .unwrap();
+        let create = CreatePaymentBundleRequest {
+            query_id: resolved.query_id.clone(),
+            handles: vec![resolved.matches[0].handle.clone()],
+            top_up_atomic: Some("5000000".to_owned()),
+        };
+        let funded_quote = store
+            .create_payment_bundle(&create, &payment_token_hash, &session_hash, &policy)
+            .unwrap();
+        let (funding_attempt, funding_signature) = signed_chain_attempt_fixture(
+            "bundle",
+            &funded_quote.id,
+            &wallet_a,
+            &funded_quote.pay_to,
+            8,
+        );
+        store.claim_payment_attempt(&funding_attempt).unwrap();
+        store
+            .record_bundle_chain_settlement(&RecordChainSettlementRequest {
+                quote_id: funded_quote.id.clone(),
+                attempt_id: Some(funding_attempt.attempt_id),
+                transaction_signature: funding_signature,
+                payer: wallet_a.clone(),
+                pay_to: funded_quote.pay_to,
+                amount_atomic: funded_quote.amount_atomic,
+                network: funded_quote.network,
+                raw_response: serde_json::json!({"success": true}),
+            })
+            .unwrap();
+
+        let rotation = store
+            .create_wallet_challenge(buyer_id, &wallet_b, &"cd".repeat(32), 300_000)
+            .unwrap();
+        let rotation_signature =
+            bs58::encode(wallet_b_key.sign(rotation.message.as_bytes()).to_bytes()).into_string();
+        assert!(matches!(
+            store.verify_wallet_challenge(buyer_id, &rotation.id, &rotation_signature),
+            Err(StoreError::Conflict(_))
+        ));
+        assert_eq!(
+            store.get_profile(buyer_id).unwrap().unwrap().wallet,
+            Some(wallet_a.clone())
+        );
+
+        // A failed prepaid job returns its exact reservation to wallet A. The
+        // value must then be durably reserved for withdrawal before A can stop
+        // being the active prepaid owner.
+        assert_eq!(
+            store
+                .fail_research_job(&funded_quote.id, "buyer cancelled before document payment")
+                .unwrap()
+                .status,
+            "balance_refunded"
+        );
+        let old_balance = store.prepaid_balance(buyer_id, &policy).unwrap();
+        assert_eq!(old_balance.wallet, wallet_a);
+        assert_eq!(old_balance.available_atomic, "5000000");
+        let withdrawal = store
+            .create_prepaid_withdrawal(buyer_id, None, &policy)
+            .unwrap();
+        assert_eq!(withdrawal.recipient_wallet, wallet_a);
+        assert_eq!(withdrawal.amount_atomic, "5000000");
+
+        let second_question = "Which Seongsu lunch quote is invalidated by a wallet switch?";
+        let second_resolution = Resolver::new(store.documents().unwrap())
+            .resolve(ResolveQuestionRequest {
+                question: second_question.to_owned(),
+                requested_documents: 1,
+                budget_krw: None,
+                filters: SearchFilters::default(),
+            })
+            .unwrap();
+        let second_token_hash = "b".repeat(64);
+        store
+            .record_resolution(
+                second_question,
+                &second_resolution,
+                Some(&second_token_hash),
+            )
+            .unwrap();
+        let second_request = CreatePaymentBundleRequest {
+            query_id: second_resolution.query_id.clone(),
+            handles: vec![second_resolution.matches[0].handle.clone()],
+            top_up_atomic: Some("5000000".to_owned()),
+        };
+        let stale_quote = store
+            .create_payment_bundle(&second_request, &second_token_hash, &session_hash, &policy)
+            .unwrap();
+
+        let rotated = store
+            .verify_wallet_challenge(buyer_id, &rotation.id, &rotation_signature)
+            .unwrap();
+        assert_eq!(rotated.wallet, Some(wallet_b.clone()));
+        assert_eq!(
+            store.payment_bundle_quote(&stale_quote.id).unwrap().status,
+            "deleted"
+        );
+        assert!(matches!(
+            store.create_payment_bundle(
+                &second_request,
+                &second_token_hash,
+                &session_hash,
+                &policy,
+            ),
+            Err(StoreError::Unauthorized(_))
+        ));
+        let new_balance = store.prepaid_balance(buyer_id, &policy).unwrap();
+        assert_eq!(new_balance.wallet, wallet_b);
+        assert_eq!(new_balance.available_atomic, "0");
+    }
+
+    #[test]
+    fn one_wallet_cannot_back_prepaid_ledgers_for_two_accounts() {
+        let store = Store::in_memory().unwrap();
+        let owner_id = "canonical-prepaid-owner";
+        let second_id = "secondary-wallet-profile";
+        ensure_user(&store, owner_id);
+        onboard(&store, second_id);
+        let wallet_key = SigningKey::from_bytes(&[78; 32]);
+        let wallet = bs58::encode(wallet_key.verifying_key().as_bytes()).into_string();
+        store.bind_wallet_identity(owner_id, &wallet).unwrap();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[79; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = PaymentQuotePolicy {
+            fallback_recipient: Some(receiver.clone()),
+            bundle_recipient: Some(receiver),
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
+            krw_per_usdc: 1_350,
+            ttl_ms: 300_000,
+        };
+        store
+            .issue_prepaid_wallet_session(owner_id, &wallet, &"e".repeat(64), 300_000, &policy)
+            .unwrap();
+
+        // The same controller may deliberately attach its payout wallet to a
+        // second profile, but that must not merge two application accounts
+        // into the same custodial prepaid ledger.
+        let challenge = store
+            .create_wallet_challenge(second_id, &wallet, &"ef".repeat(32), 300_000)
+            .unwrap();
+        let signature =
+            bs58::encode(wallet_key.sign(challenge.message.as_bytes()).to_bytes()).into_string();
+        store
+            .verify_wallet_challenge(second_id, &challenge.id, &signature)
+            .unwrap();
+        assert!(matches!(
+            store.issue_prepaid_wallet_session(
+                second_id,
+                &wallet,
+                &"f".repeat(64),
+                300_000,
+                &policy,
+            ),
+            Err(StoreError::Conflict(_))
+        ));
+        assert!(matches!(
+            store.prepaid_balance(second_id, &policy),
+            Err(StoreError::Conflict(_))
+        ));
+
+        // Deleting the secondary profile must not withdraw, tombstone, or
+        // otherwise inherit the canonical owner's prepaid wallet state.
+        store.delete_account(second_id).unwrap();
+        let canonical_owner: String = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT user_id FROM prepaid_wallet_owners WHERE wallet = ?1",
+                [&wallet],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(canonical_owner, owner_id);
+        store
+            .issue_prepaid_wallet_session(owner_id, &wallet, &"1".repeat(64), 300_000, &policy)
+            .unwrap();
     }
 
     #[test]
@@ -11105,18 +21073,47 @@ mod tests {
             .create_open_call_funding_quote("funded-buyer", &request, &policy)
             .unwrap();
         assert_eq!(quote.total_price_krw, 2_100);
+        let (payment_attempt, payment_signature) =
+            signed_chain_attempt_fixture("open_call", &quote.id, &payer_wallet, &quote.pay_to, 4);
+        store.claim_payment_attempt(&payment_attempt).unwrap();
+        assert_eq!(
+            store.open_call_funding_quote(&quote.id).unwrap().status,
+            "settling"
+        );
+        let in_flight_quote = store
+            .create_open_call_funding_quote("funded-buyer", &request, &policy)
+            .unwrap();
+        assert_eq!(in_flight_quote.id, quote.id);
+        assert_eq!(in_flight_quote.status, "settling");
         let settlement = RecordChainSettlementRequest {
             quote_id: quote.id.clone(),
-            transaction_signature: "4".repeat(88),
+            attempt_id: Some(payment_attempt.attempt_id.clone()),
+            transaction_signature: payment_signature,
             payer: payer_wallet.clone(),
             pay_to: escrow_wallet.clone(),
             amount_atomic: quote.amount_atomic.clone(),
             network: policy.network.clone(),
             raw_response: serde_json::json!({ "success": true }),
         };
+        // Expiry gates payment initiation, not a delayed durable callback for
+        // a transfer the facilitator already completed.
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE open_call_funding_quotes SET expires_at = 0 WHERE id = ?1",
+                [&quote.id],
+            )
+            .unwrap();
         let first = store
             .record_open_call_chain_settlement(&settlement)
             .unwrap();
+        assert!(
+            !store
+                .release_payment_attempt(&payment_attempt)
+                .unwrap()
+                .released
+        );
         assert_eq!(
             first,
             store
@@ -11125,6 +21122,11 @@ mod tests {
         );
         let funded_quote = store.open_call_funding_quote(&quote.id).unwrap();
         assert_eq!(funded_quote.status, "funded");
+        let recovered_quote = store
+            .create_open_call_funding_quote("funded-buyer", &request, &policy)
+            .unwrap();
+        assert_eq!(recovered_quote.id, quote.id);
+        assert_eq!(recovered_quote.status, "funded");
         let call_id = funded_quote.open_call_id.unwrap();
         let call = store
             .list_open_calls(Some("funded-buyer"))
@@ -11154,6 +21156,224 @@ mod tests {
         assert_eq!(balance_after.available_krw, balance_before.available_krw);
         assert_eq!(balance_after.reserved_krw, balance_before.reserved_krw);
         assert_eq!(balance_after.held_krw, balance_before.held_krw);
+    }
+
+    #[test]
+    fn approved_funded_dispute_consumes_atomic_escrow_exactly_once() {
+        let store = Store::in_memory().unwrap();
+        ensure_user(&store, "funded-dispute-buyer");
+        onboard(&store, "funded-dispute-author");
+        let author_wallet = verify_wallet(&store, "funded-dispute-author", 41);
+        let escrow_wallet =
+            bs58::encode(SigningKey::from_bytes(&[42; 32]).verifying_key().as_bytes())
+                .into_string();
+        let payer_wallet =
+            bs58::encode(SigningKey::from_bytes(&[43; 32]).verifying_key().as_bytes())
+                .into_string();
+        let policy = PaymentQuotePolicy {
+            fallback_recipient: None,
+            bundle_recipient: Some(escrow_wallet.clone()),
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
+            krw_per_usdc: 1_350,
+            ttl_ms: 300_000,
+        };
+        let request = CreateOpenCallRequest {
+            question: "Which winter boots survived an actual Svalbard field shift?".to_owned(),
+            unit_price: 700,
+            target: 1,
+            chat_id: Some("funded-dispute-chat".to_owned()),
+            shelf: "Svalbard field researchers".to_owned(),
+            category: "travel".to_owned(),
+            filters: SearchFilters::default(),
+        };
+        let quote = store
+            .create_open_call_funding_quote("funded-dispute-buyer", &request, &policy)
+            .unwrap();
+        let (attempt, payment_signature) =
+            signed_chain_attempt_fixture("open_call", &quote.id, &payer_wallet, &quote.pay_to, 5);
+        store.claim_payment_attempt(&attempt).unwrap();
+        store
+            .record_open_call_chain_settlement(&RecordChainSettlementRequest {
+                quote_id: quote.id.clone(),
+                attempt_id: Some(attempt.attempt_id),
+                transaction_signature: payment_signature,
+                payer: payer_wallet,
+                pay_to: escrow_wallet,
+                amount_atomic: quote.amount_atomic.clone(),
+                network: policy.network,
+                raw_response: serde_json::json!({ "success": true }),
+            })
+            .unwrap();
+        let call_id = store
+            .open_call_funding_quote(&quote.id)
+            .unwrap()
+            .open_call_id
+            .unwrap();
+        let buyer_balance_before = store.balance("funded-dispute-buyer").unwrap();
+        let author_balance_before = store.balance("funded-dispute-author").unwrap();
+
+        let voided = store
+            .submit_answer(&call_id, "funded-dispute-author", "They are good boots.")
+            .unwrap();
+        assert_eq!(voided.memory.status, "voided");
+        assert!(
+            store
+                .payout_claims("funded-dispute-author")
+                .unwrap()
+                .is_empty()
+        );
+        store
+            .submit_dispute(
+                &voided.memory.id,
+                "funded-dispute-author",
+                "The concise answer names the exact tested product, and the attached field context can be verified manually.",
+            )
+            .unwrap();
+        ensure_user(&store, "funded-dispute-reviewer");
+        store
+            .set_user_role("funded-dispute-reviewer", "admin")
+            .unwrap();
+        store
+            .review_dispute(
+                "funded-dispute-reviewer",
+                &voided.memory.id,
+                &ReviewDisputeRequest {
+                    decision: "approved".to_owned(),
+                    note: "Manual evidence review confirms the product-specific field claim."
+                        .to_owned(),
+                },
+            )
+            .unwrap();
+
+        let call = store
+            .list_open_calls(Some("funded-dispute-buyer"))
+            .unwrap()
+            .into_iter()
+            .find(|call| call.id == call_id)
+            .unwrap();
+        assert_eq!(call.status, "filled");
+        assert_eq!(call.answered, 1);
+        assert_eq!(call.escrow_remaining_krw, 0);
+        assert_eq!(call.escrow_remaining_atomic.as_deref(), Some("0"));
+        let claims = store.payout_claims("funded-dispute-author").unwrap();
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].kind, "open_call_dispute_restored");
+        assert_eq!(claims[0].recipient_wallet, author_wallet);
+        assert_eq!(claims[0].amount_atomic, quote.amount_atomic);
+        assert_eq!(claims[0].amount_krw, 700);
+        let earnings = store.earnings("funded-dispute-author").unwrap();
+        assert_eq!(earnings.event_count, 1);
+        assert_eq!(earnings.claimable_krw, 700);
+        assert_eq!(
+            earnings.events[0].payout_claim_id,
+            Some(claims[0].id.clone())
+        );
+
+        let buyer_balance_after = store.balance("funded-dispute-buyer").unwrap();
+        let author_balance_after = store.balance("funded-dispute-author").unwrap();
+        assert_eq!(
+            (
+                buyer_balance_after.available_krw,
+                buyer_balance_after.reserved_krw,
+                buyer_balance_after.held_krw,
+            ),
+            (
+                buyer_balance_before.available_krw,
+                buyer_balance_before.reserved_krw,
+                buyer_balance_before.held_krw,
+            )
+        );
+        assert_eq!(
+            (
+                author_balance_after.available_krw,
+                author_balance_after.reserved_krw,
+                author_balance_after.held_krw,
+            ),
+            (
+                author_balance_before.available_krw,
+                author_balance_before.reserved_krw,
+                author_balance_before.held_krw,
+            )
+        );
+
+        let replay = store
+            .review_dispute(
+                "funded-dispute-reviewer",
+                &voided.memory.id,
+                &ReviewDisputeRequest {
+                    decision: "approved".to_owned(),
+                    note: "A duplicate approval must never allocate the escrow twice.".to_owned(),
+                },
+            )
+            .unwrap_err();
+        assert!(replay.to_string().contains("already been reviewed"));
+        assert_eq!(
+            store.payout_claims("funded-dispute-author").unwrap().len(),
+            1
+        );
+        assert_eq!(
+            store.earnings("funded-dispute-author").unwrap().event_count,
+            1
+        );
+    }
+
+    #[test]
+    fn cancelled_call_cannot_restore_a_voided_answer_after_refund() {
+        let store = Store::in_memory().unwrap();
+        let call = create_svalbard_call(&store, "cancelled-dispute-buyer", 1);
+        let voided = submit(
+            &store,
+            &call.id,
+            "cancelled-dispute-author",
+            "They are good boots.",
+        )
+        .unwrap();
+        store
+            .submit_dispute(
+                &voided.memory.id,
+                "cancelled-dispute-author",
+                "This answer is intentionally concise but still deserves a manual evidence review.",
+            )
+            .unwrap();
+        store
+            .cancel_open_call("cancelled-dispute-buyer", &call.id)
+            .unwrap();
+        ensure_user(&store, "cancelled-dispute-reviewer");
+        store
+            .set_user_role("cancelled-dispute-reviewer", "admin")
+            .unwrap();
+
+        let error = store
+            .review_dispute(
+                "cancelled-dispute-reviewer",
+                &voided.memory.id,
+                &ReviewDisputeRequest {
+                    decision: "approved".to_owned(),
+                    note: "The evidence itself would otherwise justify restoration.".to_owned(),
+                },
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("can no longer fill this call"));
+        assert_eq!(
+            store.list_memory("cancelled-dispute-author").unwrap()[0].status,
+            "voided"
+        );
+        assert_eq!(
+            store
+                .earnings("cancelled-dispute-author")
+                .unwrap()
+                .event_count,
+            0
+        );
+        assert_eq!(
+            store
+                .my_dispute("cancelled-dispute-author")
+                .unwrap()
+                .unwrap()
+                .status,
+            "pending"
+        );
     }
 
     #[test]
@@ -11327,16 +21547,41 @@ mod tests {
             Err(StoreError::Unauthorized(_))
         ));
         assert!(matches!(
-            store.payment_quote(&resolved.query_id, handle, &policy),
+            store.x402_payment_quote(&resolved.query_id, handle, &policy),
             Err(StoreError::Conflict(_))
         ));
         let verified_wallet = verify_wallet(&store, "researcher-1", 7);
         let quote = store
-            .payment_quote(&resolved.query_id, handle, &policy)
+            .x402_payment_quote(&resolved.query_id, handle, &policy)
             .unwrap();
         assert_eq!(quote.price_krw, 700);
         assert_eq!(quote.amount_atomic, "518519");
         assert_eq!(quote.pay_to, verified_wallet);
+        assert!(matches!(
+            store.pay_sh_resource(&resolved.query_id, handle, &payment_token_hash, &policy),
+            Err(StoreError::Conflict(_))
+        ));
+        // The database guard prevents an older Pay.sh revision from recording
+        // a second rail's charge for this x402-reserved quote.
+        assert!(
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "INSERT INTO settlements
+                     (id, query_id, payer, document_handles_json, total_krw, mode,
+                      transaction_signature, created_at)
+                     VALUES (?1, ?2, 'pay.sh', ?3, ?4, 'pay_sh_mpp_direct', ?5, 0)",
+                    params![
+                        "settlement-cross-rail",
+                        resolved.query_id,
+                        serde_json::to_string(&vec![handle.clone()]).unwrap(),
+                        quote.price_krw as i64,
+                        format!("pay.sh:{}", quote.id),
+                    ],
+                )
+                .is_err()
+        );
         assert!(matches!(
             store.paid_document(&quote.id),
             Err(StoreError::NotFound("settled payment quote"))
@@ -11361,19 +21606,363 @@ mod tests {
             .unwrap();
         assert_eq!(quoted.documents[0].status, "quoted");
 
+        let first_signed_transaction =
+            BASE64_STANDARD.encode(prepared_x402_transaction_fixture(7, 180));
+        let first_attempt = ClaimPaymentAttemptRequest {
+            settlement_kind: "document".to_owned(),
+            quote_id: quote.id.clone(),
+            attempt_id: hex_digest(first_signed_transaction.as_bytes()),
+            payer: Some(payer.clone()),
+            signed_transaction_base64: Some(first_signed_transaction.clone()),
+            recent_blockhash: Some(quote.pay_to.clone()),
+            absence_observed: false,
+        };
+        let first_fence = store.claim_payment_attempt(&first_attempt).unwrap();
+        assert_eq!(
+            store.claim_payment_attempt(&first_attempt).unwrap(),
+            first_fence,
+            "a response lost after the durable claim must recover the exact fence"
+        );
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE chain_payment_attempts SET reconcile_after = 0 WHERE attempt_id = ?1",
+                [&first_attempt.attempt_id],
+            )
+            .unwrap();
+        let settling = store
+            .x402_payment_quote(&resolved.query_id, handle, &policy)
+            .unwrap();
+        assert_eq!(settling.id, quote.id);
+        assert_eq!(settling.status, "settling");
+        // Reconciliation is driven by the durable attempt, not by a mutable
+        // quote status. A stale or cross-version status write must not hide a
+        // transfer whose callback may have been lost.
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE payment_quotes SET status = 'delivered' WHERE id = ?1",
+                [&quote.id],
+            )
+            .unwrap();
+        let recovered_after_status_change = store.claim_payment_attempt(&first_attempt).unwrap();
+        assert_eq!(
+            recovered_after_status_change.attempt_id,
+            first_fence.attempt_id
+        );
+        assert_eq!(
+            recovered_after_status_change.quote_id, first_fence.quote_id,
+            "advancing quote status cannot strand an exact signed-transaction retry"
+        );
+        assert_eq!(recovered_after_status_change.reconcile_after, 0);
+        let due = store.payment_attempt_reconciliations(25).unwrap();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].settlement_kind, "document");
+        assert_eq!(due[0].quote_id, quote.id);
+        assert_eq!(due[0].attempt_id, first_attempt.attempt_id);
+        assert_eq!(due[0].pay_to, quote.pay_to);
+        assert_eq!(due[0].network, quote.network);
+        assert_eq!(due[0].asset, quote.asset);
+        assert_eq!(due[0].amount_atomic, quote.amount_atomic);
+        assert_eq!(due[0].payer.as_deref(), Some(payer.as_str()));
+        assert_eq!(
+            due[0].signed_transaction_base64.as_deref(),
+            Some(first_signed_transaction.as_str())
+        );
+        assert_eq!(
+            due[0].recent_blockhash.as_deref(),
+            Some(quote.pay_to.as_str())
+        );
+        assert_eq!(due[0].absence_observed_at, None);
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE payment_quotes SET status = 'quoted' WHERE id = ?1",
+                [&quote.id],
+            )
+            .unwrap();
+        let deferred = store
+            .defer_payment_attempt_reconciliation(&first_attempt)
+            .unwrap();
+        assert!(deferred.reconcile_after > now_ms());
+        store.ready().unwrap();
+        assert!(
+            store
+                .payment_attempt_reconciliations(25)
+                .unwrap()
+                .is_empty()
+        );
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE chain_payment_attempts SET reconcile_after = ?1
+                 WHERE attempt_id = ?2",
+                params![i64::MAX, first_attempt.attempt_id],
+            )
+            .unwrap();
+        assert!(
+            store
+                .payment_attempt_reconciliations(25)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(matches!(
+            store.ready(),
+            Err(StoreError::Conflict(message))
+                if message.contains("chain payment recovery")
+        ));
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE chain_payment_attempts SET reconcile_after = 0
+                 WHERE attempt_id = ?1",
+                [&first_attempt.attempt_id],
+            )
+            .unwrap();
+        assert_eq!(store.payment_attempt_reconciliations(25).unwrap().len(), 1);
+        store.ready().unwrap();
+        let competing_signed_transaction =
+            BASE64_STANDARD.encode(prepared_x402_transaction_fixture(8, 180));
+        let competing_attempt = ClaimPaymentAttemptRequest {
+            attempt_id: hex_digest(competing_signed_transaction.as_bytes()),
+            signed_transaction_base64: Some(competing_signed_transaction),
+            ..first_attempt.clone()
+        };
+        assert!(matches!(
+            store.claim_payment_attempt(&competing_attempt),
+            Err(StoreError::Conflict(_))
+        ));
+        assert!(matches!(
+            store.release_reconciled_payment_attempt(&first_attempt),
+            Err(StoreError::Conflict(_))
+        ));
+        let absence_observation = ClaimPaymentAttemptRequest {
+            absence_observed: true,
+            ..first_attempt.clone()
+        };
+        store
+            .defer_payment_attempt_reconciliation(&absence_observation)
+            .unwrap();
+        assert!(matches!(
+            store.release_reconciled_payment_attempt(&first_attempt),
+            Err(StoreError::Conflict(_))
+        ));
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE chain_payment_attempts
+                 SET absence_observed_at = 0, reconcile_after = 0
+                 WHERE attempt_id = ?1",
+                [&first_attempt.attempt_id],
+            )
+            .unwrap();
+        assert!(matches!(
+            store.release_reconciled_payment_attempt(&first_attempt),
+            Err(StoreError::Conflict(_))
+        ));
+        let later_pass = now_ms();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE chain_payment_attempts
+                 SET created_at = ?1, absence_observed_at = ?2, reconcile_after = 0
+                 WHERE attempt_id = ?3",
+                params![
+                    super::as_i64(later_pass.saturating_sub(10 * 60_000)).unwrap(),
+                    super::as_i64(later_pass.saturating_sub(6 * 60_000)).unwrap(),
+                    first_attempt.attempt_id
+                ],
+            )
+            .unwrap();
+        assert!(
+            store
+                .release_reconciled_payment_attempt(&first_attempt)
+                .unwrap()
+                .released
+        );
+        let remaining_after_release = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM chain_payment_attempts WHERE quote_id = ?1",
+                [&quote.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(remaining_after_release, 0);
+        let settlement_signed_transaction =
+            BASE64_STANDARD.encode(prepared_x402_transaction_fixture(2, 180));
+        let settlement_attempt = ClaimPaymentAttemptRequest {
+            attempt_id: hex_digest(settlement_signed_transaction.as_bytes()),
+            payer: Some(payer.clone()),
+            signed_transaction_base64: Some(settlement_signed_transaction),
+            recent_blockhash: Some(quote.pay_to.clone()),
+            absence_observed: false,
+            ..first_attempt
+        };
+        store.claim_payment_attempt(&settlement_attempt).unwrap();
+        let durable_attempt = store
+            .payment_attempt(&settlement_attempt.attempt_id)
+            .unwrap();
+        assert_eq!(durable_attempt.quote_id, quote.id);
+        assert!(durable_attempt.reconcile_after > now_ms());
+
         let request = RecordChainSettlementRequest {
             quote_id: quote.id.clone(),
-            transaction_signature: "2".repeat(88),
+            attempt_id: Some(settlement_attempt.attempt_id.clone()),
+            transaction_signature: bs58::encode([2_u8; 64]).into_string(),
             payer: payer.clone(),
             pay_to: quote.pay_to.clone(),
             amount_atomic: quote.amount_atomic.clone(),
             network: quote.network.clone(),
-            raw_response: serde_json::json!({ "success": true, "transaction": "2".repeat(88) }),
+            raw_response: serde_json::json!({
+                "success": true,
+                "transaction": bs58::encode([2_u8; 64]).into_string()
+            }),
         };
+        let settlement_prepared = settlement_attempt
+            .signed_transaction_base64
+            .clone()
+            .unwrap();
+        let mut stale_attempt = request.clone();
+        stale_attempt.attempt_id = Some("b".repeat(64));
+        assert!(matches!(
+            store.record_chain_settlement(&stale_attempt),
+            Err(StoreError::Conflict(message))
+                if message == "settlement does not match the active payment attempt"
+        ));
         let receipt = store.record_chain_settlement(&request).unwrap();
+        let stored_prepared = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT prepared_transaction_base64 FROM chain_settlements
+                 WHERE quote_id = ?1",
+                [&quote.id],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(
+            stored_prepared, settlement_prepared,
+            "settlement must retain the exact pre-facilitator payload after clearing its attempt"
+        );
+        let remaining_attempts = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM chain_payment_attempts WHERE quote_id = ?1",
+                [&quote.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(remaining_attempts, 0);
+        assert!(matches!(
+            store.payment_attempt(&settlement_attempt.attempt_id),
+            Err(StoreError::NotFound("payment attempt"))
+        ));
+        // A rolling API revision may have committed the settlement without
+        // knowing how to clear the newer durable fence. Idempotent replay must
+        // clean that exact stale attempt instead of scanning it forever.
+        assert!(
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "INSERT INTO chain_payment_attempts
+                     (settlement_kind, quote_id, attempt_id, reconcile_after, created_at)
+                     VALUES ('document', ?1, ?2, 0, 0)",
+                    params![quote.id, settlement_attempt.attempt_id],
+                )
+                .is_err(),
+            "a rolling pre-evidence writer must be rejected after migration"
+        );
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO chain_payment_attempts
+                 (settlement_kind, quote_id, attempt_id, payer_wallet,
+                  signed_transaction_base64, recent_blockhash, reconcile_after, created_at)
+                 VALUES ('document', ?1, ?2, ?3, ?4, ?5, 0, 1)",
+                params![
+                    quote.id,
+                    settlement_attempt.attempt_id,
+                    payer,
+                    settlement_prepared,
+                    quote.pay_to
+                ],
+            )
+            .unwrap();
         let repeated = store.record_chain_settlement(&request).unwrap();
         assert_eq!(receipt.id, repeated.id);
         assert_eq!(receipt.amount_atomic, quote.amount_atomic);
+        assert!(matches!(
+            store.payment_attempt(&settlement_attempt.attempt_id),
+            Err(StoreError::NotFound("payment attempt"))
+        ));
+        let recovered_quote = store
+            .x402_payment_quote(&resolved.query_id, handle, &policy)
+            .unwrap();
+        assert_eq!(recovered_quote.id, quote.id);
+        assert_eq!(recovered_quote.status, "delivered");
+
+        ensure_user(&store, "signature-replay-buyer");
+        let open_call_policy = PaymentQuotePolicy {
+            bundle_recipient: Some(quote.pay_to.clone()),
+            ..policy.clone()
+        };
+        let open_call_quote = store
+            .create_open_call_funding_quote(
+                "signature-replay-buyer",
+                &CreateOpenCallRequest {
+                    question: "Which settlement replay should be rejected?".to_owned(),
+                    unit_price: 700,
+                    target: 1,
+                    chat_id: Some("signature-replay".to_owned()),
+                    shelf: "Settlement safety".to_owned(),
+                    category: "engineering".to_owned(),
+                    filters: SearchFilters::default(),
+                },
+                &open_call_policy,
+            )
+            .unwrap();
+        let (open_call_attempt, replay_signature) = signed_chain_attempt_fixture(
+            "open_call",
+            &open_call_quote.id,
+            &payer,
+            &open_call_quote.pay_to,
+            2,
+        );
+        assert_eq!(replay_signature, request.transaction_signature);
+        store.claim_payment_attempt(&open_call_attempt).unwrap();
+        let cross_kind_replay = RecordChainSettlementRequest {
+            quote_id: open_call_quote.id,
+            attempt_id: Some(open_call_attempt.attempt_id.clone()),
+            transaction_signature: request.transaction_signature.clone(),
+            payer: payer.clone(),
+            pay_to: open_call_quote.pay_to,
+            amount_atomic: open_call_quote.amount_atomic,
+            network: open_call_quote.network,
+            raw_response: serde_json::json!({ "success": true }),
+        };
+        assert!(matches!(
+            store.record_open_call_chain_settlement(&cross_kind_replay),
+            Err(StoreError::Conflict(message))
+                if message == "this transaction signature has already been recorded"
+        ));
+        assert!(
+            store
+                .release_payment_attempt(&open_call_attempt)
+                .unwrap()
+                .released
+        );
         let delivered = store.paid_document(&quote.id).unwrap();
         assert_eq!(delivered.citation.handle, *handle);
         assert_eq!(delivered.citation.excerpt, strong_answer());
@@ -11493,6 +22082,141 @@ mod tests {
                 .iter()
                 .any(|event| event.payout_status == "onchain")
         );
+
+        // Database triggers protect rolling deployments whose older API
+        // revision does not know about the global registry yet.
+        let guarded_row = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT id, quote_id, settlement_id, transaction_signature, payer, pay_to,
+                        amount_atomic, network, raw_response_json, confirmed_at
+                 FROM chain_settlements WHERE quote_id = ?1",
+                [&quote.id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, i64>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, String>(8)?,
+                        row.get::<_, i64>(9)?,
+                    ))
+                },
+            )
+            .unwrap();
+        let connection = store.connection().unwrap();
+        assert!(
+            connection
+                .execute(
+                    "UPDATE chain_settlements SET transaction_signature = ?1
+                     WHERE quote_id = ?2",
+                    params![bs58::encode([91_u8; 64]).into_string(), quote.id],
+                )
+                .is_err(),
+            "a stale writer cannot rewrite immutable settlement evidence"
+        );
+        assert!(
+            connection
+                .execute(
+                    "DELETE FROM chain_settlements WHERE quote_id = ?1",
+                    [&quote.id],
+                )
+                .is_err(),
+            "a stale writer cannot erase immutable settlement evidence"
+        );
+        // The remaining assertions simulate a database restored to a point
+        // before these guards existed. PITR does not execute DELETE, so remove
+        // only the test database triggers before constructing that old state.
+        connection
+            .execute_batch(
+                "DROP TRIGGER guard_chain_settlements_immutable;
+                 DROP TRIGGER guard_chain_settlements_immutable_delete;",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM chain_settlements WHERE quote_id = ?1",
+                [&quote.id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM chain_transaction_registry WHERE transaction_signature = ?1",
+                [&guarded_row.3],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO chain_settlements
+                 (id, quote_id, settlement_id, transaction_signature, payer, pay_to,
+                  amount_atomic, network, raw_response_json, confirmed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    guarded_row.0,
+                    guarded_row.1,
+                    guarded_row.2,
+                    guarded_row.3,
+                    guarded_row.4,
+                    guarded_row.5,
+                    guarded_row.6,
+                    guarded_row.7,
+                    guarded_row.8,
+                    guarded_row.9,
+                ],
+            )
+            .unwrap();
+        let trigger_registered = connection
+            .query_row(
+                "SELECT COUNT(*) FROM chain_transaction_registry
+                 WHERE transaction_signature = ?1 AND settlement_kind = 'document'
+                   AND quote_id = ?2",
+                params![guarded_row.3, quote.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(trigger_registered, 1);
+        connection
+            .execute(
+                "DELETE FROM chain_settlements WHERE quote_id = ?1",
+                [&quote.id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE chain_transaction_registry
+                 SET settlement_kind = 'open_call', quote_id = 'another-quote'
+                 WHERE transaction_signature = ?1",
+                [&guarded_row.3],
+            )
+            .unwrap();
+        assert!(
+            connection
+                .execute(
+                    "INSERT INTO chain_settlements
+                     (id, quote_id, settlement_id, transaction_signature, payer, pay_to,
+                      amount_atomic, network, raw_response_json, confirmed_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![
+                        guarded_row.0,
+                        guarded_row.1,
+                        guarded_row.2,
+                        guarded_row.3,
+                        guarded_row.4,
+                        guarded_row.5,
+                        guarded_row.6,
+                        guarded_row.7,
+                        guarded_row.8,
+                        guarded_row.9,
+                    ],
+                )
+                .is_err()
+        );
+        super::install_chain_transaction_guards(&connection).unwrap();
     }
 
     #[test]
@@ -11541,6 +22265,62 @@ mod tests {
         assert_eq!(earnings.available_krw, 0);
         assert_eq!(earnings.events[0].payout_status, "held");
         assert!(earnings.events[0].available_at > earnings.events[0].created_at);
+    }
+
+    #[test]
+    fn matured_hold_rolls_back_if_the_balance_no_longer_matches_the_ledger() {
+        let store = Store::in_memory().unwrap();
+        let contributor = "matured-hold-corruption";
+        store
+            .upsert_profile(contributor, &profile_request("hold_corruption"))
+            .unwrap();
+        for index in 0..2 {
+            let call = create_svalbard_call(&store, &format!("hold-strike-buyer-{index}"), 1);
+            submit(&store, &call.id, contributor, "They are good boots.").unwrap();
+        }
+        let paid_call = create_svalbard_call(&store, "hold-payment-buyer", 1);
+        submit(&store, &paid_call.id, contributor, strong_answer()).unwrap();
+
+        let connection = store.connection().unwrap();
+        connection
+            .execute(
+                "UPDATE earning_events SET available_at = 0
+                 WHERE author_id = ?1 AND payout_status = 'held'",
+                [contributor],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE balances SET held_krw = 0 WHERE user_id = ?1",
+                [contributor],
+            )
+            .unwrap();
+        drop(connection);
+
+        assert!(matches!(
+            store.earnings(contributor),
+            Err(StoreError::Conflict(_))
+        ));
+        let (event_status, available_krw, held_krw): (String, u64, u64) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT e.payout_status, b.available_krw, b.held_krw
+                 FROM earning_events e JOIN balances b ON b.user_id = e.author_id
+                 WHERE e.author_id = ?1 AND e.amount_krw > 0",
+                [contributor],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        super::as_u64(row.get(1)?)?,
+                        super::as_u64(row.get(2)?)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(event_status, "held");
+        assert_eq!(available_krw, 100_000);
+        assert_eq!(held_krw, 0);
     }
 
     #[test]
@@ -11716,6 +22496,12 @@ mod tests {
             .unwrap();
         let call = create_svalbard_call(&store, "delete-me", 1);
         assert_eq!(store.balance("delete-me").unwrap().reserved_krw, 700);
+        assert!(matches!(
+            store
+                .claim_ai_generation("shelf_starters", "delete-me", &"9".repeat(64), &[])
+                .unwrap(),
+            AiGenerationClaim::Acquired { .. }
+        ));
 
         store.delete_account("delete-me").unwrap();
 
@@ -11735,6 +22521,987 @@ mod tests {
                 .iter()
                 .all(|item| item.id != call.id)
         );
+        let retained_ai_scope: i64 = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM ai_generation_attempts
+                         WHERE artifact_kind = 'shelf_starters' AND scope_id = 'delete-me')
+                      + (SELECT COUNT(*) FROM ai_generation_budgets
+                         WHERE artifact_kind = 'shelf_starters' AND scope_id = 'delete-me')",
+                params![],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retained_ai_scope, 0);
+    }
+
+    #[test]
+    fn account_deletion_tombstones_a_copied_pay_sh_url_before_it_can_charge() {
+        let store = Store::in_memory().unwrap();
+        let seller_id = "delete-quoted-seller";
+        let (query_id, handle, token_hash, policy) =
+            user_document_payment_fixture(&store, seller_id, 41);
+        let resource = store
+            .pay_sh_resource(&query_id, &handle, &token_hash, &policy)
+            .unwrap();
+        let original_excerpt = store
+            .payment_document_snapshot(&resource.quote_id)
+            .unwrap()
+            .citation
+            .excerpt;
+        assert_eq!(original_excerpt, strong_answer());
+
+        store.delete_account(seller_id).unwrap();
+
+        let (status, document_id, document_handle, pay_to, shelf, content, content_hash): (
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+        ) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT status, document_id, document_handle, pay_to,
+                        shelf_snapshot, content_snapshot, content_hash
+                 FROM payment_quotes WHERE id = ?1",
+                [&resource.quote_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(status, "deleted");
+        assert!(document_id.starts_with("deleted:quote_"));
+        assert!(document_handle.starts_with("deleted:quote_"));
+        assert!(pay_to.is_empty());
+        assert!(shelf.is_empty());
+        assert!(content.is_empty());
+        assert!(content_hash.is_empty());
+        assert!(matches!(
+            store.payment_document_snapshot(&resource.quote_id),
+            Err(StoreError::NotFound("payment quote"))
+        ));
+        assert!(matches!(
+            store.pay_sh_resource(&query_id, &handle, &token_hash, &policy),
+            Err(StoreError::DocumentNotQuoted)
+        ));
+
+        // Replaying the exact copied URL's metadata still cannot create the
+        // durable pre-charge record that authorizes the official Pay.sh gate.
+        let mut transaction = vec![0_u8; 192];
+        transaction[0] = 1;
+        transaction[1..65].fill(9);
+        let attempt_id = hex_digest(&transaction);
+        assert!(matches!(
+            store.prepare_direct_pay_sh_payment(
+                &attempt_id,
+                &PrepareDirectPayShPaymentRequest {
+                    quote_id: resource.quote_id,
+                    query_id,
+                    document_handle: handle,
+                    path_price_krw: resource.price_krw,
+                    owner_wallet: resource.recipient_wallet.clone(),
+                    payer: resource.recipient_wallet.clone(),
+                    platform_recipient_wallet: resource.recipient_wallet.clone(),
+                    challenge_id: "copied-url-after-deletion".to_owned(),
+                    external_id: "human-document-krw-700#deleted".to_owned(),
+                    signed_transaction_base64: BASE64_STANDARD.encode(transaction),
+                    recent_blockhash: resource.recipient_wallet,
+                    challenge_expires_at: now_ms() + 60_000,
+                },
+                &token_hash,
+            ),
+            Err(StoreError::Conflict(_))
+        ));
+    }
+
+    #[test]
+    fn account_deletion_loses_to_an_already_fenced_external_payment() {
+        let store = Store::in_memory().unwrap();
+        let seller_id = "delete-fenced-seller";
+        let (query_id, handle, _token_hash, policy) =
+            user_document_payment_fixture(&store, seller_id, 42);
+        let quote = store
+            .x402_payment_quote(&query_id, &handle, &policy)
+            .unwrap();
+        let (attempt, _) = signed_chain_attempt_fixture(
+            "document",
+            &quote.id,
+            "SysvarRent111111111111111111111111111111111",
+            "11111111111111111111111111111111",
+            4,
+        );
+        store.claim_payment_attempt(&attempt).unwrap();
+
+        assert!(matches!(
+            store.delete_account(seller_id),
+            Err(StoreError::Conflict(message))
+                if message == "wait for active document payments before deleting the account"
+        ));
+        assert_eq!(
+            store
+                .payment_document_snapshot(&quote.id)
+                .unwrap()
+                .citation
+                .excerpt,
+            strong_answer()
+        );
+
+        // Only an explicit pre-settlement cancellation re-opens deletion.
+        assert!(store.release_payment_attempt(&attempt).unwrap().released);
+        store.delete_account(seller_id).unwrap();
+        assert!(matches!(
+            store.payment_document_snapshot(&quote.id),
+            Err(StoreError::NotFound("payment quote"))
+        ));
+    }
+
+    #[test]
+    fn contributor_deletion_waits_for_paid_synthesis_and_erases_its_derived_cache() {
+        let store = Store::in_memory().unwrap();
+        let seller_id = "delete-during-synthesis-seller";
+        let (query_id, handle, token_hash, policy) =
+            user_document_payment_fixture(&store, seller_id, 45);
+        let quote = store
+            .x402_payment_quote(&query_id, &handle, &policy)
+            .unwrap();
+        let payer = bs58::encode(SigningKey::from_bytes(&[46; 32]).verifying_key().as_bytes())
+            .into_string();
+        let (payment_attempt, payment_signature) =
+            signed_chain_attempt_fixture("document", &quote.id, &payer, &quote.pay_to, 7);
+        store.claim_payment_attempt(&payment_attempt).unwrap();
+        store
+            .record_chain_settlement(&RecordChainSettlementRequest {
+                quote_id: quote.id,
+                attempt_id: Some(payment_attempt.attempt_id),
+                transaction_signature: payment_signature,
+                payer,
+                pay_to: quote.pay_to,
+                amount_atomic: quote.amount_atomic,
+                network: quote.network,
+                raw_response: serde_json::json!({"success": true}),
+            })
+            .unwrap();
+        let (_, citations) = store
+            .opened_evidence(&query_id, std::slice::from_ref(&handle), &token_hash)
+            .unwrap();
+        assert_eq!(citations[0].excerpt, strong_answer());
+
+        let synthesis_hash = hex_digest(b"paid synthesis whose seller requests deletion");
+        let synthesis_window = match store
+            .claim_ai_generation(
+                "synthesis",
+                &query_id,
+                &synthesis_hash,
+                std::slice::from_ref(&handle),
+            )
+            .unwrap()
+        {
+            AiGenerationClaim::Acquired { window_started_at } => window_started_at,
+            claim => panic!("the paid synthesis should acquire its provider fence: {claim:?}"),
+        };
+        assert!(matches!(
+            store.delete_account(seller_id),
+            Err(StoreError::Conflict(message))
+                if message.contains("active paid synthesis")
+        ));
+
+        // Model process death rather than a clean failure callback. Once the
+        // provider HTTP deadline is certainly past, deletion removes both the
+        // source snapshot and every derived/cached synthesis row. A late worker
+        // from before deletion cannot recreate the response afterward.
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE ai_generation_attempts SET claimed_at = ?1
+                 WHERE artifact_kind = 'synthesis' AND scope_id = ?2 AND input_hash = ?3",
+                params![
+                    as_i64(
+                        now_ms()
+                            .saturating_sub(super::AI_GENERATION_IN_FLIGHT_MAX_MS)
+                            .saturating_sub(1)
+                    )
+                    .unwrap(),
+                    query_id,
+                    synthesis_hash,
+                ],
+            )
+            .unwrap();
+        store.delete_account(seller_id).unwrap();
+        assert!(matches!(
+            store.complete_ai_generation(
+                "synthesis",
+                &query_id,
+                &synthesis_hash,
+                synthesis_window,
+                Some("{}"),
+            ),
+            Err(StoreError::Conflict(_))
+        ));
+        let retained: i64 = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM ai_generation_documents
+                         WHERE author_id = ?1)
+                      + (SELECT COUNT(*) FROM ai_generation_attempts
+                         WHERE scope_id = ?2 AND input_hash = ?3)",
+                params![seller_id, query_id, synthesis_hash],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retained, 0);
+        store.ready().unwrap();
+    }
+
+    #[test]
+    fn deletion_removes_service_recovery_but_preserves_anonymous_chain_audit() {
+        let store = Store::in_memory().unwrap();
+        let seller_id = "delete-delivered-seller";
+        let (query_id, handle, token_hash, policy) =
+            user_document_payment_fixture(&store, seller_id, 43);
+        let quote = store
+            .x402_payment_quote(&query_id, &handle, &policy)
+            .unwrap();
+        let payer = bs58::encode(SigningKey::from_bytes(&[44; 32]).verifying_key().as_bytes())
+            .into_string();
+        let (attempt, signature) =
+            signed_chain_attempt_fixture("document", &quote.id, &payer, &quote.pay_to, 5);
+        store.claim_payment_attempt(&attempt).unwrap();
+        let receipt = store
+            .record_chain_settlement(&RecordChainSettlementRequest {
+                quote_id: quote.id.clone(),
+                attempt_id: Some(attempt.attempt_id),
+                transaction_signature: signature.clone(),
+                payer: payer.clone(),
+                pay_to: quote.pay_to,
+                amount_atomic: quote.amount_atomic,
+                network: quote.network,
+                raw_response: serde_json::json!({ "success": true }),
+            })
+            .unwrap();
+        assert_eq!(
+            store
+                .recover_paid_document(&query_id, &handle, &payer, &token_hash)
+                .unwrap()
+                .citation
+                .excerpt,
+            strong_answer()
+        );
+
+        store.delete_account(seller_id).unwrap();
+
+        assert!(matches!(
+            store.recover_paid_document(&query_id, &handle, &payer, &token_hash),
+            Err(StoreError::NotFound("settled document"))
+        ));
+        assert!(matches!(
+            store.paid_document(&quote.id),
+            Err(StoreError::NotFound("settled payment quote"))
+        ));
+        let (recorded_signature, handles_json): (String, String) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT cs.transaction_signature, s.document_handles_json
+                 FROM chain_settlements cs
+                 JOIN settlements s ON s.id = cs.settlement_id
+                 WHERE cs.id = ?1",
+                [&receipt.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(recorded_signature, signature);
+        assert_eq!(handles_json, "[]");
+    }
+
+    #[test]
+    fn completed_bundle_history_cannot_make_account_deletion_fail_on_a_foreign_key() {
+        let store = Store::in_memory().unwrap();
+        let seller_id = "delete-bundle-history-seller";
+        let (query_id, handle, _token_hash, policy) =
+            user_document_payment_fixture(&store, seller_id, 45);
+        let (document_id, shelf, content, content_hash, version): (
+            String,
+            String,
+            String,
+            String,
+            u64,
+        ) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT id, shelf, content, content_hash, version
+                 FROM documents WHERE author_id = ?1",
+                [seller_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        super::as_u64(row.get(4)?)?,
+                    ))
+                },
+            )
+            .unwrap();
+        let bundle_id = "completed-bundle-before-seller-deletion";
+        let connection = store.connection().unwrap();
+        connection
+            .execute(
+                "INSERT INTO payment_bundle_quotes
+                 (id, query_id, pay_to, network, asset, amount_atomic, total_price_krw,
+                  krw_per_usdc, expires_at, settled_at, delivered_at, created_at,
+                  bundle_hash, status, payer_wallet)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 1, 700, 1350, ?6, ?6, ?6, ?6,
+                         'completed-history', 'completed', ?3)",
+                params![
+                    bundle_id,
+                    query_id,
+                    policy.bundle_recipient.as_deref().unwrap(),
+                    policy.network,
+                    policy.asset,
+                    now_ms() as i64,
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO payment_bundle_documents
+                 (quote_id, rank, document_id, document_handle, author_id,
+                  recipient_wallet, price_krw, shelf_snapshot, content_snapshot,
+                  content_hash, document_version, consent_version)
+                 VALUES (?1, 0, ?2, ?3, ?4, ?5, 700, ?6, ?7, ?8, ?9, 'test.v1')",
+                params![
+                    bundle_id,
+                    document_id,
+                    handle,
+                    seller_id,
+                    policy.bundle_recipient.as_deref().unwrap(),
+                    shelf,
+                    content,
+                    content_hash,
+                    version as i64,
+                ],
+            )
+            .unwrap();
+        drop(connection);
+
+        store.delete_account(seller_id).unwrap();
+
+        let remaining: u64 = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM payment_bundle_documents WHERE quote_id = ?1",
+                [bundle_id],
+                |row| super::as_u64(row.get(0)?),
+            )
+            .unwrap();
+        assert_eq!(remaining, 0);
+        assert!(
+            store
+                .documents()
+                .unwrap()
+                .iter()
+                .all(|document| document.author_id != seller_id)
+        );
+    }
+
+    #[test]
+    fn buyer_deletion_tombstones_unpaid_bundles_and_revokes_copied_prepaid_sessions() {
+        let store = Store::in_memory().unwrap();
+        let buyer_id = "delete-quoted-bundle-buyer";
+        onboard(&store, buyer_id);
+        let wallet = verify_wallet(&store, buyer_id, 73);
+        let question = "Which Seongsu lunches still work after a buyer deletes their account?";
+        let resolved = Resolver::new(store.documents().unwrap())
+            .resolve(ResolveQuestionRequest {
+                question: question.to_owned(),
+                requested_documents: 2,
+                budget_krw: None,
+                filters: SearchFilters::default(),
+            })
+            .unwrap();
+        let handles = resolved
+            .matches
+            .iter()
+            .take(2)
+            .map(|matched| matched.handle.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(handles.len(), 2);
+        let payment_token_hash = "8".repeat(64);
+        store
+            .record_resolution(question, &resolved, Some(&payment_token_hash))
+            .unwrap();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[74; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = PaymentQuotePolicy {
+            fallback_recipient: Some(receiver.clone()),
+            bundle_recipient: Some(receiver),
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
+            krw_per_usdc: 1_350,
+            ttl_ms: 300_000,
+        };
+        let session_token = "b".repeat(64);
+        store
+            .issue_prepaid_wallet_session(buyer_id, &wallet, &session_token, 300_000, &policy)
+            .unwrap();
+        let request = CreatePaymentBundleRequest {
+            query_id: resolved.query_id.clone(),
+            handles,
+            top_up_atomic: Some("5000000".to_owned()),
+        };
+        let session_hash = super::hex_digest(session_token.as_bytes());
+        let quote = store
+            .create_payment_bundle(&request, &payment_token_hash, &session_hash, &policy)
+            .unwrap();
+        assert_eq!(quote.status, "quoted");
+
+        store.delete_account(buyer_id).unwrap();
+        assert_eq!(
+            store.payment_bundle_quote(&quote.id).unwrap().status,
+            "deleted"
+        );
+        assert!(matches!(
+            store.create_payment_bundle(&request, &payment_token_hash, &session_hash, &policy),
+            Err(StoreError::Unauthorized(_))
+        ));
+        assert!(matches!(
+            store.claim_payment_attempt(
+                &signed_chain_attempt_fixture(
+                    "bundle",
+                    &quote.id,
+                    "SysvarRent111111111111111111111111111111111",
+                    "11111111111111111111111111111111",
+                    8,
+                )
+                .0
+            ),
+            Err(StoreError::Conflict(_))
+        ));
+    }
+
+    #[test]
+    fn buyer_cannot_delete_the_wallet_while_research_payment_is_ambiguous() {
+        let store = Store::in_memory().unwrap();
+        let buyer_id = "delete-ambiguous-buyer";
+        onboard(&store, buyer_id);
+        let wallet = verify_wallet(&store, buyer_id, 46);
+        let query_id = "query-owned-by-ambiguous-payment";
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO queries (id, question, decision, created_at)
+                 VALUES (?1, 'Could the payment have landed?', 'hit', ?2)",
+                params![query_id, now_ms() as i64],
+            )
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO payment_bundle_quotes
+                 (id, query_id, pay_to, network, asset, amount_atomic, total_price_krw,
+                  krw_per_usdc, expires_at, created_at, bundle_hash, status,
+                  payer_wallet, funding_source)
+                 VALUES ('ambiguous-buyer-job', ?1, ?2,
+                         'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+                         '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+                         1, 700, 1350, ?3, ?3, 'ambiguous-buyer-job',
+                         'payment_in_progress', ?2, 'prepaid')",
+                params![query_id, wallet, now_ms() as i64],
+            )
+            .unwrap();
+
+        assert!(matches!(
+            store.delete_account(buyer_id),
+            Err(StoreError::Conflict(_))
+        ));
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE payment_bundle_quotes SET status = 'payment_reconciliation'
+                 WHERE id = 'ambiguous-buyer-job'",
+                params![],
+            )
+            .unwrap();
+        assert!(matches!(
+            store.delete_account(buyer_id),
+            Err(StoreError::Conflict(_))
+        ));
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE payment_bundle_quotes SET status = 'balance_refunded'
+                 WHERE id = 'ambiguous-buyer-job'",
+                params![],
+            )
+            .unwrap();
+        store.delete_account(buyer_id).unwrap();
+    }
+
+    #[test]
+    fn funded_open_call_deletion_scrubs_the_request_without_breaking_chain_audit() {
+        let store = Store::in_memory().unwrap();
+        let buyer_id = "delete-funded-call-buyer";
+        ensure_user(&store, buyer_id);
+        let escrow_wallet =
+            bs58::encode(SigningKey::from_bytes(&[47; 32]).verifying_key().as_bytes())
+                .into_string();
+        let payer_wallet =
+            bs58::encode(SigningKey::from_bytes(&[48; 32]).verifying_key().as_bytes())
+                .into_string();
+        let policy = PaymentQuotePolicy {
+            fallback_recipient: None,
+            bundle_recipient: Some(escrow_wallet.clone()),
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
+            krw_per_usdc: 1_350,
+            ttl_ms: 300_000,
+        };
+        let private_question =
+            "This question must not survive in a funding-quote snapshot after deletion";
+        let quote = store
+            .create_open_call_funding_quote(
+                buyer_id,
+                &CreateOpenCallRequest {
+                    question: private_question.to_owned(),
+                    unit_price: 700,
+                    target: 1,
+                    chat_id: Some("private-chat-id".to_owned()),
+                    shelf: "Private deletion test".to_owned(),
+                    category: "engineering".to_owned(),
+                    filters: SearchFilters::default(),
+                },
+                &policy,
+            )
+            .unwrap();
+        let (attempt, payment_signature) =
+            signed_chain_attempt_fixture("open_call", &quote.id, &payer_wallet, &quote.pay_to, 6);
+        store.claim_payment_attempt(&attempt).unwrap();
+        assert!(matches!(
+            store.delete_account(buyer_id),
+            Err(StoreError::Conflict(message))
+                if message
+                    == "wait for active open-call funding payments before deleting the account"
+        ));
+        let receipt = store
+            .record_open_call_chain_settlement(&RecordChainSettlementRequest {
+                quote_id: quote.id.clone(),
+                attempt_id: Some(attempt.attempt_id),
+                transaction_signature: payment_signature,
+                payer: payer_wallet,
+                pay_to: escrow_wallet,
+                amount_atomic: quote.amount_atomic,
+                network: quote.network,
+                raw_response: serde_json::json!({ "success": true }),
+            })
+            .unwrap();
+
+        store.delete_account(buyer_id).unwrap();
+
+        let (owner_id, request_json, payload_hash, status, deleted_at, call_status, chat_id): (
+            String,
+            String,
+            String,
+            String,
+            Option<u64>,
+            String,
+            Option<String>,
+        ) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT quote.owner_id, quote.request_json, quote.payload_hash, quote.status,
+                        tombstone.deleted_at, call.status, call.chat_id
+                 FROM open_call_funding_quotes quote
+                 JOIN users tombstone ON tombstone.id = quote.owner_id
+                 JOIN open_call_chain_settlements chain ON chain.quote_id = quote.id
+                 JOIN open_calls call ON call.id = chain.open_call_id
+                 WHERE quote.id = ?1 AND chain.id = ?2",
+                params![quote.id, receipt.id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get::<_, Option<i64>>(4)?
+                            .map(super::as_u64)
+                            .transpose()?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert!(owner_id.starts_with("deleted:account_"));
+        assert_eq!(request_json, "{}");
+        assert_eq!(payload_hash, "deleted");
+        assert_eq!(status, "funded");
+        assert!(deleted_at.is_some());
+        assert_eq!(call_status, "cancelled");
+        assert!(chat_id.is_none());
+        assert!(!request_json.contains(private_question));
+        assert!(matches!(
+            store.balance(buyer_id),
+            Err(StoreError::NotFound("balance"))
+        ));
+    }
+
+    #[test]
+    fn one_expired_rpc_view_cannot_abandon_a_prepared_payout() {
+        let store = Store::in_memory().unwrap();
+        let escrow = bs58::encode(SigningKey::from_bytes(&[49; 32]).verifying_key().as_bytes())
+            .into_string();
+        let recipient = bs58::encode(SigningKey::from_bytes(&[50; 32]).verifying_key().as_bytes())
+            .into_string();
+        let network = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+        let claim_id = "payout-two-pass-absence";
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO payout_claims
+                 (id, beneficiary_user_id, kind, escrow_wallet, recipient_wallet,
+                  asset, network, amount_atomic, amount_krw, status, created_at, updated_at)
+                 VALUES (?1, 'payout-beneficiary', 'test-refund', ?2, ?3,
+                         '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', ?4,
+                         1, 0, 'pending', ?5, ?5)",
+                params![claim_id, escrow, recipient, network, now_ms() as i64],
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .lease_payout_claims("payout-worker", &escrow, network, 1, 60_000)
+                .unwrap()
+                .len(),
+            1
+        );
+        let prepared_signature = bs58::encode([51_u8; 64]).into_string();
+        let blockhash = bs58::encode([52_u8; 32]).into_string();
+        let prepared_transaction = signed_transaction_fixture(51, 1, 180);
+        let prepared = store
+            .prepare_payout_claim(
+                claim_id,
+                "payout-worker",
+                &prepared_signature,
+                &BASE64_STANDARD.encode(prepared_transaction),
+                &blockhash,
+                123,
+            )
+            .unwrap();
+        assert_eq!(prepared.status, "prepared");
+
+        let first_absence = store
+            .fail_payout_claim(
+                claim_id,
+                "payout-worker",
+                "two RPC origins reported expiry once",
+                true,
+            )
+            .unwrap();
+        assert_eq!(first_absence.status, "prepared");
+        assert_eq!(
+            first_absence.transaction_signature.as_deref(),
+            Some(prepared_signature.as_str())
+        );
+        assert!(first_absence.absence_observed_at.is_some());
+
+        store
+            .lease_payout_claims("payout-worker", &escrow, network, 1, 60_000)
+            .unwrap();
+        let same_moment_retry = store
+            .fail_payout_claim(
+                claim_id,
+                "payout-worker",
+                "the same observation was replayed immediately",
+                true,
+            )
+            .unwrap();
+        assert_eq!(same_moment_retry.status, "prepared");
+        assert_eq!(
+            same_moment_retry.absence_observed_at,
+            first_absence.absence_observed_at
+        );
+
+        // Simulate the required later reconciliation pass without sleeping.
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE payout_claims SET absence_observed_at = 0 WHERE id = ?1",
+                [claim_id],
+            )
+            .unwrap();
+        store
+            .lease_payout_claims("payout-worker", &escrow, network, 1, 60_000)
+            .unwrap();
+        assert!(matches!(
+            store.fail_payout_claim(
+                claim_id,
+                "payout-worker",
+                "a time-reversed absence observation must fail closed",
+                true,
+            ),
+            Err(StoreError::Conflict(message))
+                if message.contains("outside the prepared transaction lifetime")
+        ));
+        let later_pass = now_ms();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE payout_claims SET prepared_at = ?1, absence_observed_at = ?2
+                 WHERE id = ?3",
+                params![
+                    super::as_i64(later_pass.saturating_sub(5 * 60_000)).unwrap(),
+                    super::as_i64(later_pass.saturating_sub(3 * 60_000)).unwrap(),
+                    claim_id
+                ],
+            )
+            .unwrap();
+        let released = store
+            .fail_payout_claim(
+                claim_id,
+                "payout-worker",
+                "a later independent finalized pass confirmed absence",
+                true,
+            )
+            .unwrap();
+        assert_eq!(released.status, "failed");
+        assert!(released.transaction_signature.is_none());
+        assert!(released.signed_transaction_base64.is_none());
+        assert!(released.absence_observed_at.is_none());
+    }
+
+    #[test]
+    fn kms_rotation_cannot_hide_an_old_wallet_payout_backlog() {
+        let store = Store::in_memory().unwrap();
+        let old_escrow = bs58::encode(SigningKey::from_bytes(&[54; 32]).verifying_key().as_bytes())
+            .into_string();
+        let new_escrow = bs58::encode(SigningKey::from_bytes(&[55; 32]).verifying_key().as_bytes())
+            .into_string();
+        let recipient = bs58::encode(SigningKey::from_bytes(&[56; 32]).verifying_key().as_bytes())
+            .into_string();
+        let network = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO payout_claims
+                 (id, beneficiary_user_id, kind, escrow_wallet, recipient_wallet,
+                  asset, network, amount_atomic, amount_krw, status, created_at, updated_at)
+                 VALUES ('old-kms-refund', 'rotation-beneficiary', 'open_call_refund', ?1, ?2,
+                         '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', ?3,
+                         740741, 1000, 'pending', ?4, ?4)",
+                params![old_escrow, recipient, network, now_ms() as i64],
+            )
+            .unwrap();
+
+        // This is the dangerous production symptom: the new key sees no work.
+        assert!(
+            store
+                .lease_payout_claims("new-kms-worker", &new_escrow, network, 20, 60_000)
+                .unwrap()
+                .is_empty()
+        );
+
+        // The readiness view must still expose the old signer's exact liability.
+        let backlog = store.payout_claim_backlogs().unwrap();
+        assert_eq!(backlog.len(), 1);
+        assert_eq!(backlog[0].escrow_wallet, old_escrow);
+        assert_eq!(backlog[0].network, network);
+        assert_eq!(backlog[0].claim_count, 1);
+        assert_eq!(backlog[0].prepared_count, 0);
+        assert_eq!(backlog[0].blocked_count, 0);
+    }
+
+    #[test]
+    fn impossible_future_payout_lease_is_visible_and_recoverable_without_resigning() {
+        let store = Store::in_memory().unwrap();
+        let escrow = bs58::encode(SigningKey::from_bytes(&[62; 32]).verifying_key().as_bytes())
+            .into_string();
+        let recipient = bs58::encode(SigningKey::from_bytes(&[63; 32]).verifying_key().as_bytes())
+            .into_string();
+        let network = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO payout_claims
+                 (id, beneficiary_user_id, kind, escrow_wallet, recipient_wallet,
+                  asset, network, amount_atomic, amount_krw, status, created_at, updated_at)
+                 VALUES ('future-lease-refund', 'future-lease-beneficiary', 'open_call_refund',
+                         ?1, ?2, '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', ?3,
+                         1000, 1, 'pending', ?4, ?4)",
+                params![escrow, recipient, network, now_ms() as i64],
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .lease_payout_claims(
+                    "worker-before-clock-corruption",
+                    &escrow,
+                    network,
+                    1,
+                    60_000
+                )
+                .unwrap()
+                .len(),
+            1
+        );
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE payout_claims SET lease_expires_at = ?1
+                 WHERE id = 'future-lease-refund'",
+                [i64::MAX],
+            )
+            .unwrap();
+
+        // A replacement worker cannot steal a lease that appears valid until
+        // year 292 million, but the liability must not disappear operationally.
+        assert!(
+            store
+                .lease_payout_claims("worker-after-clock-corruption", &escrow, network, 1, 60_000)
+                .unwrap()
+                .is_empty()
+        );
+        let backlog = store.payout_claim_backlogs().unwrap();
+        assert_eq!(backlog.len(), 1);
+        assert_eq!(backlog[0].claim_count, 1);
+        assert_eq!(backlog[0].blocked_count, 1);
+        assert!(matches!(store.ready(), Err(StoreError::Conflict(_))));
+
+        // Incident repair changes only the lease clock. It does not delete the
+        // claim or manufacture a fresh economic action.
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE payout_claims SET lease_expires_at = 0
+                 WHERE id = 'future-lease-refund'",
+                params![],
+            )
+            .unwrap();
+        let recovered = store
+            .lease_payout_claims("worker-after-clock-repair", &escrow, network, 1, 60_000)
+            .unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].id, "future-lease-refund");
+        assert_eq!(recovered[0].attempt_count, 0);
+        store.ready().unwrap();
+    }
+
+    #[test]
+    fn repeated_preparation_failure_stops_hot_loop_and_blocks_readiness() {
+        let store = Store::in_memory().unwrap();
+        let escrow = bs58::encode(SigningKey::from_bytes(&[57; 32]).verifying_key().as_bytes())
+            .into_string();
+        let recipient = bs58::encode(SigningKey::from_bytes(&[58; 32]).verifying_key().as_bytes())
+            .into_string();
+        let network = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+        let claim_id = "kms-preparation-hot-loop";
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO payout_claims
+                 (id, beneficiary_user_id, kind, escrow_wallet, recipient_wallet,
+                  asset, network, amount_atomic, amount_krw, status, created_at, updated_at)
+                 VALUES (?1, 'blocked-beneficiary', 'author_share', ?2, ?3,
+                         '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', ?4,
+                         1000, 1, 'pending', ?5, ?5)",
+                params![claim_id, escrow, recipient, network, now_ms() as i64],
+            )
+            .unwrap();
+
+        for attempt in 1..=10 {
+            let leased = store
+                .lease_payout_claims("kms-failing-worker", &escrow, network, 1, 60_000)
+                .unwrap();
+            assert_eq!(leased.len(), 1, "attempt {attempt} should be leased");
+            let failed = store
+                .fail_payout_claim(
+                    claim_id,
+                    "kms-failing-worker",
+                    "KMS unavailable before a transaction could be signed",
+                    false,
+                )
+                .unwrap();
+            assert_eq!(failed.attempt_count, attempt);
+            assert_eq!(failed.status, "failed");
+        }
+
+        assert!(
+            store
+                .lease_payout_claims("kms-failing-worker", &escrow, network, 1, 60_000)
+                .unwrap()
+                .is_empty()
+        );
+        let backlog = store.payout_claim_backlogs().unwrap();
+        assert_eq!(backlog.len(), 1);
+        assert_eq!(backlog[0].claim_count, 1);
+        assert_eq!(backlog[0].blocked_count, 1);
+    }
+
+    #[test]
+    fn partial_prepared_evidence_is_never_resigned_or_hidden() {
+        let store = Store::in_memory().unwrap();
+        let escrow = bs58::encode(SigningKey::from_bytes(&[59; 32]).verifying_key().as_bytes())
+            .into_string();
+        let recipient = bs58::encode(SigningKey::from_bytes(&[60; 32]).verifying_key().as_bytes())
+            .into_string();
+        let network = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+        let signature = bs58::encode([61_u8; 64]).into_string();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO payout_claims
+                 (id, beneficiary_user_id, kind, escrow_wallet, recipient_wallet,
+                  asset, network, amount_atomic, amount_krw, status,
+                  transaction_signature, attempt_count, created_at, updated_at)
+                 VALUES ('torn-prepared-payout', 'torn-beneficiary', 'open_call_refund', ?1, ?2,
+                         '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', ?3,
+                         1000, 1, 'prepared', ?4, 1, ?5, ?5)",
+                params![escrow, recipient, network, signature, now_ms() as i64],
+            )
+            .unwrap();
+
+        // A migration/manual-write torn row may describe a transaction that
+        // was broadcast. Never create a second signature to "repair" it.
+        assert!(
+            store
+                .lease_payout_claims("repair-worker", &escrow, network, 20, 60_000)
+                .unwrap()
+                .is_empty()
+        );
+        let backlog = store.payout_claim_backlogs().unwrap();
+        assert_eq!(backlog.len(), 1);
+        assert_eq!(backlog[0].prepared_count, 0);
+        assert_eq!(backlog[0].blocked_count, 1);
     }
 
     #[test]
@@ -11806,6 +23573,249 @@ mod tests {
                 .find(|notification| notification.id == available.id)
                 .and_then(|notification| notification.read_at)
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn email_outbox_lease_prevents_duplicate_delivery_and_recovers_crashes() {
+        let store = Store::in_memory().unwrap();
+        let email = "email-race@example.com";
+        store.register_user(email, "irrelevant-test-hash").unwrap();
+        store
+            .queue_password_reset(
+                email,
+                &"1".repeat(64),
+                "first-reset-token-with-at-least-32-bytes",
+                "https://openshelf.example",
+            )
+            .unwrap();
+        let email_id = store.pending_emails(10).unwrap()[0].id.clone();
+
+        // Two independent application tasks begin from the same queue view.
+        // The database state transition, rather than a process-local flag,
+        // must choose the one task allowed to contact the provider.
+        let barrier = Arc::new(Barrier::new(2));
+        let workers = ["email-worker-race-alpha", "email-worker-race-bravo"].map(|worker_id| {
+            let worker_store = store.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                (
+                    worker_id,
+                    worker_store
+                        .lease_pending_emails(worker_id, 10, 60_000)
+                        .unwrap(),
+                )
+            })
+        });
+        let outcomes = workers.map(|worker| worker.join().expect("email worker should not panic"));
+        assert_eq!(
+            outcomes
+                .iter()
+                .map(|(_, emails)| emails.len())
+                .sum::<usize>(),
+            1,
+            "one outbox row may be handed to only one provider caller"
+        );
+        let winner = outcomes
+            .iter()
+            .find(|(_, emails)| !emails.is_empty())
+            .map(|(worker_id, _)| *worker_id)
+            .unwrap();
+        let loser = outcomes
+            .iter()
+            .find(|(_, emails)| emails.is_empty())
+            .map(|(worker_id, _)| *worker_id)
+            .unwrap();
+        assert!(matches!(
+            store.mark_email_failed(&email_id, loser, "stale worker response"),
+            Err(StoreError::Conflict(_))
+        ));
+        store.mark_email_delivered(&email_id, winner).unwrap();
+        let delivered: (String, i64, String, String, String) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT status, attempts, recipient, subject, body
+                 FROM email_outbox WHERE id = ?1",
+                [&email_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            delivered,
+            (
+                "delivered".to_owned(),
+                1,
+                String::new(),
+                String::new(),
+                String::new()
+            )
+        );
+
+        // Model the dangerous crash point: the provider call may have
+        // succeeded, but the process died before recording its response.
+        // A replacement gets the same durable email id (the provider's
+        // idempotency key), while the old worker loses all write authority.
+        store
+            .queue_password_reset(
+                email,
+                &"2".repeat(64),
+                "second-reset-token-with-at-least-32-bytes",
+                "https://openshelf.example",
+            )
+            .unwrap();
+        let crashed_email = store.pending_emails(10).unwrap()[0].id.clone();
+        let crashed_worker = "email-worker-before-crash";
+        assert_eq!(
+            store
+                .lease_pending_emails(crashed_worker, 10, 60_000)
+                .unwrap()
+                .len(),
+            1
+        );
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE email_outbox SET lease_expires_at = ?1 WHERE id = ?2",
+                params![i64::MAX, crashed_email],
+            )
+            .unwrap();
+        assert!(
+            store
+                .lease_pending_emails("email-worker-hidden-by-future", 10, 60_000)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(matches!(
+            store.ready(),
+            Err(StoreError::Conflict(message)) if message.contains("email delivery")
+        ));
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE email_outbox SET lease_expires_at = 0 WHERE id = ?1",
+                [&crashed_email],
+            )
+            .unwrap();
+        let recovery_worker = "email-worker-after-crash";
+        let recovered = store
+            .lease_pending_emails(recovery_worker, 10, 60_000)
+            .unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].id, crashed_email);
+        assert!(matches!(
+            store.mark_email_delivered(&crashed_email, crashed_worker),
+            Err(StoreError::Conflict(_))
+        ));
+        store
+            .mark_email_delivered(&crashed_email, recovery_worker)
+            .unwrap();
+        let attempts: i64 = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT attempts FROM email_outbox WHERE id = ?1",
+                [&crashed_email],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(attempts, 2);
+
+        // A torn legacy/manual row can have `sending` without any expiry.
+        // Treat it as abandoned rather than hiding it forever.
+        store
+            .queue_password_reset(
+                email,
+                &"3".repeat(64),
+                "third-reset-token-with-at-least-32-bytes",
+                "https://openshelf.example",
+            )
+            .unwrap();
+        let orphaned_email = store.pending_emails(10).unwrap()[0].id.clone();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE email_outbox
+                 SET status = 'sending', lease_owner = 'orphaned-worker',
+                     lease_expires_at = NULL
+                 WHERE id = ?1",
+                [&orphaned_email],
+            )
+            .unwrap();
+        let orphan_recovery = store
+            .lease_pending_emails("email-worker-orphan-recovery", 10, 60_000)
+            .unwrap();
+        assert_eq!(orphan_recovery.len(), 1);
+        assert_eq!(orphan_recovery[0].id, orphaned_email);
+
+        // A provider that stays broken must not leave a reset URL and email
+        // address in a queue state that no worker will ever inspect again.
+        store
+            .mark_email_delivered(&orphaned_email, "email-worker-orphan-recovery")
+            .unwrap();
+        store
+            .queue_password_reset(
+                email,
+                &"4".repeat(64),
+                "fourth-reset-token-with-at-least-32-bytes",
+                "https://openshelf.example",
+            )
+            .unwrap();
+        let exhausted_email = store.pending_emails(10).unwrap()[0].id.clone();
+        for attempt in 1..=5 {
+            let worker = format!("email-failure-worker-{attempt}");
+            let leased = store.lease_pending_emails(&worker, 10, 60_000).unwrap();
+            assert_eq!(leased.len(), 1);
+            assert_eq!(leased[0].id, exhausted_email);
+            assert_eq!(
+                store
+                    .mark_email_failed(&exhausted_email, &worker, "provider unavailable")
+                    .unwrap(),
+                attempt == 5
+            );
+        }
+        assert!(store.pending_emails(10).unwrap().is_empty());
+        let exhausted: (String, i64, String, String, String, String) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT status, attempts, recipient, subject, body, last_error
+                 FROM email_outbox WHERE id = ?1",
+                [&exhausted_email],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            exhausted,
+            (
+                "exhausted".to_owned(),
+                5,
+                String::new(),
+                String::new(),
+                String::new(),
+                "provider unavailable".to_owned(),
+            )
         );
     }
 
@@ -11900,6 +23910,197 @@ mod tests {
             .ai_baseline_context(&response.query_id, &token_hash)
             .unwrap();
         assert_eq!(cached.unwrap().id, baseline.id);
+    }
+
+    #[test]
+    fn model_provider_fence_survives_response_loss_and_caps_novel_inputs() {
+        let path = PathBuf::from(format!(
+            "/tmp/openshelf-ai-provider-fence-{}-{}.db",
+            std::process::id(),
+            now_ms()
+        ));
+        let first = Store::open(&path).unwrap();
+        let second = Store::open(&path).unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+        let input = "a".repeat(64);
+        let synthesis_handles = vec!["PARISR_12".to_owned()];
+        let workers = [first, second]
+            .into_iter()
+            .map(|store| {
+                let barrier = Arc::clone(&barrier);
+                let input = input.clone();
+                let synthesis_handles = synthesis_handles.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    store.claim_ai_generation(
+                        "synthesis",
+                        "query-paid-once",
+                        &input,
+                        &synthesis_handles,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let claims = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            claims
+                .iter()
+                .filter(|claim| matches!(claim, AiGenerationClaim::Acquired { .. }))
+                .count(),
+            1,
+            "two API processes may race, but only one may contact the model provider"
+        );
+        assert_eq!(
+            claims
+                .iter()
+                .filter(|claim| matches!(claim, AiGenerationClaim::Suppressed))
+                .count(),
+            1
+        );
+
+        // Model the worst crash point: the provider accepted the request, but
+        // the API process died before it could persist or return the response.
+        // A fresh process must preserve the ambiguous fence rather than buy it
+        // again merely because the client retries.
+        let restarted = Store::open(&path).unwrap();
+        assert_eq!(
+            restarted
+                .claim_ai_generation("synthesis", "query-paid-once", &input, &synthesis_handles,)
+                .unwrap(),
+            AiGenerationClaim::Suppressed
+        );
+
+        // Two machines can disagree about the UTC day at midnight. Move a
+        // real claimed attempt into the preceding budget window, then prove a
+        // fresh caller in the current window still cannot buy the exact input.
+        let boundary_input = "e".repeat(64);
+        let boundary_window = match restarted
+            .claim_ai_generation(
+                "synthesis",
+                "query-midnight-skew",
+                &boundary_input,
+                &synthesis_handles,
+            )
+            .unwrap()
+        {
+            AiGenerationClaim::Acquired { window_started_at } => window_started_at,
+            claim => panic!("the boundary fixture should acquire once: {claim:?}"),
+        };
+        let prior_window = boundary_window.saturating_sub(AI_GENERATION_BUDGET_WINDOW_MS);
+        restarted
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE ai_generation_attempts SET window_started_at = ?1
+                 WHERE artifact_kind = 'synthesis' AND scope_id = 'query-midnight-skew'",
+                [as_i64(prior_window).unwrap()],
+            )
+            .unwrap();
+        restarted
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE ai_generation_budgets SET window_started_at = ?1
+                 WHERE artifact_kind = 'synthesis' AND scope_id = 'query-midnight-skew'",
+                [as_i64(prior_window).unwrap()],
+            )
+            .unwrap();
+        assert_eq!(
+            restarted
+                .claim_ai_generation(
+                    "synthesis",
+                    "query-midnight-skew",
+                    &boundary_input,
+                    &synthesis_handles,
+                )
+                .unwrap(),
+            AiGenerationClaim::Suppressed,
+            "midnight window skew must not create a second exact provider call"
+        );
+
+        let second_input = "b".repeat(64);
+        let second_window = match restarted
+            .claim_ai_generation(
+                "synthesis",
+                "query-paid-once",
+                &second_input,
+                &synthesis_handles,
+            )
+            .unwrap()
+        {
+            AiGenerationClaim::Acquired { window_started_at } => window_started_at,
+            claim => panic!("a distinct paid-evidence input should fit the budget: {claim:?}"),
+        };
+        let durable_response = serde_json::json!({
+            "answer": "The paid reports agree on the operating constraint [PAID_1].",
+            "confidence": 0.8,
+            "consensus": ["The constraint appeared in the opened evidence."],
+            "disagreements": [],
+            "usedHandles": ["PAID_1"],
+            "contributions": [{
+                "handle": "PAID_1",
+                "score": 0.8,
+                "reason": "Directly supports the bounded conclusion."
+            }],
+            "model": "gemini-test",
+            "mode": "vertex"
+        })
+        .to_string();
+        restarted
+            .complete_ai_generation(
+                "synthesis",
+                "query-paid-once",
+                &second_input,
+                second_window,
+                Some(&durable_response),
+            )
+            .unwrap();
+        assert_eq!(
+            restarted
+                .claim_ai_generation(
+                    "synthesis",
+                    "query-paid-once",
+                    &second_input,
+                    &synthesis_handles,
+                )
+                .unwrap(),
+            AiGenerationClaim::Cached(durable_response)
+        );
+
+        assert!(matches!(
+            restarted
+                .claim_ai_generation(
+                    "synthesis",
+                    "query-paid-once",
+                    &"c".repeat(64),
+                    &synthesis_handles,
+                )
+                .unwrap(),
+            AiGenerationClaim::Acquired { .. }
+        ));
+        assert_eq!(
+            restarted
+                .claim_ai_generation(
+                    "synthesis",
+                    "query-paid-once",
+                    &"d".repeat(64),
+                    &synthesis_handles,
+                )
+                .unwrap(),
+            AiGenerationClaim::Suppressed,
+            "changing handle combinations must not evade the per-query provider budget"
+        );
+        restarted.ready().unwrap();
+        drop(restarted);
+        for suffix in ["", "-wal", "-shm"] {
+            let target = PathBuf::from(format!("{}{suffix}", path.display()));
+            if target.exists() {
+                std::fs::remove_file(&target).unwrap();
+            }
+        }
     }
 
     #[test]
@@ -12056,6 +24257,46 @@ mod tests {
     }
 
     #[test]
+    fn simultaneous_sqlite_cold_starts_serialize_schema_and_seed_work() {
+        let path = std::env::temp_dir().join(format!(
+            "openshelf-concurrent-migration-{}-{}.db",
+            std::process::id(),
+            new_id("cold-start")
+        ));
+        let barrier = Arc::new(Barrier::new(4));
+        let workers = (0..4)
+            .map(|_| {
+                let path = path.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    Store::open(path)
+                })
+            })
+            .collect::<Vec<_>>();
+        let stores = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("cold-start worker should not panic"))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("every simultaneous cold start should migrate successfully");
+        assert!(stores.iter().all(|store| store.ready().is_ok()));
+        assert!(
+            stores[0]
+                .documents()
+                .unwrap()
+                .iter()
+                .any(|document| document.handle == "SEONGS_11")
+        );
+        drop(stores);
+        for suffix in ["", "-wal", "-shm"] {
+            let target = PathBuf::from(format!("{}{suffix}", path.display()));
+            if target.exists() {
+                std::fs::remove_file(&target).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn migration_adds_payout_availability_to_existing_ledgers() {
         let path = PathBuf::from(format!(
             "/tmp/openshelf-migration-test-{}-{}.db",
@@ -12090,6 +24331,84 @@ mod tests {
                     .events
                     .iter()
                     .all(|event| event.available_at == event.created_at)
+            );
+        }
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn migration_tags_only_preexisting_unsigned_attempts_and_stops_the_old_writer() {
+        let path = std::env::temp_dir().join(format!(
+            "openshelf-chain-evidence-migration-{}-{}.db",
+            std::process::id(),
+            new_id("legacy-chain")
+        ));
+        {
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE chain_payment_attempts (
+                         settlement_kind TEXT NOT NULL,
+                         quote_id TEXT NOT NULL,
+                         attempt_id TEXT NOT NULL UNIQUE,
+                         payer_wallet TEXT,
+                         signed_transaction_base64 TEXT,
+                         recent_blockhash TEXT,
+                         absence_observed_at INTEGER,
+                         reconcile_after INTEGER NOT NULL,
+                         created_at INTEGER NOT NULL,
+                         PRIMARY KEY(settlement_kind, quote_id)
+                     );
+                     INSERT INTO chain_payment_attempts
+                         (settlement_kind, quote_id, attempt_id,
+                          reconcile_after, created_at)
+                     VALUES ('document', 'legacy-quote',
+                             'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                             1, 1);",
+                )
+                .unwrap();
+        }
+        {
+            let migrated = Store::open(&path).unwrap();
+            let connection = migrated.connection().unwrap();
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT legacy_evidence FROM chain_payment_attempts
+                         WHERE quote_id = 'legacy-quote'",
+                        params![],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap(),
+                1,
+                "only the migration may grant the compatibility marker"
+            );
+            assert!(
+                connection
+                    .execute(
+                        "INSERT INTO chain_payment_attempts
+                         (settlement_kind, quote_id, attempt_id,
+                          reconcile_after, created_at)
+                         VALUES ('document', 'stale-writer-quote',
+                                 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                                 1, 1)",
+                        params![],
+                    )
+                    .is_err(),
+                "a pre-evidence binary must not create a new compatibility row"
+            );
+            assert!(
+                connection
+                    .execute(
+                        "UPDATE chain_payment_attempts
+                         SET signed_transaction_base64 = 'late-backfill'
+                         WHERE quote_id = 'legacy-quote'",
+                        params![],
+                    )
+                    .is_err(),
+                "legacy evidence cannot be rewritten into a false exact credential"
             );
         }
         for suffix in ["", "-wal", "-shm"] {

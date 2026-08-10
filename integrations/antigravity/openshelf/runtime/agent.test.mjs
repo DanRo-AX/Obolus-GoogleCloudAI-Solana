@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,9 +11,13 @@ import {
   DEVNET_NETWORK,
   DEVNET_USDC,
   assertDevnetQuote,
+  emptyState,
+  exactAgentBundleQuote,
+  jsonRequest,
   readState,
   runtimeConfig,
   sessionTokenFrom,
+  updateState,
   writeState,
 } from './core.mjs'
 import {
@@ -54,6 +58,7 @@ test('MCP advertises complete asker and contributor actions', async () => {
   for (const expected of [
     'ask_people',
     'prepare_evidence_payment',
+    'evidence_payment_status',
     'prepare_open_call',
     'prepare_payout_wallet_link',
     'list_opportunities',
@@ -177,6 +182,8 @@ test('local authentication stores only the session token in a private file', asy
 })
 
 test('ask and aggregate evidence preparation keep query capability local', async (context) => {
+  let bundlePreparations = 0
+  let currentBundleQuote = null
   const fixture = await fixtureServer(async (request, response) => {
     if (request.url === '/api/v1/questions/resolve' && request.method === 'POST') {
       response.writeHead(200, { 'content-type': 'application/json' })
@@ -201,16 +208,53 @@ test('ask and aggregate evidence preparation keep query capability local', async
       return
     }
     if (request.url === '/api/v1/payment-bundles' && request.method === 'POST') {
+      bundlePreparations += 1
       assert.equal(request.headers['x-openshelf-query-token'], 'query-secret')
+      assert.equal(request.headers['x-openshelf-agent-payment-mode'], 'exact-agent-bundle-v1')
+      assert.equal(request.headers['x-openshelf-wallet-session'], undefined)
+      const chunks = []
+      for await (const chunk of request) chunks.push(chunk)
+      assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString('utf8')), {
+        queryId: 'query_1',
+        handles: ['HUMAN_1', 'HUMAN_2'],
+      })
+      currentBundleQuote = devnetQuote({
+        id: 'bundle_1',
+        resourcePath: '/api/v1/paid-bundles/bundle_1',
+        totalPriceKrw: 300,
+        queryId: 'query_1',
+        documentHandles: ['HUMAN_1', 'HUMAN_2'],
+        status: bundlePreparations === 1 ? 'quoted' : 'completed',
+        requiresPayment: bundlePreparations === 1,
+      })
       response.writeHead(201, { 'content-type': 'application/json' })
       response.end(
         JSON.stringify({
-          resourceUrl: `${fixture.origin}/api/v1/paid-bundles/bundle_1`,
-          quote: devnetQuote({
-            id: 'bundle_1',
-            resourcePath: '/api/v1/paid-bundles/bundle_1',
-            totalPriceKrw: 300,
-          }),
+          resourceUrl: 'https://attacker.invalid/collect-instead',
+          quote: currentBundleQuote,
+        }),
+      )
+      return
+    }
+    if (request.url === '/api/v1/agent-payment-bundles/bundle_1' && request.method === 'GET') {
+      assert.equal(request.headers['x-openshelf-query-token'], 'query-secret')
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify(currentBundleQuote))
+      return
+    }
+    if (request.url === '/api/v1/research-jobs/bundle_1' && request.method === 'GET') {
+      assert.equal(request.headers['x-openshelf-query-token'], 'query-secret')
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(
+        JSON.stringify({
+          id: 'bundle_1',
+          queryId: 'query_1',
+          status: 'completed',
+          citations: [
+            { handle: 'HUMAN_1', shelf: 'Local', excerpt: 'First paid answer', price: 100 },
+            { handle: 'HUMAN_2', shelf: 'Local', excerpt: 'Second paid answer', price: 200 },
+          ],
+          pendingHandles: [],
         }),
       )
       return
@@ -243,6 +287,35 @@ test('ask and aggregate evidence preparation keep query capability local', async
   assert.equal(plan.quote.amountUsdc, '0.0003')
   assert.equal(plan.paymentUrl, `${fixture.origin}/api/v1/paid-bundles/bundle_1`)
   assert.doesNotMatch(JSON.stringify(plan), /query-secret/)
+
+  const recovered = await callTool(
+    'evidence_payment_status',
+    { queryId: 'query_1', jobId: 'bundle_1' },
+    { config },
+  )
+  assert.equal(recovered.status, 'completed')
+  assert.deepEqual(recovered.citations.map((citation) => citation.handle), ['HUMAN_1', 'HUMAN_2'])
+  assert.doesNotMatch(JSON.stringify(recovered), /query-secret/)
+
+  const restartRecovery = await callTool(
+    'prepare_evidence_payment',
+    { queryId: 'query_1', handles: ['HUMAN_1', 'HUMAN_2'] },
+    { config },
+  )
+  assert.deepEqual(
+    {
+      status: restartRecovery.status,
+      jobId: restartRecovery.jobId,
+      jobStatus: restartRecovery.jobStatus,
+      hasPaymentUrl: Object.hasOwn(restartRecovery, 'paymentUrl'),
+    },
+    {
+      status: 'recovery_required',
+      jobId: 'bundle_1',
+      jobStatus: 'completed',
+      hasPaymentUrl: false,
+    },
+  )
 })
 
 test('mainnet or changed asset payment quotes fail closed', () => {
@@ -253,6 +326,34 @@ test('mainnet or changed asset payment quotes fail closed', () => {
     /non-Devnet/,
   )
   assert.throws(() => assertDevnetQuote({ ...quote, asset: 'unknown' }), /unknown asset/)
+
+  const canonicalBundle = devnetQuote({
+    id: 'bundle_canonical',
+    queryId: 'query_canonical',
+    documentHandles: ['HUMAN_1', 'HUMAN_2'],
+    resourcePath: '/api/v1/paid-bundles/bundle_canonical',
+    status: 'quoted',
+    requiresPayment: true,
+  })
+  assert.equal(
+    exactAgentBundleQuote({
+      gatewayQuote: canonicalBundle,
+      canonicalQuote: canonicalBundle,
+      queryId: 'query_canonical',
+      handles: ['HUMAN_1', 'HUMAN_2'],
+    }),
+    canonicalBundle,
+  )
+  assert.throws(
+    () =>
+      exactAgentBundleQuote({
+        gatewayQuote: { ...canonicalBundle, amountAtomic: '3000' },
+        canonicalQuote: canonicalBundle,
+        queryId: 'query_canonical',
+        handles: ['HUMAN_1', 'HUMAN_2'],
+      }),
+    /does not match the canonical research ledger/,
+  )
 })
 
 test('runtime endpoints reject insecure remote HTTP origins', () => {
@@ -287,6 +388,68 @@ test('runtime endpoints reject insecure remote HTTP origins', () => {
 test('session cookie parser rejects responses without an OpenShelf session', () => {
   const response = new Response('{}', { status: 200 })
   assert.throws(() => sessionTokenFrom(response), /session cookie/)
+})
+
+test('agent HTTP boundary aborts a 200 response whose JSON body never finishes', async (context) => {
+  const fixture = await fixtureServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.write('{"status":"half')
+    setTimeout(() => response.end('"}'), 250)
+  })
+  context.after(fixture.close)
+  const started = performance.now()
+  await assert.rejects(
+    () => jsonRequest(`${fixture.origin}/half-open`, {}, { timeoutMs: 50 }),
+    (error) => error?.code === 'request_timeout',
+  )
+  assert.ok(performance.now() - started < 200)
+})
+
+test('one hundred concurrent agent queries preserve every recovery capability', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'openshelf-agent-state-race-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const config = {
+    apiOrigin: 'http://127.0.0.1:8787',
+    gatewayOrigin: 'http://127.0.0.1:1402',
+    statePath: join(directory, 'session.json'),
+  }
+  await writeState(emptyState(config), config)
+  await Promise.all(Array.from({ length: 100 }, (_, index) =>
+    updateState(config, async (state) => {
+      await Promise.resolve()
+      state.queries[`query_${index}`] = {
+        paymentAccessToken: `recovery_${index}`,
+        handles: [`doc_${index}`],
+      }
+      return state
+    })))
+  const persisted = await readState(config)
+  assert.equal(Object.keys(persisted.queries).length, 100)
+  for (let index = 0; index < 100; index += 1) {
+    assert.equal(persisted.queries[`query_${index}`].paymentAccessToken, `recovery_${index}`)
+  }
+})
+
+test('a process-death state lock is recovered without deleting session data', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'openshelf-agent-stale-lock-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const config = {
+    apiOrigin: 'http://127.0.0.1:8787',
+    gatewayOrigin: 'http://127.0.0.1:1402',
+    statePath: join(directory, 'session.json'),
+  }
+  await writeState(emptyState(config), config)
+  await writeFile(
+    `${config.statePath}.lock`,
+    JSON.stringify({ pid: 2_147_483_647, nonce: 'dead-process', createdAt: Date.now() - 31_000 }),
+    { mode: 0o600 },
+  )
+  await updateState(config, (state) => {
+    state.token = 'still-present-after-stale-lock'
+    return state
+  })
+  assert.equal((await readState(config)).token, 'still-present-after-stale-lock')
+  await assert.rejects(stat(`${config.statePath}.lock`), (error) => error?.code === 'ENOENT')
 })
 
 test('CLI fallback invokes the same tool boundary and rejects malformed arguments', async (context) => {
@@ -341,8 +504,14 @@ function devnetQuote(overrides = {}) {
     network: DEVNET_NETWORK,
     asset: DEVNET_USDC,
     amountAtomic: '300',
+    budgetAtomic: '300',
+    minimumDepositAtomic: '300',
+    availableBalanceAtomic: '0',
     priceKrw: 300,
+    totalPriceKrw: 300,
+    krwPerUsdc: 1_350,
     expiresAt: Date.now() + 300_000,
+    bundleHash: 'a'.repeat(64),
     resourcePath: '/api/v1/paid-documents/query_1/HUMAN_1',
     ...overrides,
   }

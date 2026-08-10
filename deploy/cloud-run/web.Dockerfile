@@ -1,8 +1,8 @@
-FROM node:22-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
-COPY index.html vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json ./
+COPY index.html vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json tsconfig.functions.json ./
 COPY public ./public
 COPY src ./src
 ARG VITE_BACKEND_ENABLED=true
@@ -13,7 +13,7 @@ ENV VITE_BACKEND_ENABLED=${VITE_BACKEND_ENABLED}
 ENV VITE_X402_ENABLED=${VITE_X402_ENABLED}
 ENV VITE_X402_GATEWAY_BASE=${VITE_X402_GATEWAY_BASE}
 ENV VITE_PREPAID_TOPUP_USDC=${VITE_PREPAID_TOPUP_USDC}
-RUN npm run build
+RUN npm run build:web
 
 FROM nginx:1.29-alpine
 COPY deploy/cloud-run/nginx.conf.template /etc/nginx/templates/default.conf.template

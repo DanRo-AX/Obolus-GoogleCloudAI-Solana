@@ -1,8 +1,6 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::{HashMap, HashSet};
+
+use rand_core::{OsRng, RngCore};
 
 use crate::authority::personalized_page_rank;
 use crate::domain::{
@@ -14,7 +12,6 @@ use crate::domain::{
 const EMBEDDING_DIMENSIONS: usize = 768;
 const MIN_RELEVANCE: f32 = 0.22;
 const DEFAULT_OPEN_CALL_PRICE_KRW: u64 = 500;
-static QUERY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
 struct IndexedDocument {
@@ -555,15 +552,15 @@ fn rounded(value: f32) -> f32 {
     (value * 10_000.0).round() / 10_000.0
 }
 
-fn query_id(question: &str) -> String {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time is before Unix epoch")
-        .as_nanos();
-    let counter = QUERY_COUNTER.fetch_add(1, Ordering::Relaxed);
+fn query_id(_question: &str) -> String {
+    let mut random = [0_u8; 16];
+    OsRng.fill_bytes(&mut random);
     format!(
-        "qry_{timestamp:x}_{:x}_{counter:x}",
-        fnv1a(question.as_bytes())
+        "qry_{}",
+        random
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
     )
 }
 
@@ -748,7 +745,7 @@ mod tests {
     };
 
     use super::{
-        Candidate, IndexedDocument, Resolver, embed, select_candidate_indices, word_terms,
+        Candidate, IndexedDocument, Resolver, embed, query_id, select_candidate_indices, word_terms,
     };
 
     fn request(question: &str, requested_documents: usize) -> ResolveQuestionRequest {
@@ -758,6 +755,19 @@ mod tests {
             budget_krw: None,
             filters: SearchFilters::default(),
         }
+    }
+
+    #[test]
+    fn query_capability_parents_use_process_independent_entropy() {
+        let ids = (0..4_096)
+            .map(|_| query_id("same question in many API processes"))
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(ids.len(), 4_096);
+        assert!(ids.iter().all(|id| {
+            id.len() == 36
+                && id.starts_with("qry_")
+                && id[4..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        }));
     }
 
     #[test]

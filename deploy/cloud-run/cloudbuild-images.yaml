@@ -4,8 +4,6 @@ substitutions:
   _TAG: manual
 
 timeout: 2400s
-options:
-  machineType: E2_HIGHCPU_32
 
 steps:
   - id: api
@@ -52,20 +50,8 @@ steps:
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/pay:${_TAG}
       - .
 
-  - id: web
-    name: gcr.io/cloud-builders/docker
-    waitFor: ['-']
-    args:
-      - build
-      - --file
-      - deploy/cloud-run/web.Dockerfile
-      - --tag
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/web:${_TAG}
-      - .
-
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/api:${_TAG}
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/gateway:${_TAG}
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/orchestrator:${_TAG}
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/pay:${_TAG}
-  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/web:${_TAG}

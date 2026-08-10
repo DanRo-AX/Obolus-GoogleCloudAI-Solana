@@ -12,6 +12,7 @@ import {
   readState,
   runtimeConfig,
   sessionTokenFrom,
+  updateState,
   writeState,
 } from './core.mjs'
 import { callTool, tools } from './tools.mjs'
@@ -140,10 +141,11 @@ export async function authenticate(mode, { email, password, ageConfirmed14 = fal
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email, password, ageConfirmed14 }),
   })
-  const state = await readState(config)
-  state.token = sessionTokenFrom(response)
-  state.user = body.user
-  await writeState(state, config)
+  await updateState(config, (state) => {
+    state.token = sessionTokenFrom(response)
+    state.user = body.user
+    return state
+  })
   return { user: body.user, balance: body.balance, statePath: config.statePath }
 }
 

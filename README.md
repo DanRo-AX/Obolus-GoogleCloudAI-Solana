@@ -23,6 +23,11 @@
 
 <h3 align="center"><a href="#getting-started"><ins>Getting started</ins></a></h3>
 
+> **Project pause snapshot (2026-08-04):** current code, Devnet deployment,
+> verified scope, unresolved risks, cost-bearing resources, rollback, and the
+> exact resume checklist are recorded in the
+> **[Korean project handoff](docs/PROJECT-HANDOFF-2026-08-04.ko.md)**.
+
 <p align="center">
   <img src="docs/assets/hero.png" alt="Obolus asking a question, with the shelf search box on the landing page" width="960" />
 </p>
@@ -78,7 +83,7 @@ Prices read in won because that is what the people on the shelves think in. USDC
 
 ### Wallet-only accounts
 
-No email, no password, no name. Connecting reads your public address and nothing else, and an asker only ever sees a handle.
+No email, no password, no name. Connecting reads your public address; entering signs one expiring message that cannot move funds or approve a transaction. An asker only ever sees a handle.
 
 Devnet SOL and USDC faucet links are on the sign-in page, before you connect.
 
@@ -214,7 +219,7 @@ Implementation diagrams: **[system architecture and ERD](architecture.html)**.
 
 <p>
   <kbd>React&nbsp;19</kbd> &nbsp; <kbd>TypeScript&nbsp;5.9</kbd> &nbsp; <kbd>Vite&nbsp;8</kbd> &nbsp; <kbd>Tailwind&nbsp;v4</kbd> &nbsp; <kbd>React&nbsp;Router&nbsp;7</kbd> &nbsp; <kbd>three.js</kbd> &nbsp;
-  <kbd>Rust&nbsp;1.89&nbsp;/&nbsp;Axum</kbd> &nbsp; <kbd>SQLite</kbd> &nbsp;
+  <kbd>Rust&nbsp;1.89&nbsp;/&nbsp;Axum</kbd> &nbsp; <kbd>Cloud SQL&nbsp;/&nbsp;PostgreSQL</kbd> &nbsp;
   <kbd>x402&nbsp;v2&nbsp;—&nbsp;exact&nbsp;/&nbsp;SVM</kbd> &nbsp; <kbd>Solana&nbsp;Devnet</kbd> &nbsp; <kbd>USDC</kbd> &nbsp; <kbd>Phantom</kbd> &nbsp;
   <kbd>Pay.sh&nbsp;+&nbsp;MPP</kbd> &nbsp; <kbd>GCP&nbsp;KMS</kbd> &nbsp; <kbd>Cloud&nbsp;Run</kbd> &nbsp; <kbd>Gemini&nbsp;on&nbsp;Vertex&nbsp;AI</kbd>
 </p>
@@ -258,7 +263,6 @@ the fully static fallback.
 ```bash
 agy plugin install ./integrations/antigravity/openshelf
 npm run agent:doctor
-node integrations/antigravity/openshelf/runtime/server.mjs auth login --email YOU@example.com
 agy
 ```
 
@@ -277,9 +281,11 @@ npm run agent:call -- ask_people --json \
   '{"question":"What do people living in Paris actually eat on weeknights?","requestedDocuments":3}'
 ```
 
-Authenticated contributor commands reuse the local session from `auth login`.
-Paid commands return an exact URL and amount for the separate Pay MCP. They
-never receive a private key.
+Paid buyer commands return an exact URL and amount for the separate Pay MCP;
+they never receive a private key. Managed contributor-account commands are
+deferred until the agent can complete the same wallet challenge/SIWX proof as
+the browser. The legacy email `auth login` command remains test-only behind
+`OPENSHELF_EMAIL_PASSWORD_AUTH_ENABLED=true` and is not part of the launch path.
 
 See [`integrations/antigravity/openshelf/README.md`](integrations/antigravity/openshelf/README.md),
 [`docs/ACCOUNT-LINKING.md`](docs/ACCOUNT-LINKING.md), [`pay/PAY.md`](pay/PAY.md),

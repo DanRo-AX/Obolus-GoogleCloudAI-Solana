@@ -1,0 +1,7 @@
+.gcloudignore
+target
+.env
+.env.*
+*.db
+*.db-wal
+*.db-shm

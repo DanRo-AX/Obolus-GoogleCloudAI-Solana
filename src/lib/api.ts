@@ -128,6 +128,7 @@ export type BalanceSummary = {
 export type AuthSession = {
   user: Account
   balance: BalanceSummary
+  wallet?: string | null
 }
 
 export type DisputeCase = {
@@ -171,7 +172,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     })
   } catch {
     throw new ApiError(
-      'Obolus backend is not reachable. Start it on port 8787.',
+      'Obolus is temporarily unavailable. Check your connection and try again.',
       0,
       'offline',
     )
@@ -208,6 +209,29 @@ export function login(email: string, password: string): Promise<AuthSession> {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email, password }),
+  })
+}
+
+export function createWalletAuthChallenge(
+  wallet: string,
+): Promise<WalletChallenge> {
+  return apiFetch('/api/v1/auth/wallet/challenge', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet }),
+  })
+}
+
+export function verifyWalletAuth(
+  wallet: string,
+  challengeId: string,
+  signature: string,
+  ageConfirmed14: boolean,
+): Promise<AuthSession> {
+  return apiFetch('/api/v1/auth/wallet/verify', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet, challengeId, signature, ageConfirmed14 }),
   })
 }
 
@@ -317,7 +341,7 @@ export type OpenCallFundingQuote = {
   expiresAt: number
   resourcePath: string
   payloadHash: string
-  status: 'quoted' | 'funded' | 'expired'
+  status: 'quoted' | 'settling' | 'funded' | 'expired'
   openCallId?: string | null
 }
 
@@ -475,6 +499,26 @@ export type PrepaidWalletSession = {
 
 export type PrepaidBalance = Omit<PrepaidWalletSession, 'token' | 'expiresAt'>
 
+export type PaymentBundleQuote = {
+  id: string
+  queryId: string
+  documentHandles: string[]
+  payTo: string
+  network: string
+  asset: string
+  amountAtomic: string
+  budgetAtomic: string
+  minimumDepositAtomic: string
+  requiresPayment: boolean
+  availableBalanceAtomic: string
+  totalPriceKrw: number
+  krwPerUsdc: number
+  expiresAt: number
+  resourcePath: string
+  bundleHash: string
+  status: string
+}
+
 export function createPrepaidWalletSession(
   wallet: string,
   challengeId: string,
@@ -489,6 +533,19 @@ export function createPrepaidWalletSession(
 
 export function getPrepaidBalance(): Promise<PrepaidBalance> {
   return apiFetch('/api/v1/prepaid/balance')
+}
+
+export function getPaymentBundleQuote(
+  quoteId: string,
+  queryAccessToken: string,
+  walletSessionToken: string,
+): Promise<PaymentBundleQuote> {
+  return apiFetch(`/api/v1/payment-bundles/${encodeURIComponent(quoteId)}`, {
+    headers: {
+      'x-openshelf-query-token': queryAccessToken,
+      'x-openshelf-wallet-session': walletSessionToken,
+    },
+  })
 }
 
 export function withdrawPrepaidBalance(amountAtomic?: string): Promise<{

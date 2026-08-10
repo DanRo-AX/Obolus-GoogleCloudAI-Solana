@@ -26,6 +26,7 @@ import {
   type AiBaseline,
   type Resolution,
 } from '@/lib/api'
+import { krwPerUsdc } from '@/lib/browserPaymentConfig'
 import { cn } from '@/lib/utils'
 import { explorerUrl, openDocuments, PaymentError } from '@/lib/x402'
 import { DEVNET_USDC, shortKey, useWallet } from '@/state/wallet'
@@ -61,7 +62,7 @@ type RankedShelf = {
   accent: string
 }
 
-const KRW_PER_USDC = Number(import.meta.env.VITE_KRW_PER_USDC ?? 1350)
+const KRW_PER_USDC = krwPerUsdc(import.meta.env.VITE_KRW_PER_USDC, import.meta.env.PROD)
 
 const STEPS = [
   { n: 2, label: 'Search the shelves', blurb: 'People\u2019s documents, not the web' },
@@ -178,6 +179,10 @@ export default function Chat() {
       resolvedQueryId: string | null,
     ) => {
       if (!chatId || !resolvedQueryId) return
+      if (!account) {
+        navigate(`/login?returnTo=${encodeURIComponent(`/chat/${chatId}`)}`)
+        return
+      }
       const session = chat?.paymentSession
       if (!session) {
         setPayError('The payment session is gone. Ask the question again.')
@@ -281,9 +286,11 @@ export default function Chat() {
       }
     },
     [
+      account,
       appendAssistant,
       chat?.paymentSession,
       chatId,
+      navigate,
       patchChat,
       prompt,
       refreshLedger,
@@ -598,7 +605,19 @@ export default function Chat() {
                       {shortKey(DEVNET_USDC)}
                     </span>.
                   </div>
-                  {!paymentUsesLegacyPaySh && wallet.pubkey && !paymentPayerMismatch ? (
+                  {!account ? (
+                    <Button
+                      variant="mono"
+                      size="mono"
+                      onClick={() =>
+                        navigate(
+                          `/login?returnTo=${encodeURIComponent(`/chat/${chatId}`)}`,
+                        )
+                      }
+                    >
+                      {t('Sign in to pay')}
+                    </Button>
+                  ) : !paymentUsesLegacyPaySh && wallet.pubkey && !paymentPayerMismatch ? (
                     <Button
                       variant="mono"
                       size="mono"
@@ -738,7 +757,9 @@ export default function Chat() {
                       size="mono"
                       onClick={() => {
                         if (!account) {
-                          navigate('/login')
+                          navigate(
+                            `/login?returnTo=${encodeURIComponent(`/chat/${chatId}`)}`,
+                          )
                           return
                         }
                         void placeOrder({

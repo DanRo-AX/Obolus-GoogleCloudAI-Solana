@@ -282,6 +282,9 @@ export default function Dashboard() {
 
   const activeSort = SORTS.find((s) => s.id === sort) ?? SORTS[0]
   const unread = notifications.filter((notification) => !notification.readAt)
+  const emailAlertsAvailable = Boolean(
+    account && !/@wallet\.(?:obolus|openshelf)\.local$/i.test(account.email),
+  )
 
   return (
     <div className="page-enter flex-1 overflow-y-auto">
@@ -303,7 +306,12 @@ export default function Dashboard() {
         </div>
 
         {profile ? (
-          <div className="grid gap-3 rounded-[6px] border border-border bg-card p-4 lg:grid-cols-3">
+          <div
+            className={cn(
+              'grid gap-3 rounded-[6px] border border-border bg-card p-4',
+              emailAlertsAvailable ? 'lg:grid-cols-3' : 'lg:grid-cols-2',
+            )}
+          >
             <AlertPreference
               icon={Bell}
               label={t('Browser alerts')}
@@ -320,18 +328,20 @@ export default function Dashboard() {
                 )
               }}
             />
-            <AlertPreference
-              icon={Mail}
-              label={t('Email alerts')}
-              detail={t('Emails you the open calls that match your fields.')}
-              checked={profile.emailAlerts === true}
-              onChange={(value) => {
-                setAlertError(null)
-                void setEmailAlerts(value).catch((error) =>
-                  setAlertError(error instanceof Error ? error.message : t('The switch did not move. Try it again.')),
-                )
-              }}
-            />
+            {emailAlertsAvailable ? (
+              <AlertPreference
+                icon={Mail}
+                label={t('Email alerts')}
+                detail={t('Emails you the open calls that match your fields.')}
+                checked={profile.emailAlerts === true}
+                onChange={(value) => {
+                  setAlertError(null)
+                  void setEmailAlerts(value).catch((error) =>
+                    setAlertError(error instanceof Error ? error.message : t('The switch did not move. Try it again.')),
+                  )
+                }}
+              />
+            ) : null}
             <AlertPreference
               icon={Bot}
               label={t('Reuse from my shelf')}

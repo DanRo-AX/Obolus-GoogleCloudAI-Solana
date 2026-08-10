@@ -2,8 +2,11 @@ pub mod api;
 pub mod authority;
 pub mod db;
 pub mod domain;
+pub mod environment;
 pub mod orchestrator;
 pub mod quality;
+pub mod rollback_audit;
+pub mod rollback_sweep;
 pub mod search;
 pub mod seed;
 pub mod store;
@@ -22,18 +25,11 @@ use tower_http::{cors::CorsLayer, timeout::TimeoutLayer, trace::TraceLayer};
 use store::Store;
 
 pub fn build_app(store: Store) -> Router {
-    let frontend_origin = std::env::var("OPENSHELF_FRONTEND_ORIGIN")
-        .unwrap_or_else(|_| "http://localhost:4319".to_owned());
-    let production = std::env::var("OPENSHELF_ENV").ok().is_some_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "production" | "prod"
-        )
-    });
-    if production && !frontend_origin.starts_with("https://") {
-        panic!("OPENSHELF_FRONTEND_ORIGIN must use HTTPS in production");
-    }
-    let frontend_origin = HeaderValue::from_str(&frontend_origin)
+    build_app_with_state(Arc::new(api::AppState::new(store)))
+}
+
+fn build_app_with_state(state: Arc<api::AppState>) -> Router {
+    let frontend_origin = HeaderValue::from_str(state.frontend_origin())
         .unwrap_or_else(|error| panic!("invalid OPENSHELF_FRONTEND_ORIGIN: {error}"));
     let cors = CorsLayer::new()
         .allow_origin(frontend_origin)
@@ -42,15 +38,17 @@ pub fn build_app(store: Store) -> Router {
             header::CONTENT_TYPE,
             header::AUTHORIZATION,
             HeaderName::from_static("x-openshelf-query-token"),
+            HeaderName::from_static("x-openshelf-wallet-session"),
         ])
         .allow_credentials(true);
 
-    api::router(Arc::new(api::AppState::new(store)))
+    api::AppState::start_email_delivery_loop(&state);
+    api::router(state)
         .layer(from_fn(default_response_headers))
         .layer(DefaultBodyLimit::max(64 * 1_024))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(15),
+            Duration::from_secs(22),
         ))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
@@ -86,5 +84,7 @@ async fn default_response_headers(request: Request, next: Next) -> Response {
 }
 
 pub fn demo_app() -> Router {
-    build_app(Store::in_memory().expect("in-memory store should initialise"))
+    let state = api::AppState::new(Store::in_memory().expect("in-memory store should initialise"))
+        .with_email_password_auth_enabled(true);
+    build_app_with_state(Arc::new(state))
 }

@@ -14,8 +14,8 @@ RUN apt-get update \
 COPY --from=builder /app/target/release/openshelf-api /usr/local/bin/openshelf-api
 WORKDIR /data
 USER openshelf
+ENV OPENSHELF_ENV=production
 ENV OPENSHELF_BIND=0.0.0.0:8787
-ENV OPENSHELF_DATABASE=/data/openshelf.db
 VOLUME ["/data"]
 EXPOSE 8787
 CMD ["openshelf-api"]

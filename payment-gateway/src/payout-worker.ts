@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { hostname } from "node:os";
 import { isAbsolute, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import {
   fetchMint,
   findAssociatedTokenPda,
@@ -22,25 +23,46 @@ import {
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
   signTransactionMessageWithSigners,
-  signature,
   type Base64EncodedWireTransaction,
   type Instruction,
   type KeyPairSigner,
 } from "@solana/kit";
 import { repositoryRoot } from "./root-env.js";
+import { independentRpcUrls } from "./rpc-policy.js";
+import {
+  ledgerBlockHeight,
+  observePreparedPayout,
+  validateLocalPayoutClaim,
+} from "./payout-reconciliation.js";
+import { payoutLedgerJson } from "./payout-ledger-client.js";
+import { secureServiceOrigin } from "./url-policy.js";
+import { integerEnv } from "./runtime-config.js";
 
 const DEVNET_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 const MEMO_PROGRAM = address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
-const rustApiUrl = env("RUST_API_URL", "http://127.0.0.1:8787").replace(/\/$/, "");
+const rustApiUrl = secureServiceOrigin(
+  "RUST_API_URL",
+  env("RUST_API_URL", "http://127.0.0.1:8787"),
+);
 const internalToken = env("OPENSHELF_INTERNAL_TOKEN", "openshelf-local-internal");
 const rpcUrl = env("X402_RPC_URL", "https://api.devnet.solana.com");
+const reconciliationRpcUrls = independentRpcUrls([
+  rpcUrl,
+  ...(process.env.X402_RECONCILIATION_RPC_URLS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
+]);
+if (reconciliationRpcUrls.length < 2) {
+  throw new Error("X402_RECONCILIATION_RPC_URLS must include a second payout RPC origin");
+}
 const configuredKeypairPath = requiredEnv("OPENSHELF_ESCROW_KEYPAIR_PATH");
 const keypairPath = isAbsolute(configuredKeypairPath)
   ? configuredKeypairPath
   : resolve(repositoryRoot, configuredKeypairPath);
 const workerId = env("OPENSHELF_PAYOUT_WORKER_ID", `${hostname()}-${process.pid}`);
 const watch = process.argv.includes("--watch");
-const pollMs = integerEnv("OPENSHELF_PAYOUT_POLL_MS", 5_000);
+const pollMs = integerEnv("OPENSHELF_PAYOUT_POLL_MS", 5_000, 1_000, 300_000);
 
 type PayoutClaim = {
   id: string;
@@ -72,8 +94,8 @@ do {
       workerId,
       escrowWallet: escrow.address,
       network: DEVNET_NETWORK,
-      limit: 20,
-      leaseMs: 60_000,
+      limit: 1,
+      leaseMs: 600_000,
     }),
   });
   for (const claim of claims) {
@@ -97,6 +119,7 @@ do {
 } while (watch);
 
 async function processClaim(claim: PayoutClaim): Promise<void> {
+  validateLocalPayoutClaim(claim, escrow.address);
   if (claim.network !== DEVNET_NETWORK) {
     throw new Error(`payout worker is Devnet-only; rejected network ${claim.network}`);
   }
@@ -129,11 +152,17 @@ async function processClaim(claim: PayoutClaim): Promise<void> {
     tokenProgram: TOKEN_PROGRAM_ADDRESS,
     mint,
   });
-  const mintInfo = await fetchMint(rpc, mint, { commitment: "confirmed" });
+  const mintInfo = await fetchMint(rpc, mint, {
+    commitment: "confirmed",
+    abortSignal: AbortSignal.timeout(10_000),
+  });
   const amount = BigInt(claim.amountAtomic);
   if (amount <= 0n) throw new Error("payout amount must be positive");
 
-  const latest = (await rpc.getLatestBlockhash({ commitment: "confirmed" }).send()).value;
+  const latest = (await rpc
+    .getLatestBlockhash({ commitment: "confirmed" })
+    .send({ abortSignal: AbortSignal.timeout(10_000) })).value;
+  const lastValidBlockHeight = ledgerBlockHeight(latest.lastValidBlockHeight);
   const memoInstruction: Instruction = {
     programAddress: MEMO_PROGRAM,
     accounts: [],
@@ -178,7 +207,7 @@ async function processClaim(claim: PayoutClaim): Promise<void> {
         transactionSignature: preparedSignature,
         signedTransactionBase64: raw,
         recentBlockhash: latest.blockhash,
-        lastValidBlockHeight: latest.lastValidBlockHeight,
+        lastValidBlockHeight,
       }),
     },
   );
@@ -187,24 +216,17 @@ async function processClaim(claim: PayoutClaim): Promise<void> {
 
 async function resumePreparedClaim(claim: PayoutClaim): Promise<void> {
   const preparedSignature = claim.transactionSignature as string;
-  const status = (
-    await rpc
-      .getSignatureStatuses([signature(preparedSignature)], {
-        searchTransactionHistory: true,
-      })
-      .send()
-  ).value[0];
-  if (status?.err) {
-    await abandonPrepared(claim, `prepared transaction failed on-chain: ${JSON.stringify(status.err)}`);
-    return;
-  }
-  if (status?.confirmationStatus === "confirmed" || status?.confirmationStatus === "finalized") {
+  const observation = await observePreparedPayout({
+    transactionSignature: preparedSignature,
+    lastValidBlockHeight: claim.lastValidBlockHeight,
+    rpcUrls: reconciliationRpcUrls,
+  });
+  if (observation === "finalized") {
     await markComplete(claim, preparedSignature);
     return;
   }
-  const currentHeight = await rpc.getBlockHeight({ commitment: "confirmed" }).send();
-  if (currentHeight > BigInt(claim.lastValidBlockHeight as number)) {
-    await abandonPrepared(claim, "prepared transaction blockhash expired without landing");
+  if (observation === "absent_or_failed") {
+    await markPreparedAbsent(claim);
     return;
   }
   await broadcastAndConfirm(claim);
@@ -226,11 +248,15 @@ async function broadcastAndConfirm(claim: PayoutClaim): Promise<void> {
       preflightCommitment: "confirmed",
       maxRetries: 3n,
     })
-    .send();
+    .send({ abortSignal: AbortSignal.timeout(10_000) });
   if (sentSignature !== claim.transactionSignature) {
     throw new Error("RPC returned a signature different from the prepared payout");
   }
-  await waitForConfirmation(claim);
+  const outcome = await waitForFinalizedOutcome(claim);
+  if (outcome === "absent_or_failed") {
+    await markPreparedAbsent(claim);
+    return;
+  }
   await markComplete(claim, sentSignature);
   console.log(
     `paid ${claim.amountAtomic} atomic units to ${claim.recipientWallet} for ${claim.id}: ${sentSignature}`,
@@ -247,36 +273,35 @@ async function markComplete(claim: PayoutClaim, signature: string): Promise<void
   );
 }
 
-async function abandonPrepared(claim: PayoutClaim, error: string): Promise<void> {
+async function waitForFinalizedOutcome(
+  claim: PayoutClaim,
+): Promise<"finalized" | "absent_or_failed"> {
+  const deadline = performance.now() + 45_000;
+  while (performance.now() < deadline) {
+    const observation = await observePreparedPayout({
+      transactionSignature: claim.transactionSignature,
+      lastValidBlockHeight: claim.lastValidBlockHeight,
+      rpcUrls: reconciliationRpcUrls,
+    });
+    if (observation !== "inconclusive") return observation;
+    const remaining = deadline - performance.now();
+    if (remaining > 0) await delay(Math.min(1_000, remaining));
+  }
+  throw new Error("payout finalization timed out with inconclusive independent RPC views");
+}
+
+async function markPreparedAbsent(claim: PayoutClaim): Promise<void> {
   await internalJson<PayoutClaim>(
     `/internal/v1/payout-claims/${encodeURIComponent(claim.id)}/fail`,
     {
       method: "POST",
-      body: JSON.stringify({ workerId, error, abandonPreparedTransaction: true }),
+      body: JSON.stringify({
+        workerId,
+        error: "two independent finalized RPC views found no successful prepared payout",
+        abandonPreparedTransaction: true,
+      }),
     },
   );
-}
-
-async function waitForConfirmation(claim: PayoutClaim): Promise<void> {
-  const preparedSignature = signature(claim.transactionSignature as string);
-  for (;;) {
-    const status = (
-      await rpc
-        .getSignatureStatuses([preparedSignature], { searchTransactionHistory: true })
-        .send()
-    ).value[0];
-    if (status?.err) {
-      throw new Error(`payout transaction failed: ${JSON.stringify(status.err)}`);
-    }
-    if (status?.confirmationStatus === "confirmed" || status?.confirmationStatus === "finalized") {
-      return;
-    }
-    const height = await rpc.getBlockHeight({ commitment: "confirmed" }).send();
-    if (height > BigInt(claim.lastValidBlockHeight as number)) {
-      throw new Error("payout transaction blockhash expired before confirmation");
-    }
-    await delay(1_000);
-  }
 }
 
 async function loadKeypair(path: string): Promise<KeyPairSigner> {
@@ -304,18 +329,12 @@ async function loadKeypair(path: string): Promise<KeyPairSigner> {
 }
 
 async function internalJson<T>(path: string, init: RequestInit): Promise<T> {
-  const response = await fetch(`${rustApiUrl}${path}`, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      "x-openshelf-internal-token": internalToken,
-      ...init.headers,
-    },
+  return payoutLedgerJson<T>({
+    baseUrl: rustApiUrl,
+    internalToken,
+    path,
+    init,
   });
-  if (!response.ok) {
-    throw new Error(`Rust API ${response.status}: ${(await response.text()).slice(0, 500)}`);
-  }
-  return (await response.json()) as T;
 }
 
 function env(name: string, fallback: string): string {
@@ -326,11 +345,6 @@ function requiredEnv(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} is required`);
   return value;
-}
-
-function integerEnv(name: string, fallback: number): number {
-  const value = Number.parseInt(process.env[name] ?? "", 10);
-  return Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
 function safeError(error: unknown): string {

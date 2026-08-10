@@ -12,11 +12,15 @@ use crate::domain::{
 };
 
 const DEFAULT_MODEL: &str = "gemini-2.5-flash";
+const VERTEX_MAX_RESPONSE_BYTES: usize = 1_048_576;
 pub const AI_BASELINE_POLICY_VERSION: &str = "general-liquidity-v1";
+pub const SHELF_STARTER_POLICY_VERSION: &str = "shelf-starter-v1";
+pub const PAID_SYNTHESIS_POLICY_VERSION: &str = "paid-evidence-v1";
 static HTTP_CLIENT: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
-        // The API router has a 15-second request deadline, so provider fallback
-        // must happen before that outer timeout can discard a paid response.
+        // The API router has a 22-second deadline. This leaves a bounded seven
+        // seconds for the independent pre-provider audit plus normal handler
+        // overhead before the outer timeout can discard a paid response.
         .timeout(Duration::from_secs(12))
         .build()
         .expect("orchestrator HTTP client configuration is valid")
@@ -75,6 +79,13 @@ fn valid_vertex_identifier(value: &str) -> bool {
         })
 }
 
+pub fn generation_fence_namespace(policy_version: &str) -> String {
+    match VertexConfig::from_env() {
+        Some(config) => format!("{policy_version}:vertex:{}", config.model),
+        None => format!("{policy_version}:vertex-unconfigured"),
+    }
+}
+
 async fn vertex_generate(body: &Value) -> Option<(Value, String)> {
     let config = VertexConfig::from_env()?;
     let credentials = match VERTEX_CREDENTIALS.as_ref() {
@@ -104,14 +115,32 @@ async fn vertex_generate(body: &Value) -> Option<(Value, String)> {
             return None;
         }
     };
-    let response = match response.error_for_status() {
+    let mut response = match response.error_for_status() {
         Ok(response) => response,
         Err(error) => {
             warn!(status = ?error.status(), "Vertex generateContent returned an error");
             return None;
         }
     };
-    match response.json::<Value>().await {
+    let mut body = Vec::new();
+    loop {
+        let chunk = match response.chunk().await {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                warn!(error = %error, "Vertex generateContent response body failed");
+                return None;
+            }
+        };
+        let Some(chunk) = chunk else {
+            break;
+        };
+        if body.len().saturating_add(chunk.len()) > VERTEX_MAX_RESPONSE_BYTES {
+            warn!("Vertex generateContent response exceeded the bounded body limit");
+            return None;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    match serde_json::from_slice::<Value>(&body) {
         Ok(payload) => Some((payload, config.model)),
         Err(error) => {
             warn!(error = %error, "Vertex generateContent returned malformed JSON");
@@ -262,6 +291,7 @@ fn generation_body(request: &SynthesizeAnswerRequest) -> Value {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.2,
+            "maxOutputTokens": 4096,
             "responseMimeType": "application/json",
             "responseSchema": {
                 "type": "OBJECT",
@@ -300,6 +330,7 @@ fn baseline_generation_body(question: &str) -> Value {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.15,
+            "maxOutputTokens": 2048,
             "responseMimeType": "application/json",
             "responseSchema": {
                 "type": "OBJECT",
@@ -329,6 +360,7 @@ fn shelf_starter_generation_body(field: &str, categories: &[String]) -> Value {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.35,
+            "maxOutputTokens": 2048,
             "responseMimeType": "application/json",
             "responseSchema": {
                 "type": "OBJECT",
@@ -453,6 +485,24 @@ fn parse_provider_response(
         .filter_map(|part| part.get("text").and_then(Value::as_str))
         .collect::<String>();
     let mut parsed = serde_json::from_str::<SynthesizeAnswerResponse>(&text).ok()?;
+    if parsed.answer.trim().is_empty()
+        || parsed.answer.chars().count() > 20_000
+        || parsed.consensus.len() > 20
+        || parsed.disagreements.len() > 20
+        || parsed.used_handles.len() > 20
+        || parsed.contributions.len() > 20
+        || parsed
+            .consensus
+            .iter()
+            .chain(&parsed.disagreements)
+            .any(|value| value.chars().count() > 2_000)
+        || parsed
+            .contributions
+            .iter()
+            .any(|value| value.reason.chars().count() > 500)
+    {
+        return None;
+    }
     let allowed = request
         .citations
         .iter()
@@ -491,7 +541,7 @@ fn inline_citations_are_allowed(answer: &str, allowed: &HashSet<&str>) -> bool {
     })
 }
 
-fn fallback(request: &SynthesizeAnswerRequest) -> SynthesizeAnswerResponse {
+pub(crate) fn fallback(request: &SynthesizeAnswerRequest) -> SynthesizeAnswerResponse {
     let used_handles = request
         .citations
         .iter()
@@ -505,12 +555,12 @@ fn fallback(request: &SynthesizeAnswerRequest) -> SynthesizeAnswerResponse {
         .join("\n\n");
     SynthesizeAnswerResponse {
         answer: format!(
-            "Vertex AI is not configured, so OPENSHELF is showing the paid evidence without inventing a synthesis.\n\n{evidence_list}"
+            "A new model synthesis is unavailable, so OPENSHELF is showing the paid evidence without inventing an analysis.\n\n{evidence_list}"
         ),
         confidence: 0.0,
         consensus: Vec::new(),
         disagreements: vec![
-            "No Vertex AI agreement analysis was run in this local fallback.".to_owned(),
+            "No model agreement analysis is available for this response.".to_owned(),
         ],
         contributions: request
             .citations
@@ -615,6 +665,27 @@ mod tests {
                 "disagreements": [],
                 "usedHandles": ["PARISR_12"],
                 "contributions": [],
+                "model": "ignored",
+                "mode": "ignored"
+            })).unwrap()}]}}]
+        });
+        assert!(parse_provider_response(&payload, &request(), "test", "test").is_none());
+    }
+
+    #[test]
+    fn provider_cannot_turn_paid_synthesis_into_an_unbounded_database_response() {
+        let payload = json!({
+            "candidates": [{"content": {"parts": [{"text": serde_json::to_string(&json!({
+                "answer": format!("{} [PARISR_12]", "x".repeat(20_001)),
+                "confidence": 0.5,
+                "consensus": [],
+                "disagreements": [],
+                "usedHandles": ["PARISR_12"],
+                "contributions": [{
+                    "handle": "PARISR_12",
+                    "score": 0.5,
+                    "reason": "r".repeat(501)
+                }],
                 "model": "ignored",
                 "mode": "ignored"
             })).unwrap()}]}}]

@@ -15,7 +15,7 @@ test("signed retries see stable SVM payment requirements", async () => {
     asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
     payTo: "11111111111111111111111111111111",
     maxTimeoutSeconds: 60,
-    extra: {},
+    extra: { memo: "openshelf:v1:document:quote-1" },
   };
   const supportedKind = {
     x402Version: 2,
@@ -29,6 +29,7 @@ test("signed retries see stable SVM payment requirements", async () => {
 
   assert.deepEqual(signedRetry, first);
   assert.equal(first.extra?.feePayer, feePayer);
+  assert.equal(first.extra?.memo, "openshelf:v1:document:quote-1");
   assert.equal(first.extra?.recentBlockhash, undefined);
   assert.equal(first.extra?.lastValidBlockHeight, undefined);
 });

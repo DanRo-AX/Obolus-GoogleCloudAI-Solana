@@ -5,10 +5,12 @@ import { NAV_ITEMS } from '@/data/nav'
 import { cn } from '@/lib/utils'
 import { useT } from '@/i18n'
 import { useUi } from '@/state/ui'
+import { useWallet } from '@/state/wallet'
 
 /** Sheet version of the sidebar for viewports below md. */
 export function MobileSidebar() {
   const { mobileSidebar, setMobileSidebar, account, profile, signOut } = useUi()
+  const wallet = useWallet()
   const t = useT()
 
   return (
@@ -103,7 +105,9 @@ export function MobileSidebar() {
                 variant="monoMuted"
                 size="mono"
                 aria-label={t('Disconnect Phantom')}
-                onClick={() => void signOut()}
+                onClick={() =>
+                  void signOut().then(() => wallet.disconnect())
+                }
               >
                 <LogOut className="size-4" />
               </Button>

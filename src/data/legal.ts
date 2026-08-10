@@ -8,7 +8,7 @@ const LINK = 'underline decoration-dotted decoration-foreground/40 underline-off
 
 export const TERMS_HTML = `<article class="${ARTICLE}">
 <h1 class="${H1}">Terms of Service</h1>
-<p class="${META}">Last updated: August 3, 2026 · Devnet release</p>
+<p class="${META}">Last updated: August 9, 2026 · Devnet wallet-only release</p>
 <p class="${P}">These terms cover the Obolus chat, the author dashboard, My shelf, the SHELF retrieval agent, open calls, and the payment functions behind them. The current release is restricted to Solana Devnet and test assets.</p>
 <h2 class="${H2}">1. Documents and search</h2>
 <p class="${P}">Accepted firsthand answers build an author-owned memory stream. Eligible passages become versioned documents with an anonymous handle, content hash, consent state, price, and payout address. Free search returns payment-safe metadata only. A passage is delivered only after the exact query-bound quote is paid.</p>
@@ -82,7 +82,7 @@ export const PRIVACY_HTML = `<article class="${ARTICLE}">
 <p class="${META}">Last updated: August 3, 2026 · Devnet release</p>
 <p class="${P}">Obolus stores lived-experience records so they can become searchable, consent-bound human databases. This policy explains what remains private, what can be discovered, what a paid buyer receives, and what payment infrastructure sees.</p>
 <h2 class="${H2}">1. Data collected</h2>
-<ul class="${LIST}"><li><strong>Account:</strong> email, password verifier, session and security events, age confirmation, role.</li><li><strong>Profile:</strong> anonymous handle, optional demographic bands, fields, notification choices, conduct state.</li><li><strong>Memory:</strong> questions, accepted answers, private interview turns, importance, reliability, source links, corrections, reflections, versions, locks, and access history.</li><li><strong>Payment:</strong> public wallet addresses, one-time challenges and signatures, query/job identifiers, amounts, mints, networks, transaction signatures, prepaid ledger and payout/refund state.</li><li><strong>Service activity:</strong> queries, filters, ranking metadata, open calls, reservations, feedback, reports, and disputes.</li></ul>
+<ul class="${LIST}"><li><strong>Account:</strong> public wallet address, one-time sign-in challenges and signatures, session and security events, age confirmation, role.</li><li><strong>Profile:</strong> anonymous handle, optional demographic bands, fields, notification choices, conduct state.</li><li><strong>Memory:</strong> questions, accepted answers, private interview turns, importance, reliability, source links, corrections, reflections, versions, locks, and access history.</li><li><strong>Payment:</strong> payer and recipient wallet addresses, query/job identifiers, amounts, mints, networks, transaction signatures, prepaid ledger and payout/refund state.</li><li><strong>Service activity:</strong> queries, filters, ranking metadata, open calls, reservations, feedback, reports, and disputes.</li></ul>
 <p class="${P}">Do not submit bank or card numbers, seed phrases, private keys, national identifiers, another person’s private information, or precise real-time location. Obolus does not need them.</p>
 <h2 class="${H2}">2. Discovery and paid disclosure</h2>
 <p class="${P}">Free discovery may expose an anonymous handle, category, optional demographic bands, document price, version/hash metadata, and ranking components. It does not expose passage text, email, wallet address, or private interview turns.</p>
@@ -105,10 +105,10 @@ export const PRIVACY_HTML = `<article class="${ARTICLE}">
 
 export const PRIVACY_HTML_KO = `<article class="${ARTICLE}">
 <h1 class="${H1}">개인정보 처리방침</h1>
-<p class="${META}">최종 수정: 2026년 8월 3일 · Devnet 릴리스</p>
+<p class="${META}">최종 수정: 2026년 8월 9일 · Devnet 지갑 전용 릴리스</p>
 <p class="${P}">Obolus는 겪은 일의 기록을 저장합니다. 그 기록이 검색되고 동의에 묶인 사람의 데이터베이스가 되게 하기 위해서입니다. 이 방침은 무엇이 비공개로 남는지, 무엇이 탐색에 드러나는지, 값을 낸 질문자가 무엇을 받는지, 결제 인프라가 무엇을 보는지 밝힙니다.</p>
 <h2 class="${H2}">1. 수집하는 정보</h2>
-<ul class="${LIST}"><li><strong>계정:</strong> 이메일, 비밀번호 검증자, 세션과 보안 이벤트, 연령 확인, 역할.</li><li><strong>프로필:</strong> 익명 활동명, 선택한 인구 구간, 분야, 알림 설정, 행동 상태.</li><li><strong>기억:</strong> 질문, 수락된 답변, 비공개 인터뷰 대화, 중요도, 신뢰도, 출처 링크, 정정, 회고, 버전, 잠금, 열람 기록.</li><li><strong>결제:</strong> 공개 지갑 주소, 1회용 챌린지와 서명, 질문·작업 식별자, 금액, mint, 네트워크, 거래 서명, 선불 원장과 정산·환불 상태.</li><li><strong>서비스 활동:</strong> 질문, 필터, 순위 메타데이터, 공개 모집, 예약, 평가, 신고, 이의 신청.</li></ul>
+<ul class="${LIST}"><li><strong>계정:</strong> 공개 지갑 주소, 1회용 로그인 챌린지와 서명, 세션과 보안 이벤트, 연령 확인, 역할.</li><li><strong>프로필:</strong> 익명 활동명, 선택한 인구 구간, 분야, 알림 설정, 행동 상태.</li><li><strong>기억:</strong> 질문, 수락된 답변, 비공개 인터뷰 대화, 중요도, 신뢰도, 출처 링크, 정정, 회고, 버전, 잠금, 열람 기록.</li><li><strong>결제:</strong> 결제자·수령자 지갑 주소, 질문·작업 식별자, 금액, mint, 네트워크, 거래 서명, 선불 원장과 정산·환불 상태.</li><li><strong>서비스 활동:</strong> 질문, 필터, 순위 메타데이터, 공개 모집, 예약, 평가, 신고, 이의 신청.</li></ul>
 <p class="${P}">계좌나 카드 번호, 시드 구문, 개인 키, 주민등록번호, 다른 사람의 사생활 정보, 정확한 실시간 위치는 올리면 안 됩니다. Obolus에는 그것이 필요 없습니다.</p>
 <h2 class="${H2}">2. 탐색과 유료 공개</h2>
 <p class="${P}">무료 탐색에는 익명 활동명, 분야, 선택한 인구 구간, 문서 가격, 버전·해시 메타데이터, 순위 구성 요소가 드러날 수 있습니다. 구절 원문, 이메일, 지갑 주소, 비공개 인터뷰 대화는 드러나지 않습니다.</p>

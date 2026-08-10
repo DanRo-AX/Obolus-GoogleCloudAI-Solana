@@ -23,9 +23,11 @@ opened passages -> server-canonical evidence -> Gemini on Vertex AI cited synthe
 memory -> hash/version/lock/correction -> public manifest + private export log
 ```
 
-SQLite persists users, Argon2id password hashes, hashed session and query tokens, balance
+The database persists users, Argon2id password hashes, hashed session and query tokens, balance
 reservations, profiles, payout wallets, demographic filters, documents, queries,
 open calls, answers, reviewed disputes and buyer reports, earning events, and settlement records.
+Local development may use SQLite; every staging or production process requires an
+explicit PostgreSQL connection string and refuses SQLite paths.
 Search never returns an MD passage;
 `/api/flash-research` releases content only for handles quoted under that exact
 query ID.
@@ -45,9 +47,11 @@ directory. Configuration:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `OPENSHELF_BIND` | `127.0.0.1:8787` | Listen address; non-loopback requires a strong internal token |
-| `OPENSHELF_DATABASE` | `openshelf.db` | SQLite path |
-| `OPENSHELF_ENV` | `development` | Enables production secret and secure-cookie guards |
-| `OPENSHELF_SEED_DEMO` | non-production-dependent | Seed demo personas/calls; forbidden in production |
+| `OPENSHELF_DATABASE` | `openshelf.db` in local development only | SQLite path locally; explicit PostgreSQL connection string required in staging/production |
+| `OPENSHELF_ROLLBACK_AUDIT_BUCKET` | none locally; required in managed environments | GCS bucket receiving create-only payment and model-call intents before external transport is authorized |
+| `OPENSHELF_ROLLBACK_AUDIT_PREFIX` | bucket root | Validated lower-case object prefix; set to `obolus/rollback-audit` when using shared `ax-apps-storage` |
+| `OPENSHELF_ENV` | `development` | `development/dev/local/test` or managed `staging/stage/production/prod`; unknown values fail startup |
+| `OPENSHELF_SEED_DEMO` | local-environment-dependent | Seed demo personas/calls; forbidden in managed environments |
 | `OPENSHELF_FRONTEND_ORIGIN` | `http://localhost:4319` | Exact credentialed CORS origin |
 | `OPENSHELF_AGENT_API_ORIGIN` | `http://127.0.0.1:8787` | Exact public API origin embedded in one-time Pay SIWX wallet-link resources; remote production values require HTTPS |
 | `OPENSHELF_SECURE_COOKIES` | production-dependent | Force the `Secure` session-cookie flag |
@@ -58,20 +62,58 @@ directory. Configuration:
 | `OPENSHELF_BUNDLE_RECEIVER` | defaults to `OPENSHELF_DEFAULT_RECEIVER` | Escrow/custody wallet receiving one aggregate payment for a multi-document quote |
 | `OPENSHELF_X402_NETWORK` | Solana Devnet CAIP-2 | Network committed into quotes |
 | `OPENSHELF_X402_ASSET` | Circle Devnet USDC | Mint committed into quotes |
-| `OPENSHELF_KRW_PER_USDC` | `1350` | Deterministic quote conversion rate |
-| `OPENSHELF_QUOTE_TTL_MS` | `300000` | Quote lifetime |
+| `OPENSHELF_KRW_PER_USDC` | `1350` | Deterministic quote conversion rate (1–1,000,000,000; fixed to 1350 in managed environments) |
+| `OPENSHELF_QUOTE_TTL_MS` | `300000` | Quote lifetime (30 seconds–24 hours) |
 | `OPENSHELF_ALLOW_DEMO_OPEN` | development-dependent | Enable the non-x402 demo opener; keep false publicly |
+| `OPENSHELF_ACCEPT_LEGACY_PAY_SH_CALLBACKS` | `false` | Temporary staged-cutover flag for already-metered v1 callbacks; never leave enabled after retiring the v1 meter |
 | `GOOGLE_CLOUD_PROJECT` | none | Vertex AI billing/resource project; required for model calls |
 | `GOOGLE_CLOUD_LOCATION` | `global` | Vertex AI location; regional endpoints are derived safely |
 | `OPENSHELF_VERTEX_MODEL` | `gemini-2.5-flash` | Gemini model hosted by Vertex AI |
-| `OPENSHELF_AI_BASELINE_TTL_MS` | `21600000` | Lifetime of a zero-price general AI baseline; never a human document |
-| `OPENSHELF_EMAIL_ENDPOINT` | none | Optional Resend-compatible contributor-alert endpoint |
-| `OPENSHELF_EMAIL_API_KEY` | none | Bearer token for the email endpoint |
-| `OPENSHELF_EMAIL_FROM` | none | Verified sender used for contributor alerts |
+| `OPENSHELF_AI_BASELINE_TTL_MS` | `21600000` | Lifetime of a zero-price general AI baseline (1 minute–24 hours); never a human document |
+| `OPENSHELF_EMAIL_PASSWORD_AUTH_ENABLED` | `false` | Deferred email/password account surface; when false, register/login/forgot/reset routes are not mounted |
+| `OPENSHELF_EMAIL_ENDPOINT` | none | Optional Resend-compatible password-reset and contributor-alert endpoint |
+| `OPENSHELF_EMAIL_API_KEY` | none | Bearer token for the email endpoint; inject from Secret Manager |
+| `OPENSHELF_EMAIL_FROM` | none | Verified sender used for password resets and contributor alerts |
 
-Production also refuses to start against a database that already contains the
-demo corpus. Use a clean production database rather than relabelling a populated
-development volume.
+Managed environments also refuse to start against a database that already
+contains the demo corpus. Use a clean PostgreSQL database rather than
+relabelling a populated development volume. Explicit booleans and integers are
+strictly parsed, so misspellings such as `flase`, suffixes such as `60000ms`,
+and out-of-range values fail startup instead of silently selecting a default.
+
+The production convention uses `ax-apps-storage` with
+`OPENSHELF_ROLLBACK_AUDIT_PREFIX=obolus/rollback-audit`; a dedicated bucket is
+also supported. Register its consumer, owner, purpose, service account, allowed
+object prefix, and review date in the data-access registry before changing IAM.
+Give the API workload a conditional bucket binding for the registered prefix
+and a custom role containing only `storage.objects.create` and
+`storage.objects.get`; do not grant delete, overwrite, list, a broad project
+storage role, or a service-account key. GCS retention is bucket-wide rather
+than prefix-scoped, so a shared-bucket retention or object-protection change
+requires review with every existing consumer. Production remains blocked until
+the selected protection lasts longer than the maximum Cloud SQL PITR window.
+The API validates the prefix, uses
+`ifGenerationMatch=0`, byte-compares an existing object on exact retry, and
+returns `503` before the caller can reach an external payment rail if the audit
+write cannot be proven. The same gate applies before an externally billed
+Vertex request; its object contains only provider policy, a one-way scope hash,
+input hash, and budget window, never the prompt, human evidence, profile, or
+generated answer.
+The restore sweep requires a unique `OPENSHELF_RESTORE_ID` and first installs
+an unresolved PostgreSQL recovery-window hold. Missing or mismatched audit
+objects receive their own holds. Readiness fails and database triggers reject
+new chain attempts, Pay.sh preparations, payout preparations, and model-call
+fences even from a stale application revision; settlement and reconciliation
+of already-started work remain enabled. Do not treat sweep exit `0` as traffic
+permission. After chain, Pay.sh, payout, and provider receipts are reconciled,
+use `rollback_hold_resolve` with the exact recovery ID, the explicit
+`payments-stopped-and-external-receipts-reconciled` acknowledgement, and a
+durable incident/report reference as resolution evidence.
+
+If PostgreSQL terminates an idle session during maintenance, the next top-level
+store operation reconnects before issuing any query. Reconnection never occurs
+inside an individual query or transaction, because continuing half a ledger
+mutation on a new session could commit torn payment state.
 
 Vertex authentication uses Application Default Credentials. For local
 development, run `gcloud auth application-default login`; for production,
@@ -79,22 +121,30 @@ attach a least-privilege runtime service account with `roles/aiplatform.user`
 through the hosting platform or Workload Identity. Do not create or commit a
 service-account key, and do not manage expiring bearer tokens in `.env`.
 
-Docker persists SQLite in `/data`:
+The production image contains no database fallback. For an explicitly local
+container-only smoke test, provide a development SQLite path and mount it:
 
 ```bash
 docker build -t openshelf-api backend
 docker run --rm -p 8787:8787 -v openshelf-data:/data \
+  -e OPENSHELF_ENV=development \
+  -e OPENSHELF_DATABASE=/data/openshelf.db \
   -e OPENSHELF_INTERNAL_TOKEN='replace-with-at-least-32-random-characters' \
   openshelf-api
 ```
+
+The image defaults to `OPENSHELF_ENV=production`, so an actual deployment fails
+closed unless HTTPS origins, secure cookies, a strong internal token, and a
+clean PostgreSQL database satisfy the managed-environment guards. The explicit development
+override above is only for a local published-port container.
 
 ## API
 
 | Method | Path | Responsibility |
 | --- | --- | --- |
 | `GET` | `/healthz` | Liveness |
-| `GET` | `/readyz` | SQLite readiness and deployment environment |
-| `POST` | `/api/v1/auth/register` `/login` `/logout` | Create, issue, or revoke an HttpOnly session |
+| `GET` | `/readyz` | Database/recovery readiness and deployment environment |
+| `POST` | `/api/v1/auth/logout` | Revoke an HttpOnly wallet session |
 | `GET` | `/api/v1/auth/me` | Read the authenticated account and sandbox balance |
 | `POST` | `/api/v1/questions/resolve` | Search, rank, and return HIT/MISS plus a safe quote |
 | `POST` | `/api/v1/questions/{id}/ai-baseline` | Generate/cache general AI liquidity only when human coverage is thin (query token required) |
@@ -121,7 +171,7 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data \
 | `GET/POST` | `/api/v1/admin/document-feedback[/{id}/review]` | List and review paid-buyer reports (admin only) |
 | `POST` | `/api/v1/admin/evidence-edges` | Add independently owned verified authority edges (admin only) |
 | `GET` | `/api/v1/account-controls` | Read server-authoritative strikes/dispute use |
-| `GET/DELETE` | `/api/v1/account/balance` `/api/v1/account` | Read the ledger or delete and anonymize the account |
+| `GET/DELETE` | `/api/v1/account/balance` `/api/v1/account` | Read the ledger, or atomically tombstone payment snapshots and anonymize the account once external payments are no longer in flight |
 | `GET` | `/api/v1/account/export` | Export profile, private memories, and access log |
 | `GET` | `/api/v1/contributors/{handle}` | Public payment-safe contributor manifest |
 | `GET` | `/api/v1/personas/{handle}` | PR #9 compatibility alias for a contributor manifest |
@@ -130,9 +180,11 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data \
 | `POST` | `/api/v1/profile/preferences` | Persist search auto-match, exact-memory agent, browser, and email-alert preferences |
 | `POST` | `/api/v1/profile/wallet/challenge` `/verify` | Prove payout-wallet ownership with a signed message |
 | `POST/GET` | `/api/v1/profile/wallet/siwx[/{id}]` | Create an authenticated one-time payout link, then verify a Pay `SIGN-IN-WITH-X` ownership signature without exporting its key |
+| `GET` | `/api/v1/payment-bundles/{id}` | Return the canonical bundle quote only to its query capability and prepaid wallet session, for pre-wallet gateway cross-checking |
+| `GET` | `/api/v1/agent-payment-bundles/{id}` | Return an agent-direct canonical quote to its query capability for independent gateway and recovery cross-checking |
 | `GET` | `/api/v1/earnings` | Audit append-only earnings and wallet snapshots |
 | `GET` | `/api/v1/payout-claims` | Inspect contributor/refund claim status and confirmed payout signatures |
-| `POST` | `/api/v1/auth/password/forgot` `/reset` | Queue an enumeration-safe one-hour reset link and rotate the password/session set |
+| `POST` | `/api/v1/auth/register` `/login` `/password/forgot` `/password/reset` | Deferred email/password surface; mounted only when `OPENSHELF_EMAIL_PASSWORD_AUTH_ENABLED=true` |
 | `GET` | `/api/v1/admin/ai-liquidity-metrics` | Audit AI-only/hybrid coverage, starter conversion, and zero priced-AI/authority invariants |
 | `GET` | `/api/flash-research` | Reveal only handles quoted for a query and accrue them once |
 | `GET` | `/internal/v1/payment-quotes/{queryId}/{handle}` | Create/reuse an exact short-lived x402 quote (internal token required) |
@@ -140,7 +192,8 @@ docker run --rm -p 8787:8787 -v openshelf-data:/data \
 | `GET` | `/internal/v1/payment-quotes/{id}/snapshot` | Buffer the immutable quote snapshot without marking delivery |
 | `POST` | `/internal/v1/chain-settlements` | Idempotently mirror a confirmed facilitator receipt |
 | `POST` | `/internal/v1/open-call-chain-settlements` | Activate a paid call only after its exact Devnet receipt is mirrored |
-| `POST` | `/internal/v1/payout-claims/*` | Lease, prepare, complete, or fail crash-safe Devnet payout work |
+| `POST` | `/internal/v1/agent-payment-bundles` | Create/reuse an exact one-shot aggregate quote for the explicit agent protocol without a prepaid wallet session or balance |
+| `GET/POST` | `/internal/v1/payout-claims/*` | Inspect signer-owned backlog, then lease, prepare, finalize, or two-pass release crash-safe Devnet payout work (`exact-payout-v1`) |
 
 The conduct ladder is enforced in the service, not just the UI. At two strikes,
 the author's documents leave auto-match and new payouts are held for 14 days;
@@ -150,6 +203,10 @@ strike or payment. An admin approval performs the restoration atomically.
 An unverified profile wallet is never used as an on-chain recipient. Updating the
 address revokes verification, one verified wallet cannot belong to two accounts,
 and user-authored documents cannot fall back to the seeded-content receiver.
+Wallet-only users are created with one atomic user/balance/signup-credit/identity
+transaction; both synthetic email suffixes are unavailable to public signup or
+password reset. All generated entity ids use 128 bits of OS entropy so separate
+API processes do not share a timestamp/counter collision domain.
 The SIWX path uses Pay's canonical Solana sign-in message, checks domain, URI,
 chain, nonce, issued/expiry time, request ID, Ed25519 signature, and one-time
 consumption before applying the same wallet-uniqueness rule. It links a wallet
@@ -163,11 +220,25 @@ buyer, priced, or settled separately; the final `answer` remains the sale unit.
 
 Contributor delivery is server-owned. Eligible calls receive a recommendation
 score and an in-app notification; the frontend polls every five seconds and may
-surface new unread items through the browser Notification API. Email is opt-in
-and written to a durable SQLite outbox. Delivery runs only when all three email
-environment variables above are configured, so a missing provider never blocks
-call creation. Opening the interview reserves one remaining slot for ten minutes
-and renews it while the page stays open.
+surface new unread items through the browser Notification API. The managed
+launch is wallet-only, so email/password routes and email alerts are not exposed.
+The durable email outbox remains dormant for a later reviewed rollout. When all
+three email environment variables are configured, API instances acquire
+expiring database leases before contacting the provider and send the stable
+outbox id as the provider idempotency key. Enabling email/password auth in a
+managed environment fails startup unless all three provider values are present.
+A crash can replay an id only after lease expiry; a successful delivery erases
+the stored recipient, subject, and body. After five provider failures the row
+becomes `exhausted`, emits an error log, and erases its recipient and message
+payload; operational alert routing is a prerequisite for that future rollout.
+Opening the interview reserves one remaining slot for ten minutes and renews it
+while the page stays open.
+
+Answer, cancellation, and dispute approval serialize on the same open-call row.
+An approved dispute can fill only an open call with remaining capacity and
+escrow. Sandbox calls release reserved KRW; funded calls instead decrement the
+exact remaining atomic escrow and create one contributor payout claim. A
+cancelled call can never be reopened by a late administrator decision.
 
 The memory agent never generates a human experience. When explicitly enabled,
 it can reuse the contributor's exact previously paid answer only when the old

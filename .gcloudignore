@@ -2,6 +2,7 @@
 .git
 #!include:.gitignore
 
+.agents
 .omc
 **/.omc
 .tmp
