@@ -18,7 +18,10 @@ const LIT = /\bt\(\s*(['"])((?:\\.|(?!\1)[^\\])*)\1/g
 const used = new Set()
 for (const file of walk(SRC)) {
   const text = readFileSync(file, 'utf8')
-  for (const m of text.matchAll(LIT)) used.add(m[2].replaceAll("\\'", "'"))
+  // Strip block comments to avoid scanning JSDoc examples and other comment text.
+  // Note: line comments (//) are not stripped because t() strings can contain URLs (http://…).
+  const code = text.replace(/\/\*[\s\S]*?\*\//g, '')
+  for (const m of code.matchAll(LIT)) used.add(m[2].replaceAll("\\'", "'"))
 }
 
 const KEY = /^\s{2}(['"])((?:\\.|(?!\1)[^\\])*)\1:/gm
