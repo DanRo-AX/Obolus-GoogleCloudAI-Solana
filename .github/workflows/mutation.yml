@@ -74,7 +74,10 @@ jobs:
             src/authority.rs \
             src/environment.rs \
             src/rollback_audit.rs \
-            src/rollback_sweep.rs > mutation.diff
+            src/rollback_sweep.rs \
+            src/store.rs \
+            src/search.rs \
+            src/orchestrator.rs > mutation.diff
           if [[ ! -s mutation.diff ]]; then
             echo "No changed Rust safety-boundary lines to mutate."
             exit 0
