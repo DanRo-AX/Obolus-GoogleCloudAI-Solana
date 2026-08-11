@@ -45,6 +45,66 @@ test("a readiness response that never ends is cancelled after its status is know
   assert.equal(cancelled, true);
 });
 
+test("a bodyless readiness response does not require a cancellation handle", async () => {
+  await requireReadyDependency({
+    name: "research orchestrator",
+    origin: "https://orchestrator.example",
+    fetchImpl: async (_input, init) => {
+      assert.equal(new Headers(init?.headers).get("accept"), "application/json");
+      return { ok: true, status: 200, body: null } as Response;
+    },
+  });
+});
+
+test("readiness cache TTLs reject every value outside the bounded integer contract", () => {
+  for (const [key, value] of [
+    ["successTtlMs", -1],
+    ["successTtlMs", 1.5],
+    ["successTtlMs", 5_001],
+    ["failureTtlMs", -1],
+    ["failureTtlMs", 1.5],
+    ["failureTtlMs", 5_001],
+  ] as const) {
+    assert.throws(
+      () => createReadyDependencyGuard({
+        name: "research orchestrator",
+        origin: "https://orchestrator.example",
+        [key]: value,
+      }),
+      /cache TTLs must be between 0 and 5000ms/,
+    );
+  }
+
+  assert.doesNotThrow(() => createReadyDependencyGuard({
+    name: "research orchestrator",
+    origin: "https://orchestrator.example",
+    successTtlMs: 0,
+    failureTtlMs: 5_000,
+  }));
+  assert.doesNotThrow(() => createReadyDependencyGuard({
+    name: "research orchestrator",
+    origin: "https://orchestrator.example",
+    successTtlMs: 5_000,
+    failureTtlMs: 0,
+  }));
+});
+
+test("the default monotonic clock keeps a successful dependency probe cached", async () => {
+  let calls = 0;
+  const guard = createReadyDependencyGuard({
+    name: "research orchestrator",
+    origin: "https://orchestrator.example",
+    fetchImpl: async () => {
+      calls += 1;
+      return new Response("{}", { status: 200 });
+    },
+  });
+
+  await guard();
+  await guard();
+  assert.equal(calls, 1);
+});
+
 test("concurrent public readiness traffic produces one bounded upstream probe", async () => {
   let calls = 0;
   let now = 1_000;
@@ -63,7 +123,7 @@ test("concurrent public readiness traffic produces one bounded upstream probe", 
   assert.equal(calls, 1);
   await guard();
   assert.equal(calls, 1);
-  now += 1_001;
+  now += 1_000;
   await guard();
   assert.equal(calls, 2);
 });
@@ -86,7 +146,7 @@ test("an orchestrator outage is briefly negative-cached instead of becoming a pr
   assert.equal(calls, 1);
   await assert.rejects(guard, /not ready/);
   assert.equal(calls, 1);
-  now += 251;
+  now += 250;
   await assert.rejects(guard, /not ready/);
   assert.equal(calls, 2);
 });
