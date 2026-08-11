@@ -55,6 +55,23 @@ const SORTS: Array<{ id: SortId; label: string; hint: string }> = [
   { id: 'closing', label: 'Closing soon', hint: 'Fewest slots left' },
 ]
 
+/** How many cards sit in a row on tablet width and up. Mobile is always 1. */
+type ColumnCount = 2 | 3 | 4
+const COLUMNS_STORAGE_KEY = 'obolus:dashboard:columns:v1'
+const GRID_COLS_CLASS: Record<ColumnCount, string> = {
+  2: 'grid-cols-1 gap-4 sm:grid-cols-2',
+  3: 'grid-cols-1 gap-3 sm:grid-cols-3',
+  4: 'grid-cols-1 gap-3 sm:grid-cols-4',
+}
+
+function initialColumns(): ColumnCount {
+  if (typeof window === 'undefined') return 2
+  const saved = window.localStorage.getItem(COLUMNS_STORAGE_KEY)
+  return saved === '2' || saved === '3' || saved === '4'
+    ? (Number(saved) as ColumnCount)
+    : 2
+}
+
 /**
  * The default ranking.
  *
@@ -121,6 +138,7 @@ export default function Dashboard() {
     return CATEGORIES.some((c) => c.id === q) ? (q as CategoryId) : 'all'
   })
   const [sort, setSort] = useState<SortId>('top')
+  const [columns, setColumns] = useState<ColumnCount>(initialColumns)
   const [minPay, setMinPay] = useState(0)
   const [fitsMe, setFitsMe] = useState(false)
   const [hideFilled, setHideFilled] = useState(true)
@@ -135,6 +153,14 @@ export default function Dashboard() {
   const [starterAnswers, setStarterAnswers] = useState<Record<string, string>>({})
   const [starterPrices, setStarterPrices] = useState<Record<string, number>>({})
   const [submittingStarter, setSubmittingStarter] = useState<string | null>(null)
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(COLUMNS_STORAGE_KEY, String(columns))
+    } catch {
+      /* storage disabled — the choice just will not survive a reload */
+    }
+  }, [columns])
 
   useEffect(() => {
     if (!profile) {
@@ -295,6 +321,9 @@ export default function Dashboard() {
         .reduce((sum, m) => sum + m.earned, 0)
 
   const activeSort = SORTS.find((s) => s.id === sort) ?? SORTS[0]
+  // 3-4 columns need the card chrome a size down so nothing overflows a
+  // narrower card — 2 columns keeps the original, roomier sizing.
+  const compactCards = columns >= 3
   const unread = notifications.filter((notification) => !notification.readAt)
   const emailAlertsAvailable = Boolean(
     account && !/@wallet\.(?:obolus|openshelf)\.local$/i.test(account.email),
@@ -497,37 +526,41 @@ export default function Dashboard() {
             count={mineCount}
           />
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                className="ml-auto flex h-11 cursor-pointer items-center gap-2 rounded-[2px] border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9"
-              >
-                {t('Sort')}
-                <span className="text-foreground">{t(activeSort.label)}</span>
-                <ChevronDown className="size-3.5" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-[248px]">
-              {SORTS.map((s) => (
-                <DropdownMenuItem
-                  key={s.id}
-                  onClick={() => setSort(s.id)}
-                  className="flex-col items-start gap-0.5"
+          <div className="ml-auto flex items-center gap-2">
+            <ColumnToggle value={columns} onChange={setColumns} t={t} />
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-11 cursor-pointer items-center gap-2 rounded-[2px] border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9"
                 >
-                  <span className="flex w-full items-center gap-2 text-sm">
-                    {t(s.label)}
-                    {sort === s.id ? (
-                      <Check className="ml-auto size-3.5" />
-                    ) : null}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {t(s.hint)}
-                  </span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                  {t('Sort')}
+                  <span className="text-foreground">{t(activeSort.label)}</span>
+                  <ChevronDown className="size-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-[248px]">
+                {SORTS.map((s) => (
+                  <DropdownMenuItem
+                    key={s.id}
+                    onClick={() => setSort(s.id)}
+                    className="flex-col items-start gap-0.5"
+                  >
+                    <span className="flex w-full items-center gap-2 text-sm">
+                      {t(s.label)}
+                      {sort === s.id ? (
+                        <Check className="ml-auto size-3.5" />
+                      ) : null}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {t(s.hint)}
+                    </span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
 
         {/* category rail --------------------------------------------------
@@ -652,7 +685,7 @@ export default function Dashboard() {
           // hairline list. Each card gets a profile-style header, a banner
           // strip tinted from the category accent with a circular icon
           // badge overlapping its left-bottom edge, like an avatar.
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className={cn('grid', GRID_COLS_CLASS[columns])}>
             {list.map((order) => {
               const done = order.answered >= order.target
               const cancelled = order.status === 'cancelled'
@@ -674,16 +707,29 @@ export default function Dashboard() {
                     (done || cancelled) && 'opacity-70',
                   )}
                 >
-                  <div className="relative h-14 shrink-0" style={categoryBannerStyle(cat?.accent)}>
-                    <span className="absolute -bottom-5 left-4 flex size-10 items-center justify-center rounded-full border border-border bg-card shadow-[0_1px_3px_rgba(20,20,25,0.12)]">
+                  <div
+                    className={cn('relative shrink-0', compactCards ? 'h-11' : 'h-14')}
+                    style={categoryBannerStyle(cat?.accent)}
+                  >
+                    <span
+                      className={cn(
+                        'absolute flex items-center justify-center rounded-full border border-border bg-card shadow-[0_1px_3px_rgba(20,20,25,0.12)]',
+                        compactCards ? '-bottom-4 left-3 size-8' : '-bottom-5 left-4 size-10',
+                      )}
+                    >
                       <CategoryIcon
                         id={order.category}
-                        className="size-5"
+                        className={compactCards ? 'size-4' : 'size-5'}
                         style={{ color: cat?.accent ?? 'var(--muted-foreground)' }}
                       />
                     </span>
                   </div>
-                  <div className="flex flex-1 flex-col px-4 pb-4 pt-7">
+                  <div
+                    className={cn(
+                      'flex flex-1 flex-col',
+                      compactCards ? 'px-3 pb-3 pt-6' : 'px-4 pb-4 pt-7',
+                    )}
+                  >
                   <div className="flex items-center justify-between gap-3">
                     <span className="flex min-w-0 items-center gap-2">
                       <span
@@ -707,7 +753,12 @@ export default function Dashboard() {
                     </span>
                   </div>
 
-                  <p className="mt-1.5 text-[15px] leading-relaxed text-foreground">
+                  <p
+                    className={cn(
+                      'mt-1.5 leading-relaxed text-foreground',
+                      compactCards ? 'text-[13px]' : 'text-[15px]',
+                    )}
+                  >
                     {order.question}
                   </p>
                   {order.filters && Object.values(order.filters).some(Boolean) ? (
@@ -1010,6 +1061,65 @@ function FilterChip({
     >
       {label}
     </button>
+  )
+}
+
+/**
+ * A segmented 2/3/4 control, same hairline-border-and-tiny-radius language
+ * as FilterChip, just compact enough to sit next to the Sort trigger instead
+ * of taking a filter-row slot of its own.
+ */
+function ColumnToggle({
+  value,
+  onChange,
+  t,
+}: {
+  value: ColumnCount
+  onChange: (value: ColumnCount) => void
+  t: (en: string) => string
+}) {
+  const optionClass = (n: ColumnCount, withDivider: boolean) =>
+    cn(
+      'flex min-w-9 cursor-pointer items-center justify-center px-2 font-mono text-xs tabular-nums transition-colors',
+      withDivider && 'border-l border-border',
+      value === n
+        ? 'bg-foreground/[0.06] text-foreground'
+        : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+    )
+  return (
+    <div
+      role="group"
+      aria-label={t('Columns per row')}
+      className="flex h-11 items-stretch overflow-hidden rounded-[2px] border border-border sm:h-9"
+    >
+      <button
+        type="button"
+        aria-label={t('2 columns per row')}
+        aria-pressed={value === 2}
+        onClick={() => onChange(2)}
+        className={optionClass(2, false)}
+      >
+        2
+      </button>
+      <button
+        type="button"
+        aria-label={t('3 columns per row')}
+        aria-pressed={value === 3}
+        onClick={() => onChange(3)}
+        className={optionClass(3, true)}
+      >
+        3
+      </button>
+      <button
+        type="button"
+        aria-label={t('4 columns per row')}
+        aria-pressed={value === 4}
+        onClick={() => onChange(4)}
+        className={optionClass(4, true)}
+      >
+        4
+      </button>
+    </div>
   )
 }
 
