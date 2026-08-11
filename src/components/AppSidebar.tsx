@@ -37,10 +37,8 @@ function ProfileChip({ onSignOut }: { onSignOut: () => Promise<void> }) {
   return (
     <div
       className={cn(
-        'rounded-[2px] border p-2.5',
-        suspended
-          ? 'border-destructive/40 bg-destructive/[0.05]'
-          : 'border-border bg-card',
+        'border-t pt-2.5',
+        suspended ? 'border-destructive/40' : 'border-border',
       )}
     >
       <div className="flex items-center gap-2">
@@ -101,7 +99,7 @@ function LiveStrip() {
   const held = earnings?.heldKrw ?? 0
 
   return (
-    <div className="flex flex-col divide-y divide-border/70 rounded-[2px] border border-border bg-card">
+    <div className="flex flex-col divide-y divide-border/70 border-y border-border/70">
       <Link
         to="/memory"
         className="flex items-baseline justify-between gap-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground"
@@ -335,7 +333,7 @@ export function AppSidebar() {
                 {profile ? (
                   <ProfileChip onSignOut={disconnect} />
                 ) : account ? (
-                  <div className="space-y-2 rounded-[2px] border border-border bg-card p-2.5">
+                  <div className="space-y-2 border-t border-border pt-2.5">
                     <p className="truncate font-mono text-[10px] text-muted-foreground">
                       {authWallet
                         ? `${t('Wallet')} · ${shortKey(authWallet)}`

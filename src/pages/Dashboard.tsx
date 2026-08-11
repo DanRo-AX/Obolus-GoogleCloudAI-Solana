@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/primitives'
 import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from '@/data/categories'
 import { AGE_BANDS, HOUSEHOLDS, REGIONS, STRIKE_LIMIT } from '@/data/onboarding'
-import { useT } from '@/i18n'
+import { useLang } from '@/i18n'
 import {
   ApiError,
   generateShelfStarters,
@@ -35,6 +35,7 @@ import {
   listShelfStarters,
   submitShelfStarterAnswer,
   type ChatAnswer,
+  type ContributorNotification,
   type ShelfStarter,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -108,6 +109,47 @@ function categoryBannerStyle(accent?: string): CSSProperties {
   }
 }
 
+/**
+ * Notification title/body come from the backend as fixed English literals
+ * plus interpolated runtime numbers (see insert_notification's four call
+ * sites in backend/src/store.rs) — there is no per-locale field to read.
+ * Titles are exact literals, so they translate through the ordinary t()
+ * dictionary. Bodies interpolate a price/percentage/question, so in ko mode
+ * they are re-templated by parsing the four known English formats back out;
+ * an unrecognised kind or format is left in English rather than mangled.
+ */
+const NOTIFICATION_CAPTION: Partial<Record<ContributorNotification['kind'], string>> = {
+  call_available: 'New call',
+  auto_matched: 'Auto-match',
+  answer_received: 'New answer',
+  call_filled: 'Filled',
+}
+
+function notificationCaption(kind: string, t: (en: string) => string) {
+  const en = NOTIFICATION_CAPTION[kind as ContributorNotification['kind']]
+  return en ? t(en) : kind
+}
+
+function notificationBody(n: ContributorNotification, lang: 'en' | 'ko'): string {
+  if (lang !== 'ko') return n.body
+  if (n.kind === 'auto_matched') {
+    const m = n.body.match(
+      /^A (\d+)% match reused your original answer and earned ₩([\d,]+)\.$/,
+    )
+    if (m) return `일치율 ${m[1]}%로 예전 답변이 재사용돼 ₩${m[2]}을 벌었어요.`
+  } else if (n.kind === 'answer_received') {
+    const m = n.body.match(/^(\d+)\/(\d+) answers collected for (.+)$/)
+    if (m) return `${m[1]}/${m[2]}건 모였어요 · ${m[3]}`
+  } else if (n.kind === 'call_filled') {
+    const m = n.body.match(/^All (\d+) answers are ready to read\.$/)
+    if (m) return `답변 ${m[1]}건, 이제 다 읽을 수 있어요.`
+  } else if (n.kind === 'call_available') {
+    const m = n.body.match(/^₩([\d,]+) per answer · (.+)$/)
+    if (m) return `답변당 ₩${m[1]} · ${m[2]}`
+  }
+  return n.body
+}
+
 export default function Dashboard() {
   const {
     orders,
@@ -127,7 +169,7 @@ export default function Dashboard() {
     setBrowserAlerts,
     setEmailAlerts,
   } = useUi()
-  const t = useT()
+  const { t, lang } = useLang()
   const navigate = useNavigate()
   const [params] = useSearchParams()
 
@@ -349,60 +391,61 @@ export default function Dashboard() {
         </div>
 
         {profile ? (
-          <div
-            className={cn(
-              'grid gap-3 rounded-[6px] border border-border bg-card p-4',
-              emailAlertsAvailable ? 'lg:grid-cols-3' : 'lg:grid-cols-2',
-            )}
-          >
-            <AlertPreference
-              icon={Bell}
-              label={t('Browser alerts')}
-              detail={t('Alerts this browser when an open call in your fields is posted.')}
-              checked={
-                profile.browserAlerts === true &&
-                typeof Notification !== 'undefined' &&
-                Notification.permission === 'granted'
-              }
-              onChange={(value) => {
-                setAlertError(null)
-                void setBrowserAlerts(value).catch((error) =>
-                  setAlertError(error instanceof Error ? error.message : t('The switch did not move. Try it again.')),
-                )
-              }}
-            />
-            {emailAlertsAvailable ? (
+          <div className="divide-y divide-border border-y border-border lg:divide-y-0 lg:divide-x lg:flex">
+            <div className="py-3 lg:flex-1 lg:px-4 lg:first:pl-0 lg:py-0">
               <AlertPreference
-                icon={Mail}
-                label={t('Email alerts')}
-                detail={t('Emails you the open calls that match your fields.')}
-                checked={profile.emailAlerts === true}
+                icon={Bell}
+                label={t('Browser alerts')}
+                detail={t('Alerts this browser when an open call in your fields is posted.')}
+                checked={
+                  profile.browserAlerts === true &&
+                  typeof Notification !== 'undefined' &&
+                  Notification.permission === 'granted'
+                }
                 onChange={(value) => {
                   setAlertError(null)
-                  void setEmailAlerts(value).catch((error) =>
+                  void setBrowserAlerts(value).catch((error) =>
                     setAlertError(error instanceof Error ? error.message : t('The switch did not move. Try it again.')),
                   )
                 }}
               />
+            </div>
+            {emailAlertsAvailable ? (
+              <div className="py-3 lg:flex-1 lg:px-4">
+                <AlertPreference
+                  icon={Mail}
+                  label={t('Email alerts')}
+                  detail={t('Emails you the open calls that match your fields.')}
+                  checked={profile.emailAlerts === true}
+                  onChange={(value) => {
+                    setAlertError(null)
+                    void setEmailAlerts(value).catch((error) =>
+                      setAlertError(error instanceof Error ? error.message : t('The switch did not move. Try it again.')),
+                    )
+                  }}
+                />
+              </div>
             ) : null}
-            <AlertPreference
-              icon={Bot}
-              label={t('Reuse from my shelf')}
-              detail={t('Reuses an answer you already wrote, only when a call matches it 82% or more.')}
-              checked={agents}
-              onChange={setAgents}
-            />
+            <div className="py-3 lg:flex-1 lg:px-4 lg:last:pr-0">
+              <AlertPreference
+                icon={Bot}
+                label={t('Reuse from my shelf')}
+                detail={t('Reuses an answer you already wrote, only when a call matches it 82% or more.')}
+                checked={agents}
+                onChange={setAgents}
+              />
+            </div>
             {alertError ? (
-              <p className="text-sm text-destructive lg:col-span-3">{alertError}</p>
+              <p className="pb-3 text-sm text-destructive lg:px-4">{alertError}</p>
             ) : null}
           </div>
         ) : null}
 
         {unread.length ? (
-          <div className="rounded-[6px] border border-[#0F766E]/25 bg-[#0F766E]/[0.04] p-4">
-            <div className="flex items-center gap-2">
-              <Bell className="size-4 text-[#0F766E]" />
-              <span className="text-sm font-medium">
+          <div>
+            <div className="flex items-center gap-2 pb-2">
+              <Bell className="size-3.5 text-[#0F766E]" />
+              <span className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
                 {unread.length} {unread.length > 1 ? t('new updates') : t('new update')}
               </span>
               <button
@@ -413,7 +456,7 @@ export default function Dashboard() {
                 {t('Mark all read')}
               </button>
             </div>
-            <div className="mt-3 grid gap-2 lg:grid-cols-3">
+            <div className="divide-y divide-border border-y border-border">
               {unread.slice(0, 3).map((notification) => (
                 <Link
                   key={notification.id}
@@ -421,10 +464,18 @@ export default function Dashboard() {
                     ? `/answer/${notification.openCallId}`
                     : '/dashboard'}
                   onClick={() => void markNotificationsRead([notification.id])}
-                  className="rounded-[4px] border border-border bg-card p-3 transition-colors hover:border-foreground/25"
+                  className="flex items-center gap-3 py-2.5 transition-colors hover:bg-foreground/[0.03]"
                 >
-                  <p className="text-sm font-medium">{notification.title}</p>
-                  <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{notification.body}</p>
+                  <span className="size-1.5 shrink-0 rounded-full bg-[#0F766E]" />
+                  <span className="shrink-0 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                    {notificationCaption(notification.kind, t)}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                    {notificationBody(notification, lang)}
+                  </span>
+                  <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
+                    {relative(notification.createdAt, t)}
+                  </span>
                 </Link>
               ))}
             </div>
