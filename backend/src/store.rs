@@ -4020,7 +4020,7 @@ impl Store {
         &self,
         request: &ClaimPaymentAttemptRequest,
     ) -> Result<PaymentAttemptRelease, StoreError> {
-        validate_payment_attempt_request(request)?;
+        validate_payment_attempt_identity(request)?;
         let released = self.connection()?.execute(
             "DELETE FROM chain_payment_attempts
              WHERE settlement_kind = ?1 AND quote_id = ?2 AND attempt_id = ?3",
@@ -4171,7 +4171,7 @@ impl Store {
         &self,
         request: &ClaimPaymentAttemptRequest,
     ) -> Result<PaymentAttemptFence, StoreError> {
-        validate_payment_attempt_request(request)?;
+        validate_payment_attempt_identity(request)?;
         let reconcile_after = now_ms().saturating_add(PAYMENT_ATTEMPT_RETRY_AFTER_MS);
         let changed = self.connection()?.execute(
             "UPDATE chain_payment_attempts SET reconcile_after = ?1,
@@ -4204,7 +4204,7 @@ impl Store {
         &self,
         request: &ClaimPaymentAttemptRequest,
     ) -> Result<PaymentAttemptRelease, StoreError> {
-        validate_payment_attempt_request(request)?;
+        validate_payment_attempt_identity(request)?;
         let now = now_ms();
         let released = self.connection()?.execute(
             "DELETE FROM chain_payment_attempts
@@ -17502,20 +17502,7 @@ fn matching_chain_payment_attempt(
 fn validate_payment_attempt_request(
     request: &ClaimPaymentAttemptRequest,
 ) -> Result<(), StoreError> {
-    if !matches!(
-        request.settlement_kind.as_str(),
-        "document" | "bundle" | "open_call"
-    ) {
-        return Err(StoreError::Validation(
-            "settlementKind must be document, bundle, or open_call".to_owned(),
-        ));
-    }
-    if request.quote_id.trim().is_empty() || request.quote_id.len() > 160 {
-        return Err(StoreError::Validation(
-            "quoteId must be between 1 and 160 characters".to_owned(),
-        ));
-    }
-    validate_attempt_id(&request.attempt_id)?;
+    validate_payment_attempt_identity(request)?;
     match (
         request.payer.as_deref(),
         request.signed_transaction_base64.as_deref(),
@@ -17556,6 +17543,26 @@ fn validate_payment_attempt_request(
             ));
         }
     }
+    Ok(())
+}
+
+fn validate_payment_attempt_identity(
+    request: &ClaimPaymentAttemptRequest,
+) -> Result<(), StoreError> {
+    if !matches!(
+        request.settlement_kind.as_str(),
+        "document" | "bundle" | "open_call"
+    ) {
+        return Err(StoreError::Validation(
+            "settlementKind must be document, bundle, or open_call".to_owned(),
+        ));
+    }
+    if request.quote_id.trim().is_empty() || request.quote_id.len() > 160 {
+        return Err(StoreError::Validation(
+            "quoteId must be between 1 and 160 characters".to_owned(),
+        ));
+    }
+    validate_attempt_id(&request.attempt_id)?;
     Ok(())
 }
 
@@ -21940,6 +21947,20 @@ mod tests {
             absence_observed: false,
         };
         let first_fence = store.claim_payment_attempt(&first_attempt).unwrap();
+        let identity_only_attempt = ClaimPaymentAttemptRequest {
+            settlement_kind: first_attempt.settlement_kind.clone(),
+            quote_id: first_attempt.quote_id.clone(),
+            attempt_id: first_attempt.attempt_id.clone(),
+            payer: None,
+            signed_transaction_base64: None,
+            recent_blockhash: None,
+            absence_observed: false,
+        };
+        assert!(matches!(
+            store.claim_payment_attempt(&identity_only_attempt),
+            Err(StoreError::Validation(message))
+                if message == "new payment attempts require exact x402 chain evidence"
+        ));
         assert_eq!(
             store.claim_payment_attempt(&first_attempt).unwrap(),
             first_fence,
@@ -22007,7 +22028,7 @@ mod tests {
             )
             .unwrap();
         let deferred = store
-            .defer_payment_attempt_reconciliation(&first_attempt)
+            .defer_payment_attempt_reconciliation(&identity_only_attempt)
             .unwrap();
         assert!(deferred.reconcile_after > now_ms());
         store.ready().unwrap();
@@ -22060,18 +22081,18 @@ mod tests {
             Err(StoreError::Conflict(_))
         ));
         assert!(matches!(
-            store.release_reconciled_payment_attempt(&first_attempt),
+            store.release_reconciled_payment_attempt(&identity_only_attempt),
             Err(StoreError::Conflict(_))
         ));
         let absence_observation = ClaimPaymentAttemptRequest {
             absence_observed: true,
-            ..first_attempt.clone()
+            ..identity_only_attempt.clone()
         };
         store
             .defer_payment_attempt_reconciliation(&absence_observation)
             .unwrap();
         assert!(matches!(
-            store.release_reconciled_payment_attempt(&first_attempt),
+            store.release_reconciled_payment_attempt(&identity_only_attempt),
             Err(StoreError::Conflict(_))
         ));
         store
@@ -22085,7 +22106,7 @@ mod tests {
             )
             .unwrap();
         assert!(matches!(
-            store.release_reconciled_payment_attempt(&first_attempt),
+            store.release_reconciled_payment_attempt(&identity_only_attempt),
             Err(StoreError::Conflict(_))
         ));
         let later_pass = now_ms();
@@ -22105,7 +22126,7 @@ mod tests {
             .unwrap();
         assert!(
             store
-                .release_reconciled_payment_attempt(&first_attempt)
+                .release_reconciled_payment_attempt(&identity_only_attempt)
                 .unwrap()
                 .released
         );
@@ -22992,7 +23013,21 @@ mod tests {
         );
 
         // Only an explicit pre-settlement cancellation re-opens deletion.
-        assert!(store.release_payment_attempt(&attempt).unwrap().released);
+        let identity_only_attempt = ClaimPaymentAttemptRequest {
+            settlement_kind: attempt.settlement_kind.clone(),
+            quote_id: attempt.quote_id.clone(),
+            attempt_id: attempt.attempt_id.clone(),
+            payer: None,
+            signed_transaction_base64: None,
+            recent_blockhash: None,
+            absence_observed: false,
+        };
+        assert!(
+            store
+                .release_payment_attempt(&identity_only_attempt)
+                .unwrap()
+                .released
+        );
         store.delete_account(seller_id).unwrap();
         assert!(matches!(
             store.payment_document_snapshot(&quote.id),
