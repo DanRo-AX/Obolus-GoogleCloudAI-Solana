@@ -21,6 +21,7 @@ import {
 import { getPhantom } from '@/state/wallet'
 import { exactQuotePaymentPolicy, exactResearchBundleQuote } from '@/lib/exactPaymentPolicy'
 import { prepaidTopUpAtomic } from '@/lib/browserPaymentConfig'
+import { withSufficientSvmComputeBudget } from '@/lib/svmComputeBudget'
 
 export type OpenRequest = {
   queryId: string
@@ -161,7 +162,7 @@ export async function fundOpenCall(input: CreateOpenCallInput): Promise<Order> {
       ])
     const client = new x402Client()
     client.registerPolicy(exactQuotePaymentPolicy('open_call', quote))
-    const signer = phantomSvmSigner(provider)
+    const signer = withSufficientSvmComputeBudget(phantomSvmSigner(provider))
     svm.registerExactSvmScheme(client, { signer, networks: [DEVNET_NETWORK] })
     client.register(
       DEVNET_NETWORK,
@@ -389,7 +390,7 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
     ])
     const client = new x402Client()
     client.registerPolicy(exactQuotePaymentPolicy('bundle', quote))
-    const signer = phantomSvmSigner(provider)
+    const signer = withSufficientSvmComputeBudget(phantomSvmSigner(provider))
     svm.registerExactSvmScheme(client, { signer, networks: [DEVNET_NETWORK] })
     client.register(
       DEVNET_NETWORK,

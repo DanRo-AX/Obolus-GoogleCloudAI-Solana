@@ -5,6 +5,8 @@ import type { Network } from '@x402/core/types'
 import { decodePaymentResponseHeader, wrapFetchWithPayment } from '@x402/fetch'
 import { ExactSvmScheme } from '@x402/svm/exact/client'
 
+import { withSufficientSvmComputeBudget } from '../src/lib/svmComputeBudget.ts'
+
 const DEVNET = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1' as Network
 const DEVNET_RPC = process.env.X402_RPC_URL?.trim() || 'https://api.devnet.solana.com'
 const DEVNET_USDC = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
@@ -63,7 +65,9 @@ while (balance < amount) {
   balance = await tokenBalance(connection, keypair.publicKey, new PublicKey(DEVNET_USDC))
 }
 
-const signer = await createKeyPairSignerFromBytes(keypair.secretKey)
+const signer = withSufficientSvmComputeBudget(
+  await createKeyPairSignerFromBytes(keypair.secretKey),
+)
 const client = new x402Client().register(DEVNET, new ExactSvmScheme(signer))
 client.registerPolicy((_version, requirements) =>
   requirements.filter(

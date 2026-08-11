@@ -7,15 +7,5 @@
   "vars": {
     "API_ORIGIN": "https://obolus-api-amjeodet3q-du.a.run.app",
     "GATEWAY_ORIGIN": "https://obolus-gateway-amjeodet3q-du.a.run.app"
-  },
-  "observability": {
-    "enabled": true,
-    "logs": {
-      "head_sampling_rate": 1
-    },
-    "traces": {
-      "enabled": true,
-      "head_sampling_rate": 0.01
-    }
   }
 }

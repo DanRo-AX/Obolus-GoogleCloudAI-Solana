@@ -1,9 +1,19 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowUpRight, Database, GitBranch, ShieldCheck } from 'lucide-react'
+import {
+  ArrowUpRight,
+  Coins,
+  Database,
+  GitBranch,
+  MessageSquareText,
+  Receipt,
+  ShieldCheck,
+  type LucideIcon,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CATEGORIES } from '@/data/categories'
 import { useT } from '@/i18n'
+import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
 
 const RANKING = [
@@ -23,6 +33,44 @@ const RANKING = [
     body: 'The selected content hash, owner, amount, mint, and network are committed before payment. Only a matching paid callback releases the snapshot.',
   },
 ] as const
+
+const VALUE_LOOP: Array<{
+  Icon: LucideIcon
+  sequence: string
+  audience: string
+  title: string
+  body: string
+  to: string
+  action: string
+}> = [
+  {
+    Icon: MessageSquareText,
+    sequence: '01',
+    audience: 'Buyer',
+    title: 'Buy only what changes the decision',
+    body: 'Search metadata for free. Existing evidence costs ₩5 to ₩25 per document; a miss becomes a targeted open call instead of a fabricated answer.',
+    to: '/',
+    action: 'Run a question',
+  },
+  {
+    Icon: Coins,
+    sequence: '02',
+    audience: 'Contributor',
+    title: 'Answer once, earn on qualified reuse',
+    body: 'An accepted answer becomes a versioned document. Each qualified open settles 90% to its owner; no new answer is required.',
+    to: '/dashboard',
+    action: 'Find an open call',
+  },
+  {
+    Icon: Receipt,
+    sequence: '03',
+    audience: 'Network',
+    title: 'Revenue follows delivered evidence',
+    body: 'The displayed price already includes the 10% protocol fee. The buyer gets the passage and receipt together; no subscription or checkout surcharge.',
+    to: '/archive',
+    action: 'Inspect receipts',
+  },
+]
 
 export default function Coverage() {
   const t = useT()
@@ -78,6 +126,57 @@ export default function Coverage() {
                 <Icon className="size-4 text-muted-foreground" />
                 <h2 className="mt-4 text-sm font-medium">{t(title)}</h2>
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">{t(body)}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section aria-labelledby="value-loop-title">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 id="value-loop-title" className="font-sans text-lg font-medium">
+                {t('One market, three proofs')}
+              </h2>
+              <p className="mt-2 max-w-2xl text-[15px] leading-7 text-muted-foreground">
+                {t(
+                  'Value is visible in the same flow: a buyer spends less, a contributor earns again, and the network charges only when evidence is delivered.',
+                )}
+              </p>
+            </div>
+            <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+              {totals.remaining} {t('slots left')} · ₩{totals.budget.toLocaleString()} {t('waiting')}
+            </span>
+          </div>
+
+          <div className="mt-5 grid overflow-hidden rounded-[6px] border border-border bg-card sm:grid-cols-3">
+            {VALUE_LOOP.map(({ Icon, sequence, audience, title, body, to, action }, index) => (
+              <article
+                key={audience}
+                className={cn(
+                  'flex min-h-64 flex-col p-5',
+                  index < VALUE_LOOP.length - 1 &&
+                    'border-b border-border sm:border-b-0 sm:border-r',
+                )}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                    {sequence} · {t(audience)}
+                  </span>
+                  <Icon className="size-4 text-muted-foreground" aria-hidden="true" />
+                </div>
+                <h3 className="mt-8 max-w-xs text-base font-medium leading-snug">
+                  {t(title)}
+                </h3>
+                <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                  {t(body)}
+                </p>
+                <Link
+                  to={to}
+                  className="mt-auto inline-flex min-h-11 items-center gap-1.5 self-start pt-5 font-mono text-[10px] uppercase tracking-[1px] text-foreground underline decoration-dotted underline-offset-4 transition-opacity hover:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+                >
+                  {t(action)}
+                  <ArrowUpRight className="size-3.5" aria-hidden="true" />
+                </Link>
               </article>
             ))}
           </div>
