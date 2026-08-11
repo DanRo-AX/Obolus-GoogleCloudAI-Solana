@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import {
   DEFAULT_INFRA_EXPECTATIONS,
   DEVNET_NETWORK,
   assertSecretFree,
+  buildAutonomyEvidence,
   buildDevnetEvidence,
   evaluateInfraSnapshot,
   evaluatePromotion,
@@ -76,6 +81,78 @@ test('money-moving Cloud Build releases create no-traffic candidate revisions', 
     const source = await readFile(new URL(`../${path}`, import.meta.url), 'utf8')
     assert.match(source, /- --no-traffic(?:\r?\n|$)/, path)
     assert.doesNotMatch(source, /--to-latest/, path)
+  }
+})
+
+test('Pay.sh sandbox gateway follows the current Rust API environment contract', async () => {
+  const source = await readFile(new URL('../scripts/pay-sh-sandbox-e2e.sh', import.meta.url), 'utf8')
+  const startGateway = source.match(/start_gateway\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.match(startGateway, /RUST_API_URL="\$backend_origin"/)
+  assert.doesNotMatch(startGateway, /OPENSHELF_BACKEND_URL="\$backend_origin"/)
+})
+
+test('hosted Devnet funding is durably fenced before a payment can leave', async () => {
+  const source = await readFile(new URL('../scripts/hosted-devnet-finalist-e2e.mjs', import.meta.url), 'utf8')
+  assert.match(
+    source,
+    /quote\.status === 'quoted' && state\.fundingAttemptQuoteId !== quote\.id/,
+  )
+  assert.match(source, /reconciling without another payment/)
+  const durableFence = source.indexOf('onReadyToSubmit()')
+  const paidTransport = source.indexOf('wrapFetchWithPayment(fetch, client)')
+  assert(durableFence >= 0 && paidTransport >= 0 && durableFence < paidTransport)
+})
+
+test('autonomy recorder validates a provider-path trace while dropping questions and capabilities', () => {
+  const report = buildAutonomyEvidence(goodAutonomyRun(), '2026-08-11T00:00:00.000Z')
+  assert.equal(report.summary.ready, true)
+  assert.equal(report.agentRun.mode, 'vertex_tools_with_deterministic_guards')
+  assert.equal(report.agentRun.steps.length, 3)
+  assert.equal(JSON.stringify(report).includes('paymentAccessToken'), false)
+  assert.equal(JSON.stringify(report).includes('private customer question'), false)
+  assert.equal(JSON.stringify(report).includes('private planner detail'), false)
+  assert.equal(JSON.stringify(report).includes('hidden_1'), false)
+  assertSecretFree(report)
+})
+
+test('autonomy proof fails closed on fallback, unsafe tools, or a missing approval stop', () => {
+  const input = goodAutonomyRun()
+  input.agentRun.mode = 'deterministic_fallback'
+  input.agentRun.steps[0].status = 'fallback'
+  input.agentRun.steps[2].tool = 'execute_payment'
+  input.agentRun.steps[2].status = 'completed'
+  input.agentRun.nextAction = 'execute_payment'
+  input.agentRun.requiresUserApproval = false
+  const report = buildAutonomyEvidence(input)
+  assert.equal(report.summary.ready, false)
+  assert(report.checks.some((check) => check.id === 'planner.vertex-function-call' && !check.passed))
+  assert(report.checks.some((check) => check.id === 'trace.safe-tools' && !check.passed))
+  assert(report.checks.some((check) => check.id === 'approval.boundary' && !check.passed))
+})
+
+test('autonomy recorder CLI writes private output and refuses destructive in-place input', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'obolus-autonomy-evidence-'))
+  const input = join(directory, 'resolve-response.json')
+  const output = join(directory, 'autonomy.json')
+  const executable = fileURLToPath(new URL('./record-finalist-autonomy-evidence.mjs', import.meta.url))
+  try {
+    await writeFile(input, `${JSON.stringify(goodAutonomyRun())}\n`, { mode: 0o600 })
+    const recorded = spawnSync(process.execPath, [executable, '--input', input, '--output', output], {
+      encoding: 'utf8',
+    })
+    assert.equal(recorded.status, 0, recorded.stderr)
+    assert.equal(JSON.parse(await readFile(output, 'utf8')).summary.ready, true)
+    assert.equal((await stat(output)).mode & 0o777, 0o600)
+    assert.deepEqual((await readdir(directory)).sort(), ['autonomy.json', 'resolve-response.json'])
+
+    const inPlace = spawnSync(process.execPath, [executable, '--input', input, '--output', input], {
+      encoding: 'utf8',
+    })
+    assert.equal(inPlace.status, 2)
+    assert.match(inPlace.stderr, /must be different/)
+    assert.equal(JSON.parse(await readFile(input, 'utf8')).paymentAccessToken, 'never copy this capability')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
   }
 })
 
@@ -191,6 +268,13 @@ function goodDevnetRun() {
     jobStatus: 'completed',
     quotes: [
       {
+        id: 'call_quote_001',
+        kind: 'open-call-funding',
+        status: 'funded',
+        amountAtomic: '20',
+        asset: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+      },
+      {
         id: 'quote_001',
         kind: 'evidence',
         status: 'delivered',
@@ -199,6 +283,15 @@ function goodDevnetRun() {
       },
     ],
     transactions: [
+      {
+        kind: 'open-call-funding',
+        signature: '3333333333333333333333333333333333333333333333333333333333333333',
+        quoteIds: ['call_quote_001'],
+        status: 'finalized',
+        finalityProviderCount: 2,
+        ownerDeltaAtomic: '20',
+        payerDeltaAtomic: '-20',
+      },
       {
         kind: 'evidence',
         signature: '1111111111111111111111111111111111111111111111111111111111111111',
@@ -220,5 +313,47 @@ function goodDevnetRun() {
     questionText: 'private customer question',
     passage: 'paid human passage',
     privateKey: 'never copy me',
+  }
+}
+
+function goodAutonomyRun() {
+  return {
+    queryId: 'query_autonomy_001',
+    decision: 'hit',
+    requestedDocuments: 3,
+    candidateCount: 7,
+    matches: [{ handle: 'hidden_1' }, { handle: 'hidden_2' }],
+    quote: { currency: 'KRW', documentCount: 2, totalPriceKrw: 30 },
+    agentRun: {
+      id: 'agent_autonomy_001',
+      model: 'gemini-2.5-flash',
+      mode: 'vertex_tools_with_deterministic_guards',
+      nextAction: 'propose_evidence_purchase',
+      requiresUserApproval: true,
+      steps: [
+        {
+          sequence: 1,
+          agent: 'research_planner',
+          tool: 'search_human_evidence',
+          status: 'completed',
+          summary: 'private planner detail that is not copied',
+        },
+        {
+          sequence: 2,
+          agent: 'retrieval_agent',
+          tool: 'rank_evidence_bundle',
+          status: 'completed',
+          artifactRef: 'query_autonomy_001',
+        },
+        {
+          sequence: 3,
+          agent: 'coverage_agent',
+          tool: 'propose_evidence_purchase',
+          status: 'awaiting_user_approval',
+        },
+      ],
+    },
+    questionText: 'private customer question',
+    paymentAccessToken: 'never copy this capability',
   }
 }

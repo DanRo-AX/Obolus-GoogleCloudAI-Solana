@@ -2,6 +2,22 @@ import { createHash } from 'node:crypto'
 
 export const DEVNET_NETWORK = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
 
+const AUTONOMY_AGENTS = Object.freeze(['research_planner', 'retrieval_agent', 'coverage_agent'])
+const AUTONOMY_TOOLS = new Set([
+  'search_human_evidence',
+  'rank_evidence_bundle',
+  'propose_evidence_purchase',
+  'propose_hybrid_research',
+  'propose_open_call',
+  'generate_general_baseline',
+  'finish_without_purchase',
+])
+const APPROVAL_GATED_ACTIONS = new Set([
+  'propose_evidence_purchase',
+  'propose_hybrid_research',
+  'propose_open_call',
+])
+
 export const DEFAULT_INFRA_EXPECTATIONS = Object.freeze({
   services: {
     api: {
@@ -304,6 +320,128 @@ export function evaluatePromotion(revision, expectation) {
   }
 }
 
+export function buildAutonomyEvidence(input, generatedAt = new Date().toISOString()) {
+  const response = input?.response && typeof input.response === 'object' ? input.response : input
+  const run = response?.agentRun ?? {}
+  const queryId = safeId(response?.queryId, 'query id')
+  const runId = safeId(run.id, 'agent run id')
+  const decision = ['hit', 'miss'].includes(String(response?.decision)) ? String(response.decision) : 'unsupported'
+  const requestedDocuments = positiveInteger(response?.requestedDocuments)
+  const candidateCount = positiveInteger(response?.candidateCount)
+  const selectedDocumentCount = Array.isArray(response?.matches) ? response.matches.length : 0
+  const nextAction = safeEnum(run.nextAction, AUTONOMY_TOOLS)
+  const mode = run.mode === 'vertex_tools_with_deterministic_guards' ? run.mode : 'unsupported'
+  const model = safeModel(run.model)
+  const steps = (Array.isArray(run.steps) ? run.steps : []).map((step) => ({
+    sequence: positiveInteger(step.sequence),
+    agent: safeEnum(step.agent, new Set(AUTONOMY_AGENTS)),
+    tool: safeEnum(step.tool, AUTONOMY_TOOLS),
+    status: safeEnum(step.status, new Set(['completed', 'fallback', 'awaiting_user_approval'])),
+    ...(safeIdOrNull(step.artifactRef) ? { artifactRef: safeIdOrNull(step.artifactRef) } : {}),
+  }))
+  const quote = response?.quote
+    ? {
+        currency: response.quote.currency === 'KRW' ? 'KRW' : 'unsupported',
+        documentCount: positiveInteger(response.quote.documentCount),
+        totalPriceKrw: positiveInteger(response.quote.totalPriceKrw),
+      }
+    : null
+  const approvalRequired = APPROVAL_GATED_ACTIONS.has(nextAction)
+  const expectedAction = actionMatchesDecision(decision, selectedDocumentCount, nextAction)
+  const hasForbiddenReasoning = containsForbiddenReasoningField(run)
+
+  const checks = [
+    evidenceCheck(
+      'planner.vertex-function-call',
+      mode === 'vertex_tools_with_deterministic_guards' && model.startsWith('gemini-'),
+      'the authenticated API response reports the Gemini function-call path with deterministic guards',
+    ),
+    evidenceCheck(
+      'trace.roles',
+      steps.length === AUTONOMY_AGENTS.length && steps.every((step, index) => step.agent === AUTONOMY_AGENTS[index]),
+      'the public trace records planner, retrieval, and coverage roles in order',
+    ),
+    evidenceCheck(
+      'trace.sequence',
+      steps.length === 3 && steps.every((step, index) => step.sequence === index + 1),
+      'the three durable steps have an unambiguous sequence',
+    ),
+    evidenceCheck(
+      'trace.safe-tools',
+      steps.length === 3 && steps.every((step) => AUTONOMY_TOOLS.has(step.tool)),
+      'every exposed tool is from the reviewed non-payment allowlist',
+    ),
+    evidenceCheck(
+      'trace.no-private-reasoning',
+      !hasForbiddenReasoning,
+      'the public run contains outcomes and artifacts without prompts or private reasoning fields',
+    ),
+    evidenceCheck(
+      'planner.completed',
+      steps[0]?.tool === 'search_human_evidence' && steps[0]?.status === 'completed',
+      'Gemini completed the bounded metadata search plan',
+    ),
+    evidenceCheck(
+      'retrieval.recorded',
+      steps[1]?.tool === 'rank_evidence_bundle' && steps[1]?.status === 'completed' && steps[1]?.artifactRef === queryId,
+      'deterministic retrieval recorded the query artifact used by the run',
+    ),
+    evidenceCheck(
+      'coverage.observed',
+      steps[2]?.tool === nextAction && expectedAction,
+      'coverage selected a next action consistent with the observed HIT/PARTIAL/MISS result',
+    ),
+    evidenceCheck(
+      'approval.boundary',
+      AUTONOMY_TOOLS.has(nextAction) &&
+        Boolean(run.requiresUserApproval) === approvalRequired &&
+        (approvalRequired ? steps[2]?.status === 'awaiting_user_approval' : steps[2]?.status !== 'awaiting_user_approval'),
+      'economic next actions stop at an explicit user-approval boundary',
+    ),
+    evidenceCheck(
+      'selection.bounded',
+      requestedDocuments >= 1 &&
+        requestedDocuments <= 20 &&
+        selectedDocumentCount <= requestedDocuments &&
+        candidateCount >= selectedDocumentCount,
+      'selected evidence stays inside the caller document ceiling',
+    ),
+    evidenceCheck(
+      'quote.exact',
+      decision !== 'hit' ||
+        (quote?.currency === 'KRW' &&
+          quote.documentCount === selectedDocumentCount &&
+          quote.totalPriceKrw > 0 &&
+          nextAction === 'propose_evidence_purchase'),
+      'a HIT exposes an exact non-zero quote before any payment action',
+    ),
+  ]
+  const failed = checks.filter((check) => !check.passed).length
+
+  return {
+    schemaVersion: 'obulus.finalist.autonomy-evidence.v1',
+    generatedAt,
+    query: {
+      id: queryId,
+      decision,
+      requestedDocuments,
+      candidateCount,
+      selectedDocumentCount,
+    },
+    agentRun: {
+      id: runId,
+      model,
+      mode,
+      nextAction,
+      requiresUserApproval: Boolean(run.requiresUserApproval),
+      steps,
+    },
+    quote,
+    summary: { passed: checks.length - failed, failed, ready: failed === 0 },
+    checks,
+  }
+}
+
 export function buildDevnetEvidence(input, generatedAt = new Date().toISOString()) {
   const transactions = (input.transactions ?? []).map((transaction) => ({
     kind: allowedKind(transaction.kind),
@@ -449,7 +587,9 @@ function serviceAccountMatches(actual, expectedShortName) {
 
 function allowedKind(value) {
   const kind = String(value ?? '')
-  if (!['evidence', 'open-call-payout', 'refund'].includes(kind)) throw new Error(`unsupported transaction kind: ${kind}`)
+  if (!['evidence', 'open-call-funding', 'open-call-payout', 'refund'].includes(kind)) {
+    throw new Error(`unsupported transaction kind: ${kind}`)
+  }
   return kind
 }
 
@@ -485,6 +625,31 @@ function canonicalAtomic(value, { allowNegative = false, allowZero = true } = {}
 function positiveInteger(value) {
   const number = Number(value)
   return Number.isInteger(number) && number >= 0 ? number : 0
+}
+
+function safeEnum(value, allowed) {
+  const candidate = String(value ?? '')
+  return allowed.has(candidate) ? candidate : 'unsupported'
+}
+
+function safeModel(value) {
+  const candidate = String(value ?? '')
+  return /^gemini-[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(candidate) ? candidate : 'unsupported'
+}
+
+function actionMatchesDecision(decision, selectedDocumentCount, action) {
+  if (decision === 'hit') return action === 'propose_evidence_purchase'
+  if (decision !== 'miss') return false
+  if (selectedDocumentCount > 0) return ['propose_hybrid_research', 'propose_open_call'].includes(action)
+  return ['propose_open_call', 'generate_general_baseline'].includes(action)
+}
+
+function containsForbiddenReasoningField(value) {
+  if (!value || typeof value !== 'object') return false
+  const forbidden = /^(?:chain_?of_?thought|reasoning|rationale|prompt|model_?response)$/i
+  return Object.entries(value).some(
+    ([key, child]) => forbidden.test(key) || containsForbiddenReasoningField(child),
+  )
 }
 
 function uniqueStrings(values) {

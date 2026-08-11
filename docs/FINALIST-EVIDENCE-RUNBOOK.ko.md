@@ -1,9 +1,11 @@
-# 결선 인프라·Devnet 증거 실행 가이드
+# 결선 인프라·AI·Devnet 증거 실행 가이드
 
 이 도구들은 배포나 트래픽을 바꾸지 않는다. 현재 서빙 중인 Cloud Run 리비전과
 운영 리소스를 읽어서 결선 시연 전에 반드시 만족해야 할 조건을 **실패 폐쇄**
-방식으로 검사하고, Devnet 실행 결과를 질문 원문·유료 passage·RPC URL·개인키 없이
-제출 가능한 JSON으로 정리한다.
+방식으로 검사한다. 실제 AI trace와 Devnet 실행 결과는 질문 원문·유료 passage·
+세션 capability·RPC URL·개인키 없이 제출 가능한 JSON으로 정리한다. JSON은
+재현 가능한 판정 기록이지 외부 시스템의 서명된 증명은 아니므로, 마지막 절의
+독립 provenance 확인과 함께 사용한다.
 
 ## 1. 단위 테스트
 
@@ -17,6 +19,8 @@ npm run test:finalist-evidence
 - 서빙 리비전이 전용 서비스 계정 대신 공유 계정을 사용하는 문제
 - 결제 최종성을 한 RPC에서만 확인하는 문제
 - 결제 재시도에서 중복 정산이 생기거나, 환불 증거가 없는 실행을 완료로 표시하는 문제
+- AI trace가 실제 Vertex function call 없이 fallback인데도 라이브 자율성 증거로 표시되는 문제
+- AI가 결제·본문 열람 도구를 선택하거나 사용자 승인 경계를 건너는 문제
 - 질문 원문, 유료 passage, private key 같은 민감 필드가 제출용 evidence에 복사되는 문제
 
 ## 2. 현재 GCP 운영 상태 검증
@@ -81,7 +85,43 @@ gcloud run services update-traffic obolus-gateway ... --to-revisions=obolus-gate
 
 특히 `obolus-gateway` revision이 `obolus/pay` 이미지를 가리키면 무조건 거부한다.
 
-## 4. 실제 Devnet 실행 증거 기록
+## 4. 실제 AI 자율성 실행 증거 기록
+
+로그인한 지갑 세션에서 현재 서빙 origin의 `/api/v1/questions/resolve`를 한 번
+실행한다. 브라우저 개발자 도구의 Network 패널에서 응답 JSON을 다른 사용자가
+읽을 수 없는 임시 디렉터리에 저장하고 파일 권한을 `0600`으로 제한한다. 익명
+요청은 비용 통제를 위해 Vertex를 호출하지 않으므로 라이브 자율성 증거가 될 수
+없다. 원본에는 `paymentAccessToken`이 있을 수 있으므로 레코더 성공 직후 폐기한다.
+
+```bash
+npm run finalist:record-autonomy -- \
+  --input /secure-runtime-output/resolve-response.json \
+  --output artifacts/finalist-evidence/autonomy.json
+```
+
+레코더는 다음을 실패 폐쇄 방식으로 확인한다.
+
+- `gemini-*` 모델의 provider-backed function-call mode와 deterministic guard
+- `research_planner → retrieval_agent → coverage_agent`의 순서 있는 3단계 trace
+- 검색·랭킹·구매 제안·Open Call 제안만 허용하는 비결제 tool allowlist
+- HIT/PARTIAL/MISS 관찰 결과와 다음 행동의 일치
+- 최대 20개인 사용자 문서 수 한도와 선택 개수
+- 구매·hybrid·Open Call이 `awaiting_user_approval`에서 멈추는지
+- HIT의 선택 문서 수와 exact KRW quote의 일치
+
+출력에는 query/run ID, 모델, mode, 역할·도구·상태, 개수와 quote 합계만 남는다.
+질문, 검색 handle, paid passage, step summary, prompt/model response,
+`paymentAccessToken`, cookie는 복사하지 않는다. 모든 항목을 만족해야
+`summary.ready=true`가 된다. CLI는 기존 출력을 `0600` 임시 파일로 쓴 뒤 원자적으로
+교체하고, input과 output이 같으면 거부한다. exit `0`은 schema-ready, exit `1`은
+보고서 생성 후 gate 실패, exit `2`는 입력·변환·쓰기 오류다.
+
+`autonomy.json`은 API가 보고한 실행 경로를 검사하며, 그 파일만으로 Vertex 호출
+provenance를 독립 증명하지는 않는다. 최종 시연에는 같은 query/run을 보여주는
+브라우저 Network 원본과 같은 시각의 Vertex/Cloud Run 감사 또는 요청 로그를 함께
+제시한다. 독립 로그가 없다면 실제 provider 호출은 미검증 blocker로 표시한다.
+
+## 5. 실제 Devnet 실행 증거 기록
 
 먼저 기존 E2E/운영 콘솔에서 실제 실행 결과를 JSON으로 내보낸다. 입력 구조 예시는
 [`scripts/fixtures/finalist-devnet-run.example.json`](../scripts/fixtures/finalist-devnet-run.example.json)에
@@ -116,14 +156,22 @@ npm run finalist:record-devnet -- \
 private key는 allowlist 밖이므로 출력에 포함되지 않는다. 모든 항목을 갖춰야
 `summary.ready=true`가 된다.
 
-## 5. 결선 제출 직전 판정
+`devnet.json`도 운영 입력을 allowlist로 직렬화한 기록이지 체인 자체의 서명된
+attestation은 아니다. 제출 직전 각 Explorer URL을 열고, 서로 다른 두 RPC
+origin에서 같은 finalized transaction bytes와 mint·amount·recipient를 다시
+조회한다. 이 독립 재조회가 없으면 실제 온체인 결제는 미검증 blocker로 표시한다.
 
-다음 두 파일이 모두 `summary.ready=true`여야 “프로덕션 구조와 실제 Devnet 결제를
-검증했다”고 표현할 수 있다.
+## 6. 결선 제출 직전 판정
+
+다음 세 파일이 모두 `summary.ready=true`여야 하고, 같은 데모 실행의 query ID와
+가까운 생성 시각으로 연결돼야 한다.
 
 - `infrastructure.json`: 현재 서빙 revision과 GCP 안전 경계
+- `autonomy.json`: 로그인된 실제 질문의 Vertex tool call·3단계 trace·승인 경계
 - `devnet.json`: 실제 질문에서 지급·finality·중복 방지·refund까지 이어진 receipt bundle
 
 Explorer URL, Cloud Run revision/digest, 소유자 잔액 증가, 중복 지급 0을 데모 화면에
-함께 보여준다. 예시 fixture, sandbox 영수증, 서빙하지 않는 tagged revision은 실제
-운영 증거로 사용하지 않는다.
+함께 보여준다. 여기에 일치하는 Vertex 감사·요청 로그와 두 RPC의 finalized 재조회가
+있을 때만 “프로덕션 구조, 실제 Gemini 자율 실행과 실제 Devnet 결제를 검증했다”고
+표현한다. 예시 fixture, sandbox 영수증, 서빙하지 않는 tagged revision은 실제 운영
+증거로 사용하지 않는다.

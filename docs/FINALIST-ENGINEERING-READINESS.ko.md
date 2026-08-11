@@ -15,10 +15,12 @@ Obulus의 가장 강한 포지션은 **B. Autonomous On-chain Settlement**다. �
 정산한다는 점이다. 현재 코드에는 A2A 프로토콜이나 Passkey가 구현돼 있지 않으므로
 그 둘을 사용했다고 주장해서는 안 된다.
 
-소스 코드 기준 핵심 제품 흐름은 구현됐고 전체 자동 검증 324개가 통과한다. 그러나
-현재 GCP의 **실제 100% 서빙 리비전**은 최신 소스와 일치하지 않는 부분이 있다.
-읽기 전용 운영 검증 결과는 63개 통과, 14개 실패다. 따라서 아래 P0를 해결하기
-전에는 “현재 프로덕션 경로가 모두 최신·완료됐다”고 표현하면 안 된다.
+소스 코드 기준 핵심 제품 흐름은 구현됐고 전체 자동 검증 356개가 통과한다. 현재
+GCP의 **실제 100% 서빙 리비전**은 읽기 전용 운영 검증 77/77을 통과했고,
+로그인된 실제 질문의 Gemini 실행 증거는 11/11, Solana Devnet의 funding·payout·
+refund 실행 증거는 13/13으로 모두 `summary.ready=true`다. 이는 현재 결선 데모의
+프로덕션형 구조와 Devnet 실증이 준비됐다는 뜻이지 Mainnet 상용 출시 승인이나 실제
+고객 수요 검증을 뜻하지는 않는다.
 
 ## 제품을 한 문장으로 설명하면
 
@@ -72,8 +74,8 @@ Gemini가 사용할 수 있는 검색 도구에는 지갑, 수취인, 자산, �
 
 #### 보완 우선순위
 
-- P0: 최신 API 리비전을 승격한 뒤, 실제 Vertex function-call 응답과 화면의 agent
-  trace를 한 질문에서 함께 검증한다.
+- 완료: 최신 API 리비전에서 실제 Vertex function-call 응답과 3단계 agent trace,
+  사용자 승인 정지를 한 질문으로 연결한 비밀 없는 증거가 11/11을 통과했다.
 - P1: agent run 상세 조회 API와 운영 대시보드에 tool latency, fallback rate,
   HIT/PARTIAL/MISS별 다음 행동, 사용자 승인 전환율을 추가한다.
 - P1: 복잡한 질문에만 2차 계획 호출을 허용하는 bounded re-planning을 추가한다.
@@ -151,14 +153,19 @@ Gemini가 사용할 수 있는 검색 도구에는 지갑, 수취인, 자산, �
 
 #### 현재 실제 운영 검사 결과
 
-읽기 전용 검증기 기준 77개 항목 중 63개가 통과했고 14개가 실패했다.
+2026-08-11 읽기 전용 검증기 기준 77/77이 통과했다.
 
-- 100% 서빙 API·gateway·orchestrator가 과거 공유 service account를 사용한다.
-- gateway의 latest-ready revision이 gateway가 아니라 Pay.sh 이미지를 가리킨다.
-- 현재 서빙 gateway/orchestrator에서 독립 RPC 2개가 확인되지 않는다.
-- Pay.sh public health boundary가 기대한 404가 아니라 200을 반환한다.
-- Cloud SQL `sslMode`가 암호화 연결만 강제하지 않는다.
-- 별도 SQL binding 검사에서 현재 서빙 API와 `ax-apps-db` 연결이 불일치로 판정된다.
+- API `obolus-api-hotfix-7265e30`, gateway·orchestrator·Pay의 서비스별 리비전이
+  각각 명시적으로 100% 트래픽을 받고 올바른 image repository와 digest를 사용한다.
+- API·gateway·orchestrator는 각각 전용 service account를 사용한다.
+- gateway의 x402·Pay.sh와 orchestrator의 Pay.sh 최종성 검사는 서로 다른 origin의
+  RPC 두 개를 사용한다.
+- API·gateway·orchestrator readiness는 200이고 Pay.sh 내부 health는 public
+  boundary에서 404로 차단된다.
+- `ax-apps-db`는 PostgreSQL 16, backup, PITR, 7일 보존, `ENCRYPTED_ONLY`이며 API가
+  Cloud SQL을 mount하고 Secret Manager의 DB URL을 사용한다.
+- Cloud Tasks settlement queue는 bounded retry·dispatch 한도를 갖고, Cloud KMS
+  signer는 비수출형 키와 전용 권한을 사용한다.
 
 이 상태를 감추지 않기 위해 `finalist:verify-infra`와
 `finalist:guard-promotion`을 추가했다. 승격 가드는 정확한 revision, image repository,
@@ -167,14 +174,8 @@ digest, 전용 service account, Cloud Tasks, KMS, 독립 RPC 조건을 확인하
 
 #### 보완 우선순위
 
-- P0: 서비스별 전용 service account와 최신 안전 리비전을 만들고, 잘못된 gateway
-  latest-ready 리비전을 절대 트래픽에 올리지 않는다.
-- P0: gateway와 orchestrator 모두에서 서로 다른 origin의 RPC 2개로 동일한 finalized
-  transaction bytes를 재현하도록 Secret과 revision을 설정한다.
-- P0: Pay.sh 내부 health endpoint는 public front에서 404로 차단한다.
-- P0: Cloud SQL 암호화 연결을 강제하고 API가 `ax-apps-db`를 실제 mount하는지 확인한다.
-- P0: 변경 후 검증 보고서가 `summary.ready=true`일 때만 정확한 revision으로 100%
-  트래픽을 이동한다.
+- P0: 배포마다 `finalist:guard-promotion`과 `finalist:verify-infra`를 다시 실행하고,
+  `summary.ready=true`인 정확한 revision ID만 승격한다.
 - P1: Cloud Monitoring SLO, error budget, 결제 reconciliation backlog, Vertex fallback
   rate, queue age, RPC 불일치 알람을 대시보드와 alert policy로 고정한다.
 - P1: 실제 트래픽 증가 전 Cloud SQL HA, private IP/VPC connector, restore drill,
@@ -200,13 +201,14 @@ digest, 전용 service account, Cloud Tasks, KMS, 독립 RPC 조건을 확인하
 - Open Call은 미래 수취인이 정해지지 않으므로 기존 문서 결제와 분리된 escrow
   funding·deterministic payout claim·미사용분 환불 흐름을 사용한다.
 
-#### 보완 우선순위
+#### 실측 완료와 보완 우선순위
 
-- P0: 최신 hosted 경로에서 실제 질문 하나를 실행하고 query/job/quote ID, 각
-  transaction signature, Explorer URL, owner USDC 증가, 독립 RPC 2개 finality,
-  동일 job 재시도 후 duplicate settlement 0, 실패분 refund를 한 증거 묶음으로 남긴다.
-- P0: 이 증거는 `finalist:record-devnet`으로 개인정보 없이 직렬화하고
-  `summary.ready=true`를 확인한다. fixture나 sandbox receipt는 실제 거래 증거가 아니다.
+- hosted run `hosted-devnet-1786442491484`에서 7,408 atomic Devnet USDC funding,
+  3,704 atomic 기여자 payout, 3,704 atomic 미사용분 refund를 실행했다.
+- funding·payout·refund는 각각 서로 다른 두 RPC에서 finalized·오류 없음으로
+  재현됐고, 동일 durable job의 취소 재시도에서 duplicate settlement는 0건이었다.
+- `finalist:record-devnet`이 질문·인터뷰·개인키·RPC URL을 제외한 증거로 직렬화했고
+  13/13, `summary.ready=true`를 통과했다.
 - P1: Mainnet 전환 전 treasury와 사용자 자금을 법적으로 분리하고 KYC/AML, 제재
   주소, 세금, 환불·분쟁, 회계 원장 정책을 확정한다.
 - P1: Open Call escrow를 장기적으로 trust-minimized하게 만들 필요가 있으면 Solana
@@ -300,15 +302,13 @@ flowchart LR
 
 ## 상용화 단계
 
-### P0 — 결선 전에 반드시 완료
+### 결선 현재 완료
 
-- 최신 소스를 서비스별 올바른 Cloud Run 리비전으로 배포
+- API·gateway·orchestrator·Pay를 서비스별 올바른 Cloud Run 리비전과 전용 identity로 배포
 - GCP 검증 77개 전부 통과, `summary.ready=true`
 - hosted Pay.sh 실제 Devnet 지급·복구 evidence의 `summary.ready=true`
 - signed-in 질문에서 Vertex tool call과 3단계 agent trace 확인
 - SOL 없는 신규 Phantom 지갑의 USDC-only 온보딩 확인
-- 최신 90/10 수수료와 ₩5~₩25 가격이 UI·quote·on-chain split에서 동일한지 확인
-- buyer server receipt 조회 또는 데모용 원장 조회 화면 제공
 
 ### P1 — 유료 PoC 전에 완료
 
@@ -316,6 +316,8 @@ flowchart LR
 - 실제 사람 30~100명 규모의 좁은 패널과 20~50개 질문으로 품질·HIT rate 검증
 - representative sample이 아님을 표시하고 diversity/coverage 경고 제공
 - buyer·contributor support, dispute SLA, payout reconciliation 운영 절차
+- 실제 문서 결제 한 건에서 UI·quote·90/10 on-chain split을 같은 receipt로 연결
+- buyer server receipt 조회 API와 계정별 영수증 화면
 - Passkey/embedded wallet 또는 검증된 fiat-to-USDC 진입 경로
 - SLO·alert·incident drill·Cloud SQL restore drill·KMS rotation drill
 - mainnet 경제 모델과 수수료, treasury, 세무·회계·제재 정책 검증
@@ -330,26 +332,31 @@ flowchart LR
 
 ## 검증 결과
 
-- frontend unit: 10/10
+- frontend unit: 13/13
 - Cloudflare Pages proxy: 3/3
-- MCP/CLI runtime: 14/14
-- 결선 evidence tooling: 8/8
-- x402 payment gateway: 88/88
+- Antigravity MCP runtime: 14/14
+- 로컬 Agent MCP/CLI: 15/15
+- 결선 evidence tooling: 13/13
+- x402 payment gateway: 97/97
 - Pay.sh orchestrator: 50/50
 - Rust library/API: 141/141
+- Rust API main: 1/1
 - Rust agent autonomy contract: 7/7
-- Rust API main/contract/PostgreSQL concurrency: 4/4
-- 총 324개 테스트 통과
+- Rust contract/PostgreSQL concurrency: 2/2
+- 총 356개 테스트 통과
 - TypeScript build/typecheck, Vite production build, Pages bundle verification, oxlint,
   Rust fmt, Clippy `-D warnings`, `git diff --check` 통과
-- root/payment-gateway/agent-orchestrator npm production dependency audit: 취약점 0
-- RustSec audit: 취약점 0
+- root/payment-gateway/agent-orchestrator/local-agent npm production dependency audit: 취약점 0
+- RustSec audit은 현재 로컬 도구가 설치돼 있지 않아 이번 기준선에서 재실행하지 못했다.
+  Mainnet 후보 판정 전 CI 또는 별도 검증 환경에서 반드시 통과시킨다.
+- gateway mutation: 200/200 killed, 100%
+- Rust 전체 mutation 기준선: 437개 중 197 caught, 221 missed, 19 unviable. 이 수치는
+  통과가 아니며 survivor 축소가 Mainnet 전 필수 후속 작업이다.
 
 ## 현실적인 점수 판단
 
-소스와 로컬 자동 검증만 보면 AI 자율성 25~27/30, 비즈니스·UX 24~26/30,
-GCP 12~13/15, Solana 13~14/15 수준의 근거가 있다. 하지만 현재 서빙 리비전의 14개
-실패와 최신 hosted Devnet receipt 부재는 실제 심사에서 감점될 수 있다. P0를 모두
-완료하고 라이브 화면과 Explorer receipt가 같은 질문에 연결되면 발표 점수를 제외한
-90점 중 약 82~86점을 방어할 수 있다. “만점”은 코드 양보다도 실제 최신 리비전,
-실제 결제 증거, 좁고 명확한 고객 PoC 지표가 함께 있을 때 가능하다.
+운영·Gemini·Devnet 실증까지 포함하면 AI 자율성 26~28/30, 비즈니스·UX 24~26/30,
+GCP 14~15/15, Solana 14~15/15 수준의 근거가 있다. 발표 점수를 제외한 90점 중
+약 82~87점을 방어할 수 있다. 남은 가장 큰 불확실성은 코드량이 아니라 좁고 명확한
+고객 PoC의 독립 품질·시간 절감 지표와 Rust mutation survivor다. Mainnet은 법률·
+treasury·회계·제재 정책과 외부 보안 검토 전에는 출시 완료로 표현하지 않는다.

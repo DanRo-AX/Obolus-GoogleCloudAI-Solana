@@ -713,6 +713,14 @@
         font-weight: 540;
       }
 
+      .product-solution .experience-card {
+        padding: 0.72rem 1.3rem;
+      }
+
+      .product-solution .experience-card strong {
+        margin-bottom: 0.2rem;
+      }
+
       .timeline {
         display: grid;
         grid-template-columns: repeat(5, 1fr);
@@ -2338,7 +2346,7 @@
 
     <main class="deck" id="deck" aria-label="Obulus 피치덱">
       <!-- 01 -->
-      <section class="slide-shell" data-title="표지">
+      <section class="slide-shell" data-title="표지" data-final>
         <article class="slide">
           <div class="cover-word">O</div>
           <div class="cover-layout">
@@ -2365,7 +2373,7 @@
             <div class="cover-media">
               <div class="browser-frame">
                 <div class="browser-bar"><i class="browser-dot"></i><i class="browser-dot"></i><i class="browser-dot"></i></div>
-                <img src="pitch-deck-assets/01-home-hero.png" alt="Obulus 질문 화면" />
+                <img src="assets/hero.png" alt="Obulus 질문 화면" />
               </div>
             </div>
           </div>
@@ -2374,7 +2382,7 @@
       </section>
 
       <!-- 02 -->
-      <section class="slide-shell" data-title="AI가 모르는 인간 데이터">
+      <section class="slide-shell" data-title="AI가 모르는 인간 데이터" data-final>
         <article class="slide light problem-slide">
           <div class="pad">
             <div class="eyebrow">문제 / 웹 밖의 인간 데이터</div>
@@ -2452,8 +2460,8 @@
       </section>
 
       <!-- 04 -->
-      <section class="slide-shell" data-title="제품 해결책">
-        <article class="slide">
+      <section class="slide-shell" data-title="제품 해결책" data-final>
+        <article class="slide product-solution">
           <div class="pad">
             <div class="eyebrow">제품 / 질문에서 근거까지</div>
             <div class="two-col" style="margin-top:3%; grid-template-columns:.82fr 1.18fr">
@@ -2617,7 +2625,7 @@
       </section>
 
       <!-- 10 -->
-      <section class="slide-shell" data-title="Gemini와 Google Cloud">
+      <section class="slide-shell" data-title="Gemini와 Google Cloud" data-final>
         <article class="slide">
           <div class="pad">
             <div class="eyebrow">평가 기준 02 / Gemini · Google Cloud AI 활용</div>
@@ -2662,7 +2670,7 @@
               <div class="card card-pad" style="display:flex; flex-direction:column; justify-content:space-between">
                 <div><div class="card-kicker">한 질문의 예시</div><div class="metric">80개 후보 → 8개 구매</div></div>
                 <div class="unit-stack"><div style="width:100%; background:var(--black); color:#fff">평균 ₩15 × 8개 = 총 ₩120</div></div>
-                <p class="small muted">현재 Pay.sh 데모는 운영자 1 atomic unit을 제외한 금액을 소유자에게 보냅니다. 상업용 take rate는 아직 구현되지 않았습니다.</p>
+                <p class="small muted">현재 코드와 UI는 문서별 결제액의 90%를 근거 소유자에게, 10%를 프로토콜에 정확히 배분합니다.</p>
               </div>
               <div class="card card-pad" style="display:flex; flex-direction:column; justify-content:space-between">
                 <div><div class="card-kicker">상용 수익화 방향</div><div class="metric">소액 거래 × Agent 규모</div></div>
@@ -2676,7 +2684,7 @@
       </section>
 
       <!-- 12 -->
-      <section class="slide-shell" data-title="유료 URL과 결제">
+      <section class="slide-shell" data-title="유료 URL과 결제" data-final>
         <article class="slide light">
           <div class="pad">
             <div class="eyebrow">결제 프로토콜 / 유료 인간 DB URL</div>
@@ -2781,14 +2789,14 @@
               <div class="agent-capability"><strong>신규 공급</strong><p>Open Call · 응답 제출 · 메모리 관리</p></div>
               <div class="agent-capability"><strong>정산 관리</strong><p>수익 · 지급 주소 · 온체인 claim 상태</p></div>
             </div>
-            <div class="footer-note"><span>현재 약 23개 마켓플레이스 도구 · Google/Obulus/Pay 신원 분리</span><span>13</span></div>
+            <div class="footer-note"><span>현재 24개 마켓플레이스 도구 · Google/Obulus/Pay 신원 분리</span><span>13</span></div>
           </div>
           <div class="page-mark">13 / 16</div>
         </article>
       </section>
 
       <!-- 14 -->
-      <section class="slide-shell" data-title="전체 아키텍처">
+      <section class="slide-shell" data-title="전체 아키텍처" data-final>
         <article class="slide light">
           <div class="pad">
             <div class="eyebrow">기술 / 전체 아키텍처</div>
@@ -2812,7 +2820,7 @@
                 <text x="270" y="57" class="diagram-small">OBULUS APPLICATION + DOMAIN CORE / GOOGLE CLOUD</text>
 
                 <rect x="275" y="78" width="260" height="54" class="diagram-node" /><text x="405" y="102" text-anchor="middle" class="diagram-title">React Experience</text><text x="405" y="121" text-anchor="middle" class="diagram-small">CHAT · DASHBOARD · MEMORY</text>
-                <rect x="565" y="78" width="260" height="54" class="diagram-node" /><text x="695" y="102" text-anchor="middle" class="diagram-title">CLI / MCP Tools</text><text x="695" y="121" text-anchor="middle" class="diagram-small">23 MARKETPLACE ACTIONS</text>
+                <rect x="565" y="78" width="260" height="54" class="diagram-node" /><text x="695" y="102" text-anchor="middle" class="diagram-title">CLI / MCP Tools</text><text x="695" y="121" text-anchor="middle" class="diagram-small">24 MARKETPLACE ACTIONS</text>
                 <rect x="855" y="78" width="315" height="54" class="diagram-node dark-node" /><text x="1012" y="102" text-anchor="middle" class="diagram-title inverse">Rust / Axum API</text><text x="1012" y="121" text-anchor="middle" class="diagram-small inverse">SESSION · CAPABILITY · POLICY</text>
 
                 <rect x="275" y="160" width="565" height="151" class="diagram-zone dark-zone" />
@@ -2869,7 +2877,7 @@
       </section>
 
       <!-- 15 -->
-      <section class="slide-shell" data-title="첫 고객과 진입 시장">
+      <section class="slide-shell" data-title="첫 고객과 진입 시장" data-final>
         <article class="slide">
           <div class="pad">
             <div class="eyebrow">시장 진입 / 첫 구매자</div>
@@ -2950,7 +2958,7 @@
             <div class="eyebrow">사업 모델 / 단위경제</div>
             <div style="display:flex; justify-content:space-between; align-items:end; margin-top:2.5%">
               <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(28px,3vw,50px)"><span>한 질문에 근거 8개를 열면 120원,</span><span>Obulus는 열린 문서마다 소액 수수료를 받습니다.</span></h2>
-              <span class="badge fill">상용 모델 가정 · 미구현</span>
+              <span class="badge fill">90:10 정산 구현 · 거래량은 가정</span>
             </div>
             <div class="unit-economics">
               <div class="card card-pad" style="display:flex; flex-direction:column">
@@ -2962,7 +2970,7 @@
                   <div><div class="card-kicker">성장 변수</div><strong>Agent 호출량</strong><p class="small muted">사람 클릭보다 큰 규모</p></div>
                   <div><div class="card-kicker">비용 변수</div><strong>합성·검수</strong><p class="small muted">PoC에서 실측 필요</p></div>
                 </div>
-                <p class="small muted" style="margin-top:auto">현재 데모는 상업 수수료를 부과하지 않습니다. 10%는 네트워크 운영을 위한 검증 가정입니다.</p>
+                <p class="small muted" style="margin-top:auto">90:10 정산 규칙은 코드와 UI에 구현됐습니다. 거래량, 고객 수와 장기 수수료 정책은 PoC에서 검증할 사업 가정입니다.</p>
               </div>
               <div class="card card-pad">
                 <div class="card-kicker">대량 API 기업 1곳 / 월간 가정</div>
@@ -3024,23 +3032,23 @@
       </section>
 
       <!-- 20 -->
-      <section class="slide-shell" data-title="증거와 비전">
+      <section class="slide-shell" data-title="증거와 비전" data-final>
         <article class="slide light">
           <div class="pad">
-            <div class="eyebrow">Devnet 검증 완료 / Mainnet 전환 / 고객 PoC</div>
-            <h2 class="title wide fixed-title-lines" style="margin-top:2.5%; font-size:clamp(28px,3vw,50px)"><span>Devnet에서 검색·결제·소유자 정산을 검증했습니다.</span><span>다음 단계는 Mainnet 전환과 고객 PoC입니다.</span></h2>
+            <div class="eyebrow">검증 기준선 / 코드 · 운영 · AI · Devnet 분리 검증</div>
+            <h2 class="title wide fixed-title-lines" style="margin-top:2.5%; font-size:clamp(28px,3vw,50px)"><span>코드 검증과 운영 증거를 분리해 보여드립니다.</span><span>라이브 주장은 운영·AI·Devnet 세 게이트가 통과할 때만 합니다.</span></h2>
             <div class="validation-layout">
               <div class="validation-column">
                 <div class="validation-row"><strong>제품 흐름</strong><p>자연어 질문 → 무료 메타데이터 검색 → 질문별 랭킹 → 정확한 견적 → HIT 또는 Open Call → 결제된 근거 합성 → 개인 메모리와 수익 적재</p></div>
                 <div class="validation-row"><strong>기술 구조</strong><p>React 웹, Rust/Axum 코어, 버전형 Memory DB, Vertex AI/Gemini, x402 게이트웨이, Pay.sh/MPP 오케스트레이터, Cloud KMS, Solana Devnet USDC, CLI/MCP 도구</p></div>
-                <div class="validation-row"><strong>자동화 검증</strong><p>기준 시점 90개 테스트: Rust 백엔드 72개, Agent·CLI 11개, 결제 경로 7개. 빌드·lint·typecheck·clippy를 함께 통과했습니다.</p></div>
-                <div class="validation-row"><strong>설계 증거</strong><p>08 메모리 적재 구조 · 12 유료 URL 결제 시퀀스 · 15 전체 시스템 아키텍처. 결제 실패·응답 유실·중복 지급·부분 환불까지 원장 상태로 처리합니다.</p></div>
+                <div class="validation-row"><strong>자동화 검증</strong><p>2026-08-11 엔지니어링 감사 기준선은 프런트·프록시·MCP/CLI·evidence tooling·gateway·orchestrator·Rust API 총 356개 테스트와 build·lint·typecheck·clippy 통과입니다.</p></div>
+                <div class="validation-row"><strong>현재 운영 증거</strong><p><span id="infraProofStatus">Infrastructure evidence를 확인하는 중입니다.</span><br /><span id="autonomyProofStatus">Autonomy evidence를 확인하는 중입니다.</span><br /><span id="devnetProofStatus">Devnet evidence를 확인하는 중입니다.</span></p></div>
               </div>
               <div class="validation-ask">
-                <div><div class="card-kicker">Devnet에서 검증한 흐름</div><h3 style="margin-top:1rem">하나의 질문이 실제 소유자 지급과 인용 답변으로 끝납니다.</h3></div>
-                <p>Cloud KMS 서명 → Pay.sh 402 해결 → Solana Devnet USDC 이전 → 소유자 잔액 증가 → 결제된 passage 반환 → Gemini 인용 답변 → 동일 job 재시도 시 중복 지급 0.</p>
+                <div><div class="card-kicker">무대에서 LIVE라고 말하는 조건</div><h3 style="margin-top:1rem">세 증거 JSON의 <code>summary.ready</code>가 모두 true</h3></div>
+                <p><strong>Infrastructure:</strong> 실제 서빙 revision·digest, 전용 service account, Cloud Tasks·KMS, 독립 RPC와 ready endpoint가 모두 통과.<br /><br /><strong>Autonomy:</strong> 로그인된 실제 질문에서 Gemini tool call, 3단계 역할 trace와 승인 경계가 연결.<br /><br /><strong>Devnet:</strong> Explorer signature, 소유자 잔액 증가, 2-RPC finality, 중복 지급 0과 refund receipt가 한 run bundle로 연결.</p>
                 <div class="rule" style="background:rgba(255,255,255,.22)"></div>
-                <p><strong style="color:#fff">다음 단계</strong><br />Mainnet 자산·RPC·규제·운영 정책을 적용하고, 실제 기업 질문으로 검색 성공률·재사용률·정산 원가를 검증합니다.</p>
+                <p><strong style="color:#fff">발표 직전 판정</strong><br /><span id="liveProofStatus">세 evidence JSON을 불러온 뒤 라이브 주장 가능 여부를 표시합니다.</span></p>
               </div>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:end; margin-top:2.2%">
@@ -3056,31 +3064,37 @@
 
     <nav class="nav" aria-label="슬라이드 탐색">
       <button id="prevBtn" type="button" aria-label="이전 슬라이드">←</button>
-      <span class="counter" id="counter">01 / 21</span>
+      <span class="counter" id="counter">01 / 20</span>
       <button id="nextBtn" type="button" aria-label="다음 슬라이드">→</button>
+      <button id="modeBtn" type="button" aria-label="6분 심사 모드 전환">6분</button>
       <button id="printBtn" type="button" aria-label="PDF로 인쇄">PDF</button>
     </nav>
 
     <script>
       const deck = document.getElementById('deck')
-      const slides = Array.from(document.querySelectorAll('.slide-shell'))
+      const allSlides = Array.from(document.querySelectorAll('.slide-shell'))
       const counter = document.getElementById('counter')
       const progressBar = document.getElementById('progressBar')
+      const modeBtn = document.getElementById('modeBtn')
+      let slides = allSlides
       let activeIndex = 0
+      let mode = 'all'
 
       function fitDeck() {
         const scale = Math.min(window.innerWidth / 1600, window.innerHeight / 900)
         document.documentElement.style.setProperty('--deck-scale', String(scale))
       }
 
-      slides.forEach((slide, index) => {
-        const number = String(index + 1).padStart(2, '0')
-        const total = String(slides.length).padStart(2, '0')
-        const pageMark = slide.querySelector('.page-mark')
-        if (pageMark) pageMark.textContent = `${number} / ${total}`
-        const footerPage = slide.querySelector('.footer-note span:last-child')
-        if (footerPage && /^\d+$/.test(footerPage.textContent.trim())) footerPage.textContent = number
-      })
+      function renumberSlides() {
+        slides.forEach((slide, index) => {
+          const number = String(index + 1).padStart(2, '0')
+          const total = String(slides.length).padStart(2, '0')
+          const pageMark = slide.querySelector('.page-mark')
+          if (pageMark) pageMark.textContent = `${number} / ${total}`
+          const footerPage = slide.querySelector('.footer-note span:last-child')
+          if (footerPage && /^\d+$/.test(footerPage.textContent.trim())) footerPage.textContent = number
+        })
+      }
 
       function updateNavigation(index) {
         activeIndex = Math.max(0, Math.min(slides.length - 1, index))
@@ -3089,14 +3103,60 @@
         document.title = `Obulus — ${slides[activeIndex].dataset.title}`
       }
 
-      function goTo(index) {
+      function goTo(index, behavior = 'smooth') {
         const next = Math.max(0, Math.min(slides.length - 1, index))
-        slides[next].scrollIntoView({ behavior: 'smooth', block: 'start' })
+        slides[next].scrollIntoView({ behavior, block: 'start' })
         updateNavigation(next)
+      }
+
+      function setMode(nextMode, startAtBeginning = true) {
+        mode = nextMode === 'final' ? 'final' : 'all'
+        allSlides.forEach((slide) => {
+          slide.hidden = mode === 'final' && !slide.hasAttribute('data-final')
+        })
+        slides = mode === 'final' ? allSlides.filter((slide) => slide.hasAttribute('data-final')) : allSlides
+        modeBtn.textContent = mode === 'final' ? '전체' : '6분'
+        modeBtn.setAttribute('aria-label', mode === 'final' ? '전체 덱으로 전환' : '6분 심사 모드로 전환')
+        const url = new URL(window.location.href)
+        if (mode === 'final') url.searchParams.set('mode', 'final')
+        else url.searchParams.delete('mode')
+        window.history.replaceState({}, '', url)
+        renumberSlides()
+        goTo(startAtBeginning ? 0 : Math.min(activeIndex, slides.length - 1), 'auto')
+      }
+
+      async function readEvidence(path, label) {
+        try {
+          const response = await fetch(path, { cache: 'no-store' })
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          const evidence = await response.json()
+          const summary = evidence?.summary ?? {}
+          const counts = Number.isFinite(summary.passed) && Number.isFinite(summary.failed)
+            ? ` · ${summary.passed} passed / ${summary.failed} failed`
+            : ''
+          return { label, ready: summary.ready === true, text: `${label}: ready=${String(summary.ready)}${counts}` }
+        } catch {
+          return { label, ready: false, text: `${label}: evidence unavailable` }
+        }
+      }
+
+      async function loadProofStatus() {
+        const [infrastructure, autonomy, devnet] = await Promise.all([
+          readEvidence('../artifacts/finalist-evidence/infrastructure.json', 'Infrastructure'),
+          readEvidence('../artifacts/finalist-evidence/autonomy.json', 'Autonomy'),
+          readEvidence('../artifacts/finalist-evidence/devnet.json', 'Devnet'),
+        ])
+        document.getElementById('infraProofStatus').textContent = infrastructure.text
+        document.getElementById('autonomyProofStatus').textContent = autonomy.text
+        document.getElementById('devnetProofStatus').textContent = devnet.text
+        document.getElementById('liveProofStatus').textContent = infrastructure.ready && autonomy.ready && devnet.ready
+          ? 'LIVE CLAIM ALLOWED · 세 운영 증거 게이트 통과'
+          : 'LIVE CLAIM BLOCKED · 통과한 범위만 발표'
       }
 
       document.getElementById('prevBtn').addEventListener('click', () => goTo(activeIndex - 1))
       document.getElementById('nextBtn').addEventListener('click', () => goTo(activeIndex + 1))
+      modeBtn.addEventListener('click', () => setMode(mode === 'final' ? 'all' : 'final'))
       document.getElementById('printBtn').addEventListener('click', () => window.print())
 
       document.addEventListener('keydown', (event) => {
@@ -3116,20 +3176,29 @@
           event.preventDefault()
           goTo(slides.length - 1)
         }
+        if (event.key === '6') {
+          event.preventDefault()
+          setMode(mode === 'final' ? 'all' : 'final')
+        }
+        if (event.key.toLowerCase() === 'b') {
+          event.preventDefault()
+          goTo(slides.length - 1, 'auto')
+        }
       })
 
       const observer = new IntersectionObserver(
         (entries) => {
           const visible = entries.find((entry) => entry.isIntersecting && entry.intersectionRatio > 0.6)
-          if (visible) updateNavigation(slides.indexOf(visible.target))
+          if (visible && slides.includes(visible.target)) updateNavigation(slides.indexOf(visible.target))
         },
         { root: deck, threshold: [0.6] },
       )
 
-      slides.forEach((slide) => observer.observe(slide))
+      allSlides.forEach((slide) => observer.observe(slide))
       window.addEventListener('resize', fitDeck)
       fitDeck()
-      updateNavigation(0)
+      setMode(new URLSearchParams(window.location.search).get('mode'), false)
+      loadProofStatus()
     </script>
   </body>
 </html>

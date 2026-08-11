@@ -258,7 +258,7 @@ fi
 start_gateway() {
   local failpoint="${1:-}"
   PORT="$gateway_port" \
-  OPENSHELF_BACKEND_URL="$backend_origin" \
+  RUST_API_URL="$backend_origin" \
   PAY_SH_PRIVATE_URL="$pay_origin" \
   PAY_SH_RPC_URL=https://402.surfnet.dev:8899 \
   OPENSHELF_REQUIRE_RESEARCH_ORCHESTRATOR=false \
