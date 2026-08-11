@@ -64,13 +64,21 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-mutants
-      - name: Mutate pull-request changes
+      - name: Mutate changed safety-boundary lines
         if: github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
           git diff --relative=backend --no-ext-diff --unified=0 \
-            "origin/${BASE_REF}...HEAD" -- src > mutation.diff
+            "origin/${BASE_REF}...HEAD" -- \
+            src/authority.rs \
+            src/environment.rs \
+            src/rollback_audit.rs \
+            src/rollback_sweep.rs > mutation.diff
+          if [[ ! -s mutation.diff ]]; then
+            echo "No changed Rust safety-boundary lines to mutate."
+            exit 0
+          fi
           cargo mutants --jobs 2 --no-shuffle --in-diff mutation.diff -- --locked
       - name: Mutate the scheduled safety boundary
         if: github.event_name != 'pull_request'

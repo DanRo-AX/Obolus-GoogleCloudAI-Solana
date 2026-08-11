@@ -30,12 +30,14 @@ falsely mark a mutant as caught.
 
 ## Rust backend
 
-Pull requests run `cargo-mutants` only against changed Rust source lines, with
-at most two concurrent jobs. The
-scheduled and manually dispatched workflow scans the authentication,
-environment, rollback-audit, and rollback-sweep boundaries. A scheduled miss
-is reported without blocking unrelated development; a survivor introduced by
-a pull request fails that pull request.
+Pull requests run `cargo-mutants` only against changed lines inside the
+authentication, environment, rollback-audit, and rollback-sweep safety
+boundaries, with at most two concurrent jobs. Backend changes outside those
+files rely on the normal Rust test and Clippy gates instead of expanding one PR
+into an unbounded mutation campaign. The scheduled and manually dispatched
+workflow scans all four safety-boundary files. A scheduled miss is reported
+without blocking unrelated development; a survivor introduced inside the
+bounded pull-request scope fails that pull request.
 
 Run a local file-focused check from `backend` when changing a money or identity
 boundary:
