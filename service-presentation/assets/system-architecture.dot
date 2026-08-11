@@ -1,0 +1,93 @@
+digraph ObolusArchitecture {
+  graph [
+    rankdir=LR,
+    bgcolor="#F8F7F3",
+    pad="0.22",
+    nodesep="0.42",
+    ranksep="0.72",
+    splines=ortho,
+    fontname="Arial"
+  ];
+  node [
+    shape=box,
+    style="rounded,filled",
+    color="#B9B6AF",
+    fillcolor="#FFFFFF",
+    fontcolor="#11100F",
+    fontname="Arial",
+    fontsize=14,
+    margin="0.18,0.12",
+    penwidth=1.1
+  ];
+  edge [
+    color="#79756D",
+    fontcolor="#5F5B54",
+    fontname="Arial",
+    fontsize=10,
+    arrowsize=0.65,
+    penwidth=1.1
+  ];
+
+  subgraph cluster_channels {
+    label="USER & AGENT CHANNELS";
+    color="#D8D5CE";
+    fontcolor="#0D7668";
+    fontsize=12;
+    style="rounded,dashed";
+
+    web [label="Cloudflare Pages\nReact · Phantom", fillcolor="#F8F7F3"];
+    cli [label="Antigravity CLI\nOBOLUS Market MCP · Pay MCP", fillcolor="#F8F7F3"];
+  }
+
+  subgraph cluster_core {
+    label="OBOLUS CONTROL PLANE";
+    color="#8FC9BD";
+    fontcolor="#0D7668";
+    fontsize=12;
+    style="rounded";
+
+    rust [label="Cloud Run · Rust / Axum API\nWallet auth · Search · Quote\nOpen calls · Memory · Trust", fillcolor="#DCEEE9", color="#6FB7A8", penwidth=1.6];
+    store [label="Cloud SQL PostgreSQL 16\nax-apps-db · DB obolus\nLedger · Jobs · Claims", fillcolor="#F1F0EC"];
+    audit [label="Cloud Storage\nax-apps-storage\nobolus/rollback-audit/**", fillcolor="#F1F0EC"];
+    rust -> store [dir=both];
+    rust -> audit;
+  }
+
+  subgraph cluster_ai {
+    label="BOUNDED AI LIQUIDITY";
+    color="#C7BFF2";
+    fontcolor="#5640C3";
+    fontsize=12;
+    style="rounded";
+
+    vertex [label="Gemini on Vertex AI\nGeneral baseline · Shelf starters\nPaid-evidence synthesis", fillcolor="#E8E4FB", color="#A89AE8"];
+  }
+
+  subgraph cluster_payment {
+    label="DEVNET SETTLEMENT PLANE";
+    color="#E2BDA7";
+    fontcolor="#B6501E";
+    fontsize=12;
+    style="rounded";
+
+    gateway [label="x402 / Pay.sh Gateway\nChallenge · Callback · Recovery", fillcolor="#FAE9DF", color="#DCA383"];
+    worker [label="Cloud Run Orchestrator\nDurable jobs · Reconciliation\nRefunds", fillcolor="#FAE9DF", color="#DCA383"];
+    kms [label="Google Cloud KMS\nNon-exportable signer", fillcolor="#FFF7F0", color="#DCA383"];
+    solana [label="Solana Devnet\nUSDC settlement", fillcolor="#11100F", fontcolor="#FFFFFF", color="#11100F"];
+    owners [label="Verified contributor\npayout wallets", fillcolor="#DCEEE9", color="#6FB7A8"];
+
+    worker -> kms;
+    worker -> gateway;
+    gateway -> solana;
+    solana -> owners;
+  }
+
+  web -> rust;
+  cli -> rust;
+  cli -> gateway;
+  web -> gateway;
+  rust -> vertex;
+  vertex -> rust;
+  rust -> worker;
+  gateway -> rust;
+}

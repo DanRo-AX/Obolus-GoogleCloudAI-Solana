@@ -1,5 +1,5 @@
 import { Link, NavLink } from 'react-router-dom'
-import { LogIn, LogOut, ShieldCheck } from 'lucide-react'
+import { Activity, LogIn, LogOut, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { NAV_ITEMS } from '@/data/nav'
 import { cn } from '@/lib/utils'
@@ -74,21 +74,38 @@ export function MobileSidebar() {
                 </li>
               ))}
               {account?.role === 'admin' ? (
-                <li className="relative">
-                  <NavLink
-                    to="/admin/disputes"
-                    onClick={() => setMobileSidebar(false)}
-                    className={({ isActive }) =>
-                      cn(
-                        'flex h-11 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm font-medium transition-colors hover:bg-sidebar-accent [&>svg]:size-4',
-                        isActive && 'bg-foreground/4',
-                      )
-                    }
-                  >
-                    <ShieldCheck className="text-muted-foreground/60" />
-                    <span>{t('Disputes')}</span>
-                  </NavLink>
-                </li>
+                <>
+                  <li className="relative">
+                    <NavLink
+                      to="/admin/operations"
+                      onClick={() => setMobileSidebar(false)}
+                      className={({ isActive }) =>
+                        cn(
+                          'flex h-11 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm font-medium transition-colors hover:bg-sidebar-accent [&>svg]:size-4',
+                          isActive && 'bg-foreground/4',
+                        )
+                      }
+                    >
+                      <Activity className="text-muted-foreground/60" />
+                      <span>{t('Operations')}</span>
+                    </NavLink>
+                  </li>
+                  <li className="relative">
+                    <NavLink
+                      to="/admin/disputes"
+                      onClick={() => setMobileSidebar(false)}
+                      className={({ isActive }) =>
+                        cn(
+                          'flex h-11 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm font-medium transition-colors hover:bg-sidebar-accent [&>svg]:size-4',
+                          isActive && 'bg-foreground/4',
+                        )
+                      }
+                    >
+                      <ShieldCheck className="text-muted-foreground/60" />
+                      <span>{t('Disputes')}</span>
+                    </NavLink>
+                  </li>
+                </>
               ) : null}
             </ul>
           </div>

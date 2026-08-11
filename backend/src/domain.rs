@@ -204,6 +204,48 @@ pub struct AiLiquidityMetrics {
     pub starter_to_human_document_rate: f64,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationsStatusCount {
+    pub status: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketplaceOperationsMetrics {
+    pub human_documents: u64,
+    pub independent_contributors: u64,
+    pub open_calls: u64,
+    pub filled_calls: u64,
+    pub pending_disputes: u64,
+    pub pending_document_reports: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SettlementOperationsMetrics {
+    pub payment_quotes: Vec<OperationsStatusCount>,
+    pub research_jobs: Vec<OperationsStatusCount>,
+    pub research_payment_attempts: Vec<OperationsStatusCount>,
+    pub direct_payment_attempts: Vec<OperationsStatusCount>,
+    pub payout_claims: Vec<OperationsStatusCount>,
+    pub unresolved_payment_attempts: u64,
+    pub oldest_unresolved_payment_at: Option<u64>,
+}
+
+/// Aggregate-only operational state for the read-first admin console. It
+/// deliberately contains no document text, wallet address, credential,
+/// signature, session token, or per-user identifier.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminOperationsSnapshot {
+    pub generated_at: u64,
+    pub marketplace: MarketplaceOperationsMetrics,
+    pub settlements: SettlementOperationsMetrics,
+    pub ai_liquidity: AiLiquidityMetrics,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubmitShelfStarterAnswerRequest {

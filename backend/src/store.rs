@@ -14,26 +14,27 @@ use thiserror::Error;
 use crate::{
     db::{self, Connection, OptionalExtension, Transaction},
     domain::{
-        AccountControls, AiBaseline, AiBaselineDraft, AiLiquidityMetrics, AnswerIssue,
-        BalanceSummary, BeginResearchPaymentRequest, BindPayShChallengesRequest,
+        AccountControls, AdminOperationsSnapshot, AiBaseline, AiBaselineDraft, AiLiquidityMetrics,
+        AnswerIssue, BalanceSummary, BeginResearchPaymentRequest, BindPayShChallengesRequest,
         ChainSettlementReceipt, ChatAnswer, Citation, ClaimPaymentAttemptRequest,
         ContributorManifest, ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
         CreateEvidenceEdgeRequest, CreateOpenCallRequest, CreatePaymentBundleRequest,
         DemographicBands, DirectPayShPaymentReconciliation, DisputeCase, Document,
         DocumentFeedback, EarningEvent, EarningsSummary, EvidenceContribution, EvidenceEdge,
-        InterviewResponse, LiquidityState, MemoryAccessEvent, MemoryEntry, MemoryExport, OpenCall,
-        OpenCallFundingQuote, OpenCallFundingSnapshot, OpenCallReservation, OpenDocumentsResponse,
-        PaidDocument, PayShResource, PaymentAttemptFence, PaymentAttemptReconciliation,
-        PaymentAttemptRelease, PaymentBundleQuote, PaymentBundleSnapshot, PaymentDocumentProgress,
+        InterviewResponse, LiquidityState, MarketplaceOperationsMetrics, MemoryAccessEvent,
+        MemoryEntry, MemoryExport, OpenCall, OpenCallFundingQuote, OpenCallFundingSnapshot,
+        OpenCallReservation, OpenDocumentsResponse, OperationsStatusCount, PaidDocument,
+        PayShResource, PaymentAttemptFence, PaymentAttemptReconciliation, PaymentAttemptRelease,
+        PaymentBundleQuote, PaymentBundleSnapshot, PaymentDocumentProgress,
         PaymentDocumentSnapshot, PaymentProgress, PaymentQuote, PayoutClaim, PayoutClaimBacklog,
         PrepaidBalance, PrepaidWalletSession, PrepareDirectPayShPaymentRequest,
         PrepareResearchPaymentRequest, PublicDocument, RecordChainSettlementRequest,
         RecoveredPaidDocument, ReleaseResearchPaymentRequest, ResearchJobPlan, ResearchJobStatus,
         ResearchPaymentReconciliation, ResolveQuestionResponse, ReviewDisputeRequest,
-        ReviewDocumentFeedbackRequest, SearchFilters, Settlement, ShelfStarter, ShelfStarterDraft,
-        SiwxPayload, SubmitAnswerResponse, SubmitDocumentFeedbackRequest,
-        SubmitShelfStarterAnswerResponse, UpdatePreferencesRequest, UpsertProfileRequest,
-        UserAccount, UserProfile, WalletChallenge,
+        ReviewDocumentFeedbackRequest, SearchFilters, Settlement, SettlementOperationsMetrics,
+        ShelfStarter, ShelfStarterDraft, SiwxPayload, SubmitAnswerResponse,
+        SubmitDocumentFeedbackRequest, SubmitShelfStarterAnswerResponse, UpdatePreferencesRequest,
+        UpsertProfileRequest, UserAccount, UserProfile, WalletChallenge,
     },
     environment::{boolean_value, managed_runtime_environment, monotonic_unix_time_ms},
     params, quality, seed,
@@ -7354,6 +7355,106 @@ impl Store {
             } else {
                 shelf_starters_answered as f64 / shelf_starters_generated as f64
             },
+        })
+    }
+
+    pub fn admin_operations_snapshot(
+        &self,
+        user_id: &str,
+    ) -> Result<AdminOperationsSnapshot, StoreError> {
+        // Reuse the stricter AI-liquidity invariant check as the admin gate.
+        // Acquire the operations connection only after that call releases its
+        // mutex guard so this remains safe for both SQLite and PostgreSQL.
+        let ai_liquidity = self.ai_liquidity_metrics(user_id)?;
+        let generated_at = now_ms();
+        let connection = self.connection()?;
+
+        let (
+            human_documents,
+            independent_contributors,
+            open_calls,
+            filled_calls,
+            pending_disputes,
+            pending_document_reports,
+        ) = connection.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM documents),
+                (SELECT COUNT(DISTINCT author_id) FROM documents),
+                (SELECT COUNT(*) FROM open_calls WHERE status = 'open' AND answered < target),
+                (SELECT COUNT(*) FROM open_calls WHERE status = 'filled' OR answered >= target),
+                (SELECT COUNT(*) FROM dispute_events WHERE status = 'pending'),
+                (SELECT COUNT(*) FROM document_feedback
+                 WHERE outcome = 'report' AND status = 'pending')",
+            params![],
+            |row| {
+                Ok((
+                    as_u64(row.get(0)?)?,
+                    as_u64(row.get(1)?)?,
+                    as_u64(row.get(2)?)?,
+                    as_u64(row.get(3)?)?,
+                    as_u64(row.get(4)?)?,
+                    as_u64(row.get(5)?)?,
+                ))
+            },
+        )?;
+
+        let (unresolved_payment_attempts, oldest_unresolved_payment_at) = connection.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM research_payment_attempts
+                 WHERE status IN ('claimed', 'prepared', 'ambiguous')) +
+                (SELECT COUNT(*) FROM direct_pay_sh_attempts
+                 WHERE status IN ('prepared', 'ambiguous')),
+                (SELECT MIN(created_at) FROM (
+                    SELECT created_at FROM research_payment_attempts
+                    WHERE status IN ('claimed', 'prepared', 'ambiguous')
+                    UNION ALL
+                    SELECT created_at FROM direct_pay_sh_attempts
+                    WHERE status IN ('prepared', 'ambiguous')
+                ) AS unresolved_attempts)",
+            params![],
+            |row| {
+                Ok((
+                    as_u64(row.get(0)?)?,
+                    row.get::<_, Option<i64>>(1)?.map(as_u64).transpose()?,
+                ))
+            },
+        )?;
+
+        Ok(AdminOperationsSnapshot {
+            generated_at,
+            marketplace: MarketplaceOperationsMetrics {
+                human_documents,
+                independent_contributors,
+                open_calls,
+                filled_calls,
+                pending_disputes,
+                pending_document_reports,
+            },
+            settlements: SettlementOperationsMetrics {
+                payment_quotes: operations_status_counts(
+                    &connection,
+                    "SELECT status, COUNT(*) FROM payment_quotes GROUP BY status ORDER BY status",
+                )?,
+                research_jobs: operations_status_counts(
+                    &connection,
+                    "SELECT status, COUNT(*) FROM payment_bundle_quotes GROUP BY status ORDER BY status",
+                )?,
+                research_payment_attempts: operations_status_counts(
+                    &connection,
+                    "SELECT status, COUNT(*) FROM research_payment_attempts GROUP BY status ORDER BY status",
+                )?,
+                direct_payment_attempts: operations_status_counts(
+                    &connection,
+                    "SELECT status, COUNT(*) FROM direct_pay_sh_attempts GROUP BY status ORDER BY status",
+                )?,
+                payout_claims: operations_status_counts(
+                    &connection,
+                    "SELECT status, COUNT(*) FROM payout_claims GROUP BY status ORDER BY status",
+                )?,
+                unresolved_payment_attempts,
+                oldest_unresolved_payment_at,
+            },
+            ai_liquidity,
         })
     }
 
@@ -17861,6 +17962,22 @@ fn as_u64(value: i64) -> db::Result<u64> {
     u64::try_from(value).map_err(|error| db::Error::Conversion(error.to_string()))
 }
 
+fn operations_status_counts(
+    connection: &Connection,
+    query: &str,
+) -> Result<Vec<OperationsStatusCount>, StoreError> {
+    let mut statement = connection.prepare(query)?;
+    let rows = statement
+        .query_map(params![], |row| {
+            Ok(OperationsStatusCount {
+                status: row.get(0)?,
+                count: as_u64(row.get(1)?)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 fn as_usize(value: i64) -> db::Result<usize> {
     usize::try_from(value).map_err(|error| db::Error::Conversion(error.to_string()))
 }
@@ -24157,6 +24274,37 @@ mod tests {
         assert!(metrics.human_documents > 0);
         assert!(metrics.starter_to_human_document_rate >= 0.0);
         assert!(metrics.starter_to_human_document_rate <= 1.0);
+    }
+
+    #[test]
+    fn operations_snapshot_is_admin_only_and_aggregate_only() {
+        let store = Store::in_memory().unwrap();
+        ensure_user(&store, "operations-admin");
+        ensure_user(&store, "operations-user");
+        store.set_user_role("operations-admin", "admin").unwrap();
+
+        assert!(matches!(
+            store.admin_operations_snapshot("operations-user"),
+            Err(StoreError::Unauthorized(_))
+        ));
+
+        let snapshot = store.admin_operations_snapshot("operations-admin").unwrap();
+        assert!(snapshot.marketplace.human_documents > 0);
+        assert!(snapshot.marketplace.independent_contributors > 0);
+        assert_eq!(snapshot.ai_liquidity.priced_ai_documents, 0);
+        assert_eq!(snapshot.ai_liquidity.ai_authority_edges, 0);
+
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+        for forbidden in [
+            "walletAddress",
+            "transactionSignature",
+            "sessionToken",
+            "documentText",
+            "privateKey",
+            "credential",
+        ] {
+            assert!(!serialized.contains(forbidden));
+        }
     }
 
     #[test]

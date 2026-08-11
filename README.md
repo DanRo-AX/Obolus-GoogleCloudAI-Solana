@@ -321,7 +321,7 @@ frontend, agent-orchestrator, payment-gateway, and backend jobs separately. See
 | `/answer/:orderId` | Answer | One screen, one question, a few warm-ups first. |
 | `/onboarding` | Set-up | Handle, bands, fields, payout wallet, and the three-strike conduct ladder. |
 | `/whitepaper` | The argument | The long-form case for the thing. |
-| `/login` `/terms` `/privacy` `/admin/disputes` | | Wallet sign-in, legal, admin dispute review. |
+| `/login` `/terms` `/privacy` `/admin/disputes` `/admin/operations` | | Wallet sign-in, legal, admin review, and an aggregate-only read operations console. |
 
 ---
 

@@ -22,6 +22,25 @@
         }
       }
     },
+    "/api/v1/admin/operations": {
+      "get": {
+        "summary": "Read aggregate marketplace and settlement operations state",
+        "description": "Admin-only, read-only counts. No wallet, signature, credential, session, user identifier, or private passage is returned.",
+        "security": [{ "sessionCookie": [] }],
+        "responses": {
+          "200": {
+            "description": "Aggregate operations snapshot",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AdminOperationsSnapshot" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/v1/questions/resolve": {
       "post": {
         "summary": "Resolve a question against private MD metadata",
@@ -745,6 +764,70 @@
           "requestedDocuments": { "type": "integer", "minimum": 1, "maximum": 20, "default": 5 },
           "budgetKrw": { "type": "integer", "minimum": 0 },
           "filters": { "type": "object" }
+        }
+      },
+      "OperationsStatusCount": {
+        "type": "object",
+        "required": ["status", "count"],
+        "properties": {
+          "status": { "type": "string" },
+          "count": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "AdminOperationsSnapshot": {
+        "type": "object",
+        "description": "Aggregate-only admin snapshot with no per-user or secret fields.",
+        "required": ["generatedAt", "marketplace", "settlements", "aiLiquidity"],
+        "properties": {
+          "generatedAt": { "type": "integer" },
+          "marketplace": {
+            "type": "object",
+            "required": ["humanDocuments", "independentContributors", "openCalls", "filledCalls", "pendingDisputes", "pendingDocumentReports"],
+            "properties": {
+              "humanDocuments": { "type": "integer", "minimum": 0 },
+              "independentContributors": { "type": "integer", "minimum": 0 },
+              "openCalls": { "type": "integer", "minimum": 0 },
+              "filledCalls": { "type": "integer", "minimum": 0 },
+              "pendingDisputes": { "type": "integer", "minimum": 0 },
+              "pendingDocumentReports": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "settlements": {
+            "type": "object",
+            "required": ["paymentQuotes", "researchJobs", "researchPaymentAttempts", "directPaymentAttempts", "payoutClaims", "unresolvedPaymentAttempts", "oldestUnresolvedPaymentAt"],
+            "properties": {
+              "paymentQuotes": { "type": "array", "items": { "$ref": "#/components/schemas/OperationsStatusCount" } },
+              "researchJobs": { "type": "array", "items": { "$ref": "#/components/schemas/OperationsStatusCount" } },
+              "researchPaymentAttempts": { "type": "array", "items": { "$ref": "#/components/schemas/OperationsStatusCount" } },
+              "directPaymentAttempts": { "type": "array", "items": { "$ref": "#/components/schemas/OperationsStatusCount" } },
+              "payoutClaims": { "type": "array", "items": { "$ref": "#/components/schemas/OperationsStatusCount" } },
+              "unresolvedPaymentAttempts": { "type": "integer", "minimum": 0 },
+              "oldestUnresolvedPaymentAt": { "type": ["integer", "null"] }
+            }
+          },
+          "aiLiquidity": {
+            "$ref": "#/components/schemas/AiLiquidityMetrics"
+          }
+        }
+      },
+      "AiLiquidityMetrics": {
+        "type": "object",
+        "description": "Human coverage and zero-price AI-liquidity aggregate metrics.",
+        "required": ["totalQueries", "aiLiquidityOnlyQueries", "hybridCoverageQueries", "humanCoveredQueries", "baselinesGenerated", "activeBaselines", "shelfStartersGenerated", "shelfStartersAnswered", "humanDocuments", "openHumanCalls", "pricedAiDocuments", "aiAuthorityEdges", "starterToHumanDocumentRate"],
+        "properties": {
+          "totalQueries": { "type": "integer", "minimum": 0 },
+          "aiLiquidityOnlyQueries": { "type": "integer", "minimum": 0 },
+          "hybridCoverageQueries": { "type": "integer", "minimum": 0 },
+          "humanCoveredQueries": { "type": "integer", "minimum": 0 },
+          "baselinesGenerated": { "type": "integer", "minimum": 0 },
+          "activeBaselines": { "type": "integer", "minimum": 0 },
+          "shelfStartersGenerated": { "type": "integer", "minimum": 0 },
+          "shelfStartersAnswered": { "type": "integer", "minimum": 0 },
+          "humanDocuments": { "type": "integer", "minimum": 0 },
+          "openHumanCalls": { "type": "integer", "minimum": 0 },
+          "pricedAiDocuments": { "type": "integer", "minimum": 0 },
+          "aiAuthorityEdges": { "type": "integer", "minimum": 0 },
+          "starterToHumanDocumentRate": { "type": "number", "minimum": 0, "maximum": 1 }
         }
       },
       "Resolution": {
