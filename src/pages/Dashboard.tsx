@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Check,
@@ -16,6 +16,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { CategoryIcon } from '@/components/CategoryIcon'
 import {
   Badge,
   DropdownMenu,
@@ -76,6 +77,19 @@ const MIN_PAY: Array<{ value: number; label: string }> = [
   { value: 500, label: '₩500+' },
   { value: 1000, label: '₩1,000+' },
 ]
+
+/**
+ * Marketplace-card header (variant 07 DNA): a banner strip tinted from the
+ * question's category accent, soft enough to sit under a profile-style icon
+ * badge rather than compete with it. Blended against --card, not the raw
+ * accent, so it stays a tint even if a dark surface is added later.
+ */
+function categoryBannerStyle(accent?: string): CSSProperties {
+  if (!accent) return { background: 'var(--muted)' }
+  return {
+    background: `linear-gradient(135deg, color-mix(in oklab, ${accent} 26%, var(--card)), color-mix(in oklab, ${accent} 9%, var(--card)))`,
+  }
+}
 
 export default function Dashboard() {
   const {
@@ -633,10 +647,12 @@ export default function Dashboard() {
             </Button>
           </div>
         ) : (
-          // A denser row list with hairline separators, not a grid of
-          // individually-bordered cards — closer to how Linear's own issue
-          // list reads than a uniform card wall.
-          <div className="divide-y divide-border border-y border-border">
+          // Marketplace card grid (variant 07 DNA): two cards per row from
+          // tablet width up, one per row only at phone width — not a dense
+          // hairline list. Each card gets a profile-style header, a banner
+          // strip tinted from the category accent with a circular icon
+          // badge overlapping its left-bottom edge, like an avatar.
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {list.map((order) => {
               const done = order.answered >= order.target
               const cancelled = order.status === 'cancelled'
@@ -652,12 +668,22 @@ export default function Dashboard() {
                 <div
                   key={order.id}
                   className={cn(
-                    'flex flex-col px-2 py-4 transition-colors duration-300 sm:px-3',
+                    'flex flex-col overflow-hidden rounded-[10px] border border-border bg-card transition-colors duration-300',
                     opening && opening !== order.id && 'opacity-30',
                     opening === order.id && 'bg-foreground/[0.03]',
                     (done || cancelled) && 'opacity-70',
                   )}
                 >
+                  <div className="relative h-14 shrink-0" style={categoryBannerStyle(cat?.accent)}>
+                    <span className="absolute -bottom-5 left-4 flex size-10 items-center justify-center rounded-full border border-border bg-card shadow-[0_1px_3px_rgba(20,20,25,0.12)]">
+                      <CategoryIcon
+                        id={order.category}
+                        className="size-5"
+                        style={{ color: cat?.accent ?? 'var(--muted-foreground)' }}
+                      />
+                    </span>
+                  </div>
+                  <div className="flex flex-1 flex-col px-4 pb-4 pt-7">
                   <div className="flex items-center justify-between gap-3">
                     <span className="flex min-w-0 items-center gap-2">
                       <span
@@ -871,6 +897,7 @@ export default function Dashboard() {
                       ) : null}
                     </div>
                   ) : null}
+                  </div>
                 </div>
               )
             })}
