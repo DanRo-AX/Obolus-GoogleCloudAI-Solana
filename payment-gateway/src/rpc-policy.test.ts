@@ -25,3 +25,27 @@ test("remote RPC aliases cannot use plaintext, embedded credentials, or fragment
     "http://127.0.0.1:8899/",
   ]);
 });
+
+test("RPC parsing preserves the explicit validation contract", () => {
+  assert.throws(
+    () => independentRpcUrls(["not-an-absolute-url"]),
+    {
+      name: "Error",
+      message: "Solana RPC endpoint must be an absolute HTTP URL",
+    },
+  );
+  assert.throws(
+    () => independentRpcUrls(["ftp://localhost:8899"]),
+    /must use HTTPS except on loopback/,
+  );
+});
+
+test("plaintext RPC is accepted only for every supported loopback spelling", () => {
+  assert.deepEqual(independentRpcUrls([
+    "http://localhost:8899",
+    "http://[::1]:8899",
+  ]), [
+    "http://localhost:8899/",
+    "http://[::1]:8899/",
+  ]);
+});

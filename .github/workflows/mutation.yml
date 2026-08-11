@@ -1,0 +1,89 @@
+name: Mutation tests
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/mutation.yml
+      - backend/Cargo.lock
+      - backend/Cargo.toml
+      - backend/src/**
+      - payment-gateway/package-lock.json
+      - payment-gateway/package.json
+      - payment-gateway/src/**
+      - payment-gateway/stryker.config.mjs
+  schedule:
+    - cron: "23 18 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gateway:
+    name: Payment gateway mutants
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: payment-gateway
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: payment-gateway/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:mutation
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: gateway-mutation-report
+          path: payment-gateway/reports/mutation/mutation.json
+          if-no-files-found: ignore
+
+  backend:
+    name: Backend mutants
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    continue-on-error: ${{ github.event_name == 'schedule' }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+      - name: Mutate pull-request changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git diff --relative=backend --no-ext-diff --unified=0 \
+            "origin/${BASE_REF}...HEAD" -- src > mutation.diff
+          cargo mutants --jobs 2 --no-shuffle --in-diff mutation.diff -- --locked
+      - name: Mutate the scheduled safety boundary
+        if: github.event_name != 'pull_request'
+        run: |
+          cargo mutants --jobs 2 --no-shuffle \
+            --file src/authority.rs \
+            --file src/environment.rs \
+            --file src/rollback_audit.rs \
+            --file src/rollback_sweep.rs \
+            -- --locked
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: backend-mutation-report
+          path: backend/mutants.out
+          if-no-files-found: ignore
