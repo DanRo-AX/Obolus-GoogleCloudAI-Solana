@@ -288,7 +288,7 @@ export default function Dashboard() {
 
   return (
     <div className="page-enter flex-1 overflow-y-auto">
-      <div className="space-y-5 p-4 sm:p-6">
+      <div className="space-y-6 p-4 sm:p-6">
         <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
           <h1 className="font-sans text-base font-medium">{t('Open calls')}</h1>
           <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
@@ -525,7 +525,7 @@ export default function Dashboard() {
         <p className="-mb-3 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground sm:hidden">
           {t('Swipe to browse fields')} →
         </p>
-        <div className="-mx-4 grid gap-5 sm:-mx-6 lg:grid-cols-[184px_1fr] lg:gap-0">
+        <div className="-mx-4 grid gap-6 sm:-mx-6 lg:grid-cols-[184px_1fr] lg:gap-0">
           <nav className="flex gap-1 overflow-x-auto px-4 pb-1 sm:px-6 lg:min-h-[70vh] lg:flex-col lg:overflow-visible lg:border-r lg:border-border lg:px-2 lg:pb-0">
             <CatTab
               active={category === 'all'}
@@ -545,7 +545,7 @@ export default function Dashboard() {
             ))}
           </nav>
 
-          <div className="min-w-0 space-y-5 px-4 sm:px-6 lg:pl-6">
+          <div className="min-w-0 space-y-6 px-4 sm:px-6 lg:pl-6">
         {/* filters ------------------------------------------------------- */}
         <div className="flex flex-wrap items-center gap-2">
           {MIN_PAY.map((p) => (
@@ -633,7 +633,10 @@ export default function Dashboard() {
             </Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          // A denser row list with hairline separators, not a grid of
+          // individually-bordered cards — closer to how Linear's own issue
+          // list reads than a uniform card wall.
+          <div className="divide-y divide-border border-y border-border">
             {list.map((order) => {
               const done = order.answered >= order.target
               const cancelled = order.status === 'cancelled'
@@ -649,9 +652,9 @@ export default function Dashboard() {
                 <div
                   key={order.id}
                   className={cn(
-                    'flex flex-col rounded-[6px] border border-border bg-card p-5 transition-all duration-500',
-                    opening && opening !== order.id && 'scale-[0.99] opacity-30',
-                    opening === order.id && 'border-foreground/40 shadow-lg',
+                    'flex flex-col px-2 py-4 transition-colors duration-300 sm:px-3',
+                    opening && opening !== order.id && 'opacity-30',
+                    opening === order.id && 'bg-foreground/[0.03]',
                     (done || cancelled) && 'opacity-70',
                   )}
                 >
@@ -678,7 +681,7 @@ export default function Dashboard() {
                     </span>
                   </div>
 
-                  <p className="mt-3 text-[15px] leading-relaxed text-foreground">
+                  <p className="mt-1.5 text-[15px] leading-relaxed text-foreground">
                     {order.question}
                   </p>
                   {order.filters && Object.values(order.filters).some(Boolean) ? (
@@ -713,10 +716,12 @@ export default function Dashboard() {
                     </p>
                   ) : null}
 
-                  <div className="mt-4 flex items-center gap-3">
-                    <div className="h-1 flex-1 overflow-hidden rounded-full bg-foreground/10">
+                  <div className="mt-3 flex items-center gap-3">
+                    {/* A thin, square-ended bar rather than a pill — Linear's
+                        progress language stays close to a hairline rule. */}
+                    <div className="h-1 flex-1 overflow-hidden rounded-[2px] bg-foreground/10">
                       <div
-                        className="h-full rounded-full bg-[#0F766E] transition-[width] duration-500"
+                        className="h-full rounded-[2px] bg-[#0F766E] transition-[width] duration-500"
                         style={{
                           width: `${Math.round((order.answered / order.target) * 100)}%`,
                         }}
@@ -730,7 +735,10 @@ export default function Dashboard() {
                     </span>
                   </div>
 
-                  <div className="mt-3 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+                  {/* Meta + the per-row CTA share one line — a quiet trailing
+                      action instead of a full-width button block repeated
+                      down the page for every open call. */}
+                  <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
                     <Clock className="size-3" />
                     {relative(order.createdAt, t)}
                     {order.escrowMode === 'x402_solana_escrow' && !cancelled ? (
@@ -754,43 +762,43 @@ export default function Dashboard() {
                         {fits ? t('Fits you') : t('Outside your fields')}
                       </span>
                     ) : null}
+
+                    {tab === 'open' && !done ? (
+                      <Button
+                        variant="monoMuted"
+                        size="monoSm"
+                        className="ml-auto shrink-0 font-sans normal-case tracking-normal"
+                        onClick={() => {
+                          if (!profile) {
+                            navigate('/onboarding')
+                            return
+                          }
+                          setOpening(order.id)
+                          window.setTimeout(
+                            () => navigate(`/answer/${order.id}`),
+                            620,
+                          )
+                        }}
+                        disabled={
+                          opening === order.id ||
+                          suspended ||
+                          Boolean(profile && !fits) ||
+                          fullyReserved
+                        }
+                      >
+                        {opening === order.id
+                          ? t('Picking it up…')
+                          : fullyReserved
+                            ? t('All remaining slots held')
+                            : profile && !fits
+                              ? t('Outside your fields')
+                              : t('Answer')}
+                      </Button>
+                    ) : null}
                   </div>
 
-                  {tab === 'open' && !done ? (
-                    <Button
-                      variant="monoMuted"
-                      size="mono"
-                      className="mt-4 self-start"
-                      onClick={() => {
-                        if (!profile) {
-                          navigate('/onboarding')
-                          return
-                        }
-                        setOpening(order.id)
-                        window.setTimeout(
-                          () => navigate(`/answer/${order.id}`),
-                          620,
-                        )
-                      }}
-                      disabled={
-                        opening === order.id ||
-                        suspended ||
-                        Boolean(profile && !fits) ||
-                        fullyReserved
-                      }
-                    >
-                      {opening === order.id
-                        ? t('Picking it up…')
-                        : fullyReserved
-                          ? t('All remaining slots held')
-                          : profile && !fits
-                            ? t('Outside your fields')
-                            : t('Answer')}
-                    </Button>
-                  ) : null}
-
                   {tab === 'mine' ? (
-                    <div className="mt-4 space-y-3">
+                    <div className="mt-3 space-y-2.5">
                       <div className="flex flex-wrap items-center gap-2">
                         {order.chatId ? (
                           <Button
@@ -964,7 +972,9 @@ function FilterChip({
       type="button"
       onClick={onClick}
       className={cn(
-        'h-10 cursor-pointer rounded-full border px-3 font-mono text-[11px] uppercase tracking-[1px] transition-colors sm:h-7',
+        // Linear's filter row uses small rectangular toggles, not pills —
+        // pill radius is reserved for status/count tokens (see Badge).
+        'h-10 cursor-pointer rounded-[6px] border px-3 font-mono text-[11px] uppercase tracking-[1px] transition-colors sm:h-7',
         active
           ? 'border-foreground/70 bg-foreground/[0.06] text-foreground'
           : 'border-border text-muted-foreground hover:border-foreground/25 hover:text-foreground',
