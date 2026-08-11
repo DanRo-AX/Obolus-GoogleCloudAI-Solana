@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -101,12 +101,19 @@ test('hosted Devnet funding is durably fenced before a payment can leave', async
   const durableFence = source.indexOf('onReadyToSubmit()')
   const paidTransport = source.indexOf('wrapFetchWithPayment(fetch, client)')
   assert(durableFence >= 0 && paidTransport >= 0 && durableFence < paidTransport)
+  assert.match(source, /attestations are operator declarations, not cryptographic authorship proof/)
+  assert.match(source, /authorAttestation !== true \|\| contribution\.usageConsent !== true/)
+  assert.doesNotMatch(source, /저는 2025년 봄부터 성수동 사무실에서 일했습니다/)
 })
 
 test('autonomy recorder validates a provider-path trace while dropping questions and capabilities', () => {
-  const report = buildAutonomyEvidence(goodAutonomyRun(), '2026-08-11T00:00:00.000Z')
+  const report = buildAutonomyEvidence(
+    goodAutonomyRun(),
+    '2026-08-11T00:00:00.000Z',
+    goodAutonomyProvenance(),
+  )
   assert.equal(report.summary.ready, true)
-  assert.equal(report.agentRun.mode, 'vertex_tools_with_deterministic_guards')
+  assert.equal(report.agentRun.mode, 'vertex_two_stage_with_deterministic_guards')
   assert.equal(report.agentRun.steps.length, 3)
   assert.equal(JSON.stringify(report).includes('paymentAccessToken'), false)
   assert.equal(JSON.stringify(report).includes('private customer question'), false)
@@ -125,7 +132,7 @@ test('autonomy proof fails closed on fallback, unsafe tools, or a missing approv
   input.agentRun.requiresUserApproval = false
   const report = buildAutonomyEvidence(input)
   assert.equal(report.summary.ready, false)
-  assert(report.checks.some((check) => check.id === 'planner.vertex-function-call' && !check.passed))
+  assert(report.checks.some((check) => check.id === 'planner.two-stage-vertex-tools' && !check.passed))
   assert(report.checks.some((check) => check.id === 'trace.safe-tools' && !check.passed))
   assert(report.checks.some((check) => check.id === 'approval.boundary' && !check.passed))
 })
@@ -134,16 +141,29 @@ test('autonomy recorder CLI writes private output and refuses destructive in-pla
   const directory = await mkdtemp(join(tmpdir(), 'obolus-autonomy-evidence-'))
   const input = join(directory, 'resolve-response.json')
   const output = join(directory, 'autonomy.json')
+  const fakeGcloud = join(directory, 'gcloud')
   const executable = fileURLToPath(new URL('./record-finalist-autonomy-evidence.mjs', import.meta.url))
   try {
     await writeFile(input, `${JSON.stringify(goodAutonomyRun())}\n`, { mode: 0o600 })
-    const recorded = spawnSync(process.execPath, [executable, '--input', input, '--output', output], {
+    await writeFile(fakeGcloud, `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify([{
+      timestamp: '2026-08-11T00:00:01.000Z',
+      resource: { labels: { service_name: 'obolus-api', revision_name: 'obolus-api-test-00001' } },
+      textPayload: 'bounded research run completed agent_run_id=agent_autonomy_001 query_id=qry_autonomy_001 provider_call_count=2 mode="vertex_two_stage_with_deterministic_guards"',
+    }])}'\n`, { mode: 0o700 })
+    await chmod(fakeGcloud, 0o700)
+    const recorded = spawnSync(process.execPath, [
+      executable,
+      '--input', input,
+      '--output', output,
+      '--project', 'demo-project',
+    ], {
       encoding: 'utf8',
+      env: { ...process.env, OBOLUS_GCLOUD_BIN: fakeGcloud },
     })
     assert.equal(recorded.status, 0, recorded.stderr)
     assert.equal(JSON.parse(await readFile(output, 'utf8')).summary.ready, true)
     assert.equal((await stat(output)).mode & 0o777, 0o600)
-    assert.deepEqual((await readdir(directory)).sort(), ['autonomy.json', 'resolve-response.json'])
+    assert.deepEqual((await readdir(directory)).sort(), ['autonomy.json', 'gcloud', 'resolve-response.json'])
 
     const inPlace = spawnSync(process.execPath, [executable, '--input', input, '--output', input], {
       encoding: 'utf8',
@@ -263,9 +283,9 @@ function goodDevnetRun() {
   return {
     runId: 'finalist-demo-001',
     network: DEVNET_NETWORK,
-    queryId: 'query_001',
-    jobId: 'job_001',
-    jobStatus: 'completed',
+    activityKind: 'open_call_lifecycle',
+    activityId: 'call_001',
+    activityStatus: 'cancelled_refunded',
     quotes: [
       {
         id: 'call_quote_001',
@@ -275,8 +295,8 @@ function goodDevnetRun() {
         asset: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
       },
       {
-        id: 'quote_001',
-        kind: 'evidence',
+        id: 'payout_001',
+        kind: 'open-call-payout',
         status: 'delivered',
         amountAtomic: '15',
         asset: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
@@ -293,9 +313,9 @@ function goodDevnetRun() {
         payerDeltaAtomic: '-20',
       },
       {
-        kind: 'evidence',
+        kind: 'open-call-payout',
         signature: '1111111111111111111111111111111111111111111111111111111111111111',
-        quoteIds: ['quote_001'],
+        quoteIds: ['payout_001'],
         status: 'finalized',
         finalityProviderCount: 2,
         ownerDeltaAtomic: '15',
@@ -318,7 +338,7 @@ function goodDevnetRun() {
 
 function goodAutonomyRun() {
   return {
-    queryId: 'query_autonomy_001',
+    queryId: 'qry_autonomy_001',
     decision: 'hit',
     requestedDocuments: 3,
     candidateCount: 7,
@@ -327,7 +347,9 @@ function goodAutonomyRun() {
     agentRun: {
       id: 'agent_autonomy_001',
       model: 'gemini-2.5-flash',
-      mode: 'vertex_tools_with_deterministic_guards',
+      mode: 'vertex_two_stage_with_deterministic_guards',
+      providerCallCount: 2,
+      runtimeRevision: 'obolus-api-test-00001',
       nextAction: 'propose_evidence_purchase',
       requiresUserApproval: true,
       steps: [
@@ -343,7 +365,7 @@ function goodAutonomyRun() {
           agent: 'retrieval_agent',
           tool: 'rank_evidence_bundle',
           status: 'completed',
-          artifactRef: 'query_autonomy_001',
+          artifactRef: 'qry_autonomy_001',
         },
         {
           sequence: 3,
@@ -355,5 +377,16 @@ function goodAutonomyRun() {
     },
     questionText: 'private customer question',
     paymentAccessToken: 'never copy this capability',
+  }
+}
+
+function goodAutonomyProvenance() {
+  return {
+    kind: 'cloud_run_application_log',
+    verified: true,
+    project: 'demo-project',
+    service: 'obolus-api',
+    runtimeRevision: 'obolus-api-test-00001',
+    logTimestamp: '2026-08-11T00:00:01.000Z',
   }
 }

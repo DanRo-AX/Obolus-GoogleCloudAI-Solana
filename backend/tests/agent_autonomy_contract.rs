@@ -337,6 +337,8 @@ fn public_trace_contract_contains_outcomes_not_private_reasoning() {
         objective: "Resolve a bounded human-evidence question".to_owned(),
         model: "deterministic-fallback".to_owned(),
         mode: "fallback".to_owned(),
+        provider_call_count: 0,
+        runtime_revision: Some("obolus-api-test".to_owned()),
         steps: vec![AgentStep {
             sequence: 1,
             agent: "coverage_agent".to_owned(),

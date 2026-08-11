@@ -1,4 +1,4 @@
-# Obulus 결선 기술·상용화 준비도
+# Obolus 결선 기술·상용화 준비도
 
 기준일: 2026-08-11
 검토 범위: 웹, Rust API, 검색·메모리·품질 로직, Gemini/Vertex AI, MCP/CLI,
@@ -7,7 +7,7 @@ Tasks·Cloud KMS·Secret Manager, 테스트 및 현재 GCP 서빙 상태
 
 ## 결론
 
-Obulus의 가장 강한 포지션은 **B. Autonomous On-chain Settlement**다. 질문자가
+Obolus의 가장 강한 포지션은 **B. Autonomous On-chain Settlement**다. 질문자가
 질문별 최대 예산을 한 번 승인하면 Agent가 사람 DB를 검색·랭킹하고, 필요한 최소
 근거만 선택한 뒤, 정해진 예산과 정책 안에서 문서별 Solana USDC 결제를 수행한다.
 **A. Agent-Initiated Commerce**도 함께 충족하지만, 핵심 차별점은 단순 결제 요청이
@@ -15,16 +15,18 @@ Obulus의 가장 강한 포지션은 **B. Autonomous On-chain Settlement**다. �
 정산한다는 점이다. 현재 코드에는 A2A 프로토콜이나 Passkey가 구현돼 있지 않으므로
 그 둘을 사용했다고 주장해서는 안 된다.
 
-소스 코드 기준 핵심 제품 흐름은 구현됐고 전체 자동 검증 356개가 통과한다. 현재
-GCP의 **실제 100% 서빙 리비전**은 읽기 전용 운영 검증 77/77을 통과했고,
-로그인된 실제 질문의 Gemini 실행 증거는 11/11, Solana Devnet의 funding·payout·
-refund 실행 증거는 13/13으로 모두 `summary.ready=true`다. 이는 현재 결선 데모의
-프로덕션형 구조와 Devnet 실증이 준비됐다는 뜻이지 Mainnet 상용 출시 승인이나 실제
-고객 수요 검증을 뜻하지는 않는다.
+소스 코드 기준 핵심 제품 흐름은 구현됐고 전체 자동 검증 362개가 통과한다. 다만 이
+revision의 두 단계 Vertex 흐름은 아직 현재 서빙 API와 공개 autonomy artifact에
+승격·재기록되지 않았다. 따라서 `npm run pitch:verify-live`가 최신 인프라 revision,
+Cloud Run 실행 로그, autonomy v2와 Devnet v2의 24시간 신선도·2시간 상호 시각 범위를
+함께 통과하기 전에는 “현재 세 gate ready”라고 주장하지 않는다. Devnet gate도
+Open Call funding·payout·refund lifecycle의 증거이지 HIT 구매·인용 합성의 동일 run
+증거가 아니다. 운영 구조와 개별 capability 실증은 Mainnet 출시 승인이나 실제 고객
+수요 검증을 뜻하지 않는다.
 
 ## 제품을 한 문장으로 설명하면
 
-Obulus는 범용 LLM이 알 수 없는 지역·직업·생활 경험을 실제 사람들의 동의된 DB에서
+Obolus는 범용 LLM이 알 수 없는 지역·직업·생활 경험을 실제 사람들의 동의된 DB에서
 검색하고, Agent가 답변에 필요한 근거만 문서 단위로 구매해 데이터 소유자에게
 Solana USDC로 정산하는 human evidence network다.
 
@@ -40,15 +42,16 @@ Open Call로 전환되어 새로운 사람 데이터가 공급된다.
 
 #### 현재 구현
 
-- 인증된 질문에서 Vertex AI Gemini function calling이
-  `search_human_evidence` 도구를 호출해 검색 수량, 카테고리, 지역, 연령·가구·분야
-  필터와 HIT/PARTIAL/MISS 후속 행동을 계획한다.
-- `research_planner → retrieval_agent → coverage_agent`의 세 단계 실행 기록이
-  생성되고 `agent_runs`, `agent_steps`에 영속 저장된다.
-- Retrieval Agent는 텍스트 관련성, 핵심어 coverage, 질문별 personalized
+- 인증된 질문의 첫 Vertex AI Gemini function call이 `search_human_evidence`를
+  호출해 검색 수량, 카테고리, 지역, 연령·가구·분야 filter를 보완한다. 사용자가
+  정한 예산은 모델 schema에 없다.
+- Rust가 텍스트 관련성, 핵심어 coverage, 질문별 personalized
   PageRank, 신뢰도, 최신성, 작성자 다양성, 중복도와 예산을 함께 계산한다.
-- Coverage Agent는 결과를 관찰한 뒤 기존 근거 구매, 기존 근거와 신규 모집을
-  결합한 hybrid research, 또는 Open Call 제안을 선택한다.
+- 검색 뒤 두 번째 Vertex function call은 aggregate HIT/PARTIAL/MISS, 후보 수,
+  선택 수, quote 유무만 관찰하고 기존 근거 구매 제안, hybrid research, Open Call,
+  무료 baseline 또는 종료 중 하나를 선택한다.
+- `research_planner → retrieval_agent → coverage_agent` 세 단계가 `agent_runs`,
+  `agent_steps`에 영속 저장된다. 이 이름은 실행 역할이며 독립 Agent나 A2A가 아니다.
 - 모델 장애·잘못된 도구·범위 밖 인자가 발생하면 동일한 정책의 결정론적 fallback을
   사용한다. 실행 기록에는 도구와 결과만 남고 chain-of-thought나 원문 prompt는
   저장하지 않는다.
@@ -67,19 +70,20 @@ Gemini가 사용할 수 있는 검색 도구에는 지갑, 수취인, 자산, �
 
 #### 심사에서 정확히 표현할 범위
 
-현재 구조는 **A2A에 준하는 역할 분리형 multi-agent orchestration**이지 Google A2A
-프로토콜 구현은 아니다. Gemini가 한 번의 function call로 검색 계획과 조건부
-후속 행동을 정하고, 결정론적 Retrieval/Coverage Agent가 관찰과 검증을 수행한다.
-실제 A2A Agent Card·task protocol을 사용했다고 말하면 안 된다.
+현재 구조는 **두 번의 실제 Vertex 함수 호출 사이에 결정적 Rust tool 실행이 있는
+bounded autonomy loop**다. A2A나 multi-agent 구현은 아니다. 세 trace 이름을 세
+Agent처럼 설명하거나 Google A2A Agent Card·task protocol을 사용했다고 말하면 안 된다.
 
 #### 보완 우선순위
 
-- 완료: 최신 API 리비전에서 실제 Vertex function-call 응답과 3단계 agent trace,
-  사용자 승인 정지를 한 질문으로 연결한 비밀 없는 증거가 11/11을 통과했다.
+- 완료: API에서 검색 전 계획과 검색 후 다음 행동을 서로 다른 Vertex function
+  call로 실행하고, 각 호출 전에 일일 budget fence와 create-only 감사 intent를 남긴다.
+- 배포 gate: 최신 API 리비전에 이 두 호출과 3단계 trace, 사용자 승인 정지를 한
+  질문으로 다시 연결한 비밀 없는 evidence v2 gate가 12/12를 통과해야 한다.
 - P1: agent run 상세 조회 API와 운영 대시보드에 tool latency, fallback rate,
   HIT/PARTIAL/MISS별 다음 행동, 사용자 승인 전환율을 추가한다.
-- P1: 복잡한 질문에만 2차 계획 호출을 허용하는 bounded re-planning을 추가한다.
-  반복 횟수와 모델 비용 상한은 서버가 고정해야 한다.
+- P1: fallback rate와 질문 복잡도를 계측한 뒤에만 최대 1회 bounded re-planning을
+  검토한다. 현재는 검색 전·후 고정 두 호출이며 반복 루프라고 주장하지 않는다.
 - P2: 외부 기업 Agent와 통신해야 할 실제 고객 요구가 생길 때 A2A를 추가한다.
   해커톤 가점을 위해 빈 프로토콜을 억지로 붙이는 것보다 현재 MCP와 감사 가능한
   실행 기록을 완성하는 편이 더 설득력 있다.
@@ -112,9 +116,10 @@ Gemini가 사용할 수 있는 검색 도구에는 지갑, 수취인, 자산, �
 #### 마이크로페이 수익 모델
 
 현재 문서 가격대는 **₩5·₩10·₩15·₩25**이며 검색과 metadata 비교는 무료다.
-결제 가격에는 프로토콜 수수료가 이미 포함된다. 한 문서가 열리면 atomic amount의
-90%는 근거 소유자, 10%는 프로토콜에 배분되고, 반올림 후 두 금액의 합은 항상
-원래 결제액과 정확히 같다. 구독이 기본 모델이 아니다.
+제품 UI가 표시하는 목표 정책은 결제액 내 소유자 90% / 프로토콜 10%이지만, 현재
+hosted Devnet Pay.sh receipt는 primary split 제약 때문에 1 atomic만 남기고 나머지를
+소유자에게 보낸다. 동일 receipt의 exact 90/10은 아직 구현되지 않은 Mainnet 전
+gate다. 구독이 기본 모델은 아니며 현재 가격은 상용 margin 증거가 아니다.
 
 플랫폼 매출은 다음처럼 설명하는 것이 가장 정확하다.
 
@@ -207,8 +212,9 @@ digest, 전용 service account, Cloud Tasks, KMS, 독립 RPC 조건을 확인하
   3,704 atomic 기여자 payout, 3,704 atomic 미사용분 refund를 실행했다.
 - funding·payout·refund는 각각 서로 다른 두 RPC에서 finalized·오류 없음으로
   재현됐고, 동일 durable job의 취소 재시도에서 duplicate settlement는 0건이었다.
-- `finalist:record-devnet`이 질문·인터뷰·개인키·RPC URL을 제외한 증거로 직렬화했고
-  13/13, `summary.ready=true`를 통과했다.
+- 이전 v1 recorder는 질문·인터뷰·개인키·RPC URL을 제외한 증거 13/13을 기록했다.
+  현재 v2 gate는 이 실행을 Open Call lifecycle로 정확히 분류하고 canonical mint,
+  quote↔transaction exact delta, payer debit, refund 산술까지 17/17로 재검증해야 한다.
 - P1: Mainnet 전환 전 treasury와 사용자 자금을 법적으로 분리하고 KYC/AML, 제재
   주소, 세금, 환불·분쟁, 회계 원장 정책을 확정한다.
 - P1: Open Call escrow를 장기적으로 trust-minimized하게 만들 필요가 있으면 Solana
@@ -306,9 +312,13 @@ flowchart LR
 
 - API·gateway·orchestrator·Pay를 서비스별 올바른 Cloud Run 리비전과 전용 identity로 배포
 - GCP 검증 77개 전부 통과, `summary.ready=true`
-- hosted Pay.sh 실제 Devnet 지급·복구 evidence의 `summary.ready=true`
-- signed-in 질문에서 Vertex tool call과 3단계 agent trace 확인
 - SOL 없는 신규 Phantom 지갑의 USDC-only 온보딩 확인
+
+### 배포 직후 재검증
+
+- hosted Pay.sh 실제 Devnet Open Call 지급·환불 evidence의 v2 gate 재기록
+- signed-in 질문에서 검색 전·후 Vertex tool call, 3단계 역할 trace와 동일 revision Cloud Run log 확인
+- 세 artifact의 24시간 신선도, 2시간 생성 범위와 API serving revision 상관관계 확인
 
 ### P1 — 유료 PoC 전에 완료
 
@@ -332,7 +342,7 @@ flowchart LR
 
 ## 검증 결과
 
-- frontend unit: 13/13
+- frontend unit: 18/18
 - Cloudflare Pages proxy: 3/3
 - Antigravity MCP runtime: 14/14
 - 로컬 Agent MCP/CLI: 15/15
@@ -343,7 +353,7 @@ flowchart LR
 - Rust API main: 1/1
 - Rust agent autonomy contract: 7/7
 - Rust contract/PostgreSQL concurrency: 2/2
-- 총 356개 테스트 통과
+- 총 362개 테스트 통과
 - TypeScript build/typecheck, Vite production build, Pages bundle verification, oxlint,
   Rust fmt, Clippy `-D warnings`, `git diff --check` 통과
 - root/payment-gateway/agent-orchestrator/local-agent npm production dependency audit: 취약점 0

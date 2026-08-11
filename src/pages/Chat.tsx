@@ -16,6 +16,7 @@ import {
 import { Composer } from '@/components/Composer'
 import { Button } from '@/components/ui/button'
 import { useT } from '@/i18n'
+import { branchForAgentAction } from '@/lib/agentActionPolicy'
 import {
   getChatAnswers,
   generateAiBaseline,
@@ -351,11 +352,17 @@ export default function Chat() {
         await new Promise((resolve) => window.setTimeout(resolve, 650))
         if (cancelled) return
 
-        // Step 4 — this is where it splits. Partial coverage is still a miss:
-        // the open call asks only for the missing number of answers.
+        // Step 4 — deterministic retrieval constrains the safe choices, then
+        // the server-validated second agent action selects the visible branch.
+        // Payment and Open Call creation still stop for explicit approval.
+        const branch = branchForAgentAction(
+          resolution.decision,
+          resolution.aiBaselineEligible,
+          resolution.agentRun?.nextAction,
+        )
         if (resolution.decision === 'miss') {
-          setPhase('ask-order')
-          if (resolution.aiBaselineEligible) {
+          setPhase(branch.phase)
+          if (branch.generateBaseline) {
             setAiBaselineStatus('loading')
             void generateAiBaseline(
               resolution.queryId,
@@ -376,6 +383,10 @@ export default function Chat() {
               },
             )
           }
+          return
+        }
+        if (branch.phase === 'declined') {
+          setPhase('declined')
           return
         }
         const cites: Citation[] = resolution.matches.map((match) => ({
@@ -908,8 +919,16 @@ export default function Chat() {
 
               {phase === 'declined' ? (
                 <Branch
-                  title={t('Understood.')}
-                  body={t('No call was posted and nothing left your wallet. Ask again at a different price any time.')}
+                  title={
+                    agentRun?.nextAction === 'finish_without_purchase'
+                      ? t('The bounded agent stopped here.')
+                      : t('Understood.')
+                  }
+                  body={
+                    agentRun?.nextAction === 'finish_without_purchase'
+                      ? t('It proposed no purchase or Open Call for this result. Nothing left your wallet; you can ask again with different filters or a different budget.')
+                      : t('No call was posted and nothing left your wallet. Ask again at a different price any time.')
+                  }
                 />
               ) : null}
             </div>
@@ -1166,12 +1185,14 @@ function TraceSteps({
         <div className="mt-2 rounded-[5px] border border-border bg-foreground/[0.025] p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="font-mono text-[10px] font-semibold uppercase tracking-[1px] text-foreground">
-              {t('Autonomous research plan')}
+              {t('Bounded research loop')}
             </span>
             <span className="rounded-full border border-border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.7px] text-muted-foreground">
-              {agentRun.mode === 'vertex_tools_with_deterministic_guards'
-                ? 'Gemini · tool calling'
-                : t('Deterministic fallback')}
+              {agentRun.mode === 'vertex_two_stage_with_deterministic_guards'
+                ? `Gemini · ${agentRun.providerCallCount} tool calls`
+                : agentRun.mode === 'partial_vertex_with_deterministic_fallback'
+                  ? 'Gemini · partial fallback'
+                  : t('Deterministic fallback')}
             </span>
           </div>
           <div className="mt-2 grid gap-2 sm:grid-cols-3">
@@ -1191,7 +1212,7 @@ function TraceSteps({
           </div>
           {agentRun.requiresUserApproval ? (
             <p className="mt-2 border-t border-border pt-2 text-[11px] leading-4 text-muted-foreground">
-              {t('The agent may plan and rank autonomously; payment or a new Open Call still waits for your approval.')}
+              {t('Gemini plans the search and proposes a next step after Rust ranks it; payment or a new Open Call still waits for your approval.')}
             </p>
           ) : null}
         </div>

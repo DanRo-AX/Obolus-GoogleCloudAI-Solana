@@ -74,6 +74,8 @@ export type Resolution = {
     objective: string
     model: string
     mode: string
+    providerCallCount: number
+    runtimeRevision?: string
     nextAction:
       | 'search_human_evidence'
       | 'rank_evidence_bundle'

@@ -96,14 +96,15 @@ gcloud run services update-traffic obolus-gateway ... --to-revisions=obolus-gate
 ```bash
 npm run finalist:record-autonomy -- \
   --input /secure-runtime-output/resolve-response.json \
-  --output artifacts/finalist-evidence/autonomy.json
+  --output artifacts/finalist-evidence/autonomy.json \
+  --project sweetspot-ax
 ```
 
 레코더는 다음을 실패 폐쇄 방식으로 확인한다.
 
-- `gemini-*` 모델의 provider-backed function-call mode와 deterministic guard
+- `gemini-*` 모델의 검색 전·후 provider-backed 함수 호출 2회 mode와 deterministic guard
 - `research_planner → retrieval_agent → coverage_agent`의 순서 있는 3단계 trace
-- 검색·랭킹·구매 제안·Open Call 제안만 허용하는 비결제 tool allowlist
+- 검색·랭킹·구매 제안·hybrid·Open Call·무료 baseline·무구매 종료만 허용하는 비결제 tool allowlist
 - HIT/PARTIAL/MISS 관찰 결과와 다음 행동의 일치
 - 최대 20개인 사용자 문서 수 한도와 선택 개수
 - 구매·hybrid·Open Call이 `awaiting_user_approval`에서 멈추는지
@@ -116,12 +117,40 @@ npm run finalist:record-autonomy -- \
 교체하고, input과 output이 같으면 거부한다. exit `0`은 schema-ready, exit `1`은
 보고서 생성 후 gate 실패, exit `2`는 입력·변환·쓰기 오류다.
 
-`autonomy.json`은 API가 보고한 실행 경로를 검사하며, 그 파일만으로 Vertex 호출
-provenance를 독립 증명하지는 않는다. 최종 시연에는 같은 query/run을 보여주는
-브라우저 Network 원본과 같은 시각의 Vertex/Cloud Run 감사 또는 요청 로그를 함께
-제시한다. 독립 로그가 없다면 실제 provider 호출은 미검증 blocker로 표시한다.
+`autonomy.json`은 API 응답뿐 아니라 같은 run ID·query ID·API revision을 가진 Cloud
+Run application log를 `gcloud logging read`로 조회해 v2 provenance에 묶는다. 이는
+배포 run 상관관계는 강화하지만 독립 Vertex Data Access audit 자체는 아니다. 최종
+시연에는 가능하면 같은 시각의 Vertex 감사 또는 요청 로그도 함께 제시하며, 없으면
+“Cloud Run 배포 run과 두 provider success를 연결했다”까지만 주장한다.
 
 ## 5. 실제 Devnet 실행 증거 기록
+
+Hosted E2E는 저장소의 fixture나 하드코딩 1인칭 답변을 제출하지 않는다. `--run` 전에
+실제 작성자가 전용 임시 state directory 안에 mode `0600` JSON을 만들고 다음 필드를
+직접 채운다.
+
+- 실제 `question`, `shelf`, 지원 category·filter, hosted Pay.sh price band, refund를 남길 `target >= 2`
+- 작성자 본인의 demographic band profile과 지원 분야
+- 80자 이상의 사실 기반 `answer`와 1~4개 `interviewResponses`
+- 운영자가 작성자의 사실성 확인을 받았다고 선언하는 `authorAttestation: true`
+- 운영자가 Devnet 유료 열람·저장·인덱싱·발표 사용 동의를 받았다고 선언하는 `usageConsent: true`
+
+파일이 state directory 밖에 있거나 symlink·권한 과다·선언 누락·지원하지 않는 band면
+스크립트는 자금 이동 전에 실패한다. 그러나 이 두 boolean은 작성자 신원이나 서명을
+암호학적으로 증명하지 않는다. 실제 발표에서는 별도의 서명된 작성자 허가 기록과
+본문 version hash를 보관하고, 그것이 없으면 consented live inventory로 세지 않는다.
+
+```bash
+finalist_state_dir="$(mktemp -d -t obolus-finalist.XXXXXXXX)"
+chmod 700 "$finalist_state_dir"
+npm run finalist:hosted-devnet -- --prepare --state-dir "$finalist_state_dir"
+
+# 작성자가 $finalist_state_dir/contribution.json을 직접 작성하고 사실성·사용 동의를 확인
+chmod 600 "$finalist_state_dir/contribution.json"
+npm run finalist:hosted-devnet -- --run \
+  --state-dir "$finalist_state_dir" \
+  --contribution-file "$finalist_state_dir/contribution.json"
+```
 
 먼저 기존 E2E/운영 콘솔에서 실제 실행 결과를 JSON으로 내보낸다. 입력 구조 예시는
 [`scripts/fixtures/finalist-devnet-run.example.json`](../scripts/fixtures/finalist-devnet-run.example.json)에
@@ -129,7 +158,7 @@ provenance를 독립 증명하지는 않는다. 최종 시연에는 같은 query
 
 필수 입력:
 
-- `network`, `runId`, `queryId`, `jobId`, `jobStatus`
+- `network`, `runId`, `activityKind=open_call_lifecycle`, `activityId`, `activityStatus=cancelled_refunded`
 - 각 quote의 `id`, `kind`, `status`, `amountAtomic`, Devnet USDC `asset`
 - 각 거래의 `signature`, 연결된 `quoteIds`, `status=finalized`
 - 두 RPC에서 동일 거래를 재현한 수 `finalityProviderCount >= 2`
@@ -145,7 +174,7 @@ npm run finalist:record-devnet -- \
 
 출력에는 다음만 남는다.
 
-- query/job/quote의 비민감 식별자와 상태
+- Open Call activity와 quote의 비민감 식별자·상태
 - atomic amount와 Devnet USDC mint
 - transaction signature와 자동 생성된 Solana Explorer Devnet URL
 - owner/payer token delta
@@ -163,15 +192,16 @@ origin에서 같은 finalized transaction bytes와 mint·amount·recipient를 �
 
 ## 6. 결선 제출 직전 판정
 
-다음 세 파일이 모두 `summary.ready=true`여야 하고, 같은 데모 실행의 query ID와
-가까운 생성 시각으로 연결돼야 한다.
+다음 세 파일이 모두 최신 schema의 `summary.ready=true`여야 한다. 인프라와 autonomy는
+같은 API serving revision에 연결되고 세 파일은 24시간 이내에 생성되며 생성 시각
+범위가 2시간 이내여야 한다. Devnet 파일은 별도의 Open Call lifecycle capability다.
 
 - `infrastructure.json`: 현재 서빙 revision과 GCP 안전 경계
-- `autonomy.json`: 로그인된 실제 질문의 Vertex tool call·3단계 trace·승인 경계
-- `devnet.json`: 실제 질문에서 지급·finality·중복 방지·refund까지 이어진 receipt bundle
+- `autonomy.json`: 로그인된 실제 질문의 Vertex 함수 호출 1 → Rust 검색 → Vertex 함수 호출 2·3단계 역할 trace·승인 경계·Cloud Run log provenance
+- `devnet.json`: 실제 Open Call의 funding → 한 답변 payout → 미사용액 refund, exact mint·quote/transaction delta·2-RPC finality·중복 방지 receipt bundle
 
 Explorer URL, Cloud Run revision/digest, 소유자 잔액 증가, 중복 지급 0을 데모 화면에
-함께 보여준다. 여기에 일치하는 Vertex 감사·요청 로그와 두 RPC의 finalized 재조회가
-있을 때만 “프로덕션 구조, 실제 Gemini 자율 실행과 실제 Devnet 결제를 검증했다”고
-표현한다. 예시 fixture, sandbox 영수증, 서빙하지 않는 tagged revision은 실제 운영
-증거로 사용하지 않는다.
+함께 보여준다. 이 세 gate만으로 HIT 구매·인용 합성까지 한 run으로 증명했다고 말하지
+않는다. 그 주장은 별도 consented document로 resolve → quote → open → payout → paid-only
+synthesis를 연결한 통합 run bundle이 있을 때만 허용한다. 예시 fixture, sandbox 영수증,
+서빙하지 않는 tagged revision은 실제 운영 증거로 사용하지 않는다.

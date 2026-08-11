@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 
 export const DEVNET_NETWORK = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
+export const DEVNET_USDC = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
 
 const AUTONOMY_AGENTS = Object.freeze(['research_planner', 'retrieval_agent', 'coverage_agent'])
 const AUTONOMY_TOOLS = new Set([
@@ -320,7 +321,11 @@ export function evaluatePromotion(revision, expectation) {
   }
 }
 
-export function buildAutonomyEvidence(input, generatedAt = new Date().toISOString()) {
+export function buildAutonomyEvidence(
+  input,
+  generatedAt = new Date().toISOString(),
+  deployedRunProvenance = null,
+) {
   const response = input?.response && typeof input.response === 'object' ? input.response : input
   const run = response?.agentRun ?? {}
   const queryId = safeId(response?.queryId, 'query id')
@@ -330,8 +335,20 @@ export function buildAutonomyEvidence(input, generatedAt = new Date().toISOStrin
   const candidateCount = positiveInteger(response?.candidateCount)
   const selectedDocumentCount = Array.isArray(response?.matches) ? response.matches.length : 0
   const nextAction = safeEnum(run.nextAction, AUTONOMY_TOOLS)
-  const mode = run.mode === 'vertex_tools_with_deterministic_guards' ? run.mode : 'unsupported'
+  const mode = run.mode === 'vertex_two_stage_with_deterministic_guards' ? run.mode : 'unsupported'
   const model = safeModel(run.model)
+  const providerCallCount = positiveInteger(run.providerCallCount)
+  const runtimeRevision = safeIdOrNull(run.runtimeRevision)
+  const provenance = {
+    kind: deployedRunProvenance?.kind === 'cloud_run_application_log'
+      ? deployedRunProvenance.kind
+      : 'unverified',
+    verified: deployedRunProvenance?.verified === true,
+    project: safeIdOrNull(deployedRunProvenance?.project),
+    service: safeIdOrNull(deployedRunProvenance?.service),
+    runtimeRevision: safeIdOrNull(deployedRunProvenance?.runtimeRevision),
+    logTimestamp: safeTimestampOrNull(deployedRunProvenance?.logTimestamp),
+  }
   const steps = (Array.isArray(run.steps) ? run.steps : []).map((step) => ({
     sequence: positiveInteger(step.sequence),
     agent: safeEnum(step.agent, new Set(AUTONOMY_AGENTS)),
@@ -352,9 +369,19 @@ export function buildAutonomyEvidence(input, generatedAt = new Date().toISOStrin
 
   const checks = [
     evidenceCheck(
-      'planner.vertex-function-call',
-      mode === 'vertex_tools_with_deterministic_guards' && model.startsWith('gemini-'),
-      'the authenticated API response reports the Gemini function-call path with deterministic guards',
+      'planner.two-stage-vertex-tools',
+      mode === 'vertex_two_stage_with_deterministic_guards' && model.startsWith('gemini-') && providerCallCount === 2,
+      'the authenticated API response reports Vertex planning and post-retrieval tool choice with deterministic guards',
+    ),
+    evidenceCheck(
+      'runtime.deployed-run-log',
+      Boolean(runtimeRevision) &&
+        provenance.verified &&
+        provenance.kind === 'cloud_run_application_log' &&
+        provenance.service === 'obolus-api' &&
+        provenance.runtimeRevision === runtimeRevision &&
+        provenance.logTimestamp !== null,
+      'a matching Cloud Run application log binds the run to the deployed API revision',
     ),
     evidenceCheck(
       'trace.roles',
@@ -411,15 +438,14 @@ export function buildAutonomyEvidence(input, generatedAt = new Date().toISOStrin
       decision !== 'hit' ||
         (quote?.currency === 'KRW' &&
           quote.documentCount === selectedDocumentCount &&
-          quote.totalPriceKrw > 0 &&
-          nextAction === 'propose_evidence_purchase'),
+          quote.totalPriceKrw > 0),
       'a HIT exposes an exact non-zero quote before any payment action',
     ),
   ]
   const failed = checks.filter((check) => !check.passed).length
 
   return {
-    schemaVersion: 'obulus.finalist.autonomy-evidence.v1',
+    schemaVersion: 'obulus.finalist.autonomy-evidence.v2',
     generatedAt,
     query: {
       id: queryId,
@@ -432,10 +458,13 @@ export function buildAutonomyEvidence(input, generatedAt = new Date().toISOStrin
       id: runId,
       model,
       mode,
+      providerCallCount,
+      runtimeRevision,
       nextAction,
       requiresUserApproval: Boolean(run.requiresUserApproval),
       steps,
     },
+    deployedRunProvenance: provenance,
     quote,
     summary: { passed: checks.length - failed, failed, ready: failed === 0 },
     checks,
@@ -443,6 +472,10 @@ export function buildAutonomyEvidence(input, generatedAt = new Date().toISOStrin
 }
 
 export function buildDevnetEvidence(input, generatedAt = new Date().toISOString()) {
+  const activityKind = ['open_call_lifecycle', 'evidence_purchase'].includes(input.activityKind)
+    ? input.activityKind
+    : 'unsupported'
+  const activityId = safeId(input.activityId, 'market activity id')
   const transactions = (input.transactions ?? []).map((transaction) => ({
     kind: allowedKind(transaction.kind),
     signature: safeBase58(transaction.signature, 'transaction signature'),
@@ -476,14 +509,39 @@ export function buildDevnetEvidence(input, generatedAt = new Date().toISOString(
     asset: safeBase58(quote.asset, 'asset mint'),
   }))
   const uniqueSignatures = new Set(transactions.map((transaction) => transaction.signature))
+  if (refund) uniqueSignatures.add(refund.signature)
   const duplicateSettlementCount = Number(input.duplicateProtection?.duplicateSettlementCount)
   const retryAttempts = Number(input.duplicateProtection?.retryAttempts)
+  const quoteById = new Map(quotes.map((quote) => [quote.id, quote]))
+  const linkedTransactions = transactions.every((transaction) => {
+    if (transaction.quoteIds.length !== 1) return false
+    const quote = quoteById.get(transaction.quoteIds[0])
+    return Boolean(quote) &&
+      quote.kind === transaction.kind &&
+      BigInt(quote.amountAtomic) === BigInt(transaction.ownerDeltaAtomic) &&
+      BigInt(transaction.payerDeltaAtomic ?? '0') === -BigInt(quote.amountAtomic)
+  })
+  const linkedQuoteIds = new Set(transactions.flatMap((transaction) => transaction.quoteIds))
+  const quoteStatusesValid = quotes.every((quote) =>
+    (quote.kind === 'open-call-funding' && quote.status === 'funded') ||
+    (quote.kind === 'open-call-payout' && quote.status === 'delivered') ||
+    (quote.kind === 'evidence' && quote.status === 'delivered'))
+  const fundingTotal = quotes
+    .filter((quote) => quote.kind === 'open-call-funding')
+    .reduce((sum, quote) => sum + BigInt(quote.amountAtomic), 0n)
+  const payoutTotal = quotes
+    .filter((quote) => quote.kind === 'open-call-payout')
+    .reduce((sum, quote) => sum + BigInt(quote.amountAtomic), 0n)
+  const refundArithmeticValid = activityKind !== 'open_call_lifecycle' ||
+    (fundingTotal > 0n && refund && fundingTotal === payoutTotal + BigInt(refund.amountAtomic))
 
   const checks = [
     evidenceCheck('network.devnet', input.network === DEVNET_NETWORK, 'receipt uses Solana Devnet'),
-    evidenceCheck('query.id', Boolean(safeIdOrNull(input.queryId)), 'query id is recorded'),
-    evidenceCheck('job.id', Boolean(safeIdOrNull(input.jobId)), 'research job id is recorded'),
+    evidenceCheck('activity.typed', activityKind !== 'unsupported' && Boolean(activityId), 'the receipt identifies its exact market flow without relabelling an Open Call as a query'),
+    evidenceCheck('activity.status', ['completed', 'cancelled_refunded'].includes(String(input.activityStatus ?? '')), 'the market flow reached a terminal successful status'),
     evidenceCheck('quotes.present', quotes.length > 0, 'one or more exact quotes are recorded'),
+    evidenceCheck('quotes.canonical-mint', quotes.length > 0 && quotes.every((quote) => quote.asset === DEVNET_USDC), 'every quote uses the canonical Solana Devnet USDC mint'),
+    evidenceCheck('quotes.status', quotes.length > 0 && quoteStatusesValid, 'every quote has the terminal status required for its kind'),
     evidenceCheck('transactions.present', transactions.length > 0, 'one or more on-chain transactions are recorded'),
     evidenceCheck(
       'transactions.finalized',
@@ -501,8 +559,15 @@ export function buildDevnetEvidence(input, generatedAt = new Date().toISOString(
       'every settled purchase has a positive owner token delta',
     ),
     evidenceCheck(
+      'transactions.quote-linkage',
+      linkedTransactions && quotes.every((quote) => linkedQuoteIds.has(quote.id)),
+      'every quote maps one-to-one to a same-kind transaction with exact owner and payer deltas',
+    ),
+    evidenceCheck(
       'duplicates.zero',
-      Number.isInteger(duplicateSettlementCount) && duplicateSettlementCount === 0 && uniqueSignatures.size === transactions.length,
+      Number.isInteger(duplicateSettlementCount) &&
+        duplicateSettlementCount === 0 &&
+        uniqueSignatures.size === transactions.length + (refund ? 1 : 0),
       'retry produced zero duplicate settlements',
     ),
     evidenceCheck(
@@ -513,16 +578,16 @@ export function buildDevnetEvidence(input, generatedAt = new Date().toISOString(
     evidenceCheck('refund.present', Boolean(refund), 'unused or failed reservation refund is recorded'),
     evidenceCheck('refund.finalized', refund?.status === 'finalized', 'refund transaction is finalized'),
     evidenceCheck('refund.two-rpc', Number(refund?.finalityProviderCount) >= 2, 'refund is verified by at least two RPC origins'),
+    evidenceCheck('refund.arithmetic', Boolean(refundArithmeticValid), 'Open Call funding equals delivered payouts plus the finalized refund'),
   ]
   const failed = checks.filter((check) => !check.passed).length
 
   return {
-    schemaVersion: 'obulus.finalist.devnet-evidence.v1',
+    schemaVersion: 'obulus.finalist.devnet-evidence.v2',
     generatedAt,
     runId: safeId(input.runId, 'run id'),
     network: input.network,
-    query: { id: safeId(input.queryId, 'query id') },
-    job: { id: safeId(input.jobId, 'job id'), status: String(input.jobStatus ?? '') },
+    activity: { kind: activityKind, id: activityId, status: String(input.activityStatus ?? '') },
     quotes,
     transactions,
     duplicateProtection: {
@@ -613,6 +678,14 @@ function safeIdOrNull(value) {
   }
 }
 
+function safeTimestampOrNull(value) {
+  const candidate = String(value ?? '')
+  const parsed = Date.parse(candidate)
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === candidate
+    ? candidate
+    : null
+}
+
 function canonicalAtomic(value, { allowNegative = false, allowZero = true } = {}) {
   const candidate = String(value ?? '')
   const pattern = allowNegative ? /^-?(?:0|[1-9]\d*)$/ : /^(?:0|[1-9]\d*)$/
@@ -638,10 +711,17 @@ function safeModel(value) {
 }
 
 function actionMatchesDecision(decision, selectedDocumentCount, action) {
-  if (decision === 'hit') return action === 'propose_evidence_purchase'
+  if (decision === 'hit') return ['propose_evidence_purchase', 'finish_without_purchase'].includes(action)
   if (decision !== 'miss') return false
-  if (selectedDocumentCount > 0) return ['propose_hybrid_research', 'propose_open_call'].includes(action)
-  return ['propose_open_call', 'generate_general_baseline'].includes(action)
+  if (selectedDocumentCount > 0) {
+    return [
+      'propose_hybrid_research',
+      'propose_open_call',
+      'generate_general_baseline',
+      'finish_without_purchase',
+    ].includes(action)
+  }
+  return ['propose_open_call', 'generate_general_baseline', 'finish_without_purchase'].includes(action)
 }
 
 function containsForbiddenReasoningField(value) {
