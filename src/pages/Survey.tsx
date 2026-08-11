@@ -24,6 +24,7 @@ import {
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
+import { AuthUnavailable } from '@/components/AuthUnavailable'
 
 /**
  * One screen per question, the way a good survey does it. Four light warm-ups
@@ -35,7 +36,15 @@ import { useUi } from '@/state/ui'
 export default function Survey() {
   const { orderId } = useParams()
   const navigate = useNavigate()
-  const { orders, answerOrder, profile, suspended, authReady } = useUi()
+  const {
+    orders,
+    answerOrder,
+    profile,
+    suspended,
+    authReady,
+    authError,
+    retryAuth,
+  } = useUi()
   const t = useT()
   const order = orders.find((o) => o.id === orderId)
 
@@ -106,6 +115,9 @@ export default function Survey() {
         {t('Opening the call…')}
       </div>
     )
+  }
+  if (authError && !profile) {
+    return <AuthUnavailable message={authError} onRetry={retryAuth} />
   }
   if (!order) return <Navigate to="/dashboard" replace />
   if (!profile) return <Navigate to="/onboarding" replace />

@@ -1,4 +1,8 @@
 import { useT } from '@/i18n'
+import {
+  formatKrwPreview,
+  protocolFeeBreakdown,
+} from '@/lib/pricingPolicy'
 
 /**
  * How the money actually moves, kept to one screen.
@@ -9,6 +13,7 @@ import { useT } from '@/i18n'
  */
 export function SettlementSection() {
   const t = useT()
+  const example = protocolFeeBreakdown(38)
   return (
     <section className="border-t border-border px-4 py-20 sm:px-8 sm:py-28">
       <div className="mx-auto grid max-w-[92rem] grid-cols-1 gap-14 lg:grid-cols-[1.1fr_1fr] lg:gap-20">
@@ -18,7 +23,7 @@ export function SettlementSection() {
           </p>
 
           <h2 className="mt-5 text-balance font-display text-[32px] leading-[1.1] sm:text-[44px]">
-            {t('Nobody approves a ₩12 payment.')}
+            {t('Nobody approves every ₩10 payment.')}
           </h2>
 
           <p className="mt-6 max-w-xl text-pretty text-[15px] leading-7 text-muted-foreground">
@@ -27,7 +32,7 @@ export function SettlementSection() {
             )}{' '}
             <strong className="font-medium text-foreground">402</strong>{' '}
             {t(
-              'with a price, the wallet pays it, the document opens. Machines settle with machines.',
+              'with a price. The agent verifies the recipient and amount, pays from bounded prepaid credit, and opens only the settled document.',
             )}
           </p>
 
@@ -85,11 +90,29 @@ export function SettlementSection() {
                 ₩38
               </span>
             </div>
+            <div className="grid grid-cols-2 divide-x divide-border border-t border-border px-5 py-3.5">
+              <div>
+                <p className="font-mono text-[9px] uppercase tracking-[1px] text-muted-foreground">
+                  {t('Evidence owners · 90%')}
+                </p>
+                <p className="mt-1 font-mono text-[13px] tabular-nums">
+                  ₩{formatKrwPreview(example.ownerKrw)}
+                </p>
+              </div>
+              <div className="pl-5">
+                <p className="font-mono text-[9px] uppercase tracking-[1px] text-muted-foreground">
+                  {t('Protocol · 10%')}
+                </p>
+                <p className="mt-1 font-mono text-[13px] tabular-nums">
+                  ₩{formatKrwPreview(example.protocolKrw)}
+                </p>
+              </div>
+            </div>
           </div>
 
           <p className="mt-4 font-mono text-[10px] uppercase leading-relaxed tracking-[1px] text-muted-foreground">
             {t(
-              'Every line is a person. Every amount left your wallet and arrived in theirs — we are not in the middle of it.',
+              'The 10% protocol fee is included in the displayed price, never added at checkout. Unused prepaid credit remains withdrawable.',
             )}
           </p>
         </div>
@@ -104,18 +127,22 @@ const POINTS = [
     body: 'A search that finds nothing costs nothing. Only the documents actually quoted appear on the receipt.',
   },
   {
-    head: 'Your wallet pays each author, per open',
-    body: 'The transfer goes from your wallet to theirs the moment the document opens. Nothing sits with us in between.',
+    head: 'One bounded deposit, then document-level settlement',
+    body: 'Phantom authorizes only the USDC deposited as prepaid credit. A KMS-protected Pay.sh agent settles each selected document from that bounded balance.',
   },
   {
-    head: 'Priced in won, settled in USDC',
-    body: 'You read ₩ because that is what the people on the shelves think in. USDC is what moves on Solana.',
+    head: '90% to evidence owners, 10% to the protocol',
+    body: 'The displayed won price is the complete price. The protocol share funds payment, recovery, quality and network operations; settlement moves in USDC on Solana.',
+  },
+  {
+    head: 'No SOL required from the buyer',
+    body: 'The x402 facilitator sponsors the Devnet network fee. The buyer signs the USDC authorization, not a separate gas transaction.',
   },
 ]
 
 const LINES = [
-  { handle: 'PARIS_11', shelf: 'Living in Paris', price: 12 },
-  { handle: 'PARIS_18', shelf: 'Living in Paris', price: 9 },
-  { handle: 'PARIS_05', shelf: 'Markets & groceries', price: 11 },
-  { handle: 'PARIS_20', shelf: 'Eating out', price: 6 },
+  { handle: 'PARIS_11', shelf: 'Living in Paris', price: 10 },
+  { handle: 'PARIS_18', shelf: 'Living in Paris', price: 10 },
+  { handle: 'PARIS_05', shelf: 'Markets & groceries', price: 15 },
+  { handle: 'PARIS_20', shelf: 'Eating out', price: 5 },
 ]

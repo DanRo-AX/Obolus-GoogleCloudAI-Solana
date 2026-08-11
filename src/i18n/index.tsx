@@ -83,6 +83,7 @@ export function LangProvider({ children }: { children: React.ReactNode }) {
   return <LangContext.Provider value={value}>{children}</LangContext.Provider>
 }
 
+// oxlint-disable-next-line react/only-export-components -- colocated context hook.
 export function useLang() {
   const ctx = useContext(LangContext)
   if (!ctx) throw new Error('useLang must be used inside <LangProvider>')
@@ -90,6 +91,7 @@ export function useLang() {
 }
 
 /** Shorthand for the common case of only needing the translator. */
+// oxlint-disable-next-line react/only-export-components -- colocated context hook.
 export function useT() {
   return useLang().t
 }

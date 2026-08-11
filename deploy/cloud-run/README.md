@@ -361,17 +361,29 @@ gateway URLs. The gateway candidate must likewise use the tagged web URL as
 `RESEARCH_ORCHESTRATOR_URL`. Repoint all four values to canonical service URLs
 when creating the release revision for promotion.
 
-```bash
-gcloud run services update-traffic obolus-api \
-  --project=sweetspot-ax --region=asia-northeast3 --to-latest
+Never promote `latest`. A prior deployment placed a Pay.sh image under the
+gateway service, so an unqualified promotion can move traffic to the wrong
+runtime even when the currently serving revision is healthy. Guard the exact
+candidate and then use only the revision-pinned command printed by the guard:
 
+```bash
+npm run finalist:guard-promotion -- \
+  --project sweetspot-ax \
+  --region asia-northeast3 \
+  --role gateway \
+  --revision obolus-gateway-REVISION \
+  --expected-digest 0123...64-hex-digest...cdef
+
+# Only after the guard passes:
 gcloud run services update-traffic obolus-gateway \
-  --project=sweetspot-ax --region=asia-northeast3 --to-latest
+  --project=sweetspot-ax --region=asia-northeast3 \
+  --to-revisions=obolus-gateway-REVISION=100
 ```
 
-Rollback reverses those two commands with `--to-revisions=REVISION=100`, API
-first. Cloud SQL is not rolled back with application traffic; use PITR only for
-an actual data incident.
+Promote the API with the same role-specific guard and exact-revision rule.
+Rollback uses `--to-revisions=KNOWN_GOOD_REVISION=100`, API first. Cloud SQL is
+not rolled back with application traffic; use PITR only for an actual data
+incident.
 
 PITR is not safe merely because the restored database passes `/readyz`.
 Restoring to a point before a Pay.sh, x402, or payout attempt removes the very

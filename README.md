@@ -85,7 +85,8 @@ Prices read in won because that is what the people on the shelves think in. USDC
 
 No email, no password, no name. Connecting reads your public address; entering signs one expiring message that cannot move funds or approve a transaction. An asker only ever sees a handle.
 
-Devnet SOL and USDC faucet links are on the sign-in page, before you connect.
+The x402 facilitator sponsors the Devnet network fee, so the buyer needs test
+USDC but no SOL. The USDC faucet link is available before wallet connection.
 
 </td>
 <td width="50%">
@@ -152,7 +153,7 @@ Switch in the sidebar footer. The choice survives a reload.
 
 **Also included**
 
-- **[Antigravity plugin](integrations/antigravity/openshelf/README.md)**: the whole asker and contributor lifecycle as 23 `openshelf` MCP tools, plus the official Pay.sh MCP wallet behind a narrow handshake adapter.
+- **[Antigravity plugin](integrations/antigravity/openshelf/README.md)**: the whole asker and contributor lifecycle as 24 `openshelf` MCP tools, plus the official Pay.sh MCP wallet behind a narrow handshake adapter.
 - **Prepaid credit with recovery**: prove wallet ownership once, top up when low. A browser that loses the response reconciles against the server and retries only the handles that were never paid.
 - **Open-call escrow**: a paid call reserves its full budget up front. Accepted answers release one unit each, and cancellation or account deletion returns the exact unused remainder as a payout claim.
 - **A conduct ladder stated before signup**: false claims or low-quality answers earn a warning, and three warnings suspend the account. It is on the onboarding screen, not in the terms.
@@ -275,7 +276,7 @@ for the exact aggregate Devnet amount before it invokes Pay.**
 The same service runs without Antigravity:
 
 ```bash
-npm run agent:tools                          # list all 23 commands
+npm run agent:tools                          # list all 24 commands
 npm run agent:tools -- ask_people            # one exact input schema
 npm run agent:call -- ask_people --json \
   '{"question":"What do people living in Paris actually eat on weeknights?","requestedDocuments":3}'
@@ -334,7 +335,7 @@ frontend, agent-orchestrator, payment-gateway, and backend jobs separately. See
 | `payment-gateway/` | The x402 v2 gateway: quotes, verify/settle delegation, payout and escrow workers. |
 | `agent-orchestrator/` | The Cloud Run agent that pays each document's Pay.sh challenge. |
 | `pay/` | Pay.sh paywall definitions, Dockerfile, and the Cloud Build + GCP KMS deployment. |
-| `integrations/antigravity/openshelf/` | The plugin: 23 MCP tools, skills, and the Pay handshake adapter. |
+| `integrations/antigravity/openshelf/` | The plugin: 24 MCP tools, skills, and the Pay handshake adapter. |
 | `docs/` | Threat model, account linking, Pay.sh deployment, code review, ranking notes. |
 | `architecture.html` | System architecture and ERD, as one openable file. |
 

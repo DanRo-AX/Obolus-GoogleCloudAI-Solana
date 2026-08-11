@@ -1,13 +1,13 @@
-# OPENSHELF user scenarios
+# Obolus user scenarios
 
-Updated: 2026-08-03
+Updated: 2026-08-11
 
 ## User types
 
 | User | Primary job | Required state | Server-owned guarantees | UI entry |
 | --- | --- | --- | --- | --- |
 | Visitor | Search public shelf metadata | None | Cannot read memory, profile, balance, disputes, or another user's chats | Home, chat, coverage |
-| Buyer | Buy existing passages or commission missing coverage | Authenticated account; sandbox balance for a call | Full call budget reserved; one unit released per accepted answer; unused amount refundable; returned answers scoped to owned `chatId` | Chat, “Posted by me”, balance |
+| Buyer | Buy existing passages or commission missing coverage | Wallet-authenticated account; prepaid Devnet balance or funded call escrow | Exact question budget reserved; one unit released per accepted answer; unused amount refundable; returned answers scoped to owned `chatId` | Chat, “Posted by me”, balance |
 | Contributor | Receive and answer matching calls, then build reusable memory | Authenticated account and completed profile | Ranked in-app delivery, optional browser/email alerts, ten-minute slot hold; cannot answer own/full/cancelled call, answer twice, or bypass targeting | Dashboard, answer flow, My memory |
 | Memory-agent contributor | Reuse a previously paid answer without fabricating a new experience | Contributor with auto-match and Memory agent explicitly enabled | Exact old answer only; 82%+ question similarity, category/target match, unlocked document, price floor, and conduct limits are server-enforced | Dashboard preferences, My memory |
 | Restricted contributor | Continue after one or two quality failures | Same as contributor | 2 strikes remove auto-match and hold new earnings for 14 days; 3 strikes suspend new answers | Dashboard warning, memory ledger |
@@ -24,11 +24,14 @@ Updated: 2026-08-03
 
 ### Visitor and authentication
 
-- Registration validates email and an 8–128 character password.
-- Passwords are Argon2id hashes; session tokens are random, SHA-256 hashed at
-  rest, expire after 30 days, and are delivered in an HttpOnly SameSite cookie.
+- A fresh, one-time Ed25519 challenge proves control of a Solana wallet. The
+  signed message is not a token transfer or an allowance.
+- Server sessions are random, SHA-256 hashed at rest, expire after 30 days, and
+  are delivered in an HttpOnly SameSite cookie.
 - Private routes ignore spoofed `userId` query parameters and derive identity
   only from the session.
+- Only an explicit `401 Unauthorized` clears authenticated UI state. A network
+  outage or server error preserves local session state and exposes a retry path.
 - Sign-out revokes the current session and clears user-local UI state.
 
 ### Buyer
@@ -69,9 +72,8 @@ Updated: 2026-08-03
 
 ### Wallet and account identity
 
-- The signed-in OPENSHELF email, anonymous profile handle, browser-wallet public
-  key, saved payout address, verification state, and Devnet network are labelled
-  separately.
+- The Obolus account, anonymous profile handle, browser-wallet public key, saved
+  payout address, verification state, and Devnet network are labelled separately.
 - Connecting Phantom never changes the service payout profile by itself.
   Onboarding requires an explicit “Use this as payout address” action.
 - Payout ownership uses the exact server challenge through `signMessage`;
@@ -98,6 +100,9 @@ Updated: 2026-08-03
 - Memory agent never invokes a generative model. It reuses the exact accepted
   answer only above the strict similarity and policy boundary; otherwise the
   contributor receives a fresh interview notification.
+- A paid reuse is stored as a `reuse` receipt, not a new `observation`. It can
+  prove fulfillment and earnings without increasing author reliability,
+  triggering reflections, or becoming another auto-match source.
 
 ### AI market liquidity
 
@@ -147,10 +152,10 @@ human-coverage shutoff, AI-interview prompt validation, Shelf-starter human
 publication, plus exact bundle creation, query-token rejection, quote
 idempotency, one-signature settlement, multi-document recovery, per-document
 feedback, and per-beneficiary claim accounting. Frontend verification consists of TypeScript production build,
-Oxlint, and end-to-end Chrome walkthroughs of registration, onboarding, explicit
+Oxlint, and end-to-end Chrome walkthroughs of wallet sign-in, onboarding, explicit
 payout-address opt-in, profile eligibility refresh, MISS-to-open-call creation,
 the four-step private interview, an accepted ₩300 answer and earnings ledger,
-and buyer retrieval of that returned answer after a full account switch erased
+and buyer retrieval of that returned answer after a wallet/account switch removed
 the original local chat. The latest legacy live Devnet pass completed the ₩50/5-approval
 HIT across a response-loss recovery boundary, proved that failed attempts did not
 create chain settlements, and finalized all five legacy direct x402/SVM
@@ -168,10 +173,11 @@ release, and a clean browser console after reload.
 ## Explicit production boundaries
 
 - `KRW_SANDBOX` is an application ledger, not custody of fiat or tokens.
-- Mainnet x402 settlement still needs production recipient funding, KMS-backed
-  bundle payout signing, confirmation/reconciliation workers, and gateway hardening.
-- Social login, email verification/recovery, abuse rate limits, observability,
-  backups, and a separately staffed review operation remain deployment work.
+- Mainnet settlement remains deliberately disabled. The current payment and
+  payout workers enforce Solana Devnet USDC, exact quote binding, idempotent
+  recovery, and KMS-backed signing.
+- Abuse rate limits, observability, backups, an optional production email
+  provider, and a separately staffed review operation remain deployment work.
 - Chat transcripts are tab-session local; money, identity, authorization, calls,
   answers, and memory are server-owned.
 
@@ -182,15 +188,17 @@ release, and a clean browser console after reload.
    per-query reservation. A public-value launch still needs durable multi-node
    policy storage, rate limits, operational revocation tooling, and audited
    KMS/IAM controls.
-2. **Bundle payout execution.** Approval batching and per-author claim
-   accounting are implemented. Funds remain in the configured escrow until a
-   separately secured payout worker executes and reconciles those claims.
+2. **Payout operations.** Durable per-beneficiary claims, KMS signing,
+   broadcast, multi-RPC reconciliation, replay, refund, and recovery are
+   implemented for Devnet. Mainnet launch still requires funded production
+   wallets, operational monitoring, and audited signer rotation.
 3. **Mainnet operations.** Managed RPC/facilitator, KMS-backed secrets, durable
    reconciliation queue, monitoring, alerts, rate limits, backups, abuse
    controls, and incident runbooks are required before real value.
-4. **Commercial model.** Monthly top-ups on the pricing page are explicitly
-   projected. Implement custody/compliance and an actual ledger-to-USDC funding
-   path, or remove those plans before launch.
+4. **Commercial model.** Obolus is usage-based: discovery is free and each
+   opened passage or accepted Open Call answer is a micropayment. There is no
+   monthly subscription in the current product. Mainnet custody, compliance,
+   tax, and the platform fee policy still need commercial validation.
 5. **Quality and moderation operations.** Paid-buyer feedback,
    report intake, admin adjudication, Bayesian reliability updates, and automatic
    locking after repeated upheld reports are implemented end to end. Review SLAs,

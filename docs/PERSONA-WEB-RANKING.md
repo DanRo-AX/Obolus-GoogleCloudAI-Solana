@@ -31,6 +31,13 @@ derive from multiple memories and keep their source IDs. Locking removes a
 passage from active retrieval and quoting. Contributors can export their own
 memory and access log.
 
+Automatic reuse creates a separate `reuse` receipt linked to the original
+memory and document. It records the fulfilled call and earnings, but it is not
+a new firsthand observation: it is excluded from author reliability,
+reflection cadence, recommendation history, and future auto-match source
+selection. The original memory remains the only passage that can be corrected
+or locked.
+
 ## Public and paid boundary
 
 Free discovery returns handles, shelf/category, price, score components, and

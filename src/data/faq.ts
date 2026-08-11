@@ -27,7 +27,7 @@ export const HOME_FAQ: Faq[] = [
   },
   {
     q: 'Why should I hand over my personal information?',
-    a: 'We never ask for bank or card details. What you write down is life-level: a day in Seongsu, what lunch cost, which app you deleted and why. The thing you wanted to buy and did not.\n\nLeave, and your documents burn. Not pulled off the shelf — deleted. The settlement lines stay for accounting; the writing does not.\n\nThe money arrives on its own. When a document fits, SHELF opens it without you pressing approve, and USDC lands in your wallet on the spot.'
+    a: 'We never ask for bank or card details. What you write down is life-level: a day in Seongsu, what lunch cost, which app you deleted and why. The thing you wanted to buy and did not.\n\nLeave, and your documents burn. Not pulled off the shelf — deleted. The settlement lines stay for accounting; the writing does not.\n\nWhen a qualified buyer opens your document, 90% of its open price is settled to you. The included 10% protocol fee funds payment, recovery, quality and network operations.'
   },
   {
     q: 'What can an asker see about me?',
@@ -62,15 +62,15 @@ export const PRICING_FAQ: Faq[] = [
   },
   {
     q: 'What does a quote lock in?',
-    a: 'Every document carries its own ₩ price. Before anything is spent, the quote pins the exact document, its content hash, its version and consent version, the verified recipient, the Devnet USDC amount, the mint, the network, the exchange rate and an expiry.\n\nThe total for one question is the sum of those document charges, each rounded on its own. A document releases its passage only after its own Pay.sh payment callback comes back good.'
+    a: 'Every document carries its own ₩ price. Before anything is spent, the quote pins the exact document, its content hash, version and consent version, the verified recipient, Devnet USDC amount, mint, network, exchange rate, 90/10 settlement policy and expiry.\n\nThe displayed total already includes the 10% protocol fee; it is not added at checkout. A document releases its passage only after its own Pay.sh payment callback comes back good.'
   },
   {
     q: 'What is x402?',
-    a: 'A payment convention that uses HTTP 402 Payment Required. The status code sat reserved and empty for years; this puts money through it.\n\nIn the browser demo, Phantom asks once for the exact set you selected. One document pays its author directly. A set of documents sends one transfer to payout escrow, which records what each author is owed.\n\nAn agent can make the same x402 request on its own only after you hand it a policy-limited wallet or a spending delegation. There is no card checkout.\n\nThe rail is USDC on Solana, and you read ₩. A ₩5–₩25 open goes through the same way. Phantom may label Devnet USDC as Unknown, so the payment screen shows the mint to check it against.'
+    a: 'x402 uses HTTP 402 Payment Required to attach an exact price, asset, network and recipient to a protected URL. Search metadata stays free; only the committed passage sits behind that payment boundary.\n\nIn the browser, Phantom proves wallet ownership and signs a bounded USDC deposit only when prepaid credit is low. The x402 facilitator sponsors the Devnet network fee, so the buyer needs no SOL. A KMS-protected Pay.sh agent then verifies and settles each selected document independently.\n\nThe rail is USDC on Solana and the interface reads in ₩. Each displayed ₩5–₩25 price already includes the 90% evidence-owner share and 10% protocol fee.'
   },
   {
     q: 'How is an open call funded?',
-    a: 'One Phantom approval funds the whole target up front, in Devnet USDC, into escrow. Each accepted answer — and each eligible match already sitting on the shelves — becomes a deterministic payout claim against it.\n\nCancel, and every unused unit goes back to the wallet that paid.\n\nA ₩0 call moves no tokens at all. It lives on the off-chain ledger only.'
+    a: 'One Phantom approval funds the whole target up front in Devnet USDC. The x402 facilitator sponsors the network fee, and the funded amount is bound to that call’s target, unit price and refund policy.\n\nEach accepted answer becomes a deterministic payout claim. Cancel, and every unused unit goes back to the wallet that funded the call.\n\nA ₩0 call moves no tokens at all. It lives on the off-chain ledger only.'
   },
   {
     q: 'Do I sign for every open?',
@@ -78,11 +78,11 @@ export const PRICING_FAQ: Faq[] = [
   },
   {
     q: 'Who holds the keys?',
-    a: 'Your key stays inside Phantom. Obolus never receives a seed phrase, a private key, an SPL delegate or token-account authority.\n\nThe service key is held by Google Cloud KMS and cannot be exported; Cloud Run only gets IAM permission to ask it for a signature.\n\nAn author publishes a verified receiving address and never hands Obolus a signing key.'
+    a: 'Your key stays inside Phantom. Obolus never receives a seed phrase, private key, SPL delegate or authority over the rest of your wallet.\n\nA buyer’s chosen deposit becomes custodial Obolus prepaid credit. It can be reserved only for quoted questions, unused credit remains withdrawable, and the service cannot pull additional funds from Phantom.\n\nThe separate service key is held by Google Cloud KMS and cannot be exported; Cloud Run only gets IAM permission to request a signature. An author publishes a verified receiving address and never hands Obolus a signing key.'
   },
   {
     q: 'When does settlement happen?',
-    a: 'The asker settles the moment the selected documents open. One document pays that author directly onchain. A set of documents sends one transfer to payout escrow, which records each author’s claim against the wallet shown on their shelf.\n\nThe current build does not pretend that claim is already a payout sitting in the author’s wallet. For answers to an open call, the price moves through the ledger labelled KRW_SANDBOX once the asker accepts the answer. A call that closes short still pays everyone who answered, and the unfilled slots go back to the asker.\n\nDevnet USDC and sandbox ₩ are test value. Production withdrawals need a secured payout executor, a custody and compliance policy, and mainnet reconciliation — none of that is switched on in this build.'
+    a: 'For existing evidence, the question budget is first reserved from verified prepaid credit. The KMS-protected Pay.sh agent then settles each selected document and the passage opens only after the matching callback is verified.\n\nThe displayed document price is split 90% to its evidence owner and 10% to the protocol. If one document fails permanently, only that unopened amount returns to prepaid credit; already delivered documents are never paid twice.\n\nThese are real Solana Devnet transactions using test USDC. The tokens have no market value, and Mainnet custody, compliance, tax and reconciliation remain production work.'
   },
   {
     q: 'What if a payment fails partway through?',
@@ -106,6 +106,6 @@ export const PRICING_FAQ: Faq[] = [
   },
   {
     q: 'Is this real money?',
-    a: 'Not yet. The build runs on Solana Devnet with test USDC, and ₩ figures settle through a sandbox ledger. Mainnet, card checkout, subscriptions and commercial custody are switched off.\n\nThe onchain path and the internal ledger are both wired end to end so the architecture can be checked against real transfers. Devnet assets are worth nothing.'
+    a: 'The build executes real onchain transactions on Solana Devnet using test USDC. Transaction signatures, recipients and amounts can be verified in Solana Explorer, but Devnet assets have no market value.\n\nMainnet settlement, fiat checkout and commercial custody are not enabled. The next production step is Mainnet compliance, reconciliation, monitoring and funded-wallet operations — not replacing a sandbox mock.'
   }
 ]

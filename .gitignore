@@ -40,3 +40,10 @@ openshelf.db-wal
 
 # Recorded demo output
 scripts/.e2e-video/
+
+# Generated finalist evidence. These reports contain only public identifiers,
+# but remain run-specific and should be attached to the submission deliberately.
+artifacts/finalist-evidence/
+
+# Local agent session and project-memory state.
+.omc/

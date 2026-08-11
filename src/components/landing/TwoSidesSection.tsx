@@ -126,7 +126,7 @@ const ASKING = [
   },
   {
     head: 'You pay per open, in won',
-    body: '₩5 to ₩20 to open one document. No subscription, no seat, no minimum.',
+    body: '₩5 to ₩25 to open one document. No subscription, no seat, no minimum. The displayed price already includes the 10% protocol fee.',
   },
 ]
 
@@ -145,6 +145,6 @@ const ANSWERING = [
   },
   {
     head: 'Money arrives without asking',
-    body: 'Every time somebody opens what you wrote, USDC lands in your wallet. ₩5 to ₩20 a go, and we never touch it.',
+    body: 'Every qualified open settles 90% of its ₩5 to ₩25 price to you. The 10% protocol fee funds payment, recovery, quality and network operations.',
   },
 ]

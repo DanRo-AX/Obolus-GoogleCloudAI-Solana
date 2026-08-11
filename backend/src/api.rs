@@ -22,12 +22,13 @@ use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_kn
 
 use crate::{
     domain::{
-        AccountControls, AdminOperationsSnapshot, AiLiquidityMetrics, AuthResponse, BalanceSummary,
-        BeginResearchPaymentRequest, BindPayShChallengesRequest, ChainSettlementReceipt,
-        ChatAnswer, ClaimPaymentAttemptRequest, CompletePayoutClaimRequest, ContributorManifest,
-        ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
-        CreateEvidenceEdgeRequest, CreateOpenCallRequest, CreatePaymentBundleRequest,
-        CreatePrepaidSessionRequest, CreatePrepaidWithdrawalRequest, DeferResearchPaymentRequest,
+        AccountControls, AdminOperationsSnapshot, AgentRun, AgentStep, AgentStepStatus, AgentTool,
+        AiLiquidityMetrics, AuthResponse, BalanceSummary, BeginResearchPaymentRequest,
+        BindPayShChallengesRequest, ChainSettlementReceipt, ChatAnswer, ClaimPaymentAttemptRequest,
+        CompletePayoutClaimRequest, ContributorManifest, ContributorMemoryLink,
+        ContributorNotification, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
+        CreateOpenCallRequest, CreatePaymentBundleRequest, CreatePrepaidSessionRequest,
+        CreatePrepaidWithdrawalRequest, DeferResearchPaymentRequest,
         DirectPayShPaymentReconciliation, DisputeCase, DocumentFeedback, EarningsSummary,
         EvidenceEdge, FailPayoutClaimRequest, FailResearchJobRequest, ForgotPasswordRequest,
         GenerateAiBaselineResponse, GenerateShelfStartersResponse, LeasePayoutClaimsRequest,
@@ -883,12 +884,117 @@ async fn me(
 
 async fn resolve_question(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(request): Json<ResolveQuestionRequest>,
 ) -> Result<Json<ResolveQuestionResponse>, ApiError> {
     let question = request.question.clone();
+    let agent_run_id = format!("agent_{}", random_token());
+    let provider_fence =
+        orchestrator::generation_fence_namespace(orchestrator::AGENT_PLAN_POLICY_VERSION);
+    let input_hash = token_hash(
+        &serde_json::to_string(&serde_json::json!({
+            "providerFence": provider_fence,
+            "question": &request.question,
+            "requestedDocuments": request.requested_documents,
+            "budgetKrw": request.budget_krw,
+            "filters": &request.filters,
+        }))
+        .expect("agent plan input is serialisable"),
+    );
+    // Free discovery remains public and deterministic. Provider-backed
+    // planning is enabled only for an authenticated account and is budgeted
+    // per user, preventing an anonymous endpoint from becoming an unbounded
+    // Vertex spend surface.
+    let planner_scope = session_token(&headers).and_then(|token| {
+        state
+            .store
+            .authenticate_session(&token_hash(&token))
+            .ok()
+            .map(|user| user.id)
+    });
+    let mut provider_window = None;
+    if let Some(scope_id) = planner_scope.as_deref()
+        && let AiGenerationClaim::Acquired { window_started_at } =
+            state
+                .store
+                .claim_ai_generation("agent_plan", scope_id, &input_hash, &[])?
+        && authorize_model_call(
+            &state,
+            "agent_plan",
+            scope_id,
+            &input_hash,
+            window_started_at,
+            &provider_fence,
+        )
+        .await
+        .is_ok()
+    {
+        provider_window = Some((scope_id.to_owned(), window_started_at));
+    }
+    let planned =
+        orchestrator::plan_human_evidence_search(&request, provider_window.is_some()).await;
+    if let Some((scope_id, window_started_at)) = provider_window {
+        if planned.mode == "vertex_function_call" {
+            state.store.complete_ai_generation(
+                "agent_plan",
+                &scope_id,
+                &input_hash,
+                window_started_at,
+                None,
+            )?;
+        } else {
+            state.store.fail_ai_generation(
+                "agent_plan",
+                &scope_id,
+                &input_hash,
+                window_started_at,
+            )?;
+        }
+    }
     let resolver =
         Resolver::new(state.store.documents()?).with_evidence_edges(state.store.evidence_edges()?);
-    let mut response = resolver.resolve(request)?;
+    let mut response = resolver.resolve(planned.request.clone())?;
+    let next = orchestrator::plan_next_market_action(&response, &planned);
+    let query_id = response.query_id.clone();
+    let mut steps = vec![planned.step];
+    steps.push(AgentStep {
+        sequence: 2,
+        agent: "retrieval_agent".to_owned(),
+        tool: AgentTool::RankEvidenceBundle,
+        status: AgentStepStatus::Completed,
+        summary: format!(
+            "Ranked {} eligible candidates and selected {} independent documents within policy.",
+            response.candidate_count,
+            response.matches.len()
+        ),
+        artifact_ref: Some(query_id.clone()),
+    });
+    steps.push(next.step);
+    let mode = if planned.mode == "vertex_function_call" || next.mode == "vertex_function_call" {
+        "vertex_tools_with_deterministic_guards"
+    } else {
+        "deterministic_fallback"
+    };
+    let model = if planned.model != "none" {
+        planned.model
+    } else {
+        next.model
+    };
+    response.agent_run = Some(AgentRun {
+        id: agent_run_id,
+        objective: "Find the smallest trustworthy human-evidence set, then choose the next safe market action."
+            .to_owned(),
+        model,
+        mode: mode.to_owned(),
+        steps,
+        next_action: next.tool,
+        requires_user_approval: matches!(
+            next.tool,
+            AgentTool::ProposeEvidencePurchase
+                | AgentTool::ProposeHybridResearch
+                | AgentTool::ProposeOpenCall
+        ),
+    });
     let payment_access_token = random_token();
     state.store.record_resolution(
         &question,
@@ -3863,6 +3969,17 @@ mod tests {
         let query_id = body["queryId"].as_str().unwrap();
         let token = body["paymentAccessToken"].as_str().unwrap();
         assert_eq!(token.len(), 64);
+        assert_eq!(body["agentRun"]["steps"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            body["agentRun"]["steps"][0]["tool"],
+            "search_human_evidence"
+        );
+        assert!(
+            !body["agentRun"]["steps"]
+                .to_string()
+                .to_lowercase()
+                .contains("chain-of-thought")
+        );
 
         let progress_path = format!(
             "/api/v1/questions/{query_id}/payment-progress?payer=11111111111111111111111111111111"

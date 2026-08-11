@@ -36,10 +36,9 @@ export function getPhantom(): PhantomProvider | null {
 
 export const PHANTOM_INSTALL_URL = 'https://phantom.app/download'
 
-/** Devnet USDC. The faucet step hands out SOL for fees and this mint for value. */
+/** Devnet USDC. The x402 facilitator sponsors fees; buyers only need this test asset. */
 export const DEVNET_USDC = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
 export const DEVNET_FAUCETS = {
-  sol: 'https://faucet.solana.com',
   usdc: 'https://faucet.circle.com',
 }
 

@@ -31,6 +31,7 @@ steps:
       - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/orchestrator:$BUILD_ID
       - --region=${_REGION}
       - --platform=managed
+      - --no-traffic
       - --labels=initiative=kr2,kr=kr2,owner=ax,item=obolus
       - --service-account=${_SERVICE_ACCOUNT}
       - --allow-unauthenticated

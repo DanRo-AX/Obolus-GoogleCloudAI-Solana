@@ -217,6 +217,7 @@ impl Resolver {
             matches,
             quote,
             open_call,
+            agent_run: None,
         })
     }
 

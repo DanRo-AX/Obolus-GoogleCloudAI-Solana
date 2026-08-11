@@ -1,0 +1,355 @@
+# Obulus 결선 기술·상용화 준비도
+
+기준일: 2026-08-11
+검토 범위: 웹, Rust API, 검색·메모리·품질 로직, Gemini/Vertex AI, MCP/CLI,
+x402 gateway, Pay.sh orchestrator, Solana Devnet, Cloud Run·Cloud SQL·Cloud
+Tasks·Cloud KMS·Secret Manager, 테스트 및 현재 GCP 서빙 상태
+
+## 결론
+
+Obulus의 가장 강한 포지션은 **B. Autonomous On-chain Settlement**다. 질문자가
+질문별 최대 예산을 한 번 승인하면 Agent가 사람 DB를 검색·랭킹하고, 필요한 최소
+근거만 선택한 뒤, 정해진 예산과 정책 안에서 문서별 Solana USDC 결제를 수행한다.
+**A. Agent-Initiated Commerce**도 함께 충족하지만, 핵심 차별점은 단순 결제 요청이
+아니라 검색 결과와 결제 대상·금액·수취인을 자동 결정하고 복구 가능한 원장으로
+정산한다는 점이다. 현재 코드에는 A2A 프로토콜이나 Passkey가 구현돼 있지 않으므로
+그 둘을 사용했다고 주장해서는 안 된다.
+
+소스 코드 기준 핵심 제품 흐름은 구현됐고 전체 자동 검증 324개가 통과한다. 그러나
+현재 GCP의 **실제 100% 서빙 리비전**은 최신 소스와 일치하지 않는 부분이 있다.
+읽기 전용 운영 검증 결과는 63개 통과, 14개 실패다. 따라서 아래 P0를 해결하기
+전에는 “현재 프로덕션 경로가 모두 최신·완료됐다”고 표현하면 안 된다.
+
+## 제품을 한 문장으로 설명하면
+
+Obulus는 범용 LLM이 알 수 없는 지역·직업·생활 경험을 실제 사람들의 동의된 DB에서
+검색하고, Agent가 답변에 필요한 근거만 문서 단위로 구매해 데이터 소유자에게
+Solana USDC로 정산하는 human evidence network다.
+
+사람의 답변은 일회성 설문으로 사라지지 않는다. 품질 검증을 통과한 응답은 해시,
+버전, 동의 범위, 수취 지갑과 연결된 개인 memory stream에 들어간다. 이후 관련
+질문에서 다시 선택되면 원문을 새로 생성하지 않고 같은 경험 문서가 재사용되며,
+실제 열람될 때마다 다시 정산된다. 검색 결과가 부족하면 대상·인원·보상을 명시한
+Open Call로 전환되어 새로운 사람 데이터가 공급된다.
+
+## 심사 항목별 구현과 남은 과제
+
+### 1. AI 기술 자율성 — 30%
+
+#### 현재 구현
+
+- 인증된 질문에서 Vertex AI Gemini function calling이
+  `search_human_evidence` 도구를 호출해 검색 수량, 카테고리, 지역, 연령·가구·분야
+  필터와 HIT/PARTIAL/MISS 후속 행동을 계획한다.
+- `research_planner → retrieval_agent → coverage_agent`의 세 단계 실행 기록이
+  생성되고 `agent_runs`, `agent_steps`에 영속 저장된다.
+- Retrieval Agent는 텍스트 관련성, 핵심어 coverage, 질문별 personalized
+  PageRank, 신뢰도, 최신성, 작성자 다양성, 중복도와 예산을 함께 계산한다.
+- Coverage Agent는 결과를 관찰한 뒤 기존 근거 구매, 기존 근거와 신규 모집을
+  결합한 hybrid research, 또는 Open Call 제안을 선택한다.
+- 모델 장애·잘못된 도구·범위 밖 인자가 발생하면 동일한 정책의 결정론적 fallback을
+  사용한다. 실행 기록에는 도구와 결과만 남고 chain-of-thought나 원문 prompt는
+  저장하지 않는다.
+- Gemini는 검색 MISS의 무료 baseline, 기여자 인터뷰 질문, 결제된 근거만을
+  사용하는 citation 합성의 세 역할을 맡는다.
+- 웹 외부에서도 24개의 MCP 도구로 검색, quote, 결제 준비, 근거 합성, Open Call,
+  memory, 수익·지급 상태를 호출할 수 있다.
+
+#### 안전 경계
+
+Gemini가 사용할 수 있는 검색 도구에는 지갑, 수취인, 자산, 가격, 송금 기능이 없다.
+모델은 사용자가 정한 문서 수와 예산을 늘릴 수 없고, 결제 전 private passage를 볼
+수 없다. HIT가 발생해도 실행은 `awaiting_user_approval`에서 멈추며, 사용자 승인과
+서버의 immutable quote가 일치해야만 결제 단계로 넘어간다. 즉 확률적 AI는 계획과
+해석을 담당하고, 동의·가격·해시·버전·결제·본문 공개는 결정론적 시스템이 통제한다.
+
+#### 심사에서 정확히 표현할 범위
+
+현재 구조는 **A2A에 준하는 역할 분리형 multi-agent orchestration**이지 Google A2A
+프로토콜 구현은 아니다. Gemini가 한 번의 function call로 검색 계획과 조건부
+후속 행동을 정하고, 결정론적 Retrieval/Coverage Agent가 관찰과 검증을 수행한다.
+실제 A2A Agent Card·task protocol을 사용했다고 말하면 안 된다.
+
+#### 보완 우선순위
+
+- P0: 최신 API 리비전을 승격한 뒤, 실제 Vertex function-call 응답과 화면의 agent
+  trace를 한 질문에서 함께 검증한다.
+- P1: agent run 상세 조회 API와 운영 대시보드에 tool latency, fallback rate,
+  HIT/PARTIAL/MISS별 다음 행동, 사용자 승인 전환율을 추가한다.
+- P1: 복잡한 질문에만 2차 계획 호출을 허용하는 bounded re-planning을 추가한다.
+  반복 횟수와 모델 비용 상한은 서버가 고정해야 한다.
+- P2: 외부 기업 Agent와 통신해야 할 실제 고객 요구가 생길 때 A2A를 추가한다.
+  해커톤 가점을 위해 빈 프로토콜을 억지로 붙이는 것보다 현재 MCP와 감사 가능한
+  실행 기록을 완성하는 편이 더 설득력 있다.
+
+### 2. 비즈니스 가치 및 UX — 30%
+
+#### 해결하는 문제
+
+시장조사 기관, 브랜드, 소셜 월드모델 기업은 특정 지역·직업·상황의 최신 인간
+경험을 얻기 위해 매번 패널을 모집하고 인터뷰한다. 같은 사람이 비슷한 질문에
+반복 응답해도 데이터는 프로젝트 보고서에 갇히고, 응답자는 최초 보상 이후의 재사용
+가치에 참여하지 못한다. 범용 LLM은 공개 웹의 평균적 패턴에는 강하지만 최근의
+지역 선택, 실제 구매 이유, 실패 경험처럼 공개되지 않은 firsthand evidence를
+정확히 알 수 없다.
+
+#### 현재 UX
+
+- 질문 한 번으로 무료 metadata 검색과 랭킹을 수행한다.
+- 질문 조건에 맞는 최소 독립 근거 집합과 정확한 총액을 결제 전에 보여준다.
+- 사용자는 문서마다 결제하지 않고 질문별 한도를 한 번 승인한다.
+- x402 facilitator가 Devnet 네트워크 수수료를 부담하므로 구매자는 테스트 USDC만
+  필요하고 SOL은 필요하지 않다.
+- Phantom은 지갑 소유 증명과 잔액 부족 시 bounded USDC 예치만 서명한다. 서버는
+  사용자의 개인키나 token delegate 권한을 받지 않는다.
+- 결제된 passage만 인용되며, 데이터가 부족하면 필요한 대상·인원·보상이 명확한
+  Open Call을 제안한다.
+- 기여자는 자신의 memory, lock·수정·삭제, 접근과 수익을 관리할 수 있다.
+- 인증 서버가 일시 장애일 때 기존 세션을 무조건 삭제하지 않고 복구 UI를 제공한다.
+
+#### 마이크로페이 수익 모델
+
+현재 문서 가격대는 **₩5·₩10·₩15·₩25**이며 검색과 metadata 비교는 무료다.
+결제 가격에는 프로토콜 수수료가 이미 포함된다. 한 문서가 열리면 atomic amount의
+90%는 근거 소유자, 10%는 프로토콜에 배분되고, 반올림 후 두 금액의 합은 항상
+원래 결제액과 정확히 같다. 구독이 기본 모델이 아니다.
+
+플랫폼 매출은 다음처럼 설명하는 것이 가장 정확하다.
+
+`플랫폼 매출 = 유료 evidence open 총액 × 10% + Open Call 정산 수수료(향후 정책)`
+
+기업용 private panel, SLA나 데이터 적재 서비스는 별도 계약 가능성이 있지만 현재
+제품의 핵심 경제는 월 구독이 아니라 문서 단위 machine micropayment다.
+
+#### 보완 우선순위
+
+- P0: 현재 GCP에 최신 gas-sponsored/90:10 UX를 승격하고 실제 브라우저에서
+  “SOL 없이 USDC 예치 → 자동 문서별 정산 → 영수증”을 증명한다.
+- P0: 브라우저 세션에만 남는 질문 UI 기록과 별개로, 서버 원장의 buyer receipt를
+  계정별로 조회하는 API와 영수증 화면을 제공한다.
+- P1: 해커톤 이후 소비자 Web3 진입장벽을 더 낮추려면 WebAuthn Passkey 또는
+  passkey-backed embedded wallet을 검토한다. 현재는 wallet-only signMessage와
+  gas sponsorship으로 진입 단계를 줄였지만 Passkey 자체는 구현돼 있지 않다.
+- P1: 실제 PoC에서 HIT rate, 질문당 유료 문서 수, 답변 시간, 반복 사용률,
+  contributor 재수익률, 환불률을 측정한다.
+- P1: 건강·법률·신용·채용 자동결정은 초기 시장에서 제외하고, 브랜드·F&B·리테일,
+  시장조사, 소셜 월드모델 검증 데이터처럼 탐색적 research부터 시작한다.
+
+### 3. GCP 인프라 확장성 — 15%
+
+#### 소스와 리소스에 구현된 구조
+
+- Cloud Run: React web, Rust API, x402 gateway, Pay.sh orchestrator/collector
+- Vertex AI Gemini: function calling, baseline, interview prompt, paid evidence synthesis
+- Cloud SQL PostgreSQL 16: 결제·동의·메모리·agent run·복구 원장
+- Cloud Tasks: settlement 작업의 bounded retry와 동시성 제한
+- Cloud KMS: 비수출형 Solana 운영 키 서명
+- Secret Manager: DB URL, RPC, 내부 인증정보
+- Cloud Build/Artifact Registry: 서비스별 이미지 빌드와 배포
+- GCS create-only rollback audit: 외부 side effect 전 독립 감사 경계
+- `/readyz`, 구조화된 복구 상태, 전용 service account 및 fail-closed 설정 검사
+
+#### 현재 실제 운영 검사 결과
+
+읽기 전용 검증기 기준 77개 항목 중 63개가 통과했고 14개가 실패했다.
+
+- 100% 서빙 API·gateway·orchestrator가 과거 공유 service account를 사용한다.
+- gateway의 latest-ready revision이 gateway가 아니라 Pay.sh 이미지를 가리킨다.
+- 현재 서빙 gateway/orchestrator에서 독립 RPC 2개가 확인되지 않는다.
+- Pay.sh public health boundary가 기대한 404가 아니라 200을 반환한다.
+- Cloud SQL `sslMode`가 암호화 연결만 강제하지 않는다.
+- 별도 SQL binding 검사에서 현재 서빙 API와 `ax-apps-db` 연결이 불일치로 판정된다.
+
+이 상태를 감추지 않기 위해 `finalist:verify-infra`와
+`finalist:guard-promotion`을 추가했다. 승격 가드는 정확한 revision, image repository,
+digest, 전용 service account, Cloud Tasks, KMS, 독립 RPC 조건을 확인하기 전에는
+통과하지 않으며 `--to-latest` 사용을 금지한다.
+
+#### 보완 우선순위
+
+- P0: 서비스별 전용 service account와 최신 안전 리비전을 만들고, 잘못된 gateway
+  latest-ready 리비전을 절대 트래픽에 올리지 않는다.
+- P0: gateway와 orchestrator 모두에서 서로 다른 origin의 RPC 2개로 동일한 finalized
+  transaction bytes를 재현하도록 Secret과 revision을 설정한다.
+- P0: Pay.sh 내부 health endpoint는 public front에서 404로 차단한다.
+- P0: Cloud SQL 암호화 연결을 강제하고 API가 `ax-apps-db`를 실제 mount하는지 확인한다.
+- P0: 변경 후 검증 보고서가 `summary.ready=true`일 때만 정확한 revision으로 100%
+  트래픽을 이동한다.
+- P1: Cloud Monitoring SLO, error budget, 결제 reconciliation backlog, Vertex fallback
+  rate, queue age, RPC 불일치 알람을 대시보드와 alert policy로 고정한다.
+- P1: 실제 트래픽 증가 전 Cloud SQL HA, private IP/VPC connector, restore drill,
+  Cloud Armor/rate limit을 검증한다.
+
+### 4. Solana 온체인 결제 — 15%
+
+#### 현재 구현
+
+- 보호된 문서 URL이 exact price, Devnet USDC mint, network, owner recipient가 포함된
+  HTTP 402/x402 또는 MPP challenge를 반환한다.
+- Agent는 질문별 immutable bundle에서 선택된 문서만 결제하고, 각 quote는 content
+  hash, document version, consent version, owner wallet, amount, expiry와 결합된다.
+- hosted 경로는 prepaid balance를 원자적으로 reserve한 뒤 Cloud Run Pay.sh
+  orchestrator와 KMS signer를 사용한다. 외부 Agent 경로는 MCP/CLI와 로컬 Pay.sh
+  credential store를 사용한다.
+- 최종 응답 공개 전에 두 독립 RPC가 같은 finalized transaction bytes, 금액, mint,
+  수취인, memo/attempt를 재현해야 한다.
+- 결제 응답 유실, worker 재시작, blockhash 만료, RPC 지연, partial failure에서
+  같은 signed transaction만 복구하며 새 송금을 중복 생성하지 않는다.
+- 미사용 reserve는 환불 claim으로 복구되고, payout/refund worker는 lease와 durable
+  outbox를 사용한다.
+- Open Call은 미래 수취인이 정해지지 않으므로 기존 문서 결제와 분리된 escrow
+  funding·deterministic payout claim·미사용분 환불 흐름을 사용한다.
+
+#### 보완 우선순위
+
+- P0: 최신 hosted 경로에서 실제 질문 하나를 실행하고 query/job/quote ID, 각
+  transaction signature, Explorer URL, owner USDC 증가, 독립 RPC 2개 finality,
+  동일 job 재시도 후 duplicate settlement 0, 실패분 refund를 한 증거 묶음으로 남긴다.
+- P0: 이 증거는 `finalist:record-devnet`으로 개인정보 없이 직렬화하고
+  `summary.ready=true`를 확인한다. fixture나 sandbox receipt는 실제 거래 증거가 아니다.
+- P1: Mainnet 전환 전 treasury와 사용자 자금을 법적으로 분리하고 KYC/AML, 제재
+  주소, 세금, 환불·분쟁, 회계 원장 정책을 확정한다.
+- P1: Open Call escrow를 장기적으로 trust-minimized하게 만들 필요가 있으면 Solana
+  program과 감사된 program-derived escrow를 도입한다. 현재는 backend ledger와
+  service-wallet payout 구조이므로 “온체인 에스크로 프로그램”이라고 부르면 안 된다.
+
+## 전체 아키텍처
+
+```mermaid
+flowchart LR
+    subgraph Client[사용자와 외부 Agent]
+        Web[React Web]
+        Phantom[Phantom\n소유 증명·USDC 예치]
+        MCP[MCP / CLI\n24 tools]
+        LocalPay[로컬 Pay.sh\nOS 보호 키]
+    end
+
+    subgraph AI[Gemini 기반 자율 의사결정]
+        Planner[Research Planner\nVertex function calling]
+        Retrieval[Retrieval Agent\n검색·PPR·다양성·예산]
+        Coverage[Coverage Agent\nHIT / PARTIAL / MISS]
+        Interview[Interview Agent\n구체화 질문]
+        Synthesis[Synthesis Agent\n결제 근거만 인용]
+    end
+
+    subgraph Core[Rust / Axum 결정론적 코어]
+        Policy[동의·버전·해시·품질]
+        Quote[Immutable Quote / Bundle]
+        Ledger[Research Job·Agent Run·Payment Ledger]
+        Memory[Memory Stream\nObservation·Reflection·Reuse]
+    end
+
+    subgraph GCP[Google Cloud]
+        Run[Cloud Run]
+        SQL[Cloud SQL PostgreSQL]
+        Tasks[Cloud Tasks]
+        KMS[Cloud KMS\n비수출형 서명키]
+        Secrets[Secret Manager]
+        Vertex[Vertex AI Gemini]
+    end
+
+    subgraph Payment[결제와 정산]
+        Gateway[x402 Gateway\nHTTP 402]
+        PaySh[Pay.sh / MPP]
+        Solana[Solana Devnet USDC]
+        Owner[데이터 소유자 지갑\n90%]
+        Protocol[프로토콜 수취\n10%]
+    end
+
+    Web --> Planner
+    MCP --> Planner
+    Vertex --> Planner
+    Planner --> Retrieval --> Coverage
+    Retrieval --> Policy
+    Coverage -->|HIT| Quote
+    Coverage -->|MISS| Interview --> Memory
+    Policy --> Memory
+    Quote -->|사용자 승인| Ledger
+    Phantom -->|bounded deposit| Ledger
+    LocalPay --> Gateway
+    Ledger --> Tasks --> PaySh
+    PaySh --> Gateway --> Solana
+    KMS --> PaySh
+    Secrets --> Run
+    Ledger --> SQL
+    Solana --> Owner
+    Solana --> Protocol
+    Solana -->|finalized receipt| Ledger
+    Ledger -->|paid snapshots only| Synthesis --> Web
+```
+
+## 구현의 혁신성을 뾰족하게 설명하는 방법
+
+1. **LLM 답변 서비스가 아니라 인간 근거를 거래하는 검색 인프라다.** Gemini가
+   사람을 흉내 내지 않고, 어떤 사람 DB가 필요한지 계획하고 이미 결제된 근거만
+   합성한다.
+2. **검색과 결제를 분리한다.** 안전한 metadata는 무료로 비교하고, 관련성·신뢰·
+   다양성·예산을 계산한 최소 근거 집합만 유료로 연다.
+3. **인기도가 아니라 질문별 권위를 계산한다.** Google의 링크 기반 검색과 스팸
+   방어 원리를 인간 evidence graph에 맞게 재해석했다. paid·sponsored·self·copied
+   관계는 positive authority를 만들 수 없다.
+4. **검색 실패가 공급을 만든다.** MISS는 빈 화면이 아니라 필요한 대상·인원·보상을
+   가진 Open Call이 되고, 채택된 답변은 다음 질문에서 재사용 가능한 memory가 된다.
+5. **사람의 데이터가 반복 수익 자산이 된다.** 정확한 원문을 버전·동의·해시와 함께
+   보존하고, 동일 경험이 다시 필요할 때 생성형 impersonation 없이 재사용한다.
+6. **결제가 정보 접근 권한을 결정한다.** payment proof가 진실을 증명하는 것은
+   아니지만, 어떤 버전의 passage를 누가 얼마에 열었고 어떤 답변에 사용할 수 있는지
+   기계적으로 고정한다.
+7. **사람이 매번 클릭하지 않아도 된다.** 질문별 한도 안에서 Agent가 문서 단위
+   마이크로페이를 수행하고, MCP를 통해 외부 Agent도 같은 시장을 사용할 수 있다.
+
+## 상용화 단계
+
+### P0 — 결선 전에 반드시 완료
+
+- 최신 소스를 서비스별 올바른 Cloud Run 리비전으로 배포
+- GCP 검증 77개 전부 통과, `summary.ready=true`
+- hosted Pay.sh 실제 Devnet 지급·복구 evidence의 `summary.ready=true`
+- signed-in 질문에서 Vertex tool call과 3단계 agent trace 확인
+- SOL 없는 신규 Phantom 지갑의 USDC-only 온보딩 확인
+- 최신 90/10 수수료와 ₩5~₩25 가격이 UI·quote·on-chain split에서 동일한지 확인
+- buyer server receipt 조회 또는 데모용 원장 조회 화면 제공
+
+### P1 — 유료 PoC 전에 완료
+
+- 동의 문구·사용 목적·보존 기간·철회·삭제 처리에 대한 법률 검토
+- 실제 사람 30~100명 규모의 좁은 패널과 20~50개 질문으로 품질·HIT rate 검증
+- representative sample이 아님을 표시하고 diversity/coverage 경고 제공
+- buyer·contributor support, dispute SLA, payout reconciliation 운영 절차
+- Passkey/embedded wallet 또는 검증된 fiat-to-USDC 진입 경로
+- SLO·alert·incident drill·Cloud SQL restore drill·KMS rotation drill
+- mainnet 경제 모델과 수수료, treasury, 세무·회계·제재 정책 검증
+
+### P2 — 네트워크 확장
+
+- outcome-verified evidence와 산업별 trust graph
+- 대규모 hybrid retrieval과 multilingual embedding
+- 기업 private panel과 세분화된 access policy
+- 실제 파트너 요구가 있을 때 A2A/AP2 interoperability
+- 외부 감사를 통과한 Solana escrow program과 Mainnet settlement
+
+## 검증 결과
+
+- frontend unit: 10/10
+- Cloudflare Pages proxy: 3/3
+- MCP/CLI runtime: 14/14
+- 결선 evidence tooling: 8/8
+- x402 payment gateway: 88/88
+- Pay.sh orchestrator: 50/50
+- Rust library/API: 141/141
+- Rust agent autonomy contract: 7/7
+- Rust API main/contract/PostgreSQL concurrency: 4/4
+- 총 324개 테스트 통과
+- TypeScript build/typecheck, Vite production build, Pages bundle verification, oxlint,
+  Rust fmt, Clippy `-D warnings`, `git diff --check` 통과
+- root/payment-gateway/agent-orchestrator npm production dependency audit: 취약점 0
+- RustSec audit: 취약점 0
+
+## 현실적인 점수 판단
+
+소스와 로컬 자동 검증만 보면 AI 자율성 25~27/30, 비즈니스·UX 24~26/30,
+GCP 12~13/15, Solana 13~14/15 수준의 근거가 있다. 하지만 현재 서빙 리비전의 14개
+실패와 최신 hosted Devnet receipt 부재는 실제 심사에서 감점될 수 있다. P0를 모두
+완료하고 라이브 화면과 Explorer receipt가 같은 질문에 연결되면 발표 점수를 제외한
+90점 중 약 82~86점을 방어할 수 있다. “만점”은 코드 양보다도 실제 최신 리비전,
+실제 결제 증거, 좁고 명확한 고객 PoC 지표가 함께 있을 때 가능하다.

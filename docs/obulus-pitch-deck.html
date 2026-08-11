@@ -1,0 +1,3135 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Obulus — 인간 경험 검색·결제 네트워크</title>
+    <style>
+      @font-face {
+        font-family: "GeistSans";
+        src: url("../public/fonts/Geist_Variable-s.p.92592eb2.woff2") format("woff2");
+        font-display: swap;
+        font-weight: 100 900;
+      }
+
+      @font-face {
+        font-family: "GeistMono";
+        src: url("../public/fonts/GeistMono_Variable.p.2f937313.woff2") format("woff2");
+        font-display: swap;
+        font-weight: 100 900;
+      }
+
+      @font-face {
+        font-family: "Noto Serif";
+        src: url("../public/fonts/b4e85636e2ca4056-s.p.9ecc21d7.woff2") format("woff2");
+        font-display: swap;
+        font-weight: 100 900;
+      }
+
+      :root {
+        --black: #050505;
+        --ink: #101010;
+        --paper: #ffffff;
+        --card-light: #f2f5f6;
+        --white: #ffffff;
+        --line: rgba(255, 255, 255, 0.16);
+        --line-dark: #d8dddf;
+        --muted: rgba(255, 255, 255, 0.58);
+        --muted-dark: #4d5353;
+        --soft: #c9c8c3;
+        --slide-w: 1600;
+        --slide-h: 900;
+        --deck-scale: 1;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+        background: var(--black);
+      }
+
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: #171717;
+        color: var(--white);
+        font-family: "GeistSans", Pretendard, "Helvetica Neue", Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      button,
+      a {
+        color: inherit;
+        font: inherit;
+      }
+
+      .deck {
+        height: 100vh;
+        overflow-y: auto;
+        scroll-snap-type: y mandatory;
+        scrollbar-width: none;
+      }
+
+      .deck::-webkit-scrollbar {
+        display: none;
+      }
+
+      .slide-shell {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        scroll-snap-align: start;
+        scroll-snap-stop: always;
+        background: #171717;
+      }
+
+      .slide {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 1600px;
+        height: 900px;
+        overflow: hidden;
+        isolation: isolate;
+        background: var(--black);
+        color: var(--white);
+        container-type: inline-size;
+        transform: translate(-50%, -50%) scale(var(--deck-scale));
+        transform-origin: center;
+      }
+
+      .slide .display { font-size: clamp(50px, 7.9cqw, 126px); }
+      .slide .title { font-size: clamp(30px, 4.2cqw, 68px) !important; }
+      .slide.problem-slide .title { font-size: clamp(28px, 3.35cqw, 54px) !important; }
+      .slide .big-quote { font-size: clamp(22px, 3cqw, 48px) !important; }
+      .slide .metric { font-size: clamp(28px, 3.6cqw, 58px); }
+
+      .slide.light {
+        background: var(--paper);
+        color: var(--black);
+      }
+
+      .slide::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: -1;
+        background-image:
+          linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+          linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+        background-size: 5vw 5vw;
+        mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.7), transparent 90%);
+      }
+
+      .slide.light::before {
+        background-image:
+          linear-gradient(to right, rgba(5, 5, 5, 0.045) 1px, transparent 1px),
+          linear-gradient(to bottom, rgba(5, 5, 5, 0.045) 1px, transparent 1px);
+      }
+
+      .pad {
+        position: absolute;
+        inset: 0;
+        padding: 4.5% 5%;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .eyebrow {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: clamp(8px, 0.72vw, 13px);
+        letter-spacing: 0.16em;
+        line-height: 1;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .light .eyebrow {
+        color: var(--muted-dark);
+      }
+
+      .eyebrow::before {
+        content: "";
+        width: 1.7rem;
+        height: 1px;
+        background: currentColor;
+      }
+
+      .page-mark {
+        position: absolute;
+        right: 5%;
+        top: 4.5%;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: clamp(8px, 0.72vw, 13px);
+        letter-spacing: 0.12em;
+        color: var(--muted);
+      }
+
+      .light .page-mark {
+        color: var(--muted-dark);
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+        word-break: keep-all;
+      }
+
+      .display {
+        font-size: clamp(50px, 7.9vw, 142px);
+        font-weight: 500;
+        line-height: 0.88;
+        letter-spacing: -0.068em;
+      }
+
+      .title {
+        max-width: 12ch;
+        margin-top: 4.2%;
+        font-size: clamp(30px, 4.6vw, 82px);
+        font-weight: 520;
+        line-height: 0.98;
+        letter-spacing: -0.055em;
+      }
+
+      .title.wide {
+        max-width: 17ch;
+      }
+
+      .lead {
+        max-width: 48ch;
+        font-size: clamp(14px, 1.42vw, 25px);
+        line-height: 1.52;
+        letter-spacing: -0.025em;
+        color: var(--muted);
+      }
+
+      .light .lead,
+      .light .muted {
+        color: var(--muted-dark);
+      }
+
+      .mono {
+        font-family: "GeistMono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      .serif {
+        font-family: "Noto Serif", Georgia, serif;
+        letter-spacing: -0.04em;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .rule {
+        height: 1px;
+        width: 100%;
+        background: var(--line);
+      }
+
+      .light .rule {
+        background: var(--line-dark);
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2rem;
+        padding: 0.1rem 0.72rem;
+        border: 1px solid var(--line);
+        border-radius: 100px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: clamp(7px, 0.62vw, 11px);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .light .badge {
+        border-color: var(--line-dark);
+      }
+
+      .badge.fill {
+        color: var(--black);
+        background: var(--white);
+      }
+
+      .light .badge.fill {
+        color: var(--white);
+        background: var(--black);
+      }
+
+      .browser-frame {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        background: #111;
+        box-shadow: 0 2rem 5rem rgba(0, 0, 0, 0.38);
+      }
+
+      .light .browser-frame {
+        border-color: var(--line-dark);
+        box-shadow: 0 2rem 4rem rgba(0, 0, 0, 0.12);
+      }
+
+      .browser-bar {
+        height: 7.5%;
+        min-height: 22px;
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0 1rem;
+        border-bottom: 1px solid var(--line);
+        background: #0b0b0b;
+      }
+
+      .browser-dot {
+        width: 0.42rem;
+        aspect-ratio: 1;
+        border: 1px solid rgba(255, 255, 255, 0.45);
+        border-radius: 50%;
+      }
+
+      .browser-frame img {
+        display: block;
+        width: 100%;
+        height: calc(100% - 7.5%);
+        object-fit: contain;
+        object-position: center;
+        background: #fff;
+        filter: grayscale(1) contrast(1.04);
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.025);
+      }
+
+      .light .card {
+        border-color: var(--line-dark);
+        background: var(--card-light);
+      }
+
+      .card-pad {
+        padding: 1.4rem;
+      }
+
+      .card-kicker {
+        margin-bottom: 0.85rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: clamp(10px, 0.82vw, 14px);
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .light .card-kicker {
+        color: var(--muted-dark);
+      }
+
+      .card h3 {
+        font-size: clamp(16px, 1.65vw, 29px);
+        font-weight: 520;
+        line-height: 1.14;
+        letter-spacing: -0.035em;
+      }
+
+      .card p,
+      .small {
+        font-size: clamp(9px, 0.9vw, 16px);
+        line-height: 1.48;
+      }
+
+      .metric {
+        font-size: clamp(28px, 4vw, 72px);
+        font-weight: 510;
+        letter-spacing: -0.055em;
+        line-height: 0.95;
+      }
+
+      .big-quote {
+        max-width: 18ch;
+        font-size: clamp(27px, 4vw, 72px);
+        line-height: 1.05;
+        letter-spacing: -0.05em;
+        font-weight: 500;
+      }
+
+      .accent-line {
+        position: absolute;
+        background: var(--white);
+      }
+
+      .light .accent-line {
+        background: var(--black);
+      }
+
+      .arrow {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: var(--muted);
+      }
+
+      .light .arrow {
+        color: var(--muted-dark);
+      }
+
+      .nav {
+        position: fixed;
+        z-index: 100;
+        left: 50%;
+        bottom: 18px;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.32rem;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 100px;
+        background: rgba(10, 10, 10, 0.84);
+        backdrop-filter: blur(18px);
+        box-shadow: 0 0.8rem 2rem rgba(0, 0, 0, 0.3);
+      }
+
+      .nav button {
+        height: 2.2rem;
+        min-width: 2.2rem;
+        padding: 0 0.75rem;
+        border: 0;
+        border-radius: 100px;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.72);
+        cursor: pointer;
+      }
+
+      .nav button:hover,
+      .nav button:focus-visible {
+        outline: none;
+        background: rgba(255, 255, 255, 0.12);
+        color: #fff;
+      }
+
+      .counter {
+        min-width: 5.2rem;
+        text-align: center;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.72rem;
+        letter-spacing: 0.1em;
+        color: rgba(255, 255, 255, 0.65);
+      }
+
+      .progress {
+        position: fixed;
+        z-index: 101;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 2px;
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .progress span {
+        display: block;
+        height: 100%;
+        width: 5%;
+        background: #fff;
+        transition: width 260ms ease;
+      }
+
+      .cover-layout {
+        display: grid;
+        grid-template-columns: 0.9fr 1.1fr;
+        height: 100%;
+      }
+
+      .cover-copy {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 8% 8% 7% 9%;
+      }
+
+      .cover-media {
+        position: relative;
+        padding: 8% 7% 7% 2%;
+        display: flex;
+        align-items: center;
+      }
+
+      .cover-media .browser-frame {
+        width: 100%;
+        height: auto;
+        aspect-ratio: 16 / 10;
+        transform: translateY(2%) rotate(-1.3deg);
+      }
+
+      .cover-media::after {
+        content: "PAID HUMAN WEB / 2026";
+        position: absolute;
+        right: 7%;
+        bottom: 5%;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: clamp(7px, 0.65vw, 11px);
+        letter-spacing: 0.16em;
+        color: var(--muted);
+      }
+
+      .cover-word {
+        position: absolute;
+        top: 5%;
+        right: 0;
+        z-index: -1;
+        font-size: clamp(80px, 17vw, 300px);
+        font-weight: 600;
+        letter-spacing: -0.09em;
+        line-height: 0.78;
+        color: rgba(255, 255, 255, 0.035);
+      }
+
+      .problem-slide .split-heading {
+        grid-template-columns: 1.18fr 0.82fr;
+        margin-top: 2.6%;
+        margin-bottom: 2.6%;
+      }
+
+      .problem-slide .title {
+        max-width: none;
+        font-size: clamp(28px, 3.35vw, 58px);
+      }
+
+      .problem-slide .card-pad,
+      .problem-slide .experience-card {
+        padding: 1rem;
+      }
+
+      .problem-slide .big-quote {
+        font-size: clamp(19px, 2.45vw, 44px) !important;
+      }
+
+      .problem-card-heading {
+        margin-bottom: 1.2rem;
+        font-size: clamp(20px, 1.65cqw, 28px);
+        font-weight: 560;
+        letter-spacing: -0.035em;
+      }
+
+      .research-flow {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        margin-top: 1.3rem;
+        border-top: 1px solid var(--line-dark);
+        border-bottom: 1px solid var(--line-dark);
+      }
+
+      .research-stage {
+        position: relative;
+        min-height: 7.2rem;
+        padding: 1rem 0.75rem;
+        border-right: 1px solid var(--line-dark);
+      }
+
+      .research-stage:last-child {
+        border-right: 0;
+      }
+
+      .research-stage strong {
+        display: block;
+        margin-top: 1.2rem;
+        font-size: clamp(12px, 1.05cqw, 18px);
+        line-height: 1.18;
+        word-break: keep-all;
+      }
+
+      .question-copy {
+        font-size: clamp(24px, 2.25cqw, 38px) !important;
+        line-height: 1.18;
+      }
+
+      .question-copy span {
+        display: block;
+        white-space: nowrap;
+      }
+
+      .definition-band {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1px;
+        margin-top: 1.1%;
+        border: 1px solid var(--line-dark);
+        background: var(--line-dark);
+      }
+
+      .definition-item {
+        display: grid;
+        grid-template-columns: 10rem 1fr;
+        align-items: center;
+        gap: 1rem;
+        min-height: 4.6rem;
+        padding: 0.8rem 1rem;
+        background: var(--paper);
+      }
+
+      .definition-item strong {
+        font-size: clamp(13px, 1.05cqw, 18px);
+      }
+
+      .definition-item p {
+        font-size: clamp(10px, 0.82cqw, 14px);
+        line-height: 1.42;
+        color: var(--muted-dark);
+      }
+
+      .definition-item.why-now {
+        background: var(--black);
+        color: var(--white);
+      }
+
+      .definition-item.why-now strong {
+        font-size: clamp(16px, 1.25cqw, 22px);
+      }
+
+      .definition-item.why-now p {
+        color: rgba(255, 255, 255, 0.74);
+      }
+
+      .why-now-band {
+        display: grid;
+        grid-template-columns: 0.65fr 1.35fr;
+        gap: 0;
+        margin: 0 0 1.6%;
+        border: 1px solid var(--black);
+        color: var(--white);
+        background: var(--black);
+      }
+
+      .why-now-band > div {
+        min-height: 5.8rem;
+        padding: 1rem 1.15rem;
+        border-right: 1px solid rgba(255,255,255,0.2);
+      }
+
+      .why-now-band > div:last-child {
+        border-right: 0;
+      }
+
+      .why-now-band strong {
+        display: block;
+        margin-bottom: 0.55rem;
+        font-size: clamp(16px, 1.35cqw, 23px);
+        letter-spacing: -0.03em;
+      }
+
+      .why-now-band p {
+        font-size: clamp(10px, 0.86cqw, 15px);
+        line-height: 1.45;
+        color: rgba(255,255,255,0.72);
+      }
+
+      .conversion-statement {
+        font-size: clamp(28px, 2.85cqw, 49px);
+        font-weight: 570;
+        line-height: 0.98;
+        letter-spacing: -0.055em;
+      }
+
+      .conversion-statement span {
+        display: block;
+        white-space: nowrap;
+      }
+
+      .conversion-statement span + span {
+        margin-top: 0.16em;
+      }
+
+      .fixed-title-lines span {
+        display: block;
+        white-space: nowrap;
+      }
+
+      .slide .title.fixed-title-lines {
+        font-size: clamp(30px, 3.4cqw, 55px) !important;
+      }
+
+      .two-col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 2.5%;
+        flex: 1;
+        min-height: 0;
+      }
+
+      .three-col {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1.3%;
+      }
+
+      .split-heading {
+        display: grid;
+        grid-template-columns: 0.8fr 1.2fr;
+        gap: 5%;
+        align-items: end;
+        margin-top: 4%;
+        margin-bottom: 4%;
+      }
+
+      .step-number {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: clamp(9px, 0.82vw, 14px);
+        color: var(--muted);
+      }
+
+      .light .step-number {
+        color: var(--muted-dark);
+      }
+
+      .experience-card {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 1rem;
+        padding: 1.3rem;
+        border-top: 1px solid var(--line);
+      }
+
+      .light .experience-card {
+        border-color: var(--line-dark);
+      }
+
+      .experience-card strong {
+        display: block;
+        margin-bottom: 0.35rem;
+        font-size: clamp(11px, 1.05vw, 19px);
+        font-weight: 540;
+      }
+
+      .timeline {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 0;
+        margin-top: auto;
+        border-top: 1px solid var(--line-dark);
+        border-bottom: 1px solid var(--line-dark);
+      }
+
+      .timeline-item {
+        position: relative;
+        min-height: 10rem;
+        padding: 1.2rem;
+        border-right: 1px solid var(--line-dark);
+      }
+
+      .timeline-item:last-child {
+        border-right: 0;
+      }
+
+      .timeline-item::before {
+        content: "";
+        position: absolute;
+        top: -0.28rem;
+        left: 1.2rem;
+        width: 0.52rem;
+        height: 0.52rem;
+        border-radius: 50%;
+        background: var(--black);
+      }
+
+      .memory-hero {
+        display: grid;
+        grid-template-columns: 1.08fr 0.92fr;
+        gap: 6%;
+        align-items: end;
+        margin-top: 3.2%;
+      }
+
+      .memory-hero .title {
+        margin: 0;
+        font-size: clamp(31px, 3.75cqw, 62px);
+        line-height: 0.98;
+      }
+
+      .memory-hero .lead {
+        max-width: 40ch;
+        padding-bottom: 0.35rem;
+      }
+
+      .memory-flow {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        margin-top: 4.2%;
+        border-top: 1px solid var(--line-dark);
+        border-bottom: 1px solid var(--line-dark);
+      }
+
+      .memory-flow-step {
+        position: relative;
+        min-height: 9.4rem;
+        padding: 1.15rem 1.25rem;
+        border-right: 1px solid var(--line-dark);
+      }
+
+      .memory-flow-step:last-child {
+        border-right: 0;
+      }
+
+      .memory-flow-step::before {
+        content: "";
+        position: absolute;
+        top: -0.29rem;
+        left: 1.25rem;
+        width: 0.54rem;
+        height: 0.54rem;
+        border-radius: 50%;
+        background: var(--black);
+      }
+
+      .memory-flow-step h3 {
+        margin-top: 1.25rem;
+        font-size: clamp(16px, 1.45cqw, 25px);
+        font-weight: 590;
+        letter-spacing: -0.035em;
+      }
+
+      .memory-flow-step p {
+        margin-top: 0.65rem;
+        font-size: clamp(10px, 0.82cqw, 14px);
+        line-height: 1.45;
+        color: var(--muted-dark);
+      }
+
+      .memory-outcome {
+        display: grid;
+        grid-template-columns: 0.82fr 1.18fr;
+        gap: 0;
+        margin-top: 3.2%;
+        color: var(--white);
+        background: var(--black);
+      }
+
+      .memory-outcome-thesis,
+      .memory-outcome-copy {
+        padding: 1.45rem 1.6rem;
+      }
+
+      .memory-outcome-thesis {
+        border-right: 1px solid rgba(255,255,255,0.22);
+      }
+
+      .memory-outcome-thesis strong {
+        display: block;
+        font-size: clamp(22px, 2.25cqw, 38px);
+        font-weight: 570;
+        line-height: 1.03;
+        letter-spacing: -0.05em;
+      }
+
+      .memory-outcome-copy {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 5%;
+        align-items: center;
+      }
+
+      .memory-outcome-copy p {
+        font-size: clamp(11px, 1cqw, 17px);
+        line-height: 1.5;
+        color: rgba(255,255,255,0.7);
+      }
+
+      .memory-outcome-copy strong {
+        color: var(--white);
+      }
+
+      .mapping {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 2%;
+        align-items: stretch;
+        flex: 1;
+        min-height: 0;
+        margin-top: 3.5%;
+      }
+
+      .mapping-side {
+        border-top: 1px solid currentColor;
+      }
+
+      .mapping-row {
+        display: grid;
+        grid-template-columns: 0.95fr 1.25fr;
+        gap: 0.8rem;
+        align-items: center;
+        min-height: 11.6%;
+        border-bottom: 1px solid var(--line);
+        font-size: clamp(9px, 0.86vw, 15px);
+      }
+
+      .light .mapping-row {
+        border-color: var(--line-dark);
+      }
+
+      .mapping-row span:first-child {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: var(--muted);
+      }
+
+      .light .mapping-row span:first-child {
+        color: var(--muted-dark);
+      }
+
+      .mapping-arrow {
+        display: grid;
+        place-items: center;
+        font-size: clamp(18px, 2vw, 36px);
+      }
+
+      .principle-layout {
+        display: grid;
+        grid-template-columns: 1.08fr 0.92fr;
+        gap: 5%;
+        flex: 1;
+        min-height: 0;
+        margin-top: 3.2%;
+      }
+
+      .principle-copy {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        border-top: 1px solid var(--line);
+      }
+
+      .principle-section {
+        display: grid;
+        grid-template-columns: 3.5rem 1fr;
+        gap: 1rem;
+        padding: 1.25rem 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .principle-section h3 {
+        margin-bottom: 0.55rem;
+        font-size: clamp(19px, 1.65cqw, 29px);
+        font-weight: 570;
+        letter-spacing: -0.04em;
+      }
+
+      .principle-section p {
+        max-width: 46rem;
+        font-size: clamp(12px, 1.03cqw, 18px);
+        line-height: 1.5;
+        color: rgba(255,255,255,0.62);
+      }
+
+      .principle-thesis {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 1.8rem;
+        color: var(--black);
+        background: var(--paper);
+      }
+
+      .principle-thesis .thesis-line {
+        font-size: clamp(26px, 2.8cqw, 49px);
+        font-weight: 570;
+        line-height: 1.02;
+        letter-spacing: -0.055em;
+      }
+
+      .principle-thesis p {
+        font-size: clamp(12px, 1.05cqw, 18px);
+        line-height: 1.5;
+        color: var(--muted-dark);
+      }
+
+      .security-explainer {
+        display: grid;
+        grid-template-columns: 1.08fr 0.92fr;
+        gap: 2.5%;
+        flex: 1;
+        min-height: 0;
+        margin-top: 2.3%;
+      }
+
+      .security-story {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 1.5rem;
+        border: 1px solid var(--line);
+      }
+
+      .security-story h3 {
+        margin-bottom: 0.8rem;
+        font-size: clamp(21px, 2cqw, 35px);
+        font-weight: 560;
+        letter-spacing: -0.045em;
+      }
+
+      .security-story p {
+        font-size: clamp(12px, 1.05cqw, 18px);
+        line-height: 1.52;
+        color: var(--muted);
+      }
+
+      .security-invariants {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        border-top: 1px solid var(--line);
+        border-left: 1px solid var(--line);
+      }
+
+      .security-invariant {
+        padding: 1.1rem;
+        border-right: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .security-invariant strong {
+        display: block;
+        margin-bottom: 0.55rem;
+        font-size: clamp(14px, 1.15cqw, 20px);
+      }
+
+      .security-invariant p {
+        font-size: clamp(10px, 0.83cqw, 14px);
+        line-height: 1.45;
+        color: var(--muted);
+      }
+
+      .validation-layout {
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        gap: 3%;
+        flex: 1;
+        min-height: 0;
+        margin-top: 3%;
+      }
+
+      .validation-column {
+        display: flex;
+        flex-direction: column;
+        border-top: 2px solid var(--black);
+      }
+
+      .validation-row {
+        display: grid;
+        grid-template-columns: 9rem 1fr;
+        gap: 1.2rem;
+        padding: 1.15rem 0;
+        border-bottom: 1px solid var(--line-dark);
+      }
+
+      .validation-row strong {
+        font-size: clamp(14px, 1.12cqw, 20px);
+      }
+
+      .validation-row p {
+        font-size: clamp(11px, 0.95cqw, 16px);
+        line-height: 1.5;
+        color: var(--muted-dark);
+      }
+
+      .validation-ask {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 1.6rem;
+        color: var(--white);
+        background: var(--black);
+      }
+
+      .validation-ask h3 {
+        font-size: clamp(27px, 2.8cqw, 49px);
+        line-height: 1.02;
+        letter-spacing: -0.055em;
+      }
+
+      .validation-ask p {
+        font-size: clamp(12px, 1.05cqw, 18px);
+        line-height: 1.52;
+        color: rgba(255,255,255,0.68);
+      }
+
+      .shot-pair {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 2%;
+        min-height: 0;
+        flex: 1;
+        margin-top: 3%;
+      }
+
+      .shot-card {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        min-height: 0;
+        border: 1px solid var(--line);
+        background: #0a0a0a;
+      }
+
+      .shot-label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem 1.1rem;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .shot-label strong {
+        font-size: clamp(12px, 1.15vw, 20px);
+        font-weight: 520;
+      }
+
+      .shot-card img {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        object-fit: contain;
+        object-position: center top;
+        filter: grayscale(1) contrast(1.05);
+      }
+
+      .market-loop-hero {
+        display: block;
+        margin-top: 3%;
+      }
+
+      .market-loop-hero .title {
+        margin: 0;
+        font-size: clamp(28px, 3.05cqw, 51px);
+      }
+
+      .market-loop-hero .lead {
+        max-width: 88ch;
+        margin-top: 1.25%;
+      }
+
+      .market-loop {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        margin-top: 3.5%;
+        border: 1px solid var(--line);
+      }
+
+      .market-loop-step {
+        position: relative;
+        min-height: 10.2rem;
+        padding: 1.15rem;
+        border-right: 1px solid var(--line);
+      }
+
+      .market-loop-step:last-child {
+        border-right: 0;
+      }
+
+      .market-loop-step::after {
+        content: "→";
+        position: absolute;
+        z-index: 2;
+        top: 50%;
+        right: -0.72rem;
+        display: grid;
+        width: 1.42rem;
+        height: 1.42rem;
+        place-items: center;
+        border-radius: 50%;
+        color: var(--black);
+        background: var(--paper);
+      }
+
+      .market-loop-step:last-child::after {
+        content: "↺";
+        right: 0.7rem;
+        top: auto;
+        bottom: 0.7rem;
+        color: var(--white);
+        background: transparent;
+      }
+
+      .market-loop-step.trigger {
+        color: var(--white);
+        background: var(--black);
+      }
+
+      .market-loop-step h3 {
+        margin-top: 1.2rem;
+        font-size: clamp(15px, 1.28cqw, 22px);
+        font-weight: 580;
+        line-height: 1.15;
+        letter-spacing: -0.035em;
+      }
+
+      .market-loop-step p {
+        margin-top: 0.65rem;
+        font-size: clamp(9px, 0.76cqw, 13px);
+        line-height: 1.45;
+        color: var(--muted);
+      }
+
+      .market-value-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        margin-top: 2.6%;
+        border-top: 1px solid var(--line);
+        border-left: 1px solid var(--line);
+      }
+
+      .market-value {
+        padding: 1.15rem 1.3rem;
+        border-right: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .market-value strong {
+        display: block;
+        margin-bottom: 0.45rem;
+        font-size: clamp(15px, 1.25cqw, 22px);
+      }
+
+      .market-value p {
+        font-size: clamp(10px, 0.82cqw, 14px);
+        line-height: 1.45;
+        color: var(--muted);
+      }
+
+      .ranking-formula {
+        display: grid;
+        grid-template-columns: 0.32fr 1.68fr;
+        gap: 2%;
+        margin-top: 3.2%;
+        padding: 1rem 1.2rem;
+        color: var(--white);
+        background: var(--black);
+      }
+
+      .ranking-head {
+        margin-top: 2.6%;
+      }
+
+      .ranking-head .title {
+        margin: 0;
+        font-size: clamp(27px, 3.05cqw, 51px);
+      }
+
+      .ranking-head .lead {
+        max-width: 90ch;
+        margin-top: 1.25%;
+      }
+
+      .ranking-formula strong {
+        font-size: clamp(14px, 1.18cqw, 20px);
+      }
+
+      .ranking-formula p {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: clamp(9px, 0.78cqw, 13px);
+        line-height: 1.5;
+        color: rgba(255,255,255,0.72);
+      }
+
+      .ranking-design-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        flex: 1;
+        min-height: 0;
+        margin-top: 2%;
+        border-top: 1px solid var(--line-dark);
+        border-left: 1px solid var(--line-dark);
+      }
+
+      .ranking-design {
+        padding: 1.25rem 1.35rem;
+        border-right: 1px solid var(--line-dark);
+        border-bottom: 1px solid var(--line-dark);
+      }
+
+      .ranking-design h3 {
+        margin-top: 1rem;
+        font-size: clamp(18px, 1.65cqw, 28px);
+        font-weight: 580;
+        letter-spacing: -0.04em;
+      }
+
+      .ranking-design p {
+        margin-top: 0.8rem;
+        font-size: clamp(11px, 0.91cqw, 15px);
+        line-height: 1.52;
+        color: var(--muted-dark);
+      }
+
+      .ranking-decision {
+        display: grid;
+        grid-template-columns: 0.35fr 1.65fr;
+        gap: 2%;
+        align-items: center;
+        padding: 1rem 1.2rem;
+        border-right: 1px solid var(--line-dark);
+        border-bottom: 1px solid var(--line-dark);
+        border-left: 1px solid var(--line-dark);
+      }
+
+      .ranking-decision p {
+        font-size: clamp(10px, 0.86cqw, 15px);
+        line-height: 1.5;
+        color: var(--muted-dark);
+      }
+
+      .pipeline {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0;
+        margin-top: 4%;
+        border: 1px solid var(--line-dark);
+      }
+
+      .pipeline-step {
+        position: relative;
+        min-height: 12rem;
+        padding: 1.3rem;
+        border-right: 1px solid var(--line-dark);
+      }
+
+      .pipeline-step:last-child {
+        border-right: 0;
+        color: var(--paper);
+        background: var(--black);
+      }
+
+      .pipeline-step::after {
+        content: "→";
+        position: absolute;
+        z-index: 2;
+        top: 50%;
+        right: -0.7rem;
+        width: 1.35rem;
+        height: 1.35rem;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--paper);
+        color: var(--black);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      .pipeline-step:last-child::after {
+        display: none;
+      }
+
+      .mini-list {
+        display: grid;
+        gap: 0.45rem;
+        margin: 1rem 0 0;
+        padding: 0;
+        list-style: none;
+        font-size: clamp(8px, 0.78vw, 14px);
+        line-height: 1.35;
+        color: var(--muted-dark);
+      }
+
+      .pipeline-step:last-child .mini-list {
+        color: var(--muted);
+      }
+
+      .memory-line {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 0.55rem;
+        align-items: stretch;
+        margin-top: 3.5%;
+      }
+
+      .memory-node {
+        position: relative;
+        min-height: 9rem;
+        padding: 1rem;
+        border: 1px solid var(--line);
+      }
+
+      .memory-node + .memory-node::before {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: -0.62rem;
+        width: 0.62rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.5);
+      }
+
+      .flywheel {
+        position: relative;
+        width: min(36vw, 36vh);
+        aspect-ratio: 1;
+        margin: auto;
+        border: 1px solid var(--line-dark);
+        border-radius: 50%;
+      }
+
+      .flywheel::before,
+      .flywheel::after {
+        content: "";
+        position: absolute;
+        border-radius: 50%;
+        border: 1px solid var(--line-dark);
+      }
+
+      .flywheel::before {
+        inset: 18%;
+      }
+
+      .flywheel::after {
+        inset: 36%;
+        background: var(--black);
+      }
+
+      .flywheel-center {
+        position: absolute;
+        inset: 38%;
+        z-index: 2;
+        display: grid;
+        place-items: center;
+        text-align: center;
+        color: var(--white);
+        font-size: clamp(8px, 0.8vw, 14px);
+      }
+
+      .orbit-label {
+        position: absolute;
+        z-index: 3;
+        padding: 0.36rem 0.62rem;
+        border: 1px solid var(--line-dark);
+        background: var(--paper);
+        font-size: clamp(7px, 0.68vw, 12px);
+        white-space: nowrap;
+      }
+
+      .orbit-label:nth-of-type(2) { top: -3%; left: 37%; }
+      .orbit-label:nth-of-type(3) { top: 20%; right: -15%; }
+      .orbit-label:nth-of-type(4) { bottom: 15%; right: -13%; }
+      .orbit-label:nth-of-type(5) { bottom: -3%; left: 34%; }
+      .orbit-label:nth-of-type(6) { bottom: 18%; left: -14%; }
+      .orbit-label:nth-of-type(7) { top: 20%; left: -15%; }
+
+      .flywheel-layout {
+        display: grid;
+        grid-template-columns: 0.78fr 1.22fr;
+        gap: 2.4%;
+        flex: 1;
+        min-height: 0;
+        margin-top: 2.6%;
+      }
+
+      .value-loop {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.8rem;
+        min-height: 0;
+      }
+
+      .value-step {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        min-height: 0;
+        padding: 1.15rem;
+        border: 1px solid var(--line-dark);
+        background: rgba(255,255,255,0.35);
+      }
+
+      .value-step:nth-child(4),
+      .value-step:nth-child(5),
+      .value-step:nth-child(6) {
+        color: var(--white);
+        background: var(--black);
+      }
+
+      .value-step h3 {
+        margin-top: 1.2rem;
+        font-size: clamp(20px, 1.8cqw, 30px);
+        font-weight: 540;
+        line-height: 1.05;
+        letter-spacing: -0.045em;
+      }
+
+      .value-step p {
+        margin-top: 0.8rem;
+        font-size: clamp(10px, 0.85cqw, 15px);
+        line-height: 1.4;
+      }
+
+      .value-step:nth-child(4) p,
+      .value-step:nth-child(5) p,
+      .value-step:nth-child(6) p {
+        color: var(--muted);
+      }
+
+      .loop-statement {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.9rem 1.1rem;
+        border: 1px solid var(--line-dark);
+        font-size: clamp(13px, 1.1cqw, 19px);
+        font-weight: 540;
+      }
+
+      .ai-lanes {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1.4%;
+        flex: 1;
+        min-height: 0;
+        margin-top: 3.5%;
+      }
+
+      .ai-lane {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        padding: 1.4rem;
+        border: 1px solid var(--line);
+        background: linear-gradient(160deg, rgba(255,255,255,0.055), rgba(255,255,255,0));
+      }
+
+      .ai-lane .num {
+        margin-bottom: 1.05rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: var(--muted);
+      }
+
+      .ai-lane h3 {
+        max-width: 14ch;
+        margin-bottom: 1rem;
+        font-size: clamp(19px, 2.1vw, 38px);
+        font-weight: 520;
+        line-height: 1;
+        letter-spacing: -0.045em;
+      }
+
+      .ai-lane-example {
+        margin-top: 1.05rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--line);
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: clamp(9px, 0.78cqw, 13px);
+        line-height: 1.55;
+        color: rgba(255,255,255,0.76);
+      }
+
+      .ai-control-strip {
+        display: grid;
+        grid-template-columns: 0.72fr repeat(4, 1fr);
+        margin-top: 1.6%;
+        border: 1px solid var(--line);
+      }
+
+      .ai-control-strip > div {
+        padding: 0.72rem 0.82rem;
+        border-right: 1px solid var(--line);
+        font-size: clamp(9px, 0.78cqw, 13px);
+        line-height: 1.4;
+        color: rgba(255,255,255,0.66);
+      }
+
+      .ai-control-strip > div:last-child { border-right: 0; }
+
+      .ai-control-strip strong {
+        display: block;
+        margin-bottom: 0.25rem;
+        color: var(--white);
+        font-size: clamp(10px, 0.86cqw, 15px);
+      }
+
+      .memory-formula-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        margin-top: 1.05%;
+        border: 1px solid var(--line);
+      }
+
+      .memory-formula-grid > div {
+        padding: 0.62rem 0.78rem;
+        border-right: 1px solid var(--line);
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: clamp(8px, 0.68cqw, 12px);
+        line-height: 1.45;
+        color: rgba(255,255,255,0.68);
+      }
+
+      .memory-formula-grid > div:last-child { border-right: 0; }
+
+      .memory-formula-grid strong {
+        display: block;
+        margin-bottom: 0.22rem;
+        color: var(--white);
+        font-family: "Pretendard", sans-serif;
+        font-size: clamp(9px, 0.78cqw, 13px);
+      }
+
+      .sequence {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        align-items: center;
+        gap: 0.7rem;
+        margin-top: 4%;
+      }
+
+      .sequence-node {
+        position: relative;
+        min-height: 8.5rem;
+        padding: 1rem;
+        border: 1px solid var(--line-dark);
+        background: rgba(255,255,255,0.42);
+      }
+
+      .sequence-node + .sequence-node::before {
+        content: "→";
+        position: absolute;
+        left: -0.82rem;
+        top: 42%;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: var(--muted-dark);
+      }
+
+      .protocol-wrap,
+      .system-architecture-wrap,
+      .memory-architecture-wrap {
+        position: relative;
+        width: 100%;
+        margin-top: 2.2%;
+        border: 1px solid var(--line-dark);
+        background: rgba(255, 255, 255, 0.66);
+        overflow: hidden;
+      }
+
+      .protocol-wrap {
+        height: 64%;
+      }
+
+      .system-architecture-wrap {
+        height: 67%;
+      }
+
+      .memory-architecture-wrap {
+        height: 47%;
+      }
+
+      .protocol-svg,
+      .system-architecture-svg,
+      .memory-architecture-svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      .diagram-zone {
+        fill: #eef0f2;
+        stroke: #cbd0d4;
+        stroke-width: 1.5;
+      }
+
+      .diagram-zone.dark-zone {
+        fill: #111;
+        stroke: #111;
+      }
+
+      .diagram-node {
+        fill: #fff;
+        stroke: #858b90;
+        stroke-width: 1.5;
+        rx: 7;
+      }
+
+      .diagram-node.dark-node {
+        fill: #070707;
+        stroke: #070707;
+      }
+
+      .diagram-node.soft-node {
+        fill: #f5f6f6;
+      }
+
+      .diagram-title {
+        font-family: "Geist", system-ui, sans-serif;
+        font-size: 20px;
+        font-weight: 620;
+        fill: #050505;
+        letter-spacing: -0.02em;
+      }
+
+      .diagram-title.inverse,
+      .diagram-label.inverse,
+      .diagram-small.inverse {
+        fill: #fff;
+      }
+
+      .diagram-label {
+        font-family: "Geist", system-ui, sans-serif;
+        font-size: 15px;
+        font-weight: 540;
+        fill: #111;
+      }
+
+      .diagram-small {
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: 11px;
+        fill: #5e6469;
+        letter-spacing: 0.02em;
+      }
+
+      .diagram-lane {
+        stroke: #b8bdc1;
+        stroke-width: 1.2;
+        stroke-dasharray: 5 6;
+      }
+
+      .diagram-data-line {
+        fill: none;
+        stroke: #171717;
+        stroke-width: 1.8;
+        marker-end: url(#arrowData);
+      }
+
+      .diagram-payment-line {
+        fill: none;
+        stroke: #5a6065;
+        stroke-width: 2.2;
+        stroke-dasharray: 7 5;
+        marker-end: url(#arrowPayment);
+      }
+
+      .diagram-trust-line {
+        fill: none;
+        stroke: #979da1;
+        stroke-width: 1.5;
+        stroke-dasharray: 2 5;
+        marker-end: url(#arrowTrust);
+      }
+
+      .diagram-note {
+        fill: #fff;
+        stroke: #b6bbc0;
+        stroke-width: 1;
+        rx: 5;
+      }
+
+      .architecture-legend {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-top: 1.1%;
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: clamp(8px, 0.68cqw, 12px);
+        color: var(--muted-dark);
+      }
+
+      .legend-lines {
+        display: flex;
+        gap: 1.2rem;
+      }
+
+      .legend-line::before {
+        content: "";
+        display: inline-block;
+        width: 2.4rem;
+        margin-right: 0.45rem;
+        transform: translateY(-0.18rem);
+        border-top: 2px solid #171717;
+      }
+
+      .legend-line.payment::before {
+        border-top-color: #5a6065;
+        border-top-style: dashed;
+      }
+
+      .legend-line.trust::before {
+        border-top-color: #979da1;
+        border-top-style: dotted;
+      }
+
+      .key-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1%;
+        margin-top: 3%;
+      }
+
+      .key-card {
+        min-height: 11rem;
+        padding: 1.25rem;
+        border: 1px solid var(--line);
+      }
+
+      .key-card .key-icon {
+        width: 2.6rem;
+        height: 2.6rem;
+        margin-bottom: 1.6rem;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line);
+        border-radius: 50%;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.75rem;
+      }
+
+      .key-grid.compact {
+        margin-top: 2%;
+      }
+
+      .key-grid.compact .key-card {
+        min-height: 8.6rem;
+        padding: 1rem;
+      }
+
+      .key-grid.compact .key-icon {
+        width: 2.2rem;
+        height: 2.2rem;
+        margin-bottom: 0.8rem;
+      }
+
+      .terminal {
+        width: 100%;
+        height: auto;
+        aspect-ratio: 16 / 10;
+        align-self: center;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        background: #090909;
+      }
+
+      .terminal img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        object-position: top center;
+        filter: grayscale(1) contrast(1.08);
+      }
+
+      .agent-interface-head {
+        display: block;
+        margin-top: 3%;
+      }
+
+      .agent-interface-head .title {
+        margin: 0;
+        font-size: clamp(28px, 3.05cqw, 51px);
+      }
+
+      .agent-interface-head .lead {
+        max-width: 92ch;
+        margin-top: 1.2%;
+      }
+
+      .terminal-crop {
+        min-height: 0;
+        flex: 1;
+        margin-top: 3%;
+        border: 1px solid var(--line);
+        background: #050505 url('pitch-deck-assets/11-cli-mcp-agent-interface.png') center 48% / cover no-repeat;
+        filter: grayscale(1) contrast(1.08);
+      }
+
+      .agent-capability-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        border-right: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        border-left: 1px solid var(--line);
+      }
+
+      .agent-capability {
+        padding: 0.9rem 1.05rem;
+        border-right: 1px solid var(--line);
+      }
+
+      .agent-capability:last-child {
+        border-right: 0;
+      }
+
+      .agent-capability strong {
+        display: block;
+        margin-bottom: 0.3rem;
+        font-size: clamp(13px, 1.08cqw, 19px);
+      }
+
+      .agent-capability p {
+        font-size: clamp(9px, 0.76cqw, 13px);
+        color: var(--muted);
+      }
+
+      .architecture {
+        display: grid;
+        grid-template-columns: 0.82fr 1.22fr 1fr 0.86fr;
+        gap: 1%;
+        flex: 1;
+        min-height: 0;
+        margin-top: 2.5%;
+      }
+
+      .arch-column {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 0.8rem;
+        border: 1px solid var(--line-dark);
+        background: rgba(255, 255, 255, 0.35);
+      }
+
+      .arch-title {
+        padding-bottom: 0.65rem;
+        border-bottom: 1px solid var(--line-dark);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: clamp(7px, 0.64vw, 11px);
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted-dark);
+      }
+
+      .arch-node {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        padding: 0.65rem;
+        border: 1px solid var(--line-dark);
+        font-size: clamp(7px, 0.7vw, 13px);
+        line-height: 1.25;
+      }
+
+      .arch-node.dark {
+        color: var(--white);
+        background: var(--black);
+      }
+
+      .arch-node span:last-child {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.72em;
+        color: var(--muted-dark);
+      }
+
+      .arch-node.dark span:last-child {
+        color: var(--muted);
+      }
+
+      .arch-flows {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1%;
+        margin-top: 1.1%;
+      }
+
+      .arch-flow {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        padding: 0.55rem 0.7rem;
+        border: 1px solid var(--line-dark);
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: clamp(6px, 0.58vw, 10px);
+        line-height: 1.25;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+
+      .arch-flow strong {
+        flex: 0 0 auto;
+        margin-right: 0.65rem;
+        color: var(--black);
+      }
+
+      .market-grid {
+        display: grid;
+        grid-template-columns: 0.88fr 1.25fr 0.95fr;
+        gap: 1.2%;
+        flex: 1;
+        min-height: 0;
+        margin-top: 2.5%;
+      }
+
+      .market-column {
+        padding: 1.2rem;
+        border: 1px solid var(--line);
+      }
+
+      .market-column h3 {
+        margin-bottom: 1.2rem;
+        font-size: clamp(16px, 1.65vw, 30px);
+        font-weight: 520;
+        letter-spacing: -0.035em;
+      }
+
+      .market-row {
+        padding: 0.75rem 0;
+        border-top: 1px solid var(--line);
+        font-size: clamp(8px, 0.8vw, 14px);
+        line-height: 1.35;
+      }
+
+      .market-size-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1.2%;
+        margin-top: 3%;
+      }
+
+      .market-size-card {
+        min-height: 16.5rem;
+        display: flex;
+        flex-direction: column;
+        padding: 1.35rem;
+        border: 1px solid var(--line-dark);
+        background: var(--card-light);
+      }
+
+      .market-size-card:nth-child(2) {
+        background: var(--paper);
+      }
+
+      .market-size-card:nth-child(3) {
+        color: var(--white);
+        background: var(--black);
+      }
+
+      .market-size-card h3 {
+        margin-top: 1.2rem;
+        font-size: clamp(34px, 3.8cqw, 62px);
+        font-weight: 520;
+        line-height: 0.95;
+        letter-spacing: -0.055em;
+      }
+
+      .market-size-card p {
+        margin-top: auto;
+        font-size: clamp(11px, 0.92cqw, 16px);
+        line-height: 1.45;
+      }
+
+      .market-size-card:nth-child(3) p {
+        color: var(--muted);
+      }
+
+      .market-scope {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 1px;
+        margin-top: 1.2%;
+        border: 1px solid var(--line-dark);
+        background: var(--line-dark);
+      }
+
+      .market-scope > div {
+        padding: 0.9rem 1rem;
+        background: var(--paper);
+      }
+
+      .market-scope strong {
+        display: block;
+        margin-bottom: 0.35rem;
+        font-size: clamp(12px, 0.95cqw, 16px);
+      }
+
+      .market-scope p,
+      .source-line {
+        font-size: clamp(9px, 0.72cqw, 12px);
+        line-height: 1.45;
+        color: var(--muted-dark);
+      }
+
+      .source-line {
+        margin-top: 1%;
+      }
+
+      .source-line a {
+        text-decoration: underline;
+        text-underline-offset: 0.18em;
+      }
+
+      .proof-grid {
+        display: grid;
+        grid-template-columns: 1.05fr 0.9fr 0.9fr;
+        gap: 1.2%;
+        flex: 1;
+        min-height: 0;
+        margin-top: 2.5%;
+      }
+
+      .proof-panel {
+        min-height: 0;
+        padding: 1.1rem;
+        border: 1px solid var(--line-dark);
+        background: rgba(255,255,255,0.4);
+      }
+
+      .proof-panel.dark {
+        color: var(--white);
+        background: var(--black);
+      }
+
+      .proof-panel img {
+        width: 100%;
+        height: 48%;
+        object-fit: contain;
+        object-position: top;
+        margin-bottom: 1rem;
+        filter: grayscale(1) contrast(1.08);
+        border: 1px solid rgba(255,255,255,0.16);
+      }
+
+      .price-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1%;
+        margin-top: 3%;
+      }
+
+      .price-card {
+        min-height: 12.5rem;
+        padding: 1.25rem;
+        border: 1px solid var(--line-dark);
+        background: var(--card-light);
+      }
+
+      .price-card.primary {
+        color: var(--white);
+        background: var(--black);
+        border-color: var(--black);
+      }
+
+      .price-value {
+        margin-top: 1.5rem;
+        font-size: clamp(26px, 3.3vw, 60px);
+        font-weight: 520;
+        line-height: 0.95;
+        letter-spacing: -0.055em;
+      }
+
+      .price-unit {
+        margin-top: 0.55rem;
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: clamp(7px, 0.66vw, 12px);
+        color: var(--muted-dark);
+      }
+
+      .price-card.primary .price-unit {
+        color: var(--muted);
+      }
+
+      .unit-economics {
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 2%;
+        flex: 1;
+        min-height: 0;
+        margin-top: 3%;
+      }
+
+      .unit-stack {
+        display: flex;
+        height: 4.8rem;
+        margin-top: 1.4rem;
+        border: 1px solid var(--line-dark);
+      }
+
+      .unit-stack > div {
+        display: flex;
+        align-items: center;
+        padding: 0.8rem;
+        border-right: 1px solid var(--line-dark);
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: clamp(7px, 0.68vw, 12px);
+      }
+
+      .unit-stack > div:last-child {
+        border-right: 0;
+      }
+
+      .assumption-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: clamp(8px, 0.78vw, 14px);
+      }
+
+      .assumption-table th,
+      .assumption-table td {
+        padding: 0.78rem 0.7rem;
+        border-bottom: 1px solid var(--line-dark);
+        text-align: right;
+      }
+
+      .assumption-table th:first-child,
+      .assumption-table td:first-child {
+        text-align: left;
+      }
+
+      .assumption-table th {
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: 0.78em;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted-dark);
+      }
+
+      .growth-chart {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1.2%;
+        height: 17rem;
+        align-items: stretch;
+        margin-top: 2.5%;
+        border-bottom: 1px solid var(--line-dark);
+      }
+
+      .growth-column {
+        display: grid;
+        grid-template-rows: 5.2rem minmax(0, 1fr);
+        min-width: 0;
+      }
+
+      .growth-label {
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        padding: 0 0.5rem 0.65rem;
+      }
+
+      .growth-label small {
+        font-family: "GeistMono", ui-monospace, monospace;
+        color: var(--muted-dark);
+      }
+
+      .growth-label strong {
+        font-size: clamp(18px, 2.25cqw, 38px);
+        line-height: 1;
+        letter-spacing: -0.045em;
+      }
+
+      .growth-label span {
+        margin-top: 0.28rem;
+        font-size: clamp(9px, 0.78cqw, 13px);
+        color: var(--muted-dark);
+      }
+
+      .growth-bar {
+        width: 100%;
+        min-height: 1.25rem;
+        align-self: end;
+        background: var(--black);
+      }
+
+      .competition {
+        display: grid;
+        grid-template-columns: 1.25fr repeat(4, 1fr);
+        margin-top: 2.5%;
+        border-top: 1px solid var(--line);
+        border-left: 1px solid var(--line);
+      }
+
+      .competition > div {
+        min-height: 3.3rem;
+        display: flex;
+        align-items: center;
+        padding: 0.7rem;
+        border-right: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        font-size: clamp(7px, 0.7vw, 13px);
+      }
+
+      .competition .head {
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: clamp(6px, 0.6vw, 11px);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .competition .yes {
+        background: rgba(255,255,255,0.08);
+      }
+
+      .footer-note {
+        position: absolute;
+        left: 5%;
+        right: 5%;
+        bottom: 3.6%;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: clamp(7px, 0.62vw, 11px);
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+
+      .light .footer-note {
+        color: var(--muted-dark);
+      }
+
+      @media (max-width: 820px) {
+        .nav {
+          bottom: 8px;
+        }
+
+        .card-pad,
+        .market-column,
+        .proof-panel,
+        .key-card,
+        .ai-lane {
+          padding: 0.65rem;
+        }
+
+        .browser-bar {
+          min-height: 12px;
+        }
+      }
+
+      @media print {
+        @page {
+          size: 16in 9in;
+          margin: 0;
+        }
+
+        body,
+        .deck {
+          overflow: visible;
+          background: #fff;
+        }
+
+        .slide-shell {
+          width: 16in;
+          height: 9in;
+          page-break-after: always;
+          break-after: page;
+        }
+
+        .slide {
+          position: relative;
+          left: auto;
+          top: auto;
+          width: 16in;
+          height: 9in;
+          transform: none;
+        }
+
+        .nav,
+        .progress {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="progress" aria-hidden="true"><span id="progressBar"></span></div>
+
+    <main class="deck" id="deck" aria-label="Obulus 피치덱">
+      <!-- 01 -->
+      <section class="slide-shell" data-title="표지">
+        <article class="slide">
+          <div class="cover-word">O</div>
+          <div class="cover-layout">
+            <div class="cover-copy">
+              <div>
+                <div class="eyebrow">Google Cloud × Solana</div>
+                <h1 class="display" style="margin-top: 13%">Obulus</h1>
+                <p class="lead" style="margin-top: 8%; max-width: 31ch">
+                  실제 인간의 경험을 검색하고,<br />열어본 근거에만 지불합니다.
+                </p>
+              </div>
+              <div>
+                <div class="rule" style="margin-bottom: 1.2rem"></div>
+                <p class="small muted" style="max-width: 34ch">
+                  AI를 위한 인간 경험 검색·결제 네트워크
+                </p>
+                <div style="display:flex; gap:.45rem; flex-wrap:wrap; margin-top:1.3rem">
+                  <span class="badge">Gemini</span><span class="badge">Google Cloud</span>
+                  <span class="badge">Solana</span><span class="badge">x402</span>
+                  <span class="badge">Pay.sh</span><span class="badge">MCP</span>
+                </div>
+              </div>
+            </div>
+            <div class="cover-media">
+              <div class="browser-frame">
+                <div class="browser-bar"><i class="browser-dot"></i><i class="browser-dot"></i><i class="browser-dot"></i></div>
+                <img src="pitch-deck-assets/01-home-hero.png" alt="Obulus 질문 화면" />
+              </div>
+            </div>
+          </div>
+          <div class="page-mark">01 / 16</div>
+        </article>
+      </section>
+
+      <!-- 02 -->
+      <section class="slide-shell" data-title="AI가 모르는 인간 데이터">
+        <article class="slide light problem-slide">
+          <div class="pad">
+            <div class="eyebrow">문제 / 웹 밖의 인간 데이터</div>
+            <div class="split-heading">
+              <h2 class="title wide fixed-title-lines" style="margin:0"><span>기업은 “파리 20대가 무엇을 먹는가”를 알기 위해</span><span>매번 새로운 사람을 모집합니다.</span></h2>
+              <p class="lead">
+                공개 웹과 범용 LLM에는 “파리는 미식 도시다”라는 일반론은 있습니다.
+                하지만 지난달 파리 20대 직장인이 실제로 무엇을 골랐고 왜 골랐는지는 없습니다.
+              </p>
+            </div>
+            <div class="why-now-band">
+              <div><strong>왜 지금인가?</strong><p>AI·소셜 월드모델 기업이 실제 인간의 설문·인터뷰를 학습과 검증 데이터로 구매하기 시작했습니다.</p></div>
+              <div><strong>현재의 경제 구조</strong><p>Simile과 같은 기업은 인간 데이터를 비싸게 확보하지만, 수집비와 반복 사용 가치는 중앙 플랫폼에 집중됩니다.</p></div>
+            </div>
+            <div class="two-col">
+              <div class="card" style="display:flex; flex-direction:column">
+                <div class="card-pad">
+                  <div class="card-kicker">기업이 지금 답을 얻는 방법</div>
+                  <h3 class="problem-card-heading">원하는 질문이 생길 때마다 조사를 처음부터 다시 만듭니다.</h3>
+                  <div class="research-flow">
+                    <div class="research-stage"><span class="step-number">01</span><strong>패널<br />모집</strong></div>
+                    <div class="research-stage"><span class="step-number">02</span><strong>설문·<br />인터뷰</strong></div>
+                    <div class="research-stage"><span class="step-number">03</span><strong>중앙<br />데이터셋</strong></div>
+                    <div class="research-stage"><span class="step-number">04</span><strong>모델 학습·<br />검증</strong></div>
+                  </div>
+                </div>
+                <div style="margin-top:auto">
+                  <div class="experience-card"><span class="step-number">문제</span><div><strong>비싸고 느리며, 같은 데이터를 반복해서 삽니다.</strong><span class="small muted">응답자는 한 번만 보상받고, 인터뷰는 일회성 보고서나 중앙 데이터셋에 묻힙니다.</span></div></div>
+                </div>
+              </div>
+              <div class="card" style="display:flex; flex-direction:column; background:#050505; color:#fff">
+                <div class="card-pad">
+                  <div class="card-kicker">기업이 실제로 알고 싶은 것</div>
+                  <h3 class="problem-card-heading">평균적인 AI 추정이 아니라, 조건에 맞는 사람들의 최근 실제 경험이 필요합니다.</h3>
+                  <p class="big-quote question-copy"><span>“파리 현지 20대는 최근</span><span>평일 저녁에 무엇을 선택하고,</span><span>왜 관광객용 메뉴를 피하는가?”</span></p>
+                </div>
+                <div style="margin-top:auto">
+                  <div class="experience-card"><span class="step-number">공백</span><div><strong>이 답은 공개 웹에도, 범용 모델에도 충분히 없습니다.</strong><span class="small muted">지역 · 직군 · 경험 · 시점이 결합된 실제 인간 응답이 필요합니다.</span></div></div>
+                </div>
+              </div>
+            </div>
+            <div class="footer-note"><span>Obulus의 기회: 비싼 일회성 설문 → 조회·재사용·정산 가능한 개인 메모리 DB</span><span>OBULUS / WHY NOW</span></div>
+          </div>
+          <div class="page-mark">02 / 20</div>
+        </article>
+      </section>
+
+      <!-- 03 -->
+      <section class="slide-shell" data-title="한 사람의 답변이 재사용되는 방식">
+        <article class="slide light">
+          <div class="pad">
+            <div class="eyebrow">한 사람의 답변이 반복 가치를 만드는 과정</div>
+            <div class="memory-hero">
+              <h2 class="title wide fixed-title-lines"><span>한 번 답한 경험을 버리지 않고,</span><span>다음 질문에서도 다시 찾아 씁니다.</span></h2>
+              <p class="lead">예를 들어 파리에 사는 27세 직장인이 “평일 저녁에 무엇을 먹고, 왜 관광객용 메뉴를 피하는가”에 답합니다. 이 답변은 당사자의 허락 아래 저장되고, 같은 조건을 찾는 다음 기업에게 다시 발견됩니다.</p>
+            </div>
+            <div class="memory-flow">
+              <div class="memory-flow-step"><span class="step-number">01</span><h3>보상 공고에 참여</h3><p>파리 거주 직장인 A가 자신의 최근 저녁 식사 경험을 직접 답합니다.</p></div>
+              <div class="memory-flow-step"><span class="step-number">02</span><h3>답변 채택·첫 보상</h3><p>시간·장소·선택 이유가 충분한 답변만 채택되고 약속한 보상이 지급됩니다.</p></div>
+              <div class="memory-flow-step"><span class="step-number">03</span><h3>허락한 답변만 보관</h3><p>채택된 원문과 작성 시점, 사용 허용 범위를 A의 경험 기록에 저장합니다.</p></div>
+              <div class="memory-flow-step"><span class="step-number">04</span><h3>다음 기업이 검색</h3><p>다른 F&amp;B 기업이 같은 지역·연령·상황의 실제 경험을 찾습니다.</p></div>
+              <div class="memory-flow-step"><span class="step-number">05</span><h3>다시 열리고, 다시 보상</h3><p>기업은 필요한 답변만 구매하고, A는 같은 경험의 재사용 수익을 받습니다.</p></div>
+            </div>
+            <div class="memory-outcome">
+              <div class="memory-outcome-thesis"><div class="card-kicker" style="color:rgba(255,255,255,.55)">기존 조사와 달라지는 지점</div><strong>같은 경험을 얻기 위해<br />같은 사람을 다시 모집하지 않습니다.</strong></div>
+              <div class="memory-outcome-copy">
+                <p><strong>기업</strong><br />기존 답변을 먼저 검색하고, 정말 부족한 사람만 새 공고로 모집해 조사 시간과 비용을 줄입니다.</p>
+                <p><strong>응답자</strong><br />한 번 성실하게 답한 경험이 허용된 범위에서 다시 쓰일 때마다 추가 보상을 받습니다.</p>
+              </div>
+            </div>
+            <div class="footer-note"><span>MEMORY-BACKED HUMAN DATABASE</span><span>03</span></div>
+          </div>
+          <div class="page-mark">03 / 20</div>
+        </article>
+      </section>
+
+      <!-- 04 -->
+      <section class="slide-shell" data-title="제품 해결책">
+        <article class="slide">
+          <div class="pad">
+            <div class="eyebrow">제품 / 질문에서 근거까지</div>
+            <div class="two-col" style="margin-top:3%; grid-template-columns:.82fr 1.18fr">
+              <div style="display:flex; flex-direction:column; justify-content:space-between; padding-right:6%">
+                <div>
+                  <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(31px,3.25vw,54px)"><span>질문 하나로</span><span>인간 DB를 검색하고,</span><span>선택한 근거만 구매합니다.</span></h2>
+                  <p class="lead" style="margin-top:5%">질문을 입력하면 조건에 맞는 사람들의 과거 답변과 가격이 먼저 나옵니다. 한도를 승인하면 선택한 답변만 열고, 실제 원문을 인용해 결과를 만듭니다.</p>
+                </div>
+                <div>
+                  <div class="experience-card"><span class="step-number">01</span><div><strong>질문 구조화</strong><span class="small muted">대상 · 지역 · 경험 · 최신성 · 표본 · 예산</span></div></div>
+                  <div class="experience-card"><span class="step-number">02</span><div><strong>검색과 최소 집합 선택</strong><span class="small muted">관련성 · 권위 · 품질 · 다양성 · 중복 · 가격</span></div></div>
+                  <div class="experience-card"><span class="step-number">03</span><div><strong>한 번의 제한된 승인</strong><span class="small muted">선택 문서의 해시·버전·동의·수취인·금액 확정</span></div></div>
+                  <div class="experience-card"><span class="step-number">04</span><div><strong>결제된 근거로 답변</strong><span class="small muted">열린 passage만 Gemini가 인용·비교·합성</span></div></div>
+                </div>
+              </div>
+              <div class="browser-frame" style="width:100%; height:auto; aspect-ratio:16/10; align-self:center">
+                <div class="browser-bar"><i class="browser-dot"></i><i class="browser-dot"></i><i class="browser-dot"></i></div>
+                <div role="img" aria-label="채팅에서 인간 DB 후보와 정확한 결제 견적을 확인하는 화면" style="height:92.5%; background:#fff url('pitch-deck-assets/10-chat-hit-exact-quote.png') 62% 22% / 132% auto no-repeat; filter:grayscale(1) contrast(1.04)"></div>
+              </div>
+            </div>
+            <div class="footer-note"><span>검색은 무료 · 인간 경험 원문만 유료</span><span>04</span></div>
+          </div>
+          <div class="page-mark">04 / 16</div>
+        </article>
+      </section>
+
+      <!-- 05 -->
+      <section class="slide-shell" data-title="웹 검색의 재해석">
+        <article class="slide">
+          <div class="pad">
+            <div class="eyebrow">Google 검색의 재해석 / 개인 DB와 유료 URL</div>
+            <h2 class="title wide fixed-title-lines"><span>“파리 20대 직장인”을 검색하면,</span><span>조건에 맞는 실제 답변과 가격이 나옵니다.</span></h2>
+            <div class="principle-layout">
+              <div class="principle-copy">
+                <div class="principle-section"><span class="step-number">01</span><div><h3>사람이 직접 답한 경험마다 검색 주소를 부여합니다.</h3><p>A가 남긴 “지난 화요일 13유로 라멘을 선택했다”는 답변에 URL·원문 해시·버전·동의 범위·가격을 붙입니다. 개인 DB는 사이트, 각 답변은 검색 가능한 페이지가 됩니다.</p></div></div>
+                <div class="principle-section"><span class="step-number">02</span><div><h3>원문은 잠근 채 후보와 가격만 무료로 비교합니다.</h3><p>Agent는 파리 거주·20대·직장인·최근 90일·외식 경험 조건으로 후보 30명을 찾습니다. 원문을 보지 않고 관련성·품질·가격·중복을 계산해 서로 다른 7명을 고릅니다.</p></div></div>
+                <div class="principle-section"><span class="step-number">03</span><div><h3>선택한 7개의 URL에만 결제하고 원문을 엽니다.</h3><p>x402·Pay.sh가 7명에게 문서별 USDC를 정산하면, 그 7개 원문만 Gemini에 전달됩니다. 최종 답변에는 공통 선택·반례·문서 7개의 인용이 함께 표시됩니다.</p></div></div>
+              </div>
+              <div class="principle-thesis">
+                <div><div class="card-kicker">한 질문의 실제 처리</div><p class="thesis-line" style="margin-top:1rem">30명 검색<br />→ 7명 선택<br />→ 7개 원문 결제</p></div>
+                <p><strong>웹페이지의 URL을 인간 답변에 적용했습니다.</strong><br /><br />검색 결과 클릭이 광고 매출을 만드는 대신, 유료 답변 URL이 열릴 때 그 답을 제공한 사람에게 직접 수익이 돌아갑니다.</p>
+                <div class="card-kicker">무료: HANDLE · 가격 · 품질 · 최신성<br />유료: 정확한 원문 SNAPSHOT · 인용</div>
+              </div>
+            </div>
+            <div class="footer-note"><span>웹페이지 URL → 인간 답변 URL · 클릭 광고 → 소유자 직접 정산</span><span>05</span></div>
+          </div>
+          <div class="page-mark">05 / 16</div>
+        </article>
+      </section>
+
+      <!-- 06 -->
+      <section class="slide-shell" data-title="질문이 공급을 만드는 선순환">
+        <article class="slide">
+          <div class="pad">
+            <div class="eyebrow">검색 결과가 부족할 때 / Open Call</div>
+            <div class="market-loop-hero">
+              <h2 class="title wide fixed-title-lines"><span>파리 20대 답변이 7개뿐이라면,</span><span>부족한 5명에게만 보상 공고를 냅니다.</span></h2>
+              <p class="lead">기업은 12명을 전부 새로 모집하지 않습니다. 기존 답변 7개를 먼저 활용하고, 정확히 부족한 조건의 5명만 모집해 이번 질문을 완성합니다.</p>
+            </div>
+            <div class="market-loop">
+              <div class="market-loop-step"><span class="step-number">01 / 질문</span><h3>F&amp;B 기업이 12명을 요청합니다.</h3><p>파리 거주·20대·직장인·최근 저녁 경험 조건을 입력합니다.</p></div>
+              <div class="market-loop-step"><span class="step-number">02 / 검색</span><h3>기존 답변 7개를 찾습니다.</h3><p>과거에 허용된 실제 답변과 가격을 무료로 비교합니다.</p></div>
+              <div class="market-loop-step trigger"><span class="step-number">03 / 공고</span><h3>부족한 5명만 모집합니다.</h3><p>1인 500원·마감·사용 범위를 명시한 Open Call을 엽니다.</p></div>
+              <div class="market-loop-step"><span class="step-number">04 / 인터뷰</span><h3>파리 사용자 5명이 답합니다.</h3><p>Agent가 언제·어디서·얼마·선택 이유를 추가로 묻습니다.</p></div>
+              <div class="market-loop-step"><span class="step-number">05 / 채택</span><h3>5개 답변을 검증·보상합니다.</h3><p>구체성·복사·반복·식별자 검사를 통과한 답변만 채택합니다.</p></div>
+              <div class="market-loop-step"><span class="step-number">06 / 다음 검색</span><h3>이제 12개를 바로 찾습니다.</h3><p>새 답변도 동의 범위 안에서 검색되고 열릴 때마다 다시 보상됩니다.</p></div>
+            </div>
+            <div class="market-value-grid">
+              <div class="market-value"><strong>기업</strong><p>12명을 새로 모집하지 않고 5명만 추가해 조사 시간과 신규 모집비를 줄입니다.</p></div>
+              <div class="market-value"><strong>응답자</strong><p>첫 채택 보상 500원을 받고, 같은 답변이 다음 기업에 열리면 추가 수익을 받습니다.</p></div>
+              <div class="market-value"><strong>Obulus</strong><p>질문이 들어올 때마다 실제로 부족한 지역·직군의 DB가 채워져 다음 검색이 빨라집니다.</p></div>
+            </div>
+            <div class="footer-note"><span>QUESTION → OPEN CALL → HUMAN MEMORY → FUTURE PAID REUSE</span><span>06</span></div>
+          </div>
+          <div class="page-mark">06 / 16</div>
+        </article>
+      </section>
+
+      <!-- 07 -->
+      <section class="slide-shell" data-title="검색과 랭킹">
+        <article class="slide light">
+          <div class="pad">
+            <div class="eyebrow">Google 검색의 재해석 / 관련성·권위·스팸 방어</div>
+            <div class="ranking-head">
+              <h2 class="title wide fixed-title-lines"><span>80개 후보를 모두 사지 않고,</span><span>질문에 맞는 서로 다른 8명의 답변만 고릅니다.</span></h2>
+              <p class="lead">Google이 링크 농장과 스팸 페이지를 걸러냈듯, Obulus는 유료 추천·자기추천·복사·담합 관계가 검색 순위를 올리지 못하게 만들었습니다.</p>
+            </div>
+            <div class="ranking-formula">
+              <strong>질문별 최종 점수</strong>
+              <p>60% 내용 관련성 + 12% 핵심 단어 + 13% 독립 검증 관계 + 10% 작성자 신뢰 + 5% 최신성</p>
+            </div>
+            <div class="ranking-design-grid">
+              <div class="ranking-design"><span class="step-number">01 / 질문과 맞는가</span><h3>파리·20대·직장인·최근 경험이 모두 맞아야 후보가 됩니다.</h3><p>768차원 로컬 검색 벡터, 핵심 단어 coverage와 희귀 지명·엔티티 일치를 함께 봅니다. 작성자 평판이 높아도 질문과 무관하면 바로 제외합니다.</p></div>
+              <div class="ranking-design"><span class="step-number">02 / 조작되지 않은가</span><h3>돈을 쓰거나 서로 추천해도 순위가 오르지 않습니다.</h3><p>독립 인용·관리자 검증·실제 결과 검증만 권위를 전달합니다. 유료·광고·자기추천·복사 관계의 가중치는 0이며, 서로 주고받은 추천 링크는 80% 감쇠합니다.</p></div>
+              <div class="ranking-design"><span class="step-number">03 / 무엇을 살 것인가</span><h3>같은 사람과 비슷한 답변을 빼고, 예산 안의 조합을 계산합니다.</h3><p>동일 작성자는 한 문서만 남기고 유사 문서는 감점합니다. 최대 80개 후보에서 동적 계획법으로 공통점·다른 관점·반례를 담은 8개 묶음을 선택합니다.</p></div>
+            </div>
+            <div class="ranking-decision"><strong>코드에 구현한 방어선</strong><p>질문 무관 후보 탈락 · 유료·자기추천 권위 0 · 상호추천 80% 감쇠 · 같은 작성자 중복 제거 · 유사 문서 감점 · 예산 안의 8개 조합 계산 · 결제 전에 hash·version·동의·수취인 고정</p></div>
+            <div class="footer-note"><span>PAYMENT RECORDS USE · IT DOES NOT PURCHASE AUTHORITY</span><span>07</span></div>
+          </div>
+          <div class="page-mark">07 / 16</div>
+        </article>
+      </section>
+
+      <!-- 08 -->
+      <section class="slide-shell" data-title="메모리 자산">
+        <article class="slide">
+          <div class="pad">
+            <div class="eyebrow">인간 메모리 시스템 / 적재·정정·재사용</div>
+            <div style="margin-top:2%">
+              <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(24px,2.55vw,41px)"><span>실제 답변 → 사건별 기록 → 반복 패턴</span><span>모든 요약은 원문으로 되돌아갈 수 있습니다.</span></h2>
+              <p class="lead" style="max-width:82ch; margin-top:.8rem">소셜 월드모델의 장기 메모리 구조를 개인 DB에 적용했습니다. 실제 발화와 AI 요약을 분리하고, Reflection마다 원본 source ID를 남깁니다.</p>
+            </div>
+            <div class="memory-architecture-wrap" aria-label="Obulus 인간 메모리 적재와 재사용 아키텍처">
+              <svg class="memory-architecture-svg" viewBox="0 0 1500 430" role="img" aria-labelledby="memory-architecture-title">
+                <title id="memory-architecture-title">실제 인간 답변이 품질 검증과 메모리 구조화를 거쳐 판매 가능한 버전형 문서가 되고 검색과 반복 정산으로 연결되는 흐름</title>
+
+                <rect x="20" y="55" width="205" height="310" class="diagram-zone" />
+                <text x="42" y="82" class="diagram-small">HUMAN INPUT</text>
+                <rect x="45" y="105" width="155" height="62" class="diagram-node dark-node" /><text x="122" y="132" text-anchor="middle" class="diagram-title inverse">직접 응답</text><text x="122" y="153" text-anchor="middle" class="diagram-small inverse">FIRSTHAND ANSWER</text>
+                <rect x="45" y="194" width="155" height="62" class="diagram-node" /><text x="122" y="220" text-anchor="middle" class="diagram-title">인터뷰 문맥</text><text x="122" y="241" text-anchor="middle" class="diagram-small">TIME · PLACE · REASON</text>
+                <rect x="45" y="283" width="155" height="62" class="diagram-node" /><text x="122" y="309" text-anchor="middle" class="diagram-title">소유자 통제</text><text x="122" y="330" text-anchor="middle" class="diagram-small">LOCK · EXPORT · DELETE</text>
+
+                <rect x="250" y="28" width="965" height="365" class="diagram-zone" />
+                <text x="275" y="57" class="diagram-small">MEMORY INGESTION + VERSIONED HUMAN DATABASE</text>
+
+                <rect x="280" y="84" width="170" height="77" class="diagram-node" /><text x="365" y="108" text-anchor="middle" class="diagram-small">QUALITY GATE</text><text x="365" y="132" text-anchor="middle" class="diagram-title">구체성 · 중복 · PII</text><text x="365" y="151" text-anchor="middle" class="diagram-small">ECHO · COPY · SPAM</text>
+                <rect x="485" y="84" width="170" height="77" class="diagram-node dark-node" /><text x="570" y="108" text-anchor="middle" class="diagram-small inverse">OBSERVATION</text><text x="570" y="132" text-anchor="middle" class="diagram-title inverse">검증된 원문</text><text x="570" y="151" text-anchor="middle" class="diagram-small inverse">SOURCE · TIME · IMPORTANCE</text>
+                <rect x="690" y="84" width="170" height="77" class="diagram-node" /><text x="775" y="108" text-anchor="middle" class="diagram-small">EPISODE</text><text x="775" y="132" text-anchor="middle" class="diagram-title">사건·주제 묶음</text><text x="775" y="151" text-anchor="middle" class="diagram-small">RELATED OBSERVATIONS</text>
+                <rect x="895" y="84" width="170" height="77" class="diagram-node" /><text x="980" y="108" text-anchor="middle" class="diagram-small">REFLECTION</text><text x="980" y="132" text-anchor="middle" class="diagram-title">패턴과 변화</text><text x="980" y="151" text-anchor="middle" class="diagram-small">SOURCE IDS REQUIRED</text>
+
+                <line x1="450" y1="122" x2="477" y2="122" class="diagram-data-line" /><line x1="655" y1="122" x2="682" y2="122" class="diagram-data-line" /><line x1="860" y1="122" x2="887" y2="122" class="diagram-data-line" />
+
+                <rect x="485" y="202" width="375" height="74" class="diagram-node dark-node" /><text x="672" y="226" text-anchor="middle" class="diagram-small inverse">SELLABLE HUMAN DOCUMENT</text><text x="672" y="250" text-anchor="middle" class="diagram-title inverse">원문 passage · SHA-256 · immutable version</text><text x="672" y="269" text-anchor="middle" class="diagram-small inverse">CONSENT VERSION · OWNER · RECIPIENT · PRICE</text>
+                <path d="M 570 161 V 194" class="diagram-data-line" />
+
+                <rect x="895" y="202" width="280" height="74" class="diagram-node" /><text x="1035" y="226" text-anchor="middle" class="diagram-small">PERSONA STATE / INTERNAL CONTEXT</text><text x="1035" y="250" text-anchor="middle" class="diagram-title">선호 · 전문성 · 최신성</text><text x="1035" y="269" text-anchor="middle" class="diagram-small">NOT SOLD AS DIRECT TESTIMONY</text>
+                <path d="M 980 161 V 194" class="diagram-trust-line" />
+
+                <rect x="280" y="309" width="895" height="53" class="diagram-note" /><text x="727" y="331" text-anchor="middle" class="diagram-small">CORRECTION CREATES A NEW VERSION — PREVIOUS PAID SNAPSHOT IS NEVER SILENTLY OVERWRITTEN</text><text x="727" y="351" text-anchor="middle" class="diagram-label">정정 · 잠금 · 동의 철회 · 접근 이력 · 수익 이력</text>
+                <path d="M 365 161 V 300 H 475 V 276" class="diagram-trust-line" /><path d="M 122 314 H 272" class="diagram-trust-line" />
+
+                <rect x="1240" y="55" width="240" height="310" class="diagram-zone" />
+                <text x="1263" y="82" class="diagram-small">QUERY + QUALIFIED REUSE</text>
+                <rect x="1265" y="105" width="190" height="50" class="diagram-node" /><text x="1360" y="128" text-anchor="middle" class="diagram-title">무료 Metadata</text><text x="1360" y="146" text-anchor="middle" class="diagram-small">NO PRIVATE TEXT</text>
+                <rect x="1265" y="174" width="190" height="50" class="diagram-node" /><text x="1360" y="197" text-anchor="middle" class="diagram-title">질문별 Rank · Match</text><text x="1360" y="215" text-anchor="middle" class="diagram-small">RELEVANCE · TRUST · FRESHNESS</text>
+                <rect x="1265" y="243" width="190" height="50" class="diagram-node dark-node" /><text x="1360" y="266" text-anchor="middle" class="diagram-title inverse">Paid Snapshot</text><text x="1360" y="284" text-anchor="middle" class="diagram-small inverse">EXACT VERSION ONLY</text>
+                <rect x="1265" y="312" width="190" height="34" class="diagram-node" /><text x="1360" y="334" text-anchor="middle" class="diagram-label">소유자 반복 정산</text>
+
+                <path d="M 200 136 H 272" class="diagram-data-line" /><path d="M 860 239 H 1232 V 130 H 1257" class="diagram-data-line" /><path d="M 1360 155 V 166" class="diagram-data-line" /><path d="M 1360 224 V 235" class="diagram-data-line" /><path d="M 1360 293 V 304" class="diagram-payment-line" />
+              </svg>
+            </div>
+            <div class="memory-formula-grid">
+              <div><strong>경험 중요도</strong>0.20 + detail×0.30 + specificity×0.20 + interview depth×0.20 + question depth×0.10</div>
+              <div><strong>최신성</strong>max(0.20, 2<sup>−ageDays/90</sup>) · 오래된 경험은 점수가 내려가지만 사라지지는 않음</div>
+              <div><strong>작성자 신뢰</strong>행동 이력×0.75 + 실제 구매자 평가×0.25 · 정정은 새 버전, 과거 원문은 잠금</div>
+            </div>
+            <div class="footer-note"><span>VERSIONED · CONSENTED · CORRECTABLE</span><span>08</span></div>
+          </div>
+          <div class="page-mark">08 / 16</div>
+        </article>
+      </section>
+
+      <!-- 10 -->
+      <section class="slide-shell" data-title="Gemini와 Google Cloud">
+        <article class="slide">
+          <div class="pad">
+            <div class="eyebrow">평가 기준 02 / Gemini · Google Cloud AI 활용</div>
+            <div style="display:flex; justify-content:space-between; align-items:end; margin-top:3%">
+              <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(27px,2.95vw,49px)"><span>Gemini는 질문을 검색 조건으로 바꾸고,</span><span>답변을 구체화한 뒤, 결제된 원문만 요약합니다.</span></h2>
+              <p class="lead" style="max-width:34ch">AI가 잘하는 해석과 요약은 Gemini에, 돈·동의·문서 접근은 Rust와 Cloud KMS에 맡겼습니다.</p>
+            </div>
+            <div class="ai-lanes">
+              <div class="ai-lane"><span class="num">01 / QUERY PLANNING</span><div><h3>자연어 → 검색 조건</h3><p class="small muted">기업의 질문에서 대상·지역·시점·근거 수·예산을 구조화하고, 현재 DB로 답할 수 없는 부분을 표시합니다.</p><div class="ai-lane-example">입력 “파리 20대의 최근 저녁 선택”<br />→ Paris · 20s · 최근 90일 · 근거 8개</div><div style="margin-top:1rem"><span class="badge">Vertex AI · Gemini</span></div></div></div>
+              <div class="ai-lane"><span class="num">02 / INTERVIEW AGENT</span><div><h3>일반론 → 실제 경험</h3><p class="small muted">“좋았어요”로 끝나면 언제·어디서·얼마를 내고·왜 선택했는지 다시 묻습니다. 사람 대신 답을 작성하지 않습니다.</p><div class="ai-lane-example">응답 “현지식을 좋아해요”<br />→ “지난주 실제로 간 곳과 가격은?”</div><div style="margin-top:1rem"><span class="badge">Gemini · Quality Gate</span></div></div></div>
+              <div class="ai-lane"><span class="num">03 / GROUNDED SYNTHESIS</span><div><h3>유료 원문 → 인용 답변</h3><p class="small muted">결제가 확인된 8개 passage만 받아 공통점·차이·소수 의견을 정리합니다. 열지 않은 문서는 인용할 수 없습니다.</p><div class="ai-lane-example">입력 paid_snapshot[8]<br />→ 결론 + 반례 + 허용된 citation ID</div><div style="margin-top:1rem"><span class="badge">JSON Schema · Allowlist</span></div></div></div>
+            </div>
+            <div class="ai-control-strip">
+              <div><strong>프레임워크 역할</strong>확률적 AI와 결정론적 통제 분리</div>
+              <div><strong>Cloud Run</strong>Rust API·Gemini 호출·Pay.sh Agent 실행</div>
+              <div><strong>Cloud KMS</strong>운영 결제키를 외부로 내보내지 않고 서명</div>
+              <div><strong>Secret Manager + IAM</strong>RPC·내부 토큰과 서비스 권한을 최소 범위로 제한</div>
+              <div><strong>Cloud Build + Logging</strong>배포 재현성과 질문·결제·복구 로그 확보</div>
+            </div>
+            <div class="footer-note"><span>PROBABILISTIC INTERPRETATION · DETERMINISTIC CONTROL</span><span>10</span></div>
+          </div>
+          <div class="page-mark">10 / 16</div>
+        </article>
+      </section>
+
+      <!-- 11 -->
+      <section class="slide-shell" data-title="마이크로페이 가격 구조">
+        <article class="slide light">
+          <div class="pad">
+            <div class="eyebrow">가격 전략 / 마이크로페이</div>
+            <div style="display:flex; justify-content:space-between; align-items:end; margin-top:2.8%">
+              <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(29px,3.55vw,61px)"><span>80개 후보를 먼저 비교하고,</span><span>선택한 8개 원문에만 120원을 지불합니다.</span></h2>
+              <div style="text-align:right"><span class="badge fill">현재 코드 기준</span><p class="small muted" style="margin-top:.8rem">Devnet·데모 가격 · 상용 가격 아님</p></div>
+            </div>
+            <div class="price-grid">
+              <div class="price-card"><div class="card-kicker">검색·랭킹</div><div class="price-value">0원</div><div class="price-unit">원문 없는 메타데이터 검색</div><p class="small muted" style="margin-top:1.3rem">후보, 가격, 커버리지와 신뢰 신호는 무료</p></div>
+              <div class="price-card primary"><div class="card-kicker">기존 인간 DB</div><div class="price-value">5–25원</div><div class="price-unit">현재 데모 문서 1건 열람</div><p class="small muted" style="margin-top:1.3rem">파리·성수·직장인·카페 운영 등 seed 문서 기준</p></div>
+              <div class="price-card"><div class="card-kicker">지원 가격 밴드</div><div class="price-value">5–1,000원</div><div class="price-unit">문서 소유자가 선택 가능한 단가</div><p class="small muted" style="margin-top:1.3rem">Pay.sh 경로가 지원하는 실제 KRW 밴드</p></div>
+              <div class="price-card"><div class="card-kicker">신규 Open Call</div><div class="price-value" style="font-size:clamp(24px,2.8vw,50px)">0·300·500·800원</div><div class="price-unit">채택 답변 1건당 UI 선택지</div><p class="small muted" style="margin-top:1.3rem">새로운 응답 수집은 재사용 문서 열람보다 높은 보상</p></div>
+            </div>
+            <div style="display:grid; grid-template-columns:1.35fr 1fr; gap:2%; margin-top:2.2%; flex:1; min-height:0">
+              <div class="card card-pad" style="display:flex; flex-direction:column; justify-content:space-between">
+                <div><div class="card-kicker">한 질문의 예시</div><div class="metric">80개 후보 → 8개 구매</div></div>
+                <div class="unit-stack"><div style="width:100%; background:var(--black); color:#fff">평균 ₩15 × 8개 = 총 ₩120</div></div>
+                <p class="small muted">현재 Pay.sh 데모는 운영자 1 atomic unit을 제외한 금액을 소유자에게 보냅니다. 상업용 take rate는 아직 구현되지 않았습니다.</p>
+              </div>
+              <div class="card card-pad" style="display:flex; flex-direction:column; justify-content:space-between">
+                <div><div class="card-kicker">상용 수익화 방향</div><div class="metric">소액 거래 × Agent 규모</div></div>
+                <p class="small muted">정산된 문서 열람마다 프로토콜 수수료가 발생합니다. 실제 사용량과 Agent 호출량만이 매출을 만듭니다.</p>
+              </div>
+            </div>
+            <div class="footer-note"><span>코드 근거: backend/src/seed.rs · backend/paywall.yml · src/pages/Chat.tsx</span><span>11</span></div>
+          </div>
+          <div class="page-mark">11 / 20</div>
+        </article>
+      </section>
+
+      <!-- 12 -->
+      <section class="slide-shell" data-title="유료 URL과 결제">
+        <article class="slide light">
+          <div class="pad">
+            <div class="eyebrow">결제 프로토콜 / 유료 인간 DB URL</div>
+            <div style="display:grid; grid-template-columns:1.42fr .58fr; gap:4%; align-items:end; margin-top:2.2%">
+              <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(28px,3vw,49px)"><span>무료 검색부터 유료 원문 공개까지,</span><span>하나의 검증 가능한 상태 흐름입니다.</span></h2>
+              <p class="lead" style="max-width:35ch">Agent는 먼저 랭킹하고, 정확한 문서·가격·수취인을 확정한 뒤에만 결제합니다.</p>
+            </div>
+            <div class="protocol-wrap" aria-label="Obulus x402와 Pay.sh 결제 시퀀스">
+              <svg class="protocol-svg" viewBox="0 0 1500 550" role="img" aria-labelledby="payment-sequence-title">
+                <title id="payment-sequence-title">구매자 질문부터 Solana USDC 정산과 결제된 근거 반환까지의 시퀀스</title>
+                <defs>
+                  <marker id="arrowData" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#171717" /></marker>
+                  <marker id="arrowPayment" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#5a6065" /></marker>
+                  <marker id="arrowTrust" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#979da1" /></marker>
+                </defs>
+
+                <rect x="35" y="16" width="175" height="48" class="diagram-node dark-node" /><text x="122" y="46" text-anchor="middle" class="diagram-title inverse">구매자 / Agent</text>
+                <rect x="275" y="16" width="175" height="48" class="diagram-node" /><text x="362" y="46" text-anchor="middle" class="diagram-title">Rust Core</text>
+                <rect x="515" y="16" width="175" height="48" class="diagram-node" /><text x="602" y="39" text-anchor="middle" class="diagram-title">유료 DB URL</text><text x="602" y="56" text-anchor="middle" class="diagram-small">x402 / MPP</text>
+                <rect x="755" y="16" width="175" height="48" class="diagram-node" /><text x="842" y="39" text-anchor="middle" class="diagram-title">Pay.sh Agent</text><text x="842" y="56" text-anchor="middle" class="diagram-small">CLOUD RUN</text>
+                <rect x="995" y="16" width="175" height="48" class="diagram-node" /><text x="1082" y="39" text-anchor="middle" class="diagram-title">Cloud KMS</text><text x="1082" y="56" text-anchor="middle" class="diagram-small">NON-EXPORTABLE KEY</text>
+                <rect x="1235" y="16" width="105" height="48" class="diagram-node" /><text x="1287" y="39" text-anchor="middle" class="diagram-title">Solana</text><text x="1287" y="56" text-anchor="middle" class="diagram-small">DEVNET</text>
+                <rect x="1370" y="16" width="105" height="48" class="diagram-node dark-node" /><text x="1422" y="39" text-anchor="middle" class="diagram-title inverse">소유자</text><text x="1422" y="56" text-anchor="middle" class="diagram-small inverse">USDC WALLET</text>
+
+                <line x1="122" y1="64" x2="122" y2="528" class="diagram-lane" /><line x1="362" y1="64" x2="362" y2="528" class="diagram-lane" /><line x1="602" y1="64" x2="602" y2="528" class="diagram-lane" /><line x1="842" y1="64" x2="842" y2="528" class="diagram-lane" /><line x1="1082" y1="64" x2="1082" y2="528" class="diagram-lane" /><line x1="1287" y1="64" x2="1287" y2="528" class="diagram-lane" /><line x1="1422" y1="64" x2="1422" y2="528" class="diagram-lane" />
+
+                <line x1="122" y1="92" x2="355" y2="92" class="diagram-data-line" /><text x="238" y="83" text-anchor="middle" class="diagram-label">01 질문 · 무료 메타데이터 검색</text>
+                <line x1="355" y1="126" x2="129" y2="126" class="diagram-data-line" /><text x="242" y="117" text-anchor="middle" class="diagram-label">02 후보 · 커버리지 · 정확한 총가격</text>
+                <line x1="122" y1="160" x2="355" y2="160" class="diagram-data-line" /><text x="238" y="151" text-anchor="middle" class="diagram-label">03 질문별 최대 예산 한 번 승인</text>
+
+                <rect x="282" y="180" width="160" height="54" class="diagram-note" /><text x="362" y="200" text-anchor="middle" class="diagram-small">04 IMMUTABLE JOB</text><text x="362" y="218" text-anchor="middle" class="diagram-label">hash · version · consent</text><text x="362" y="231" text-anchor="middle" class="diagram-small">recipient · amount · mint</text>
+
+                <line x1="370" y1="255" x2="834" y2="255" class="diagram-data-line" /><text x="602" y="246" text-anchor="middle" class="diagram-label">05 funded research job 실행</text>
+                <line x1="834" y1="289" x2="609" y2="289" class="diagram-data-line" /><text x="721" y="280" text-anchor="middle" class="diagram-label">06 GET /paid-human-document</text>
+                <line x1="602" y1="323" x2="835" y2="323" class="diagram-data-line" /><text x="718" y="314" text-anchor="middle" class="diagram-label">07 402 challenge · 가격 · 수취인</text>
+
+                <rect x="768" y="341" width="148" height="49" class="diagram-note" /><text x="842" y="360" text-anchor="middle" class="diagram-small">08 VERIFY EXACT INTENT</text><text x="842" y="378" text-anchor="middle" class="diagram-label">amount · asset · network</text>
+                <line x1="850" y1="405" x2="1074" y2="405" class="diagram-payment-line" /><text x="962" y="396" text-anchor="middle" class="diagram-label">09 제한된 서명 요청</text>
+                <line x1="1090" y1="438" x2="1279" y2="438" class="diagram-payment-line" /><text x="1184" y="429" text-anchor="middle" class="diagram-label">10 USDC transaction</text>
+                <line x1="1295" y1="462" x2="1414" y2="462" class="diagram-payment-line" /><text x="1354" y="452" text-anchor="middle" class="diagram-label">11 정산</text>
+
+                <line x1="1279" y1="486" x2="850" y2="486" class="diagram-trust-line" /><text x="1064" y="477" text-anchor="middle" class="diagram-label">12 confirmed receipt</text>
+                <line x1="834" y1="510" x2="609" y2="510" class="diagram-data-line" /><text x="721" y="501" text-anchor="middle" class="diagram-label">13 결제 증명 포함 재요청</text>
+                <line x1="594" y1="528" x2="370" y2="528" class="diagram-data-line" /><text x="482" y="519" text-anchor="middle" class="diagram-label">14 paid callback · 확정 passage</text>
+                <path d="M 354 535 H 130" class="diagram-data-line" /><text x="242" y="547" text-anchor="middle" class="diagram-small">15 PAID EVIDENCE ONLY → GEMINI CITED ANSWER</text>
+              </svg>
+            </div>
+            <div class="architecture-legend">
+              <div class="legend-lines"><span class="legend-line">질문·데이터</span><span class="legend-line payment">결제·정산</span><span class="legend-line trust">영수증·검증</span></div>
+              <span>직접 x402와 hosted Pay.sh/MPP 경로는 같은 quote·hash·version 불변조건을 공유</span>
+            </div>
+            <div class="footer-note"><span>결제는 진실이 아니라 어떤 문서 버전이 누구에게 정산되어 열렸는지를 증명합니다.</span><span>12</span></div>
+          </div>
+          <div class="page-mark">11 / 16</div>
+        </article>
+      </section>
+
+      <!-- 12 -->
+      <section class="slide-shell" data-title="제한된 자동결제">
+        <article class="slide">
+          <div class="pad">
+            <div class="eyebrow">보안 / 키와 권한 분리</div>
+            <h2 class="title wide fixed-title-lines" style="margin-top:2.5%; font-size:clamp(29px,3.2vw,54px)"><span>자동결제를 허용해도,</span><span>사용자의 지갑 권한은 넘기지 않습니다.</span></h2>
+            <p class="lead" style="margin-top:1.2%; max-width:78ch">자동결제는 개인키 위임이 아니라, 사전에 충전한 내부 잔액과 질문별 최대 예산 안에서만 실행되는 제한된 정산입니다.</p>
+            <div class="key-grid compact">
+              <div class="key-card"><div class="key-icon">P</div><h3>Phantom</h3><p class="small muted" style="margin-top:.8rem">지갑 소유 증명과 필요할 때 선불 충전</p><div class="rule" style="margin:1rem 0"></div><p class="small">개인키를 서버에 제공하지 않음</p></div>
+              <div class="key-card"><div class="key-icon">B</div><h3>선불 권한</h3><p class="small muted" style="margin-top:.8rem">내부 잔액에서 질문별 예산만 예약</p><div class="rule" style="margin:1rem 0"></div><p class="small">사용자 지갑 직접 출금 불가</p></div>
+              <div class="key-card"><div class="key-icon">K</div><h3>Cloud KMS</h3><p class="small muted" style="margin-top:.8rem">승인된 운영 결제를 비수출형 키로 서명</p><div class="rule" style="margin:1rem 0"></div><p class="small">사용자 Phantom 키와 분리</p></div>
+              <div class="key-card"><div class="key-icon">L</div><h3>로컬 Pay.sh</h3><p class="small muted" style="margin-top:.8rem">외부 Agent의 OS 보호 결제 계정</p><div class="rule" style="margin:1rem 0"></div><p class="small">AI에 원시 키 노출 없음</p></div>
+            </div>
+            <div class="security-explainer" style="margin-top:1.8%">
+              <div class="security-story">
+                <div><div class="card-kicker">브라우저와 외부 Agent의 결제 경로</div><h3>사용자는 결제 의도와 한도를 승인하고, 키는 각 지갑 경계 안에 남습니다.</h3></div>
+                <p><strong>브라우저:</strong> Phantom은 소유권 증명과 충전만 서명하고, Obulus는 충전된 잔액에서 확정 금액만 예약합니다.<br /><br /><strong>외부 Agent:</strong> Pay.sh가 OS 보안 저장소 안에서 서명하며, AI에는 결제 결과와 유료 응답만 전달됩니다.</p>
+              </div>
+              <div class="security-invariants">
+                <div class="security-invariant"><strong>원자적 예산 예약</strong><p>잔액 확인과 질문 예산 예약을 하나의 거래로 처리해 동시 질문이 같은 돈을 중복 사용하지 못합니다.</p></div>
+                <div class="security-invariant"><strong>부분 실패 복원</strong><p>여러 문서 중 일부 결제가 실패하면 열리지 않은 문서 금액만 내부 잔액으로 되돌립니다.</p></div>
+                <div class="security-invariant"><strong>무료 문서 복구</strong><p>결제 후 HTTP 응답이 유실돼도 원장에서 완료 상태를 확인하고 동일 문서를 다시 결제하지 않습니다.</p></div>
+                <div class="security-invariant"><strong>중복 지급 방지</strong><p>같은 research job을 재시도할 때 기존 transaction과 delivery 기록을 먼저 확인합니다.</p></div>
+              </div>
+            </div>
+            <div class="footer-note"><span>제한된 자동정산 ≠ 무제한 지갑 접근</span><span>12</span></div>
+          </div>
+          <div class="page-mark">12 / 16</div>
+        </article>
+      </section>
+
+      <!-- 13 -->
+      <section class="slide-shell" data-title="CLI와 MCP">
+        <article class="slide">
+          <div class="pad">
+            <div class="eyebrow">Agent 인터페이스 / CLI·MCP</div>
+            <div class="agent-interface-head">
+              <h2 class="title wide fixed-title-lines"><span>웹에서 끝나지 않습니다.</span><span>외부 AI Agent가 직접 검색하고 결제합니다.</span></h2>
+              <p class="lead">외부 리서치 Agent는 <strong>ask_people → prepare_evidence_payment → synthesize_human_answer</strong>를 호출해 브라우저 없이 같은 검색·결제·인용 답변을 받습니다.</p>
+            </div>
+            <div class="terminal-crop" role="img" aria-label="agent doctor와 marketplace tool 목록이 표시된 CLI 터미널 출력"></div>
+            <div class="agent-capability-grid">
+              <div class="agent-capability"><strong>무료 발견</strong><p>human DB 검색 · 커버리지 · 정확한 가격</p></div>
+              <div class="agent-capability"><strong>유료 거래</strong><p>x402 준비 · 결제 · 인용 합성 · 복구</p></div>
+              <div class="agent-capability"><strong>신규 공급</strong><p>Open Call · 응답 제출 · 메모리 관리</p></div>
+              <div class="agent-capability"><strong>정산 관리</strong><p>수익 · 지급 주소 · 온체인 claim 상태</p></div>
+            </div>
+            <div class="footer-note"><span>현재 약 23개 마켓플레이스 도구 · Google/Obulus/Pay 신원 분리</span><span>13</span></div>
+          </div>
+          <div class="page-mark">13 / 16</div>
+        </article>
+      </section>
+
+      <!-- 14 -->
+      <section class="slide-shell" data-title="전체 아키텍처">
+        <article class="slide light">
+          <div class="pad">
+            <div class="eyebrow">기술 / 전체 아키텍처</div>
+            <div style="display:flex; justify-content:space-between; align-items:end; margin-top:2%">
+              <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(28px,3.05vw,51px)"><span>Gemini는 답변을 만들고, Rust 코어는</span><span>읽을 원문과 지급 대상을 강제합니다.</span></h2>
+              <p class="lead" style="max-width:35ch">React·CLI/MCP에서 들어온 질문은 Rust/Axum이 검색·동의·가격을 확정하고, Vertex AI는 결제된 원문만 요약합니다. 개인 원문은 오프체인에 남습니다.</p>
+            </div>
+            <div class="system-architecture-wrap" aria-label="Obulus 전체 기술 아키텍처">
+              <svg class="system-architecture-svg" viewBox="0 0 1500 570" role="img" aria-labelledby="system-architecture-title">
+                <title id="system-architecture-title">사용자 인터페이스, Rust 코어, 인간 메모리 데이터, Gemini, Pay.sh와 Solana 정산을 연결한 Obulus 전체 구조</title>
+
+                <rect x="18" y="55" width="205" height="448" class="diagram-zone" />
+                <text x="40" y="82" class="diagram-small">USERS &amp; AGENTS</text>
+                <rect x="42" y="105" width="157" height="58" class="diagram-node dark-node" /><text x="120" y="130" text-anchor="middle" class="diagram-title inverse">기업 구매자</text><text x="120" y="150" text-anchor="middle" class="diagram-small inverse">WEB CHAT</text>
+                <rect x="42" y="190" width="157" height="58" class="diagram-node" /><text x="120" y="215" text-anchor="middle" class="diagram-title">기여자</text><text x="120" y="235" text-anchor="middle" class="diagram-small">OPEN CALL · MEMORY</text>
+                <rect x="42" y="275" width="157" height="58" class="diagram-node" /><text x="120" y="300" text-anchor="middle" class="diagram-title">외부 AI Agent</text><text x="120" y="320" text-anchor="middle" class="diagram-small">CLI · MCP</text>
+                <rect x="42" y="360" width="157" height="58" class="diagram-node" /><text x="120" y="385" text-anchor="middle" class="diagram-title">지갑 경계</text><text x="120" y="405" text-anchor="middle" class="diagram-small">PHANTOM · LOCAL PAY.SH</text>
+                <rect x="42" y="445" width="157" height="38" class="diagram-note" /><text x="120" y="469" text-anchor="middle" class="diagram-small">RAW KEY NEVER ENTERS AI</text>
+
+                <rect x="245" y="28" width="955" height="500" class="diagram-zone" />
+                <text x="270" y="57" class="diagram-small">OBULUS APPLICATION + DOMAIN CORE / GOOGLE CLOUD</text>
+
+                <rect x="275" y="78" width="260" height="54" class="diagram-node" /><text x="405" y="102" text-anchor="middle" class="diagram-title">React Experience</text><text x="405" y="121" text-anchor="middle" class="diagram-small">CHAT · DASHBOARD · MEMORY</text>
+                <rect x="565" y="78" width="260" height="54" class="diagram-node" /><text x="695" y="102" text-anchor="middle" class="diagram-title">CLI / MCP Tools</text><text x="695" y="121" text-anchor="middle" class="diagram-small">23 MARKETPLACE ACTIONS</text>
+                <rect x="855" y="78" width="315" height="54" class="diagram-node dark-node" /><text x="1012" y="102" text-anchor="middle" class="diagram-title inverse">Rust / Axum API</text><text x="1012" y="121" text-anchor="middle" class="diagram-small inverse">SESSION · CAPABILITY · POLICY</text>
+
+                <rect x="275" y="160" width="565" height="151" class="diagram-zone dark-zone" />
+                <text x="298" y="184" class="diagram-small inverse">DETERMINISTIC QUERY + MARKETPLACE ORCHESTRATION</text>
+                <rect x="298" y="202" width="155" height="40" class="diagram-node" /><text x="375" y="227" text-anchor="middle" class="diagram-label">질문 구조화</text>
+                <rect x="470" y="202" width="155" height="40" class="diagram-node" /><text x="547" y="227" text-anchor="middle" class="diagram-label">Coverage HIT/MISS</text>
+                <rect x="642" y="202" width="175" height="40" class="diagram-node" /><text x="729" y="227" text-anchor="middle" class="diagram-label">Hybrid Ranker</text>
+                <rect x="298" y="255" width="155" height="40" class="diagram-node" /><text x="375" y="280" text-anchor="middle" class="diagram-label">예산·다양성 선택</text>
+                <rect x="470" y="255" width="155" height="40" class="diagram-node" /><text x="547" y="280" text-anchor="middle" class="diagram-label">Evidence Verify</text>
+                <rect x="642" y="255" width="175" height="40" class="diagram-node" /><text x="729" y="280" text-anchor="middle" class="diagram-label">Open Call · 품질</text>
+
+                <rect x="870" y="160" width="300" height="151" class="diagram-zone" />
+                <text x="892" y="184" class="diagram-small">VERTEX AI / GEMINI</text>
+                <rect x="892" y="202" width="118" height="40" class="diagram-node" /><text x="951" y="227" text-anchor="middle" class="diagram-label">무료 Baseline</text>
+                <rect x="1023" y="202" width="125" height="40" class="diagram-node" /><text x="1085" y="227" text-anchor="middle" class="diagram-label">인터뷰 질문</text>
+                <rect x="892" y="255" width="256" height="40" class="diagram-node dark-node" /><text x="1020" y="280" text-anchor="middle" class="diagram-label inverse">Paid Evidence Synthesis</text>
+
+                <rect x="275" y="337" width="895" height="164" fill="#f7f7f7" stroke="#9ba0a4" stroke-width="1.5" stroke-dasharray="7 5" rx="4" />
+                <text x="298" y="361" class="diagram-small">ENCRYPTED OFF-CHAIN HUMAN DATA + LEDGER</text>
+                <rect x="298" y="380" width="155" height="58" class="diagram-node" /><text x="375" y="404" text-anchor="middle" class="diagram-title">Metadata</text><text x="375" y="424" text-anchor="middle" class="diagram-small">FREE DISCOVERY</text>
+                <rect x="470" y="380" width="155" height="58" class="diagram-node dark-node" /><text x="547" y="404" text-anchor="middle" class="diagram-title inverse">Human Docs</text><text x="547" y="424" text-anchor="middle" class="diagram-small inverse">LOCKED PASSAGES</text>
+                <rect x="642" y="380" width="155" height="58" class="diagram-node" /><text x="719" y="404" text-anchor="middle" class="diagram-title">Memory Stream</text><text x="719" y="424" text-anchor="middle" class="diagram-small">OBSERVE · REFLECT</text>
+                <rect x="814" y="380" width="155" height="58" class="diagram-node" /><text x="891" y="404" text-anchor="middle" class="diagram-title">Evidence Graph</text><text x="891" y="424" text-anchor="middle" class="diagram-small">TRUST · OUTCOME</text>
+                <rect x="986" y="380" width="161" height="58" class="diagram-node" /><text x="1066" y="404" text-anchor="middle" class="diagram-title">Research Ledger</text><text x="1066" y="424" text-anchor="middle" class="diagram-small">JOB · QUOTE · RECEIPT</text>
+                <rect x="298" y="451" width="849" height="31" class="diagram-note" /><text x="722" y="472" text-anchor="middle" class="diagram-small">CONSENT VERSION · LOCK · ACCESS POLICY · CONTENT HASH · CORRECTION HISTORY · EARNINGS</text>
+
+                <rect x="1222" y="55" width="260" height="448" class="diagram-zone" />
+                <text x="1246" y="82" class="diagram-small">PAYMENT + SETTLEMENT</text>
+                <rect x="1247" y="105" width="210" height="54" class="diagram-node" /><text x="1352" y="129" text-anchor="middle" class="diagram-title">x402 Gateway</text><text x="1352" y="148" text-anchor="middle" class="diagram-small">DIRECT / REFILL PATH</text>
+                <rect x="1247" y="177" width="210" height="54" class="diagram-node" /><text x="1352" y="201" text-anchor="middle" class="diagram-title">Pay.sh / MPP</text><text x="1352" y="220" text-anchor="middle" class="diagram-small">HOSTED PAYMENT AGENT</text>
+                <rect x="1247" y="249" width="210" height="54" class="diagram-node dark-node" /><text x="1352" y="273" text-anchor="middle" class="diagram-title inverse">Cloud KMS</text><text x="1352" y="292" text-anchor="middle" class="diagram-small inverse">NON-EXPORTABLE SIGNER</text>
+                <rect x="1247" y="321" width="210" height="54" class="diagram-node" /><text x="1352" y="345" text-anchor="middle" class="diagram-title">Solana USDC</text><text x="1352" y="364" text-anchor="middle" class="diagram-small">DEVNET SETTLEMENT</text>
+                <rect x="1247" y="393" width="210" height="54" class="diagram-node dark-node" /><text x="1352" y="417" text-anchor="middle" class="diagram-title inverse">Contributor Wallet</text><text x="1352" y="436" text-anchor="middle" class="diagram-small inverse">DIRECT OWNER PAYOUT</text>
+                <rect x="1247" y="461" width="210" height="27" class="diagram-note" /><text x="1352" y="479" text-anchor="middle" class="diagram-small">RECEIPT · REFUND · RECOVERY</text>
+
+                <path d="M 199 134 H 267" class="diagram-data-line" /><path d="M 199 304 H 557" class="diagram-data-line" /><path d="M 199 219 H 267 V 275 H 290" class="diagram-data-line" />
+                <path d="M 535 105 H 847" class="diagram-data-line" /><path d="M 825 105 H 847" class="diagram-data-line" /><path d="M 1012 132 V 152" class="diagram-data-line" />
+                <path d="M 840 235 H 862" class="diagram-data-line" /><path d="M 870 276 H 825" class="diagram-data-line" />
+                <path d="M 375 303 V 372" class="diagram-data-line" /><path d="M 547 303 V 372" class="diagram-data-line" /><path d="M 729 303 V 372" class="diagram-data-line" />
+                <path d="M 547 380 V 319 H 1020 V 303" class="diagram-data-line" /><path d="M 891 380 V 319 H 730 V 303" class="diagram-trust-line" />
+                <path d="M 1147 409 H 1214 V 204 H 1239" class="diagram-payment-line" /><path d="M 1352 231 V 241" class="diagram-payment-line" /><path d="M 1352 303 V 313" class="diagram-payment-line" /><path d="M 1352 375 V 385" class="diagram-payment-line" />
+                <path d="M 1247 475 H 1160 V 447 H 1147" class="diagram-trust-line" />
+                <path d="M 199 389 H 1214 V 132 H 1239" class="diagram-payment-line" />
+              </svg>
+            </div>
+            <div class="architecture-legend">
+              <div class="legend-lines"><span class="legend-line">질문·데이터</span><span class="legend-line payment">결제·정산</span><span class="legend-line trust">신뢰·복구</span></div>
+              <span>확률적 AI는 해석 · 결정론적 시스템은 권한과 돈을 집행</span>
+            </div>
+            <div class="footer-note"><span>RAW PERSONAL DATA STAYS OFF-CHAIN</span><span>14</span></div>
+          </div>
+          <div class="page-mark">14 / 16</div>
+        </article>
+      </section>
+
+      <!-- 15 -->
+      <section class="slide-shell" data-title="첫 고객과 진입 시장">
+        <article class="slide">
+          <div class="pad">
+            <div class="eyebrow">시장 진입 / 첫 구매자</div>
+            <div style="display:flex; justify-content:space-between; align-items:end; margin-top:2.5%">
+              <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(29px,3.15vw,52px)"><span>첫 고객은 소비재·F&amp;B 기업의</span><span>소비자 인사이트 팀입니다.</span></h2>
+              <p class="lead" style="max-width:35ch">이들은 지역·세대·상황이 좁은 질문이 생길 때마다 패널을 다시 모집하고, 비슷한 인터뷰 비용을 반복해서 지불합니다.</p>
+            </div>
+            <div class="market-grid">
+              <div class="market-column"><div class="card-kicker">가장 비싼 미해결 질문</div><h3>공개 웹과 기존 패널 사이</h3><div class="market-row"><strong>지역의 최근 선택</strong><br />파리 20대 직장인의 평일 저녁 행동</div><div class="market-row"><strong>접근하기 어려운 집단</strong><br />특정 직군·생활환경·구매 경험</div><div class="market-row"><strong>출시 전 판단</strong><br />콘셉트·가격·메뉴·광고 문구의 실제 반응</div></div>
+              <div class="market-column"><div class="card-kicker">첫 유료 PoC</div><h3>한 질문에서 의사결정까지</h3><div class="market-row"><strong>1. 기존 근거 검색</strong><br />조건에 맞는 기존 답변 원문만 선택</div><div class="market-row"><strong>2. 부족한 집단만 모집</strong><br />검색 공백을 Open Call로 정확히 충원</div><div class="market-row"><strong>3. 결과 비교</strong><br />6주 안에 비용·속도·재사용률과 결정 변화를 측정</div></div>
+              <div class="market-column"><div class="card-kicker">확장 순서</div><h3>동일한 인프라, 더 큰 구매자</h3><div class="market-row"><strong>시장조사 기관</strong><br />기존 인터뷰를 고객 전용 검색 DB로 전환</div><div class="market-row"><strong>소셜 월드모델 기업</strong><br />합성 결과를 최신 인간 근거로 학습·검증</div><div class="market-row"><strong>연구·공공기관</strong><br />대학·정책연구·지방정부의 반복 패널</div><div class="market-row"><strong>외부 AI Agent</strong><br />CLI·MCP로 인간 근거를 검색하고 자동 구매</div></div>
+            </div>
+            <div class="footer-note"><span>초기 wedge: 반복 조사비가 크고 결과를 빠르게 의사결정에 써야 하는 팀</span><span>15</span></div>
+          </div>
+          <div class="page-mark">15 / 16</div>
+        </article>
+      </section>
+
+      <!-- 17 -->
+      <section class="slide-shell" data-title="시장 규모와 진입 논리">
+        <article class="slide light">
+          <div class="pad">
+            <div class="eyebrow">시장 규모 / TAM · SAM · SOM</div>
+            <div style="display:flex; justify-content:space-between; align-items:end; margin-top:2.5%">
+              <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(29px,3.15vw,52px)"><span>192조 원 인사이트 시장에서,</span><span>반복 인간조사의 재사용부터 시작합니다.</span></h2>
+              <p class="lead" style="max-width:33ch">시장 규모는 외부 산업 통계와 내부 고객 수 가정을 분리해 계산했습니다.</p>
+            </div>
+            <div class="market-size-grid">
+              <div class="market-size-card"><div class="card-kicker">TAM · 산업 전체</div><h3>약 192조 원</h3><p><strong>글로벌 인사이트 산업 1,420억 달러</strong><br />시장조사·데이터·분석·리서치 소프트웨어를 포함한 2023년 매출 규모.</p></div>
+              <div class="market-size-card"><div class="card-kicker">SAM · 초기 시장 대용치</div><h3>약 39조 원</h3><p><strong>미국 시장조사·여론조사 291억 달러</strong><br />반복적으로 사람을 모집하고 분석하는 구매 시장의 보수적 지리 대용치.</p></div>
+              <div class="market-size-card"><div class="card-kicker">SOM · 3년 목표</div><h3>36억 원</h3><p><strong>연 360억 원 근거 거래 × 프로토콜 수수료 10%</strong><br />오직 정산된 마이크로페이에서 발생하는 bottom-up 매출 목표. SAM의 약 0.009%.</p></div>
+            </div>
+            <div class="market-scope">
+              <div><strong>TAM의 의미</strong><p>Obulus가 장기적으로 연결할 수 있는 전 세계 인사이트 지출의 상한선입니다.</p></div>
+              <div><strong>SAM의 의미</strong><p>시장조사·소비자 인사이트·소셜 월드모델처럼 인간 응답을 직접 구매하는 조직입니다.</p></div>
+              <div><strong>SOM의 근거</strong><p>구매 조직 300곳, 조직당 월 5만 질문, 근거 8건, 평균 25원, 수수료 10%라는 3년차 거래 가정입니다.</p></div>
+            </div>
+            <p class="source-line">환산 기준: 코드의 1 USDC = 1,350원 정책. 출처: <a href="https://community.esomar.org/knowledge-center/library?publication=3019">ESOMAR Global Market Research 2024</a> · <a href="https://fred.stlouisfed.org/series/REVEF54191ALLEST">U.S. Census Service Annual Survey / FRED</a>. TAM·SAM은 시장 대용치이며 Obulus 매출 예측이 아닙니다.</p>
+            <div class="footer-note"><span>TOP-DOWN INDUSTRY PROXY + BOTTOM-UP ACCOUNT PLAN</span><span>17</span></div>
+          </div>
+          <div class="page-mark">17 / 21</div>
+        </article>
+      </section>
+
+      <!-- 18 -->
+      <section class="slide-shell" data-title="경쟁 우위와 6주 도입 계획">
+        <article class="slide">
+          <div class="pad">
+            <div class="eyebrow">시장 진입 / 대안 비교</div>
+            <div style="display:flex; justify-content:space-between; align-items:end; margin-top:2.5%">
+              <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(27px,2.85vw,47px)"><span>LLM보다 실제적이고, 전통 조사보다 빠른 지점을</span><span>6주 유료 PoC로 검증합니다.</span></h2>
+              <span class="badge fill">6주 유료 PoC</span>
+            </div>
+            <div class="competition">
+              <div class="head">비교 기준</div><div class="head">범용 LLM</div><div class="head">전통 패널</div><div class="head">합성 페르소나</div><div class="head yes">Obulus</div>
+              <div>실제 인간 경험</div><div>제한적</div><div>가능</div><div>간접 시뮬레이션</div><div class="yes">원문 근거</div>
+              <div>즉시 재검색</div><div>빠름</div><div>느림</div><div>빠름</div><div class="yes">기존 DB는 즉시</div>
+              <div>부족 시 신규 수집</div><div>불가</div><div>가능</div><div>불가</div><div class="yes">Open Call</div>
+              <div>개인별 반복 보상</div><div>없음</div><div>일회성</div><div>없음</div><div class="yes">열람마다 정산</div>
+              <div>외부 Agent 구매</div><div>없음</div><div>수동</div><div>모델 내부</div><div class="yes">CLI·MCP</div>
+            </div>
+            <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:1%; margin-top:2.2%; flex:1; min-height:0">
+              <div class="card card-pad"><div class="card-kicker">1–2주차</div><h3>대상·동의·기존 데이터</h3><p class="small muted" style="margin-top:.8rem">사용 사례 1개, 핵심 세그먼트, 기존 전사문과 기여자 30–50명</p></div>
+              <div class="card card-pad"><div class="card-kicker">3–4주차</div><h3>20–50개 실제 질문</h3><p class="small muted" style="margin-top:.8rem">검색 성공률, 질문당 비용, Open Call 충원 시간과 근거 유용성 측정</p></div>
+              <div class="card card-pad"><div class="card-kicker">5–6주차</div><h3>결과 검증과 확장 판단</h3><p class="small muted" style="margin-top:.8rem">실제 의사결정 결과, 재사용률, ROI와 private panel 계약 제안</p></div>
+            </div>
+            <div style="display:flex; gap:.45rem; margin-top:1.5%; flex-wrap:wrap"><span class="badge">검색 성공률 ≥ 40%</span><span class="badge">근거 확보 &lt; 24시간</span><span class="badge">재사용률 ≥ 20%</span><span class="badge">유용 평가 ≥ 70%</span><span class="badge">환불률 &lt; 2%</span></div>
+            <div class="footer-note"><span>목표 수치는 초기 PoC 검증 가정</span><span>17</span></div>
+          </div>
+          <div class="page-mark">17 / 20</div>
+        </article>
+      </section>
+
+      <!-- 18 -->
+      <section class="slide-shell" data-title="단위경제">
+        <article class="slide light">
+          <div class="pad">
+            <div class="eyebrow">사업 모델 / 단위경제</div>
+            <div style="display:flex; justify-content:space-between; align-items:end; margin-top:2.5%">
+              <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(28px,3vw,50px)"><span>한 질문에 근거 8개를 열면 120원,</span><span>Obulus는 열린 문서마다 소액 수수료를 받습니다.</span></h2>
+              <span class="badge fill">상용 모델 가정 · 미구현</span>
+            </div>
+            <div class="unit-economics">
+              <div class="card card-pad" style="display:flex; flex-direction:column">
+                <div class="card-kicker">머신 트래픽 100만 건 / 평균 25원</div>
+                <div class="metric">근거 거래액 2,500만 원</div>
+                <div class="unit-stack"><div style="width:90%; background:var(--black); color:#fff">기여자 90% · 2,250만 원</div><div style="width:10%">플랫폼 10% · 250만 원</div></div>
+                <div class="three-col" style="margin-top:1.4rem">
+                  <div><div class="card-kicker">거래 단위</div><strong>문서 1건</strong><p class="small muted">필요한 근거만 개방</p></div>
+                  <div><div class="card-kicker">성장 변수</div><strong>Agent 호출량</strong><p class="small muted">사람 클릭보다 큰 규모</p></div>
+                  <div><div class="card-kicker">비용 변수</div><strong>합성·검수</strong><p class="small muted">PoC에서 실측 필요</p></div>
+                </div>
+                <p class="small muted" style="margin-top:auto">현재 데모는 상업 수수료를 부과하지 않습니다. 10%는 네트워크 운영을 위한 검증 가정입니다.</p>
+              </div>
+              <div class="card card-pad">
+                <div class="card-kicker">대량 API 기업 1곳 / 월간 가정</div>
+                <table class="assumption-table">
+                  <tr><th>항목</th><th>가정</th><th>금액</th></tr>
+                  <tr><td>질문 수</td><td>50,000건</td><td>—</td></tr>
+                  <tr><td>질문당 문서</td><td>8건 × 평균 25원</td><td>거래액 1,000만 원</td></tr>
+                  <tr><td>거래 수수료</td><td>10% 가정</td><td>100만 원</td></tr>
+                  <tr><td>기여자 정산</td><td>거래액의 90%</td><td>900만 원</td></tr>
+                  <tr><td>월 프로토콜 매출</td><td>거래액의 10%</td><td><strong>100만 원</strong></td></tr>
+                  <tr><td>연 환산 매출</td><td>구매 조직 1곳</td><td><strong>1,200만 원</strong></td></tr>
+                  <tr><td>검증할 지표</td><td>원가·재사용·해지</td><td>PoC 실측</td></tr>
+                </table>
+              </div>
+            </div>
+            <div class="footer-note"><span>마이크로 단가는 코드와 일치 · 수수료율과 거래량은 사업 검증 가정</span><span>19</span></div>
+          </div>
+          <div class="page-mark">18 / 20</div>
+        </article>
+      </section>
+
+      <!-- 19 -->
+      <section class="slide-shell" data-title="3개년 사업 시나리오">
+        <article class="slide light">
+          <div class="pad">
+            <div class="eyebrow">성장 계획 / 3개년 운영 시나리오</div>
+            <div style="display:flex; justify-content:space-between; align-items:end; margin-top:2.5%">
+              <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(28px,3vw,50px)"><span>문서가 열릴 때마다 수수료가 발생하고,</span><span>Agent 호출량이 거래 네트워크를 확장합니다.</span></h2>
+              <span class="badge fill">계획 시나리오 · 예측치 아님</span>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1.05fr; gap:3%; flex:1; min-height:0; margin-top:2.5%">
+              <div>
+                <table class="assumption-table">
+                  <tr><th>핵심 가정</th><th>1년차</th><th>2년차</th><th>3년차</th></tr>
+                  <tr><td>구매 조직</td><td>12</td><td>60</td><td>300</td></tr>
+                  <tr><td>조직당 월 질문</td><td>1만</td><td>2.5만</td><td>5만</td></tr>
+                  <tr><td>질문당 문서</td><td>8</td><td>8</td><td>8</td></tr>
+                  <tr><td>평균 문서 가격</td><td>15원</td><td>20원</td><td>25원</td></tr>
+                  <tr><td>연간 근거 거래액</td><td>1.7억</td><td>28.8억</td><td>360억</td></tr>
+                  <tr><td>프로토콜 수수료율</td><td>10%</td><td>10%</td><td>10%</td></tr>
+                  <tr><td>기여자 정산액</td><td>1.6억</td><td>25.9억</td><td>324억</td></tr>
+                  <tr><td>프로토콜 매출</td><td><strong>0.17억</strong></td><td><strong>2.88억</strong></td><td><strong>36억</strong></td></tr>
+                </table>
+              </div>
+              <div>
+                <div class="card-kicker">프로토콜 매출 · 억 원</div>
+                <div class="growth-chart">
+                  <div class="growth-column"><div class="growth-label"><small>1년차</small><strong>0.17억</strong><span>초기 유료 조회</span></div><div class="growth-bar" style="height:16%"></div></div>
+                  <div class="growth-column"><div class="growth-label"><small>2년차</small><strong>2.88억</strong><span>Agent API 거래</span></div><div class="growth-bar" style="height:38%"></div></div>
+                  <div class="growth-column"><div class="growth-label"><small>3년차</small><strong>36억</strong><span>대규모 근거 정산</span></div><div class="growth-bar" style="height:100%"></div></div>
+                </div>
+                <p class="small muted" style="margin-top:1.5rem">프로토콜 매출 = 실제 정산된 근거 거래액 × 10% 수수료 가정. 실제 호출량·수수료율·정산 원가는 PoC에서 갱신합니다.</p>
+              </div>
+            </div>
+            <div class="footer-note"><span>모든 수치는 시장 검증 전 사업 계획 가정</span><span>19</span></div>
+          </div>
+          <div class="page-mark">19 / 20</div>
+        </article>
+      </section>
+
+      <!-- 20 -->
+      <section class="slide-shell" data-title="증거와 비전">
+        <article class="slide light">
+          <div class="pad">
+            <div class="eyebrow">Devnet 검증 완료 / Mainnet 전환 / 고객 PoC</div>
+            <h2 class="title wide fixed-title-lines" style="margin-top:2.5%; font-size:clamp(28px,3vw,50px)"><span>Devnet에서 검색·결제·소유자 정산을 검증했습니다.</span><span>다음 단계는 Mainnet 전환과 고객 PoC입니다.</span></h2>
+            <div class="validation-layout">
+              <div class="validation-column">
+                <div class="validation-row"><strong>제품 흐름</strong><p>자연어 질문 → 무료 메타데이터 검색 → 질문별 랭킹 → 정확한 견적 → HIT 또는 Open Call → 결제된 근거 합성 → 개인 메모리와 수익 적재</p></div>
+                <div class="validation-row"><strong>기술 구조</strong><p>React 웹, Rust/Axum 코어, 버전형 Memory DB, Vertex AI/Gemini, x402 게이트웨이, Pay.sh/MPP 오케스트레이터, Cloud KMS, Solana Devnet USDC, CLI/MCP 도구</p></div>
+                <div class="validation-row"><strong>자동화 검증</strong><p>기준 시점 90개 테스트: Rust 백엔드 72개, Agent·CLI 11개, 결제 경로 7개. 빌드·lint·typecheck·clippy를 함께 통과했습니다.</p></div>
+                <div class="validation-row"><strong>설계 증거</strong><p>08 메모리 적재 구조 · 12 유료 URL 결제 시퀀스 · 15 전체 시스템 아키텍처. 결제 실패·응답 유실·중복 지급·부분 환불까지 원장 상태로 처리합니다.</p></div>
+              </div>
+              <div class="validation-ask">
+                <div><div class="card-kicker">Devnet에서 검증한 흐름</div><h3 style="margin-top:1rem">하나의 질문이 실제 소유자 지급과 인용 답변으로 끝납니다.</h3></div>
+                <p>Cloud KMS 서명 → Pay.sh 402 해결 → Solana Devnet USDC 이전 → 소유자 잔액 증가 → 결제된 passage 반환 → Gemini 인용 답변 → 동일 job 재시도 시 중복 지급 0.</p>
+                <div class="rule" style="background:rgba(255,255,255,.22)"></div>
+                <p><strong style="color:#fff">다음 단계</strong><br />Mainnet 자산·RPC·규제·운영 정책을 적용하고, 실제 기업 질문으로 검색 성공률·재사용률·정산 원가를 검증합니다.</p>
+              </div>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:end; margin-top:2.2%">
+              <p class="big-quote" style="font-size:clamp(20px,2.15vw,38px); max-width:42ch">웹은 공개 정보를 검색 가능하게 만들었습니다. <strong>Obulus는 인간 경험을 검색·허가·결제 가능하게 만듭니다.</strong></p>
+              <span class="badge fill">THE PAID HUMAN WEB</span>
+            </div>
+            <div class="footer-note"><span>OBULUS · GOOGLE CLOUD × SOLANA</span><span>16</span></div>
+          </div>
+          <div class="page-mark">16 / 16</div>
+        </article>
+      </section>
+    </main>
+
+    <nav class="nav" aria-label="슬라이드 탐색">
+      <button id="prevBtn" type="button" aria-label="이전 슬라이드">←</button>
+      <span class="counter" id="counter">01 / 21</span>
+      <button id="nextBtn" type="button" aria-label="다음 슬라이드">→</button>
+      <button id="printBtn" type="button" aria-label="PDF로 인쇄">PDF</button>
+    </nav>
+
+    <script>
+      const deck = document.getElementById('deck')
+      const slides = Array.from(document.querySelectorAll('.slide-shell'))
+      const counter = document.getElementById('counter')
+      const progressBar = document.getElementById('progressBar')
+      let activeIndex = 0
+
+      function fitDeck() {
+        const scale = Math.min(window.innerWidth / 1600, window.innerHeight / 900)
+        document.documentElement.style.setProperty('--deck-scale', String(scale))
+      }
+
+      slides.forEach((slide, index) => {
+        const number = String(index + 1).padStart(2, '0')
+        const total = String(slides.length).padStart(2, '0')
+        const pageMark = slide.querySelector('.page-mark')
+        if (pageMark) pageMark.textContent = `${number} / ${total}`
+        const footerPage = slide.querySelector('.footer-note span:last-child')
+        if (footerPage && /^\d+$/.test(footerPage.textContent.trim())) footerPage.textContent = number
+      })
+
+      function updateNavigation(index) {
+        activeIndex = Math.max(0, Math.min(slides.length - 1, index))
+        counter.textContent = `${String(activeIndex + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}`
+        progressBar.style.width = `${((activeIndex + 1) / slides.length) * 100}%`
+        document.title = `Obulus — ${slides[activeIndex].dataset.title}`
+      }
+
+      function goTo(index) {
+        const next = Math.max(0, Math.min(slides.length - 1, index))
+        slides[next].scrollIntoView({ behavior: 'smooth', block: 'start' })
+        updateNavigation(next)
+      }
+
+      document.getElementById('prevBtn').addEventListener('click', () => goTo(activeIndex - 1))
+      document.getElementById('nextBtn').addEventListener('click', () => goTo(activeIndex + 1))
+      document.getElementById('printBtn').addEventListener('click', () => window.print())
+
+      document.addEventListener('keydown', (event) => {
+        if (['ArrowRight', 'ArrowDown', 'PageDown', ' '].includes(event.key)) {
+          event.preventDefault()
+          goTo(activeIndex + 1)
+        }
+        if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(event.key)) {
+          event.preventDefault()
+          goTo(activeIndex - 1)
+        }
+        if (event.key === 'Home') {
+          event.preventDefault()
+          goTo(0)
+        }
+        if (event.key === 'End') {
+          event.preventDefault()
+          goTo(slides.length - 1)
+        }
+      })
+
+      const observer = new IntersectionObserver(
+        (entries) => {
+          const visible = entries.find((entry) => entry.isIntersecting && entry.intersectionRatio > 0.6)
+          if (visible) updateNavigation(slides.indexOf(visible.target))
+        },
+        { root: deck, threshold: [0.6] },
+      )
+
+      slides.forEach((slide) => observer.observe(slide))
+      window.addEventListener('resize', fitDeck)
+      fitDeck()
+      updateNavigation(0)
+    </script>
+  </body>
+</html>

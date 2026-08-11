@@ -69,6 +69,29 @@ export type Resolution = {
     suggestedUnitPriceKrw: number
     suggestedBudgetKrw: number
   }
+  agentRun?: {
+    id: string
+    objective: string
+    model: string
+    mode: string
+    nextAction:
+      | 'search_human_evidence'
+      | 'rank_evidence_bundle'
+      | 'propose_evidence_purchase'
+      | 'propose_hybrid_research'
+      | 'propose_open_call'
+      | 'generate_general_baseline'
+      | 'finish_without_purchase'
+    requiresUserApproval: boolean
+    steps: Array<{
+      sequence: number
+      agent: string
+      tool: string
+      status: 'completed' | 'fallback' | 'awaiting_user_approval'
+      summary: string
+      artifactRef?: string
+    }>
+  }
 }
 
 export type AiBaseline = {

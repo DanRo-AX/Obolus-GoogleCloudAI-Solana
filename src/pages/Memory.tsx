@@ -14,6 +14,7 @@ import {
   Wallet,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { AuthUnavailable } from '@/components/AuthUnavailable'
 import {
   Badge,
   Switch,
@@ -44,6 +45,8 @@ export default function Memory() {
     refreshLedger,
     account,
     authReady,
+    authError,
+    retryAuth,
     balance,
     verifyPayoutWallet,
     deleteCurrentAccount,
@@ -216,6 +219,9 @@ export default function Memory() {
       </div>
     )
   }
+  if (authError && !account) {
+    return <AuthUnavailable message={authError} onRetry={retryAuth} />
+  }
   if (!account) return <Navigate to="/login" replace />
 
   return (
@@ -292,7 +298,7 @@ export default function Memory() {
         {earnings?.claimableKrw ? (
           <div className="rounded-[6px] border border-[#0F766E]/30 bg-[#0F766E]/5 px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
             {t('Claimable escrow')} <strong className="text-foreground">₩{earnings.claimableKrw.toLocaleString()}</strong>
-            {' · '}{t('claim it and USDC lands in the wallet recorded at each open. Not part of the sandbox balance.')}
+            {' · '}{t('claim it and the 90% evidence-owner share lands in the wallet recorded at each open. It is separate from prepaid buyer credit.')}
           </div>
         ) : null}
 
@@ -368,7 +374,7 @@ export default function Memory() {
             <span className="text-sm leading-relaxed text-muted-foreground">
               {(profile?.strikes ?? 0) >= AUTO_MATCH_STRIKE_LIMIT
                 ? `${t('Strike')} ${AUTO_MATCH_STRIKE_LIMIT}${t(' of ')}${STRIKE_LIMIT}${t(' — auto-match is off. New payouts are held 14 days. Win the dispute and the strike lifts.')}`
-                : t('Leave it on and SHELF quotes your documents the moment one fits a question — no open call, no waiting. USDC lands in your wallet each time someone opens one, with nothing new written.')}
+                : t('Leave it on and SHELF quotes your documents when one fits a question — no new open call or answer required. Each qualified open settles the 90% evidence-owner share to your verified wallet.')}
             </span>
           </div>
         </div>
@@ -468,7 +474,7 @@ export default function Memory() {
                 {t('Nothing on your shelf yet')}
               </h2>
               <p className="max-w-[320px] text-sm leading-relaxed text-muted-foreground">
-                {t('Answer one open call and it lands here as a document. Every open after that pays you ₩5 to ₩20, and we never touch it.')}
+                {t('Answer one open call and it lands here as a document. Each qualified reuse pays you 90% of its ₩5 to ₩25 open price; the 10% protocol fee funds payment, recovery, quality and network operations.')}
               </p>
               <Button asChild variant="mono" size="mono" className="mt-2">
                 <Link to="/dashboard">{t('Browse open calls')}</Link>
@@ -527,7 +533,9 @@ export default function Memory() {
                         >
                           +₩{m.earned.toLocaleString()}
                         </span>
-                        {m.status !== 'voided' && m.memoryType !== 'reflection' ? (
+                        {m.status !== 'voided' &&
+                        m.memoryType !== 'reflection' &&
+                        m.memoryType !== 'reuse' ? (
                           <button
                             type="button"
                             disabled={lockingId === m.id}

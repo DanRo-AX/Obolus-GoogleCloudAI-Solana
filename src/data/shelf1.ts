@@ -29,7 +29,7 @@ export const HERO = {
   eyebrow: 'The argument · SHELF',
   title: 'An agent that searches people instead of the web',
   standfirst:
-    'Every crawler in production today reads for free. SHELF pays ₩5 to ₩20 per open, and the USDC lands in the author’s wallet. This is what changes when the document on the other end has an author.',
+    'Every crawler in production today reads for free. SHELF prices each firsthand document at ₩5 to ₩25; 90% of every qualified open settles to its owner and 10% funds the protocol.',
   meta: [
     { label: 'Published', value: 'July 31, 2026' },
     { label: 'By', value: 'The Obolus team' },
@@ -38,7 +38,7 @@ export const HERO = {
   ],
 }
 
-export const DEFINITION = 'SHELF searches the shelves, opens a handful, and pays each author ₩5 to ₩20 per open.'
+export const DEFINITION = 'SHELF searches the shelves, opens only the evidence a question needs, and splits each ₩5 to ₩25 open 90% to its owner and 10% to the protocol.'
 
 /** The 7 steps, rendered as a table. Step 4 is the branch the product turns on. */
 export const LIFECYCLE = [
@@ -115,7 +115,7 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'p',
-        text: 'One thing is different. Opening the URL pays its author ₩5 to ₩20, at the moment it opens.',
+        text: 'One thing is different. Opening the URL creates a document-level settlement: 90% to its owner and 10% to the protocol.',
       },
       {
         kind: 'list',
@@ -128,7 +128,7 @@ export const SECTIONS: Section[] = [
       {
         kind: 'note',
         label: 'Why not embed the whole shelf',
-        text: 'Google indexes everything and still fetches only what it shows you. Same reasoning here. The Rust ranker weighs lexical and deterministic hash relevance, freshness, trust, and a query-specific personalized PageRank over independently verified evidence links, then drops duplicate authors and repeated passages — all before anything is paid for. Then ₩5 to ₩20 goes to an author on each one that opens.',
+        text: 'Google indexes everything and still fetches only what it shows you. Same reasoning here. The Rust ranker weighs lexical and deterministic hash relevance, freshness, trust, and a query-specific personalized PageRank over independently verified evidence links, then drops duplicate authors and repeated passages — all before anything is paid for. Only the selected documents open, each with a transparent 90/10 owner and protocol split.',
       },
     ],
   },
@@ -214,7 +214,7 @@ export const SECTIONS: Section[] = [
     blocks: [
       {
         kind: 'p',
-        text: 'Per-open pricing only works when one open can cost ₩5. Phantom refills a prepaid balance, and only when it runs low; a bounded GCP KMS agent then pays each DB independently through Pay.sh.',
+        text: 'Per-open pricing only works when a ₩5 payment needs no manual gas step. Phantom authorizes a bounded USDC deposit only when prepaid credit runs low; the x402 facilitator sponsors the network fee and a KMS-protected agent settles each selected DB through Pay.sh.',
       },
       {
         kind: 'p',
@@ -261,12 +261,12 @@ export const SECTIONS: Section[] = [
           'The short interview turns fill in private context. They are not indexed and never sold as separate passages.',
           'Individual passages can be locked so they are never quoted.',
           'Delete the account and the profile, the documents, and the memory go with it. Sessions are revoked, unused balance comes back, and the accounting rows that have to be kept are anonymized.',
-          'Auto-match can pick an eligible passage without a new call. USDC arrives without you asking — but only when that committed passage is opened.',
+          'Auto-match can pick an eligible passage without a new call. The 90% evidence-owner share settles without a new answer — but only when that committed passage is actually opened.',
         ],
       },
       {
         kind: 'p',
-        text: 'That last point is the whole recruitment argument. Somebody who wrote it down once earns ₩5 to ₩20 each time SHELF opens it.',
+        text: 'That last point is the recruitment argument. Somebody who wrote it down once receives 90% of the ₩5 to ₩25 open price each time SHELF qualifies and opens it again.',
       },
     ],
   },

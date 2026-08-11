@@ -46,8 +46,8 @@ import {
  *
  * Split screen: the wallet connect flow on the left, the product flow on the
  * right, so the desktop panel explains what the wallet is being connected to
- * instead of sitting empty. Faucet links sit next to the connect button —
- * a devnet wallet with no SOL and no USDC cannot open anything.
+ * instead of sitting empty. The x402 facilitator sponsors the Devnet network
+ * fee, so a new wallet needs test USDC but does not need its own SOL.
  */
 export default function Login() {
   const navigate = useNavigate()
@@ -64,7 +64,14 @@ export default function Login() {
     !requestedReturn.includes('\\')
       ? requestedReturn
       : null
-  const { authenticateWallet, account, profile, authReady } = useUi()
+  const {
+    authenticateWallet,
+    account,
+    profile,
+    authReady,
+    authError,
+    retryAuth,
+  } = useUi()
   const { available, connecting, pubkey, error: walletError, connect } = useWallet()
 
   const [ageConfirmed, setAgeConfirmed] = useState(false)
@@ -151,7 +158,7 @@ export default function Login() {
             </h1>
             <p className="mt-3 text-[15px] leading-7 text-muted-foreground">
               {t(
-                'No password, no email. Money moves wallet to wallet here — connect the one it should move through.',
+                'No password, no email. Connect Phantom to prove ownership and authorize only the bounded Devnet USDC you choose to deposit.',
               )}
             </p>
 
@@ -199,22 +206,13 @@ export default function Login() {
               </div>
             )}
 
-            {/* Faucets belong before the connect, not after it: a fresh
-                devnet wallet arrives empty and cannot open a document. */}
+            {/* The facilitator sponsors transaction fees. A new buyer only
+                needs test USDC; asking for SOL would add a false setup step. */}
             {!pubkey ? (
               <p className="mt-4 text-[13px] leading-relaxed text-muted-foreground">
                 {t(
-                  'A fresh devnet wallet has no SOL for fees and no USDC to settle with:',
+                  'The x402 facilitator sponsors the Devnet network fee. You need test USDC, but no SOL:',
                 )}{' '}
-                <a
-                  href={DEVNET_FAUCETS.sol}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline decoration-dotted underline-offset-4 hover:text-foreground"
-                >
-                  {t('SOL faucet')}
-                </a>
-                ,{' '}
                 <a
                   href={DEVNET_FAUCETS.usdc}
                   target="_blank"
@@ -268,10 +266,19 @@ export default function Login() {
               </>
             ) : null}
 
-            {error || walletError ? (
-              <p className="mt-4 text-sm text-destructive">
-                {t(error ?? walletError ?? '')}
-              </p>
+            {error || walletError || authError ? (
+              <div className="mt-4 flex items-start justify-between gap-3 text-sm text-destructive">
+                <p>{t(error ?? walletError ?? authError ?? '')}</p>
+                {authError ? (
+                  <button
+                    type="button"
+                    className="shrink-0 underline underline-offset-4"
+                    onClick={retryAuth}
+                  >
+                    {t('Retry')}
+                  </button>
+                ) : null}
+              </div>
             ) : null}
 
             <div className="mt-10 flex flex-col gap-3 border-t border-border pt-6">
@@ -327,7 +334,7 @@ export default function Login() {
               number="03"
               title={t('Paid citations + receipt')}
               detail={t(
-                'Answers come back with the passages they cite, and ₩5 to ₩20 goes to whoever wrote each one.',
+                'Answers return with paid passages and a receipt. Each displayed price splits 90% to its owner and 10% to the protocol.',
               )}
             />
           </div>
@@ -342,7 +349,7 @@ export default function Login() {
               {t('Paid in')} <span className="text-white/80">USDC</span>
             </span>
             <span>
-              {t('Per open')} <span className="text-white/80">₩5–₩20</span>
+              {t('Per open')} <span className="text-white/80">₩5–₩25</span>
             </span>
           </div>
         </div>
@@ -382,5 +389,6 @@ function ProductStep({
 const ASSURANCES = [
   'Entering signs one expiring message. It cannot move funds or approve a transaction.',
   'No email, no password, no name — an asker only ever sees your handle.',
-  'Payments go wallet to wallet. We never take custody of your balance.',
+  'A deposit becomes withdrawable Obolus prepaid credit. Only that balance can be reserved; the rest of your wallet stays outside our authority.',
+  'The x402 facilitator sponsors network fees. A non-exportable KMS service key settles each selected document through Pay.sh.',
 ]
