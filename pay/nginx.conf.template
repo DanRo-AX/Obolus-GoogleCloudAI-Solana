@@ -5,6 +5,10 @@ events {}
 http {
   access_log /dev/stdout;
   error_log /dev/stderr warn;
+  # entrypoint.sh accepts URL-safe front tokens up to 256 bytes. Reserve a
+  # bucket large enough for that exact-key map instead of relying on nginx's
+  # CPU-dependent 32/64-byte default.
+  map_hash_bucket_size 512;
   client_body_temp_path /tmp/openshelf-client-body;
   proxy_temp_path /tmp/openshelf-proxy;
   fastcgi_temp_path /tmp/openshelf-fastcgi;

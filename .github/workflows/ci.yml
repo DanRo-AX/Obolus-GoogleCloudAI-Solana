@@ -90,7 +90,8 @@ jobs:
           set -euo pipefail
           image="openshelf-pay-ci:${GITHUB_SHA}"
           [[ "$(docker image inspect --format '{{.Config.User}}' "${image}")" == "www-data" ]]
-          front_token="ci_pay_front_token_0123456789abcdef"
+          front_token="$(printf 'a%.0s' {1..256})"
+          [[ "${#front_token}" == "256" ]]
           upstream_log="${RUNNER_TEMP}/pay-upstream.log"
           nginx_config="${RUNNER_TEMP}/openshelf-nginx.conf"
 
