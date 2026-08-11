@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test src/*.test.ts",
+    "test:mutation": "stryker run",
     "pay": "tsx src/client.ts",
     "payout:once": "tsx src/payout-worker.ts",
     "payout:watch": "tsx src/payout-worker.ts --watch",
@@ -29,6 +30,7 @@
     "mppx": "^0.5.17"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "9.6.1",
     "@types/express": "^5.0.6",
     "@types/node": "^24.0.0",
     "tsx": "^4.21.0",
@@ -37,6 +39,7 @@
   "overrides": {
     "jayson": {
       "uuid": "11.1.1"
-    }
+    },
+    "qs": "6.15.3"
   }
 }

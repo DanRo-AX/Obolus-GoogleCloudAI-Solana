@@ -12,7 +12,7 @@ test("prepaid and one-shot agent funding are explicit, mutually exclusive contra
     { kind: "prepaid", walletSession: "wallet-session" },
   );
   assert.deepEqual(
-    bundleFundingMode({ agentProtocol: AGENT_BUNDLE_PROTOCOL }),
+    bundleFundingMode({ agentProtocol: `  ${AGENT_BUNDLE_PROTOCOL}  ` }),
     { kind: "agent_direct" },
   );
 

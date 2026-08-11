@@ -16,7 +16,10 @@ dist-ssr
 *.local
 .env
 payment-gateway/*.ndjson
+payment-gateway/reports/
+payment-gateway/.stryker-tmp/
 backend/target
+backend/mutants.out*
 backend/*.db
 backend/*.db-shm
 backend/*.db-wal

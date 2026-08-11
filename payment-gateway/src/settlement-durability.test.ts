@@ -73,5 +73,40 @@ test("a direct ledger commit releases the payment exactly once without a queue",
     { queued: result.queued, ledgered: result.ledgered },
     { queued: false, ledgered: true },
   );
+  assert.equal(result.queueError, undefined);
   assert.equal(releases, 1);
+});
+
+test("two successful durable sinks release one volatile payment exactly once", async () => {
+  let releases = 0;
+
+  const result = await persistSettlementDurably({
+    enqueue: async () => undefined,
+    record: async () => undefined,
+    releaseVolatileCopy: () => {
+      releases += 1;
+    },
+  });
+
+  assert.deepEqual(
+    { queued: result.queued, ledgered: result.ledgered },
+    { queued: true, ledgered: true },
+  );
+  assert.equal(releases, 1);
+});
+
+test("a ledger-only failure reports only the configured durable sink", async () => {
+  await assert.rejects(
+    persistSettlementDurably({
+      record: async () => {
+        throw new Error("ledger unavailable");
+      },
+      releaseVolatileCopy: () => undefined,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      assert.deepEqual(error.errors.map(String), ["Error: ledger unavailable"]);
+      return true;
+    },
+  );
 });
