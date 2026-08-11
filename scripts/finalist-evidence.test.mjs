@@ -148,7 +148,7 @@ test('autonomy recorder CLI writes private output and refuses destructive in-pla
     await writeFile(fakeGcloud, `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify([{
       timestamp: '2026-08-11T00:00:01.000Z',
       resource: { labels: { service_name: 'obolus-api', revision_name: 'obolus-api-test-00001' } },
-      textPayload: 'bounded research run completed agent_run_id=agent_autonomy_001 query_id=qry_autonomy_001 provider_call_count=2 mode="vertex_two_stage_with_deterministic_guards"',
+      textPayload: '\u001b[32mINFO\u001b[0m bounded research run completed \u001b[3magent_run_id\u001b[0m\u001b[2m=\u001b[0magent_autonomy_001 \u001b[3mquery_id\u001b[0m\u001b[2m=\u001b[0mqry_autonomy_001 \u001b[3mprovider_call_count\u001b[0m\u001b[2m=\u001b[0m2 \u001b[3mmode\u001b[0m\u001b[2m=\u001b[0m"vertex_two_stage_with_deterministic_guards"',
     }])}'\n`, { mode: 0o700 })
     await chmod(fakeGcloud, 0o700)
     const recorded = spawnSync(process.execPath, [

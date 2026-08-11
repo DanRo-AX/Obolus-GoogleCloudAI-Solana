@@ -90,8 +90,6 @@ function verifyCloudRunLog(raw, project) {
     'resource.labels.service_name="obolus-api"',
     `resource.labels.revision_name="${revision}"`,
     'textPayload:"bounded research run completed"',
-    `textPayload:"agent_run_id=${runId}"`,
-    `textPayload:"query_id=${queryId}"`,
   ].join(' AND ')
   let entries
   try {
@@ -101,14 +99,18 @@ function verifyCloudRunLog(raw, project) {
       filter,
       `--project=${project}`,
       '--freshness=2h',
-      '--limit=10',
+      '--limit=100',
       '--format=json',
     ], { encoding: 'utf8', timeout: 20_000 }))
   } catch (error) {
     stop(`matching Cloud Run log could not be read: ${error.message}`)
   }
   const entry = (Array.isArray(entries) ? entries : []).find((candidate) => {
-    const text = String(candidate?.textPayload ?? '')
+    // tracing-subscriber enables ANSI when the runtime does not explicitly
+    // disable it. Cloud Logging preserves those escape sequences between a
+    // field name, `=`, and its value, so normalize display-only control codes
+    // before performing the exact run correlation.
+    const text = String(candidate?.textPayload ?? '').replace(/\x1b\[[0-9;]*m/g, '')
     return candidate?.resource?.labels?.service_name === 'obolus-api' &&
       candidate?.resource?.labels?.revision_name === revision &&
       text.includes(`agent_run_id=${runId}`) &&
