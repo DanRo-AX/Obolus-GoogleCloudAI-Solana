@@ -14,9 +14,16 @@ import {
 test("document, bundle, and open-call paths resolve to disjoint quote identities", () => {
   assert.deepEqual(paymentIdentityFromPath("/api/v1/paid-documents/query%201/MD_7"), {
     kind: "document",
+    selector: "query",
     queryId: "query 1",
     handle: "MD_7",
     key: "document\u0000query 1\u0000MD_7",
+  });
+  assert.deepEqual(paymentIdentityFromPath("/api/v1/paid-quotes/quote%2042"), {
+    kind: "document",
+    selector: "quote",
+    quoteId: "quote 42",
+    key: "document_quote\u0000quote 42",
   });
   assert.deepEqual(
     paymentIdentityFromPath("https://pay.example/api/v1/paid-bundles/bundle_42?ignored=1"),

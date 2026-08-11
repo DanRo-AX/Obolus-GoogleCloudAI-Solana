@@ -27,6 +27,8 @@ export async function approvePaymentIntent(config, intentId, options = {}) {
     `Amount: ${snapshot.amountAtomic} atomic units (${snapshot.asset})`,
     `Network: ${snapshot.network}`,
     `Recipient: ${snapshot.payTo}`,
+    `Pay.sh account: ${snapshot.payAccount}`,
+    `Immutable quote: ${snapshot.quoteId}`,
     `Expires: ${new Date(snapshot.expiresAt).toISOString()}`,
     `Type exactly: ${phrase}`,
   ].join('\n')
@@ -43,12 +45,35 @@ export async function approvePaymentIntent(config, intentId, options = {}) {
     if (intent.status !== 'prepared') {
       throw new LocalAgentError('Payment intent changed before approval.', 'intent_changed', 409)
     }
+    if (approvalFingerprint(intent) !== approvalFingerprint(snapshot)) {
+      throw new LocalAgentError(
+        'Payment economics changed while approval was pending.',
+        'intent_changed',
+        409,
+      )
+    }
     intent.status = 'approved'
     intent.approvedAt = options.now?.() ?? Date.now()
     intent.approvalNonce = randomUUID()
     return state
   })
   return { intentId, status: 'approved', expiresAt: snapshot.expiresAt }
+}
+
+function approvalFingerprint(intent) {
+  return JSON.stringify({
+    queryId: intent.queryId,
+    quoteId: intent.quoteId,
+    purpose: intent.purpose,
+    paymentUrlHash: intent.paymentUrlHash,
+    amountAtomic: intent.amountAtomic,
+    network: intent.network,
+    asset: intent.asset,
+    payTo: intent.payTo,
+    payAccount: intent.payAccount,
+    expiresAt: intent.expiresAt,
+    approvalBinding: intent.approvalBinding,
+  })
 }
 
 async function interactiveConfirmation(summary, phrase, options) {

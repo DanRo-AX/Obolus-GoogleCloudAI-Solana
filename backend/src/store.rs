@@ -8594,6 +8594,15 @@ impl Store {
             .ok_or(StoreError::DocumentNotQuoted)
     }
 
+    /// Returns one previously committed immutable quote on the browser/x402
+    /// rail. Unlike the query/handle route, this can never mint a replacement
+    /// quote after a user has approved its exact economics and snapshot.
+    pub fn x402_payment_quote_by_id(&self, quote_id: &str) -> Result<PaymentQuote, StoreError> {
+        let quote = self.payment_quote_by_id(quote_id)?;
+        self.bind_document_payment_rail(&quote.id, "x402")?;
+        Ok(quote)
+    }
+
     fn bind_document_payment_rail(
         &self,
         quote_id: &str,
@@ -12092,6 +12101,38 @@ impl Store {
                 price,
             },
         })
+    }
+
+    /// Recover a delivered direct document with only its immutable quote id
+    /// and the original query-scoped capability. The payer address is read
+    /// from the durable settlement rather than supplied by the local agent.
+    pub fn recover_paid_document_by_quote(
+        &self,
+        quote_id: &str,
+        payment_token_hash: &str,
+    ) -> Result<RecoveredPaidDocument, StoreError> {
+        let connection = self.connection()?;
+        let recovered = connection
+            .query_row(
+                "SELECT pq.query_id, pq.document_handle, cs.payer
+                 FROM payment_quotes pq
+                 JOIN chain_settlements cs ON cs.quote_id = pq.id
+                 WHERE pq.id = ?1 AND pq.status = 'delivered'
+                 ORDER BY cs.confirmed_at DESC LIMIT 1",
+                [quote_id.trim()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("settled payment quote"))?;
+        require_query_access(&connection, &recovered.0, payment_token_hash)?;
+        drop(connection);
+        self.recover_paid_document(&recovered.0, &recovered.1, &recovered.2, payment_token_hash)
     }
 
     /// Returns the immutable content committed into a quote to the trusted
@@ -21831,6 +21872,10 @@ mod tests {
         let quote = store
             .x402_payment_quote_for_agent(&resolved.query_id, handle, &payment_token_hash, &policy)
             .unwrap();
+        let immutable_quote = store.x402_payment_quote_by_id(&quote.id).unwrap();
+        assert_eq!(immutable_quote.id, quote.id);
+        assert_eq!(immutable_quote.content_hash, quote.content_hash);
+        assert_eq!(immutable_quote.amount_atomic, quote.amount_atomic);
         assert_eq!(quote.price_krw, 700);
         assert_eq!(quote.amount_atomic, "518519");
         assert_eq!(quote.pay_to, verified_wallet);
@@ -22189,6 +22234,15 @@ mod tests {
             .unwrap();
         assert_eq!(recovered_quote.id, quote.id);
         assert_eq!(recovered_quote.status, "delivered");
+        let recovered_document = store
+            .recover_paid_document_by_quote(&quote.id, &payment_token_hash)
+            .unwrap();
+        assert_eq!(recovered_document.citation.handle, *handle);
+        assert_eq!(recovered_document.settlement.quote_id, quote.id);
+        assert!(matches!(
+            store.recover_paid_document_by_quote(&quote.id, &"b".repeat(64)),
+            Err(StoreError::Unauthorized(_))
+        ));
 
         ensure_user(&store, "signature-replay-buyer");
         let open_call_policy = PaymentQuotePolicy {

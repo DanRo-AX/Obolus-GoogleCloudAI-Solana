@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs'
-import { delimiter, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const APP_PAY = fileURLToPath(
@@ -28,13 +27,9 @@ export function payInvocation(env = process.env, options = {}) {
   for (const candidate of candidates) {
     if (existsSync(candidate)) return { command: candidate, args: [], source: 'pinned-project' }
   }
-  const system = (options.findSystemPay || findSystemPay)(env)
-  if (system) return { command: system, args: [], source: 'system' }
-  return {
-    command: process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    args: ['--yes', '@solana/pay@1.0.26'],
-    source: 'pinned-npx',
-  }
+  throw new Error(
+    'Pinned Pay.sh is missing. Run npm install in apps/obulus-local-agent before enabling payments.',
+  )
 }
 
 export function payChildEnvironment(env = process.env) {
@@ -54,16 +49,5 @@ export function payChildEnvironment(env = process.env) {
   const child = Object.fromEntries(
     allowed.filter((key) => typeof env[key] === 'string').map((key) => [key, env[key]]),
   )
-  const account = env.OBULUS_PAY_ACCOUNT?.trim() || env.OPENSHELF_PAY_ACCOUNT?.trim()
-  if (account) child.OPENSHELF_PAY_ACCOUNT = account
   return child
-}
-
-function findSystemPay(env) {
-  const executable = process.platform === 'win32' ? 'pay.exe' : 'pay'
-  for (const directory of (env.PATH || '').split(delimiter).filter(Boolean)) {
-    const candidate = resolve(directory, executable)
-    if (existsSync(candidate)) return candidate
-  }
-  return null
 }

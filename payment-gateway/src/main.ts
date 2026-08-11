@@ -461,9 +461,13 @@ function identityFromContext(context: HTTPRequestContext): RouteIdentity {
 
 async function loadQuote(identity: RouteIdentity): Promise<PayableQuote> {
   const quote = await (identity.kind === "document"
-    ? internalJson<PaymentQuote>(
-        `/internal/v1/payment-quotes/${encodeURIComponent(identity.queryId)}/${encodeURIComponent(identity.handle)}`,
-      )
+    ? identity.selector === "quote"
+      ? internalJson<PaymentQuote>(
+          `/internal/v1/x402-payment-quotes/${encodeURIComponent(identity.quoteId)}`,
+        )
+      : internalJson<PaymentQuote>(
+          `/internal/v1/payment-quotes/${encodeURIComponent(identity.queryId)}/${encodeURIComponent(identity.handle)}`,
+        )
     : identity.kind === "bundle"
       ? internalJson<PaymentBundleQuote>(
           `/internal/v1/payment-bundles/${encodeURIComponent(identity.quoteId)}`,
@@ -1341,6 +1345,45 @@ app.use(
           },
         }),
       },
+      "GET /api/v1/paid-quotes/*": {
+        accepts: {
+          scheme: "exact",
+          network,
+          payTo: async (context) => (await quoteForContext(context)).payTo,
+          price: async (context) => {
+            const identity = identityFromContext(context);
+            const quote = await getQuote(identity);
+            return {
+              asset: quote.asset,
+              amount: quote.amountAtomic,
+              extra: { memo: paymentMemo(identity, quote.id) },
+            };
+          },
+          maxTimeoutSeconds: 60,
+        },
+        description: "Open one immutable Obulus evidence quote",
+        mimeType: "application/json",
+        serviceName: "Obulus",
+        unpaidResponseBody: async (context) => {
+          const quote = await quoteForContext(context);
+          return {
+            contentType: "application/json",
+            body: {
+              error: { code: "payment_required", message: "USDC payment is required" },
+              quote,
+            },
+          };
+        },
+        settlementFailedResponseBody: (_context, result) => ({
+          contentType: "application/json",
+          body: {
+            error: {
+              code: "settlement_failed",
+              message: result.errorMessage ?? result.errorReason,
+            },
+          },
+        }),
+      },
       "GET /api/v1/paid-bundles/*": {
         accepts: {
           scheme: "exact",
@@ -1432,6 +1475,7 @@ app.get("/api/v1/paid-documents/:queryId/:handle", async (request, response, nex
   try {
     const identity: RouteIdentity = {
       kind: "document",
+      selector: "query",
       queryId: request.params.queryId,
       handle: request.params.handle,
       key: `document\u0000${request.params.queryId}\u0000${request.params.handle}`,
@@ -1442,6 +1486,33 @@ app.get("/api/v1/paid-documents/:queryId/:handle", async (request, response, nex
     // facilitator once and releases the buffer only after two independent RPCs
     // reproduce its exact finalized transaction; onAfterSettle then records the
     // same evidence. The snapshot endpoint is internal and read-only.
+    const document = await internalJson<PaymentDocumentSnapshot>(
+      `/internal/v1/payment-quotes/${encodeURIComponent(quote.id)}/snapshot`,
+    );
+    response.json({
+      citations: [document.citation],
+      settlement: {
+        id: quote.id,
+        count: 1,
+        total: quote.priceKrw,
+        network: quote.network,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/v1/paid-quotes/:quoteId", async (request, response, next) => {
+  try {
+    const identity: RouteIdentity = {
+      kind: "document",
+      selector: "quote",
+      quoteId: request.params.quoteId,
+      key: `document_quote\u0000${request.params.quoteId}`,
+    };
+    const quote = await quoteForProtectedHandler(identity);
+    if (!("priceKrw" in quote)) throw new Error("document quote route received another quote type");
     const document = await internalJson<PaymentDocumentSnapshot>(
       `/internal/v1/payment-quotes/${encodeURIComponent(quote.id)}/snapshot`,
     );

@@ -77,6 +77,13 @@ export class LocalMarketplace {
   }
 
   async preparePayment(args) {
+    if (!this.config.payAccount) {
+      throw new LocalAgentError(
+        'Set OBULUS_PAY_ACCOUNT to a named local Pay.sh account before preparing a payment.',
+        'pay_account_required',
+        409,
+      )
+    }
     const state = await readState(this.config)
     const query = requireQuery(state, args.queryId, this.now())
     const handles = [...new Set(args.handles || [])]
@@ -106,19 +113,21 @@ export class LocalMarketplace {
         `/api/v1/agent-payment-quotes/${encodeURIComponent(args.queryId)}/${encodeURIComponent(handles[0])}`,
         { headers: { 'x-openshelf-query-token': query.paymentAccessToken } },
       )
+      const quote = exactDocumentQuote({
+        gatewayQuote: result.body.quote,
+        canonicalQuote: canonical,
+        queryId: args.queryId,
+        handle: handles[0],
+        resourcePath: path,
+        expectedPriceKrw: query.pricesKrw?.[handles[0]],
+        budgetKrw: query.budgetKrw,
+        maxUnitPriceKrw: query.maxUnitPriceKrw,
+        now: this.now(),
+      })
+      const paymentPath = `/api/v1/paid-quotes/${encodeURIComponent(quote.id)}`
       plan = paymentPlan(
-        `${this.config.gatewayOrigin}${path}`,
-        exactDocumentQuote({
-          gatewayQuote: result.body.quote,
-          canonicalQuote: canonical,
-          queryId: args.queryId,
-          handle: handles[0],
-          resourcePath: path,
-          expectedPriceKrw: query.pricesKrw?.[handles[0]],
-          budgetKrw: query.budgetKrw,
-          maxUnitPriceKrw: query.maxUnitPriceKrw,
-          now: this.now(),
-        }),
+        `${this.config.gatewayOrigin}${paymentPath}`,
+        quote,
         `Open human evidence document ${handles[0]}`,
         this.now(),
       )
@@ -182,6 +191,7 @@ export class LocalMarketplace {
         network: plan.quote.network,
         asset: plan.quote.asset,
         payTo: plan.quote.payTo,
+        payAccount: this.config.payAccount,
         expiresAt: plan.quote.expiresAt,
         approvalBinding: plan.approvalBinding,
         paymentUrlHash: sha256(plan.paymentUrl),
@@ -202,6 +212,33 @@ export class LocalMarketplace {
   async paymentStatus(args) {
     const state = await readState(this.config)
     const query = requireQuery(state, args.queryId, this.now())
+    const localIntentEntry = Object.entries(state.paymentIntents).find(
+      ([, intent]) => intent.queryId === args.queryId && intent.quoteId === args.jobId,
+    )
+    const [localIntentId, localIntent] = localIntentEntry || []
+    if (localIntent?.approvalBinding?.documentHandle) {
+      const recovered = await this.#api(
+        `/api/v1/agent-payment-recoveries/${encodeURIComponent(args.jobId)}`,
+        { headers: { 'x-openshelf-query-token': query.paymentAccessToken } },
+      )
+      if (
+        recovered?.settlement?.quoteId !== args.jobId ||
+        recovered?.citation?.handle !== localIntent.approvalBinding.documentHandle
+      ) {
+        throw new LocalAgentError('Recovery returned a different document.', 'unsafe_recovery_response', 502)
+      }
+      await updateState(this.config, (current) => {
+        const intent = current.paymentIntents[localIntentId]
+        if (['executing', 'ambiguous'].includes(intent?.status)) {
+          intent.status = 'completed'
+          intent.completedAt = this.now()
+          delete intent.approvalNonce
+          delete intent.failure
+        }
+        return current
+      })
+      return recovered
+    }
     const job = await this.#gateway(`/api/v1/research-jobs/${encodeURIComponent(args.jobId)}`, {
       headers: { 'x-openshelf-query-token': query.paymentAccessToken },
     })

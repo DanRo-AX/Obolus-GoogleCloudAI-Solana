@@ -57,13 +57,15 @@ async function writeStateUnlocked(config, state) {
 
 export async function forgetLocalState(config, queryId = null) {
   if (!queryId) {
-    await unlink(config.statePath).catch((error) => {
-      if (error?.code !== 'ENOENT') throw error
+    await updateState(config, (state) => {
+      refuseUnsettledIntent(state)
+      return emptyState()
     })
     return { forgotten: 'all' }
   }
   let existed = false
   await updateState(config, (state) => {
+    refuseUnsettledIntent(state, queryId)
     existed = Boolean(state.queries[queryId])
     delete state.queries[queryId]
     for (const [intentId, intent] of Object.entries(state.paymentIntents)) {
@@ -72,6 +74,21 @@ export async function forgetLocalState(config, queryId = null) {
     return state
   })
   return { forgotten: queryId, existed }
+}
+
+function refuseUnsettledIntent(state, queryId = null) {
+  const unsettled = Object.entries(state.paymentIntents).find(
+    ([, intent]) =>
+      ['executing', 'ambiguous'].includes(intent.status) &&
+      (!queryId || intent.queryId === queryId),
+  )
+  if (unsettled) {
+    throw new LocalAgentError(
+      `Cannot forget local state while payment intent ${unsettled[0]} requires settlement recovery.`,
+      'payment_in_progress',
+      409,
+    )
+  }
 }
 
 export function requireQuery(state, queryId, now = Date.now()) {

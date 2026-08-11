@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,8 +12,10 @@ import { LocalMarketplace } from '../src/marketplace.mjs'
 import { handleMcpRequest } from '../src/mcp.mjs'
 import { handlePayMcpRequest } from '../src/pay-mcp.mjs'
 import { payInvocation } from '../src/pay-sh.mjs'
+import { executeApprovedIntent } from '../src/payment-broker.mjs'
 import { minimizeQuestion } from '../src/privacy.mjs'
-import { exactBundleQuote, exactDocumentQuote } from '../src/quotes.mjs'
+import { assertDevnetQuote, exactBundleQuote, exactDocumentQuote } from '../src/quotes.mjs'
+import { forgetLocalState, readState, updateState } from '../src/state.mjs'
 import { tools } from '../src/tools.mjs'
 
 test('remote origins require HTTPS while loopback HTTP remains available', () => {
@@ -203,6 +206,15 @@ test('single-document economics and immutable fields must match the canonical Ru
   )
 })
 
+test('recipient validation requires a decoded 32-byte Solana public key', () => {
+  const quote = documentQuote(1_000)
+  assert.equal(assertDevnetQuote(quote, 1_000), quote)
+  assert.throws(
+    () => assertDevnetQuote({ ...quote, payTo: 'z'.repeat(44) }, 1_000),
+    /not a Solana address/,
+  )
+})
+
 test('Pay MCP exposes only a one-time interactively approved intent', async (context) => {
   const directory = await mkdtemp(join(tmpdir(), 'obulus-local-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
@@ -264,7 +276,18 @@ test('Pay MCP exposes only a one-time interactively approved intent', async (con
       },
       runner: async (command, args, options) => {
         invocation = { command, args, env: options.env }
-        return { stdout: '{"paid":true}', stderr: '' }
+        return {
+          stdout: JSON.stringify({
+            citations: [{ handle: 'human_2', price: 20, excerpt: 'untrusted paid evidence' }],
+            settlement: {
+              id: 'quote_2',
+              count: 1,
+              total: 20,
+              network: DEVNET_NETWORK,
+            },
+          }),
+          stderr: 'diagnostics must remain local',
+        }
       },
     },
   )
@@ -272,10 +295,15 @@ test('Pay MCP exposes only a one-time interactively approved intent', async (con
   assert.equal(paid.result.structuredContent.status, 'completed')
   assert.equal(invocation.command, '/trusted/pay')
   assert.deepEqual(invocation.args, [
-    'curl',
-    'https://pay.example.com/api/v1/paid-documents/query_pay/human_2',
+    'fetch',
+    '--account',
+    'research',
+    'https://pay.example.com/api/v1/paid-quotes/quote_2',
   ])
   assert.equal(invocation.env.UNRELATED_SECRET, undefined)
+  assert.deepEqual(paid.result.structuredContent.receipt.citationHandles, ['human_2'])
+  assert.equal(JSON.stringify(paid).includes('untrusted paid evidence'), false)
+  assert.equal(JSON.stringify(paid).includes('diagnostics must remain local'), false)
 
   const replay = await handlePayMcpRequest(
     {
@@ -346,6 +374,123 @@ test('Pay.sh resolves an explicit trusted command without Phantom dependencies',
     args: [],
     source: 'override',
   })
+  assert.throws(
+    () => payInvocation({}, { projectPay: '/definitely/missing/pay' }),
+    /Pinned Pay\.sh is missing/,
+  )
+})
+
+test('interactive approval rejects an intent changed while the user is reading it', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'obulus-local-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const config = fixtureConfig(directory)
+  await updateState(config, (state) => {
+    state.paymentIntents.intent_changed = fixtureIntent()
+    return state
+  })
+  await assert.rejects(
+    approvePaymentIntent(config, 'intent_changed', {
+      now: () => 1_000,
+      confirm: async () => {
+        await updateState(config, (state) => {
+          state.paymentIntents.intent_changed.amountAtomic = '999'
+          return state
+        })
+        return true
+      },
+    }),
+    (error) => error.code === 'intent_changed',
+  )
+})
+
+test('local capabilities cannot be deleted during Pay.sh execution', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'obulus-local-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const config = fixtureConfig(directory)
+  await updateState(config, (state) => {
+    state.queries.query_2 = { paymentAccessToken: 'capability', createdAt: 1_000 }
+    state.paymentIntents.intent_executing = { ...fixtureIntent(), status: 'executing' }
+    return state
+  })
+  await assert.rejects(
+    forgetLocalState(config),
+    (error) => error.code === 'payment_in_progress',
+  )
+  await assert.rejects(
+    forgetLocalState(config, 'query_2'),
+    (error) => error.code === 'payment_in_progress',
+  )
+  await updateState(config, (state) => {
+    state.paymentIntents.intent_executing.status = 'ambiguous'
+    return state
+  })
+  await assert.rejects(
+    forgetLocalState(config, 'query_2'),
+    (error) => error.code === 'payment_in_progress',
+  )
+  assert.equal((await readState(config)).queries.query_2.paymentAccessToken, 'capability')
+})
+
+test('direct recovery converges an uncertain local payment to completed', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'obulus-local-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const config = fixtureConfig(directory)
+  await updateState(config, (state) => {
+    state.queries.query_2 = { paymentAccessToken: 'capability', createdAt: 1_000 }
+    state.paymentIntents.intent_recovering = {
+      ...fixtureIntent(),
+      status: 'executing',
+      approvalNonce: 'one-time-nonce',
+    }
+    return state
+  })
+  const marketplace = new LocalMarketplace(config, {
+    now: () => 1_000,
+    fetchImpl: async (url, init = {}) => {
+      assert.equal(
+        String(url),
+        'https://api.example.com/api/v1/agent-payment-recoveries/quote_2',
+      )
+      assert.equal(new Headers(init.headers).get('x-openshelf-query-token'), 'capability')
+      return jsonResponse({
+        citation: { handle: 'human_2', price: 20 },
+        settlement: { quoteId: 'quote_2' },
+      })
+    },
+  })
+
+  const recovered = await marketplace.paymentStatus({ queryId: 'query_2', jobId: 'quote_2' })
+  assert.equal(recovered.citation.handle, 'human_2')
+  const stored = await readState(config)
+  assert.equal(stored.paymentIntents.intent_recovering.status, 'completed')
+  assert.equal(stored.paymentIntents.intent_recovering.approvalNonce, undefined)
+})
+
+test('a successful process exit without the exact paid receipt remains ambiguous', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'obulus-local-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const config = fixtureConfig(directory)
+  await updateState(config, (state) => {
+    state.paymentIntents.intent_bad_receipt = {
+      ...fixtureIntent(),
+      status: 'approved',
+      approvalNonce: 'one-time-nonce',
+    }
+    return state
+  })
+  await assert.rejects(
+    executeApprovedIntent(config, 'intent_bad_receipt', {
+      now: () => 1_000,
+      env: {
+        OBULUS_PAY_COMMAND: '/trusted/pay',
+        OBULUS_ALLOW_PAY_OVERRIDE: '1',
+      },
+      runner: async () => ({ stdout: '{"error":"HTTP 500"}', stderr: 'private diagnostics' }),
+    }),
+    (error) => error.code === 'payment_ambiguous' && !error.message.includes('private diagnostics'),
+  )
+  const stored = await readState(config)
+  assert.equal(stored.paymentIntents.intent_bad_receipt.status, 'ambiguous')
 })
 
 function documentQuote(now) {
@@ -374,6 +519,28 @@ function fixtureConfig(directory) {
     apiOrigin: 'https://api.example.com',
     gatewayOrigin: 'https://pay.example.com',
     statePath: join(directory, 'state.json'),
+    payAccount: 'research',
+  }
+}
+
+function fixtureIntent() {
+  const quote = documentQuote(1_000)
+  const paymentUrl = `https://pay.example.com/api/v1/paid-quotes/${quote.id}`
+  return {
+    queryId: quote.queryId,
+    quoteId: quote.id,
+    status: 'prepared',
+    purpose: 'Open exact evidence',
+    paymentUrl,
+    paymentUrlHash: createHash('sha256').update(paymentUrl).digest('hex'),
+    amountAtomic: quote.amountAtomic,
+    network: quote.network,
+    asset: quote.asset,
+    payTo: quote.payTo,
+    payAccount: 'research',
+    expiresAt: quote.expiresAt,
+    approvalBinding: quote,
+    createdAt: 1_000,
   }
 }
 

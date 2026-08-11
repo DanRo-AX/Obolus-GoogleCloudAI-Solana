@@ -271,6 +271,7 @@ headers: it can execute only a locally stored intent that the user approved in
 an interactive terminal.
 
 ```bash
+export OBULUS_PAY_ACCOUNT=research           # required named local Pay.sh account
 npm run local-agent:doctor
 npm run local-agent:tools
 npm run local-agent:mcp

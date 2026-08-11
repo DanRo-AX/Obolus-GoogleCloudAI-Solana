@@ -14,7 +14,19 @@ export function runtimeConfig(env = process.env) {
     statePath: resolve(
       env.OBULUS_LOCAL_STATE || `${homedir()}/.config/obulus/local-agent-state.json`,
     ),
+    payAccount: checkedPayAccount(
+      env.OBULUS_PAY_ACCOUNT || env.OPENSHELF_PAY_ACCOUNT || '',
+    ),
   }
+}
+
+function checkedPayAccount(value) {
+  const account = value.trim()
+  if (!account) return null
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(account)) {
+    throw new Error('OBULUS_PAY_ACCOUNT must be a safe Pay.sh account name')
+  }
+  return account
 }
 
 function checkedOrigin(value, label) {

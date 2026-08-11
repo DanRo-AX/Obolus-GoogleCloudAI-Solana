@@ -37,7 +37,7 @@ async function main(argv = process.argv.slice(2)) {
 
 async function doctor(config, marketplace) {
   const pay = payInvocation()
-  const [api, gateway, payVersion] = await Promise.all([
+  const [api, gateway, payVersion, payAccount] = await Promise.all([
     health(`${config.apiOrigin}/readyz`),
     health(`${config.gatewayOrigin}/readyz`),
     execFileAsync(pay.command, [...pay.args, '--version'], {
@@ -46,6 +46,23 @@ async function doctor(config, marketplace) {
     })
       .then(({ stdout, stderr }) => ({ ok: true, detail: `${stdout}${stderr}`.trim(), source: pay.source }))
       .catch((error) => ({ ok: false, detail: error.message, source: pay.source })),
+    config.payAccount
+      ? execFileAsync(
+          pay.command,
+          [...pay.args, 'whoami', '--account', config.payAccount],
+          { timeout: 15_000, env: payChildEnvironment() },
+        )
+          .then(({ stdout }) => ({
+            ok: true,
+            account: config.payAccount,
+            detail: stdout.trim(),
+          }))
+          .catch((error) => ({ ok: false, account: config.payAccount, detail: error.message }))
+      : Promise.resolve({
+          ok: false,
+          account: null,
+          detail: 'Set OBULUS_PAY_ACCOUNT to a named local Pay.sh account.',
+        }),
   ])
   const report = {
     mode: 'accountless-local-buyer',
@@ -53,9 +70,10 @@ async function doctor(config, marketplace) {
     api,
     gateway,
     paySh: payVersion,
+    payAccount,
     privacy: await marketplace.privacyStatus(),
   }
-  report.ok = api.ok && gateway.ok && payVersion.ok
+  report.ok = api.ok && gateway.ok && payVersion.ok && payAccount.ok
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
   if (!report.ok) process.exitCode = 1
 }

@@ -504,6 +504,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(payment_quote_for_agent),
         )
         .route(
+            "/api/v1/agent-payment-recoveries/{id}",
+            get(recover_agent_payment_quote),
+        )
+        .route(
             "/api/v1/prepaid/withdrawals",
             post(create_prepaid_withdrawal),
         )
@@ -537,6 +541,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/internal/v1/payment-quotes/{id}/snapshot",
             get(payment_document_snapshot),
+        )
+        .route(
+            "/internal/v1/x402-payment-quotes/{id}",
+            get(x402_payment_quote_by_id),
         )
         .route("/internal/v1/pay-sh-quotes/{id}", get(pay_sh_quote_by_id))
         .route(
@@ -2221,6 +2229,31 @@ async fn pay_sh_quote_by_id(
 ) -> Result<Json<PaymentQuote>, ApiError> {
     require_internal(&state, &headers)?;
     Ok(Json(state.store.payment_quote_by_id(&id)?))
+}
+
+async fn x402_payment_quote_by_id(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<PaymentQuote>, ApiError> {
+    require_internal(&state, &headers)?;
+    Ok(Json(state.store.x402_payment_quote_by_id(&id)?))
+}
+
+async fn recover_agent_payment_quote(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<(HeaderMap, Json<RecoveredPaidDocument>), ApiError> {
+    let access_token = query_access_token(&headers)?;
+    Ok((
+        private_no_store_headers(),
+        Json(
+            state
+                .store
+                .recover_paid_document_by_quote(&id, &token_hash(access_token))?,
+        ),
+    ))
 }
 
 async fn payment_document_snapshot(

@@ -65,7 +65,7 @@ export const tools = [
   {
     name: 'evidence_payment_status',
     description:
-      'Recover or inspect the exact paid research job without starting another payment.',
+      'Recover a delivered direct quote or inspect the exact paid research job without starting another payment.',
     inputSchema: object(
       { queryId: string('Local query id.'), jobId: string('Research job or quote id.') },
       ['queryId', 'jobId'],

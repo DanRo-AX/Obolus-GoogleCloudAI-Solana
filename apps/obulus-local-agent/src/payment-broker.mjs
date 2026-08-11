@@ -32,17 +32,19 @@ export async function executeApprovedIntent(config, intentId, options = {}) {
   try {
     const result = await runner(
       invocation.command,
-      [...invocation.args, 'curl', claimed.paymentUrl],
+      [...invocation.args, 'fetch', '--account', claimed.payAccount, claimed.paymentUrl],
       {
         env: payChildEnvironment(options.env || process.env),
         timeout: 120_000,
-        maxBuffer: 2 * 1024 * 1024,
+        maxBuffer: 512 * 1024,
       },
     )
+    const verifiedResponse = verifiedPaymentResponse(claimed, result.stdout)
     await updateState(config, (state) => {
       const intent = requirePaymentIntent(state, intentId, options.now?.() ?? Date.now(), {
         allowExpired: true,
       })
+      if (intent.status === 'completed') return state
       if (intent.status !== 'executing' || intent.approvalNonce !== claimed.approvalNonce) {
         throw new LocalAgentError('Payment execution state changed unexpectedly.', 'intent_changed', 409)
       }
@@ -55,10 +57,9 @@ export async function executeApprovedIntent(config, intentId, options = {}) {
       intentId,
       status: 'completed',
       payShSource: invocation.source,
-      response: boundedText(result.stdout),
-      diagnostics: boundedText(result.stderr),
+      receipt: verifiedResponse,
     }
-  } catch (error) {
+  } catch {
     await updateState(config, (state) => {
       const intent = state.paymentIntents[intentId]
       if (intent?.status === 'executing' && intent.approvalNonce === claimed.approvalNonce) {
@@ -70,7 +71,7 @@ export async function executeApprovedIntent(config, intentId, options = {}) {
       return state
     })
     throw new LocalAgentError(
-      `Pay.sh execution is ambiguous and will not be retried automatically: ${error.message}`,
+      'Pay.sh execution is ambiguous and will not be retried automatically. Use the recovery tool before considering another payment.',
       'payment_ambiguous',
       502,
     )
@@ -80,19 +81,24 @@ export async function executeApprovedIntent(config, intentId, options = {}) {
 export function assertIntentBinding(config, intent) {
   const url = new URL(intent.paymentUrl)
   const binding = intent.approvalBinding
+  const expectedPath = binding?.documentHandle
+    ? `/api/v1/paid-quotes/${encodeURIComponent(binding.id)}`
+    : binding?.resourcePath
   if (
     url.origin !== config.gatewayOrigin ||
     url.username ||
     url.password ||
     url.search ||
     url.hash ||
-    url.pathname !== binding?.resourcePath ||
+    url.pathname !== expectedPath ||
     sha256(intent.paymentUrl) !== intent.paymentUrlHash ||
     intent.quoteId !== binding?.id ||
     intent.amountAtomic !== String(binding?.amountAtomic) ||
     intent.network !== binding?.network ||
     intent.asset !== binding?.asset ||
-    intent.payTo !== binding?.payTo
+    intent.payTo !== binding?.payTo ||
+    !config.payAccount ||
+    intent.payAccount !== config.payAccount
   ) {
     throw new LocalAgentError('The approved payment binding is invalid.', 'unsafe_payment_intent')
   }
@@ -102,7 +108,57 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
 }
 
-function boundedText(value) {
-  const text = String(value || '')
-  return text.length > 200_000 ? `${text.slice(0, 200_000)}\n[truncated]` : text
+function verifiedPaymentResponse(intent, stdout) {
+  let body
+  try {
+    body = JSON.parse(String(stdout || ''))
+  } catch {
+    throw new LocalAgentError('Pay.sh returned a non-JSON response.', 'invalid_payment_response')
+  }
+  const binding = intent.approvalBinding
+  if (binding.documentHandle) {
+    const citation = Array.isArray(body?.citations) ? body.citations[0] : null
+    if (
+      body?.citations?.length !== 1 ||
+      citation?.handle !== binding.documentHandle ||
+      citation?.price !== binding.priceKrw ||
+      body?.settlement?.id !== intent.quoteId ||
+      body?.settlement?.count !== 1 ||
+      body?.settlement?.total !== binding.priceKrw ||
+      body?.settlement?.network !== intent.network
+    ) {
+      throw new LocalAgentError(
+        'Pay.sh did not return the exact approved document receipt.',
+        'invalid_payment_response',
+      )
+    }
+    return {
+      kind: 'document',
+      quoteId: intent.quoteId,
+      citationHandles: [citation.handle],
+      totalPriceKrw: body.settlement.total,
+      network: body.settlement.network,
+      evidenceBodyWithheld: true,
+    }
+  }
+  if (
+    body?.jobId !== intent.quoteId ||
+    body?.status !== 'funding' ||
+    body?.documentCount !== binding.documentHandles?.length ||
+    body?.total !== binding.totalPriceKrw ||
+    body?.network !== intent.network
+  ) {
+    throw new LocalAgentError(
+      'Pay.sh did not return the exact approved bundle receipt.',
+      'invalid_payment_response',
+    )
+  }
+  return {
+    kind: 'bundle',
+    jobId: body.jobId,
+    status: body.status,
+    documentCount: body.documentCount,
+    totalPriceKrw: body.total,
+    network: body.network,
+  }
 }

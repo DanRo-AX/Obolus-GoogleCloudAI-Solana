@@ -66,10 +66,13 @@ contributor corpus could be removed from the central data plane.
 
 Obulus MCP only searches and prepares exact quotes. It has no signing tool. The
 user approves one stored intent in a real terminal, where the exact amount,
-network, asset, recipient and purpose are shown. A constrained payment MCP then
+network, asset, recipient, immutable quote ID, named Pay.sh account and purpose
+are shown. A constrained payment MCP then
 accepts only that intent id. It cannot accept a model-supplied URL, method,
-headers, body, amount or recipient. The broker executes the already-bound URL
-through Pay.sh, whose key remains in the local OS-protected account.
+headers, body, amount or recipient. The broker executes an immutable quote-ID
+URL through `pay fetch --account NAME`, whose key remains in the local
+OS-protected account. A missing pinned Pay.sh installation or named account
+fails closed; it never falls back to a PATH binary or runtime package download.
 
 This separation prevents the language model or Obulus server from receiving a
 wallet private key, and prevents an Obulus tool call from silently turning a
@@ -93,7 +96,7 @@ apps/obulus-local-agent/
 │   ├── mcp.mjs           # MCP 2025-06-18 server
 │   ├── pay-mcp.mjs       # approved-intent-only payment MCP
 │   ├── payment-broker.mjs # exact intent binding and Pay.sh execution
-│   ├── pay-sh.mjs        # pinned/local/system Pay.sh resolution
+│   ├── pay-sh.mjs        # pinned project Pay.sh resolution (fail closed)
 │   ├── privacy.mjs       # direct-identifier blocking and request minimization
 │   ├── quotes.mjs        # network, mint, amount, recipient and bundle checks
 │   ├── state.mjs         # atomic mode-0600 local capabilities
@@ -125,5 +128,7 @@ export OBULUS_PAY_ACCOUNT=research
 Remote origins must use HTTPS. Loopback HTTP is allowed for development. Run
 `pay setup` deliberately before the first real payment; installation and free
 search never create or fund a wallet automatically. If Pay.sh returns an
-ambiguous failure, the intent is not retried automatically: inspect the
-server-side payment/recovery state first to avoid a duplicate payment.
+ambiguous failure or a response that does not match the approved receipt, the
+intent is not retried automatically. Use `evidence_payment_status` with the
+immutable quote/job ID first; direct documents and bundles both have a
+capability-scoped recovery path.

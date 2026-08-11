@@ -55,10 +55,28 @@ export function assertDevnetQuote(quote, now = Date.now()) {
   if (typeof quote.payTo !== 'string' || !quote.payTo) {
     throw new LocalAgentError('The payment recipient is missing.', 'unsafe_payment_quote')
   }
-  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(quote.payTo)) {
+  if (solanaAddressByteLength(quote.payTo) !== 32) {
     throw new LocalAgentError('The payment recipient is not a Solana address.', 'unsafe_payment_quote')
   }
   return quote
+}
+
+function solanaAddressByteLength(value) {
+  const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+  if (typeof value !== 'string' || !value) return null
+  let decoded = 0n
+  for (const character of value) {
+    const digit = alphabet.indexOf(character)
+    if (digit < 0) return null
+    decoded = decoded * 58n + BigInt(digit)
+  }
+  let payloadBytes = 0
+  while (decoded > 0n) {
+    payloadBytes += 1
+    decoded >>= 8n
+  }
+  const leadingZeroBytes = value.match(/^1*/)?.[0].length || 0
+  return leadingZeroBytes + payloadBytes
 }
 
 export function assertDocumentQuote({
