@@ -12,7 +12,12 @@ import { cn } from '@/lib/utils'
  * the app its squared-off feel.
  */
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium cursor-pointer disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 aria-invalid:border-destructive transition-all",
+  // rounded-md here is the Linear-scale fallback (now 6px via --radius) for
+  // any variant/size pair below that doesn't set its own radius — default,
+  // destructive, outline, secondary and ghost at the default/icon sizes had
+  // none at all before this, so they rendered square. The mono* variants
+  // keep their own explicit rounded-[2px] and win over this via tailwind-merge.
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md font-medium cursor-pointer disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 aria-invalid:border-destructive transition-all",
   {
     variants: {
       variant: {
