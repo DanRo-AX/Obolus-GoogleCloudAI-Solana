@@ -18,12 +18,16 @@ evaluating Obolus. Score critically, evidence-first, no cheerleading.
 ## The five criteria
 
 - **C1 AI autonomy (30%)** — Does an agent do multi-step planning and autonomous tool
-  selection on Gemini/Vertex? Known reality: exactly one constrained Vertex function call
-  (`backend/src/orchestrator.rs:224`, forced single tool, temp 0.0, enum-bounded branches);
-  the 3-step agent trace is assembled deterministically (`backend/src/api.rs:970-989`);
-  `agent-orchestrator/` contains no model call; A2A is not implemented. Do not award
-  points for autonomy that lives in an external MCP client. Check whether production
-  currently returns `deterministic_fallback` — if so, C1 is not demonstrable live.
+  selection on Gemini/Vertex? Known reality: a two-stage bounded plan — two constrained
+  Vertex function calls (search plan + next action, forced tools, temp 0.0, enum-bounded
+  arguments; see `backend/src/orchestrator.rs`); the visible agent trace is assembled
+  deterministically; `agent-orchestrator/` contains no model call; A2A is not
+  implemented. Do not award points for autonomy that lives in an external MCP client.
+  IMPORTANT measurement trap: the planner is gated behind an authenticated session
+  (`backend/src/api.rs:920`) — an anonymous resolve always reports
+  `deterministic_fallback`, which is the auth gate working, NOT Vertex being down.
+  Judge planner health from Cloud Run logs (`mode="vertex_two_stage_with_deterministic_guards"`)
+  or an authenticated probe, never from an anonymous request.
 - **C2 Business value & UX (30%)** — Real market problem, plus Web3-friction UX
   (passkey/gasless). Known reality: gasless via facilitator fee sponsorship and prepaid
   sessions are real; passkey/WebAuthn, embedded wallets, and fiat onramp are absent
