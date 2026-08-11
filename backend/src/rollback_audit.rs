@@ -373,8 +373,10 @@ impl ModelCallAuditIntent {
         window_started_at: u64,
         provider_fence: &str,
     ) -> Result<Self, RollbackAuditError> {
-        if !matches!(operation, "baseline" | "shelf_starters" | "synthesis")
-            || scope_id.is_empty()
+        if !matches!(
+            operation,
+            "baseline" | "shelf_starters" | "synthesis" | "agent_plan"
+        ) || scope_id.is_empty()
             || scope_id.chars().count() > 200
             || input_hash.len() != 64
             || !input_hash.bytes().all(|byte| byte.is_ascii_hexdigit())

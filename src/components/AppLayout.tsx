@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { Menu } from 'lucide-react'
+import { AlertTriangle, Menu, RefreshCw } from 'lucide-react'
 import { AppSidebar } from '@/components/AppSidebar'
 import { Composer } from '@/components/Composer'
 import { Button } from '@/components/ui/button'
@@ -22,6 +22,8 @@ export function AppLayout() {
     setMobileSidebar,
     account,
     authWallet,
+    authError,
+    retryAuth,
     signOut,
   } = useUi()
   const wallet = useWallet()
@@ -73,6 +75,23 @@ export function AppLayout() {
         data-slot="sidebar-inset"
         className="relative flex w-full flex-1 flex-col bg-background"
       >
+        {authError && account ? (
+          <div
+            role="alert"
+            className="flex items-center gap-2 border-b border-[#B45309]/20 bg-[#B45309]/[0.06] px-4 py-2 text-xs text-foreground"
+          >
+            <AlertTriangle className="size-3.5 shrink-0 text-[#B45309]" />
+            <span className="min-w-0 flex-1 truncate">{t(authError)}</span>
+            <button
+              type="button"
+              className="inline-flex shrink-0 items-center gap-1 font-medium underline underline-offset-4"
+              onClick={retryAuth}
+            >
+              <RefreshCw className="size-3" />
+              {t('Retry')}
+            </button>
+          </div>
+        ) : null}
         {collapsed ? (
           <button
             type="button"

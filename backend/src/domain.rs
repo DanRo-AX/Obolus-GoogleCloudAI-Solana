@@ -303,6 +303,80 @@ pub struct OpenCallDraft {
     pub suggested_budget_krw: u64,
 }
 
+/// A bounded action that one of Obulus's cooperating agents may expose in an
+/// execution trace.  Payment and private-evidence access are intentionally not
+/// planner tools: those remain deterministic server operations gated by an
+/// explicit user approval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTool {
+    SearchHumanEvidence,
+    RankEvidenceBundle,
+    ProposeEvidencePurchase,
+    ProposeHybridResearch,
+    ProposeOpenCall,
+    GenerateGeneralBaseline,
+    FinishWithoutPurchase,
+}
+
+impl AgentTool {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SearchHumanEvidence => "search_human_evidence",
+            Self::RankEvidenceBundle => "rank_evidence_bundle",
+            Self::ProposeEvidencePurchase => "propose_evidence_purchase",
+            Self::ProposeHybridResearch => "propose_hybrid_research",
+            Self::ProposeOpenCall => "propose_open_call",
+            Self::GenerateGeneralBaseline => "generate_general_baseline",
+            Self::FinishWithoutPurchase => "finish_without_purchase",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentStepStatus {
+    Completed,
+    Fallback,
+    AwaitingUserApproval,
+}
+
+impl AgentStepStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Fallback => "fallback",
+            Self::AwaitingUserApproval => "awaiting_user_approval",
+        }
+    }
+}
+
+/// Auditable orchestration metadata. `summary` is a short operational result,
+/// never hidden chain-of-thought or a model transcript.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentStep {
+    pub sequence: usize,
+    pub agent: String,
+    pub tool: AgentTool,
+    pub status: AgentStepStatus,
+    pub summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRun {
+    pub id: String,
+    pub objective: String,
+    pub model: String,
+    pub mode: String,
+    pub steps: Vec<AgentStep>,
+    pub next_action: AgentTool,
+    pub requires_user_approval: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveQuestionResponse {
@@ -319,6 +393,8 @@ pub struct ResolveQuestionResponse {
     pub matches: Vec<MatchedDocument>,
     pub quote: Option<Quote>,
     pub open_call: Option<OpenCallDraft>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_run: Option<AgentRun>,
 }
 
 #[derive(Debug, Clone, Serialize)]

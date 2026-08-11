@@ -10,6 +10,7 @@ import {
 import { categoryFor, type CategoryId } from '@/data/categories'
 import { STRIKE_LIMIT } from '@/data/onboarding'
 import {
+  ApiError,
   BACKEND_ENABLED,
   cancelOpenCall,
   createOpenCall,
@@ -39,6 +40,7 @@ import {
   type ServerProfile,
   type TargetFilters,
 } from '@/lib/api'
+import { shouldClearAuthentication } from '@/lib/authBootstrap'
 import type { Issue } from '@/lib/quality'
 import { fundOpenCall, X402_ENABLED } from '@/lib/x402'
 
@@ -187,7 +189,7 @@ export type MemoryEntry = {
   rating?: number
   /** Private warm-up context. It is retained but never indexed or sold. */
   interviewResponses?: InterviewResponse[]
-  memoryType?: 'observation' | 'reflection' | 'correction'
+  memoryType?: 'observation' | 'reflection' | 'correction' | 'reuse'
   importance?: number
   reliabilityScore?: number
   contentHash?: string
@@ -219,6 +221,8 @@ type UiValue = {
   account: Account | null
   authWallet: string | null
   authReady: boolean
+  authError: string | null
+  retryAuth: () => void
   /** null until an authenticated account completes onboarding. */
   profile: Profile | null
   saveProfile: (
@@ -365,6 +369,27 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
   const [authWallet, setAuthWallet] = useState<string | null>(null)
   const [balance, setBalance] = useState<BalanceSummary | null>(null)
   const [authReady, setAuthReady] = useState(!BACKEND_ENABLED)
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [authAttempt, setAuthAttempt] = useState(0)
+
+  const clearAuthenticatedState = useCallback(() => {
+    setAccount(null)
+    setChats((current) => current.filter((chat) => !chat.ownerId))
+    setMemory([])
+    setProfile(null)
+    setEarnings(null)
+    setNotifications([])
+    notifiedIds.current.clear()
+    setBalance(null)
+    setAuthWallet(null)
+  }, [])
+
+  const retryAuth = useCallback(() => {
+    if (!BACKEND_ENABLED) return
+    setAuthError(null)
+    setAuthReady(false)
+    setAuthAttempt((attempt) => attempt + 1)
+  }, [])
 
   useEffect(() => {
     try {
@@ -381,33 +406,18 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!BACKEND_ENABLED) return
     let cancelled = false
+    void listOpenCalls()
+      .then((remoteOrders) => {
+        if (!cancelled) setOrders(remoteOrders)
+      })
+      .catch(() => undefined)
     void (async () => {
       try {
-        const remoteOrders = await listOpenCalls()
-        if (cancelled) return
-        setOrders(remoteOrders)
-        const session = await getSession().catch(() => null)
-        if (cancelled) return
-        if (!session) {
-          setAccount(null)
-          setChats((current) => current.filter((chat) => !chat.ownerId))
-          setMemory([])
-          setProfile(null)
-          setEarnings(null)
-          setNotifications([])
-          setBalance(null)
-          setAuthWallet(null)
-          return
-        }
-        const [remoteMemory, remoteProfile, remoteEarnings, remoteNotifications] = await Promise.all([
-          listMemory(),
-          getProfile(),
-          getEarnings(),
-          listNotifications(),
-        ])
+        const session = await getSession()
         if (cancelled) return
         setAccount(session.user)
         setAuthWallet(session.wallet ?? null)
+        setBalance(session.balance)
         setChats((current) =>
           current
             .filter(
@@ -417,7 +427,14 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
               chat.ownerId ? chat : { ...chat, ownerId: session.user.id },
             ),
         )
-        setBalance(session.balance)
+        const [remoteMemory, remoteProfile, remoteEarnings, remoteNotifications] =
+          await Promise.all([
+            listMemory(),
+            getProfile(),
+            getEarnings(),
+            listNotifications(),
+          ])
+        if (cancelled) return
         setMemory(remoteMemory)
         setEarnings(remoteEarnings)
         setNotifications(remoteNotifications)
@@ -426,10 +443,25 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           setProfile(profileFromServer(remoteProfile))
           setAutoMatchState(remoteProfile.autoMatch)
           setAgentsState(remoteProfile.agents)
+        } else {
+          setProfile(null)
         }
-      } catch {
-        // Chat surfaces backend connectivity errors when a request is made.
-        // Public surfaces still render, but private state is never fabricated.
+        setAuthError(null)
+      } catch (cause) {
+        if (cancelled) return
+        if (
+          cause instanceof ApiError &&
+          shouldClearAuthentication(cause.status)
+        ) {
+          clearAuthenticatedState()
+          setAuthError(null)
+        } else {
+          setAuthError(
+            cause instanceof Error
+              ? cause.message
+              : 'Obolus is temporarily unavailable. Try again shortly.',
+          )
+        }
       } finally {
         if (!cancelled) setAuthReady(true)
       }
@@ -437,7 +469,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [authAttempt, clearAuthenticatedState])
 
   useEffect(() => {
     if (!BACKEND_ENABLED || !account) return
@@ -879,6 +911,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           listNotifications(),
         ])
       setAccount(session.user)
+      setAuthError(null)
       setAuthWallet(session.wallet ?? wallet)
       setBalance(session.balance)
       setOrders(remoteOrders)
@@ -908,6 +941,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     if (BACKEND_ENABLED) await logout()
+    setAuthError(null)
     setAccount(null)
     setAuthWallet(null)
     setBalance(null)
@@ -926,6 +960,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
 
   const deleteCurrentAccount = useCallback(async () => {
     if (BACKEND_ENABLED) await deleteAccount()
+    setAuthError(null)
     setAccount(null)
     setAuthWallet(null)
     setBalance(null)
@@ -993,6 +1028,8 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       account,
       authWallet,
       authReady,
+      authError,
+      retryAuth,
       profile,
       saveProfile,
       verifyPayoutWallet,
@@ -1030,6 +1067,8 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       account,
       authWallet,
       authReady,
+      authError,
+      retryAuth,
       profile,
       saveProfile,
       verifyPayoutWallet,

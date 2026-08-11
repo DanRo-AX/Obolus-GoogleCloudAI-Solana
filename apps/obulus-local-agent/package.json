@@ -1,0 +1,19 @@
+{
+  "name": "@obulus/local-agent",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20.18"
+  },
+  "scripts": {
+    "approve": "node src/cli.mjs approve",
+    "doctor": "node src/cli.mjs doctor",
+    "mcp": "node src/cli.mjs mcp",
+    "test": "node --test test/*.test.mjs",
+    "tools": "node src/cli.mjs tools"
+  },
+  "dependencies": {
+    "@solana/pay": "1.0.26"
+  }
+}

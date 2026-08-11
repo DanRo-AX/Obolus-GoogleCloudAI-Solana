@@ -27,6 +27,7 @@ import {
   type Resolution,
 } from '@/lib/api'
 import { krwPerUsdc } from '@/lib/browserPaymentConfig'
+import { DATA_OWNER_BPS, PROTOCOL_FEE_BPS } from '@/lib/pricingPolicy'
 import { cn } from '@/lib/utils'
 import { explorerUrl, openDocuments, PaymentError } from '@/lib/x402'
 import { DEVNET_USDC, shortKey, useWallet } from '@/state/wallet'
@@ -121,6 +122,7 @@ export default function Chat() {
   const [openCallDraft, setOpenCallDraft] = useState<Resolution['openCall'] | null>(
     null,
   )
+  const [agentRun, setAgentRun] = useState<Resolution['agentRun'] | null>(null)
   const [aiBaseline, setAiBaseline] = useState<AiBaseline | null>(
     () => chat?.aiBaseline ?? null,
   )
@@ -315,6 +317,7 @@ export default function Chat() {
     setQueryId(null)
     setResolutionReason(null)
     setOpenCallDraft(null)
+    setAgentRun(null)
     setAiBaseline(null)
     setAiBaselineStatus('idle')
 
@@ -329,6 +332,7 @@ export default function Chat() {
         setQueryId(resolution.queryId)
         setResolutionReason(resolution.reason)
         setOpenCallDraft(resolution.openCall ?? null)
+        setAgentRun(resolution.agentRun ?? null)
         const seen = new Set<string>()
         const ranked = resolution.matches.flatMap((match) => {
           if (seen.has(match.shelfId)) return []
@@ -594,7 +598,7 @@ export default function Chat() {
 
           {!hasAnswer || paymentIncomplete ? (
             <div className="flex flex-col gap-4 rounded-[6px] border border-border bg-card p-4">
-              <TraceSteps phase={phase} hits={hits} />
+              <TraceSteps phase={phase} hits={hits} agentRun={agentRun} />
 
               {phase === 'confirm' ? (
                 <Branch
@@ -602,10 +606,25 @@ export default function Chat() {
                   body={`${t('No open call needed. Opening all')} ${pending.length} ${t('costs')} ₩${total.toLocaleString()}${t(', which settles as')} ${estimatedUsdc.toFixed(6)} ${t('USDC on Solana.')} ${paymentUsesLegacyPaySh ? t('This old local Pay.sh session cannot continue. Ask again to start a new one.') : t('That amount is reserved from your prepaid USDC balance. Phantom appears only for the first refill, or when the balance runs low; SHELF then pays each author through Pay.sh.')}`}
                 >
                   <div className="w-full rounded-[4px] bg-foreground/[0.04] px-3 py-2 font-mono text-[10px] uppercase leading-relaxed tracking-[0.8px] text-muted-foreground">
-                    {t('One-time wallet proof · refill only when low · no delegate permission or browser helper key. Verify Devnet USDC mint')}{' '}
+                    {t('Gas-sponsored Devnet payment · no SOL required · refill only when low · no token delegate. Verify Devnet USDC mint')}{' '}
                     <span className="text-foreground" title={DEVNET_USDC}>
                       {shortKey(DEVNET_USDC)}
                     </span>.
+                  </div>
+                  <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-[4px] border border-border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.8px]">
+                    <span className="text-muted-foreground">
+                      {t('Included in the displayed total')}
+                    </span>
+                    <span>
+                      {t('Evidence owners')} {DATA_OWNER_BPS / 100}%
+                    </span>
+                    <span className="text-muted-foreground">·</span>
+                    <span>
+                      {t('Protocol fee')} {PROTOCOL_FEE_BPS / 100}%
+                    </span>
+                    <span className="ml-auto text-muted-foreground">
+                      {t('No checkout surcharge')}
+                    </span>
                   </div>
                   <div className="flex w-full items-center justify-between gap-3 rounded-[4px] bg-foreground/[0.04] px-3 py-2 font-mono text-[10px] uppercase leading-relaxed tracking-[0.8px] text-muted-foreground">
                     <span>
@@ -1080,9 +1099,11 @@ function FeedbackActions({
 function TraceSteps({
   phase,
   hits,
+  agentRun,
 }: {
   phase: Phase
   hits: { shelf: RankedShelf; score: number }[]
+  agentRun?: Resolution['agentRun'] | null
 }) {
   // Search and ranking are the only long-running trace phases. Once ranking
   // resolves, step 4 has made its hit/miss decision; payment, open-call, and
@@ -1141,6 +1162,40 @@ function TraceSteps({
           </div>
         )
       })}
+      {agentRun ? (
+        <div className="mt-2 rounded-[5px] border border-border bg-foreground/[0.025] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-mono text-[10px] font-semibold uppercase tracking-[1px] text-foreground">
+              {t('Autonomous research plan')}
+            </span>
+            <span className="rounded-full border border-border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.7px] text-muted-foreground">
+              {agentRun.mode === 'vertex_tools_with_deterministic_guards'
+                ? 'Gemini · tool calling'
+                : t('Deterministic fallback')}
+            </span>
+          </div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            {agentRun.steps.map((step) => (
+              <div key={`${agentRun.id}-${step.sequence}`} className="min-w-0">
+                <p className="font-mono text-[9px] uppercase tracking-[0.7px] text-muted-foreground">
+                  {step.agent.replaceAll('_', ' ')} · {step.status.replaceAll('_', ' ')}
+                </p>
+                <p className="mt-0.5 text-xs font-medium text-foreground">
+                  {step.tool.replaceAll('_', ' ')}
+                </p>
+                <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+                  {step.summary}
+                </p>
+              </div>
+            ))}
+          </div>
+          {agentRun.requiresUserApproval ? (
+            <p className="mt-2 border-t border-border pt-2 text-[11px] leading-4 text-muted-foreground">
+              {t('The agent may plan and rank autonomously; payment or a new Open Call still waits for your approval.')}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }

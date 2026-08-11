@@ -1,0 +1,41 @@
+{
+  "runId": "demo-2026-08-11-001",
+  "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+  "queryId": "query_demo_001",
+  "jobId": "job_demo_001",
+  "jobStatus": "completed",
+  "quotes": [
+    {
+      "id": "quote_demo_001",
+      "kind": "evidence",
+      "status": "delivered",
+      "amountAtomic": "15",
+      "asset": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+    }
+  ],
+  "transactions": [
+    {
+      "kind": "evidence",
+      "signature": "1111111111111111111111111111111111111111111111111111111111111111",
+      "quoteIds": ["quote_demo_001"],
+      "status": "finalized",
+      "finalityProviderCount": 2,
+      "ownerDeltaAtomic": "15",
+      "payerDeltaAtomic": "-15"
+    }
+  ],
+  "duplicateProtection": {
+    "retryAttempts": 1,
+    "duplicateSettlementCount": 0
+  },
+  "refund": {
+    "claimId": "refund_demo_001",
+    "status": "finalized",
+    "amountAtomic": "5",
+    "signature": "2222222222222222222222222222222222222222222222222222222222222222",
+    "finalityProviderCount": 2
+  },
+  "questionText": "This field demonstrates that question text is never copied to evidence.",
+  "passage": "This field demonstrates that paid human text is never copied to evidence.",
+  "privateKey": "This field must never be written to evidence. Do not use real secrets in fixtures."
+}

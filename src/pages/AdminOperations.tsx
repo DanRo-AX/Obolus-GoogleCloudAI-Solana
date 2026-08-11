@@ -18,10 +18,11 @@ import {
 import { useT } from '@/i18n'
 import { useUi } from '@/state/ui'
 import { cn } from '@/lib/utils'
+import { AuthUnavailable } from '@/components/AuthUnavailable'
 
 export default function AdminOperations() {
   const t = useT()
-  const { account, authReady } = useUi()
+  const { account, authReady, authError, retryAuth } = useUi()
   const [snapshot, setSnapshot] = useState<AdminOperationsSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -46,6 +47,9 @@ export default function AdminOperations() {
     if (account?.role === 'admin') void load()
   }, [account?.role, load])
 
+  if (authReady && authError && !account) {
+    return <AuthUnavailable message={authError} onRetry={retryAuth} />
+  }
   if (authReady && account?.role !== 'admin') {
     return <Navigate to="/dashboard" replace />
   }

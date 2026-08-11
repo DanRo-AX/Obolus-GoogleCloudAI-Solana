@@ -12,13 +12,16 @@
 3. If the balance is low, Phantom signs an x402 USDC refill to the bounded GCP
    KMS service wallet. Rust credits the confirmed atomic amount and reserves
    the exact question budget in one database transaction. Later questions skip
-   Phantom while the balance is sufficient.
+   Phantom while the balance is sufficient. The x402 facilitator fills the
+   fee-payer signature and sponsors the Devnet network fee, so the buyer needs
+   test USDC but no SOL.
 4. The Cloud Run orchestrator loads only funded jobs and uses
    `@solana/pay-kit/client` with a GCP KMS signer to satisfy each official
    Pay.sh MPP challenge independently.
-5. Pay.sh sends the document share directly to its verified owner and proxies
-   the paid request to Rust. Only this callback marks that exact quote delivered
-   and returns its citation.
+5. Pay.sh applies the quote's document-level settlement policy: 90% to the
+   verified evidence owner and 10% to the protocol. The displayed total already
+   includes this fee. Only the matching callback marks that exact quote
+   delivered and returns its citation.
 6. All documents paid means `completed`. A failure proven to occur before a
    paid request restores the unpaid atomic remainder to prepaid balance; legacy
    direct-deposit jobs still use an on-chain refund claim. A failure after the
@@ -59,6 +62,9 @@ credential for the same quote is rejected before collection.
 - Phantom key: remains in the browser extension and signs wallet proof/refills.
 - Prepaid session: an expiring OPENSHELF capability; it can reserve only the
   verified wallet's deposited balance and has no Solana signing authority.
+- Prepaid credit: custodial test-USDC credit backed by the buyer's chosen
+  deposit. Unused credit is withdrawable; the service cannot pull additional
+  funds from Phantom or spend outside an immutable quote.
 - User withdrawal/delegate authority: none is granted to OPENSHELF.
 - Service key: an Ed25519 key in Google Cloud KMS. Cloud Run receives only a
   signing API through IAM; it cannot export the private key.

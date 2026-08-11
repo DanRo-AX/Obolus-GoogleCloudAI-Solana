@@ -29,6 +29,7 @@ import {
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
+import { AuthUnavailable } from '@/components/AuthUnavailable'
 import {
   DEVNET_FAUCETS,
   PHANTOM_INSTALL_URL,
@@ -47,7 +48,15 @@ import {
  */
 export default function Onboarding() {
   const navigate = useNavigate()
-  const { saveProfile, profile, account, authWallet, authReady } = useUi()
+  const {
+    saveProfile,
+    profile,
+    account,
+    authWallet,
+    authReady,
+    authError,
+    retryAuth,
+  } = useUi()
   const wallet = useWallet()
   const t = useT()
 
@@ -144,6 +153,9 @@ export default function Onboarding() {
 
   if (!authReady) {
     return <div className="flex flex-1 items-center justify-center"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
+  }
+  if (authError && !account) {
+    return <AuthUnavailable message={authError} onRetry={retryAuth} />
   }
   if (!account) return <Navigate to="/login" replace />
 
@@ -335,7 +347,7 @@ export default function Onboarding() {
             <Screen
               title={t('Where the money lands')}
               note={t(
-                'USDC lands in the wallet you name here, over x402 on Solana devnet. The wallet that signed you in is verified automatically; another locally held Pay account can be linked later over SIWX.',
+                'Your 90% evidence-owner share settles to the wallet named here over x402 on Solana Devnet. The wallet that signed you in is verified automatically; another locally held Pay account can be linked later over SIWX.',
               )}
             >
               {wallet.pubkey ? (
@@ -432,17 +444,8 @@ export default function Onboarding() {
                   ) : null}
                   <p className="mt-3 text-[13px] leading-relaxed text-muted-foreground">
                     {t(
-                      'Reconnect the wallet that signed you in to use it for payouts. A different payout wallet needs its own proof later. A fresh devnet wallet has no SOL for fees and no USDC to settle with:',
+                      'Reconnect the wallet that signed you in to use it for payouts. A different payout wallet needs its own proof later. The x402 facilitator sponsors Devnet network fees, so the wallet needs test USDC but no SOL:',
                     )}{' '}
-                    <a
-                      href={DEVNET_FAUCETS.sol}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline decoration-dotted underline-offset-4 hover:text-foreground"
-                    >
-                      {t('SOL faucet')}
-                    </a>
-                    ,{' '}
                     <a
                       href={DEVNET_FAUCETS.usdc}
                       target="_blank"

@@ -85,7 +85,8 @@ Prices read in won because that is what the people on the shelves think in. USDC
 
 No email, no password, no name. Connecting reads your public address; entering signs one expiring message that cannot move funds or approve a transaction. An asker only ever sees a handle.
 
-Devnet SOL and USDC faucet links are on the sign-in page, before you connect.
+The x402 facilitator sponsors the Devnet network fee, so the buyer needs test
+USDC but no SOL. The USDC faucet link is available before wallet connection.
 
 </td>
 <td width="50%">
@@ -152,7 +153,7 @@ Switch in the sidebar footer. The choice survives a reload.
 
 **Also included**
 
-- **[Antigravity plugin](integrations/antigravity/openshelf/README.md)**: the whole asker and contributor lifecycle as 23 `openshelf` MCP tools, plus the official Pay.sh MCP wallet behind a narrow handshake adapter.
+- **[Antigravity plugin](integrations/antigravity/openshelf/README.md)**: the whole asker and contributor lifecycle as 24 `openshelf` MCP tools, plus the official Pay.sh MCP wallet behind a narrow handshake adapter.
 - **Prepaid credit with recovery**: prove wallet ownership once, top up when low. A browser that loses the response reconciles against the server and retries only the handles that were never paid.
 - **Open-call escrow**: a paid call reserves its full budget up front. Accepted answers release one unit each, and cancellation or account deletion returns the exact unused remainder as a payout claim.
 - **A conduct ladder stated before signup**: false claims or low-quality answers earn a warning, and three warnings suspend the account. It is on the onboarding screen, not in the terms.
@@ -260,6 +261,30 @@ the fully static fallback.
 
 ### Agents (Antigravity and plain MCP)
 
+The repository-root `.agents/mcp_config.json` uses the standalone, buyer-only
+[`apps/obulus-local-agent`](apps/obulus-local-agent) path. It requires no Obulus
+account, email, profile, Phantom session, or server-held signing key. Search
+sends only a minimized question and coarse filters; query capabilities remain
+in a mode-`0600` local file, and real signatures are delegated to the separate
+Pay.sh process. The model-facing payment MCP exposes no arbitrary URL or
+headers: it can execute only a locally stored intent that the user approved in
+an interactive terminal.
+
+```bash
+export OBULUS_PAY_ACCOUNT=research           # required named local Pay.sh account
+npm run local-agent:doctor
+npm run local-agent:tools
+npm run local-agent:mcp
+# after the MCP prepares intent_... in another terminal
+npm run local-agent:approve -- intent_...
+```
+
+This is local key custody and data minimization, not on-chain anonymity. The
+public payer address and transaction receipt necessarily remain visible during
+Solana settlement. The app README documents the complete trust boundary.
+
+The fuller Antigravity plugin remains available for the contributor lifecycle:
+
 ```bash
 agy plugin install ./integrations/antigravity/openshelf
 npm run agent:doctor
@@ -275,7 +300,7 @@ for the exact aggregate Devnet amount before it invokes Pay.**
 The same service runs without Antigravity:
 
 ```bash
-npm run agent:tools                          # list all 23 commands
+npm run agent:tools                          # list all 24 commands
 npm run agent:tools -- ask_people            # one exact input schema
 npm run agent:call -- ask_people --json \
   '{"question":"What do people living in Paris actually eat on weeknights?","requestedDocuments":3}'
@@ -334,7 +359,8 @@ frontend, agent-orchestrator, payment-gateway, and backend jobs separately. See
 | `payment-gateway/` | The x402 v2 gateway: quotes, verify/settle delegation, payout and escrow workers. |
 | `agent-orchestrator/` | The Cloud Run agent that pays each document's Pay.sh challenge. |
 | `pay/` | Pay.sh paywall definitions, Dockerfile, and the Cloud Build + GCP KMS deployment. |
-| `integrations/antigravity/openshelf/` | The plugin: 23 MCP tools, skills, and the Pay handshake adapter. |
+| `apps/obulus-local-agent/` | Accountless buyer MCP: local capabilities, privacy guard, exact quote validation, and Pay.sh handoff without Phantom. |
+| `integrations/antigravity/openshelf/` | The plugin: 24 MCP tools, skills, and the Pay handshake adapter. |
 | `docs/` | Threat model, account linking, Pay.sh deployment, code review, ranking notes. |
 | `architecture.html` | System architecture and ERD, as one openable file. |
 

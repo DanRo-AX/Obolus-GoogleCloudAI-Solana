@@ -15,12 +15,13 @@ const GIVE = [
   'What your day actually costs, where it goes, what you gave up on.',
   'The fields you have actually lived — work, family, health, whatever they are.',
   'A wallet address, so money has somewhere to land.',
+  'When you buy evidence, only the USDC you choose to deposit becomes withdrawable Obolus prepaid credit.',
 ]
 
 const NEVER = [
   'Your name, your face, your email — an asker sees a handle and nothing else.',
   'Bank details, card numbers, national ID. We never ask and never store them.',
-  'Custody of your money. Payments go wallet to wallet; we hold no keys.',
+  'Your seed phrase, private key, token delegate, or authority over the rest of your wallet.',
 ]
 
 export function TrustSection() {

@@ -54,6 +54,11 @@ const AI_GENERATION_BUDGET_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
 const AI_BASELINE_GENERATION_LIMIT: u64 = 1;
 const AI_SHELF_STARTER_GENERATION_LIMIT: u64 = 1;
 const AI_SYNTHESIS_GENERATION_LIMIT: u64 = 3;
+const AI_AGENT_PLAN_GENERATION_LIMIT: u64 = 20;
+/// The listed document price is the buyer's all-in price. Ten percent funds
+/// protocol discovery, verification, settlement and recovery; ninety percent
+/// is routed to the evidence owner. Keep this versioned before mainnet launch.
+const EVIDENCE_PROTOCOL_FEE_BPS: u64 = 1_000;
 const AI_GENERATION_IN_FLIGHT_MAX_MS: u64 = 30 * 1_000;
 const BUNDLE_FUNDING_PREPAID: &str = "prepaid";
 const BUNDLE_FUNDING_AGENT_DIRECT: &str = "agent_chain_direct";
@@ -899,15 +904,16 @@ impl Store {
         let ai_generation_invalid = connection.query_row(
             "SELECT EXISTS(
                SELECT 1 FROM ai_generation_budgets budget
-               WHERE budget.artifact_kind NOT IN ('baseline', 'shelf_starters', 'synthesis')
+               WHERE budget.artifact_kind NOT IN ('baseline', 'shelf_starters', 'synthesis', 'agent_plan')
                   OR budget.attempts_used < 0
                   OR budget.attempts_used > CASE budget.artifact_kind
                        WHEN 'baseline' THEN CAST(?1 AS BIGINT)
                        WHEN 'shelf_starters' THEN CAST(?2 AS BIGINT)
                        WHEN 'synthesis' THEN CAST(?3 AS BIGINT)
+                       WHEN 'agent_plan' THEN CAST(?4 AS BIGINT)
                        ELSE 0 END
                   OR budget.window_started_at < 0
-                  OR budget.window_started_at > CAST(?4 AS BIGINT)
+                  OR budget.window_started_at > CAST(?5 AS BIGINT)
                   OR budget.attempts_used <> (
                        SELECT COUNT(*) FROM ai_generation_attempts attempt
                        WHERE attempt.artifact_kind = budget.artifact_kind
@@ -916,17 +922,17 @@ impl Store {
                      )
                UNION ALL
                SELECT 1 FROM ai_generation_attempts attempt
-               WHERE attempt.artifact_kind NOT IN ('baseline', 'shelf_starters', 'synthesis')
+               WHERE attempt.artifact_kind NOT IN ('baseline', 'shelf_starters', 'synthesis', 'agent_plan')
                   OR attempt.status NOT IN ('started', 'completed', 'failed')
                   OR attempt.claimed_at < attempt.window_started_at
-                  OR attempt.claimed_at > CAST(?4 AS BIGINT)
+                  OR attempt.claimed_at > CAST(?5 AS BIGINT)
                   OR (attempt.status = 'started' AND (
                        attempt.completed_at IS NOT NULL OR attempt.response_json IS NOT NULL
                      ))
                   OR (attempt.status IN ('completed', 'failed') AND (
                        attempt.completed_at IS NULL
                        OR attempt.completed_at < attempt.claimed_at
-                       OR attempt.completed_at > CAST(?4 AS BIGINT)
+                       OR attempt.completed_at > CAST(?5 AS BIGINT)
                      ))
                   OR (attempt.artifact_kind = 'synthesis'
                       AND attempt.status = 'completed' AND attempt.response_json IS NULL)
@@ -961,6 +967,7 @@ impl Store {
                 as_i64(AI_BASELINE_GENERATION_LIMIT)?,
                 as_i64(AI_SHELF_STARTER_GENERATION_LIMIT)?,
                 as_i64(AI_SYNTHESIS_GENERATION_LIMIT)?,
+                as_i64(AI_AGENT_PLAN_GENERATION_LIMIT)?,
                 as_i64(recovery_clock_limit)?,
             ],
             |row| row.get::<_, bool>(0),
@@ -1189,6 +1196,28 @@ impl Store {
                 payment_token_hash TEXT,
                 payment_token_expires_at INTEGER,
                 created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_runs (
+                id TEXT PRIMARY KEY,
+                query_id TEXT NOT NULL UNIQUE REFERENCES queries(id) ON DELETE CASCADE,
+                objective TEXT NOT NULL,
+                model TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                next_action TEXT NOT NULL,
+                requires_user_approval INTEGER NOT NULL CHECK (requires_user_approval IN (0, 1)),
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_steps (
+                run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+                sequence INTEGER NOT NULL CHECK (sequence > 0),
+                agent TEXT NOT NULL,
+                tool TEXT NOT NULL,
+                status TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                artifact_ref TEXT,
+                PRIMARY KEY (run_id, sequence)
             );
 
             CREATE TABLE IF NOT EXISTS ai_baselines (
@@ -1970,6 +1999,7 @@ impl Store {
         ] {
             add_column_if_missing(connection, "memory_entries", name, definition)?;
         }
+        backfill_auto_match_reuse(connection)?;
         for (name, definition) in [
             ("content_hash", "TEXT NOT NULL DEFAULT ''"),
             ("version", "INTEGER NOT NULL DEFAULT 1"),
@@ -2503,6 +2533,40 @@ impl Store {
                     as_i64(matched.price_krw)?
                 ],
             )?;
+        }
+        if let Some(run) = response.agent_run.as_ref() {
+            transaction.execute(
+                "INSERT INTO agent_runs
+                 (id, query_id, objective, model, mode, next_action,
+                  requires_user_approval, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    run.id,
+                    response.query_id,
+                    run.objective,
+                    run.model,
+                    run.mode,
+                    run.next_action.as_str(),
+                    i64::from(run.requires_user_approval),
+                    as_i64(created_at)?,
+                ],
+            )?;
+            for step in &run.steps {
+                transaction.execute(
+                    "INSERT INTO agent_steps
+                     (run_id, sequence, agent, tool, status, summary, artifact_ref)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        run.id,
+                        as_i64(step.sequence as u64)?,
+                        step.agent,
+                        step.tool.as_str(),
+                        step.status.as_str(),
+                        step.summary,
+                        step.artifact_ref,
+                    ],
+                )?;
+            }
         }
         transaction.commit()?;
         Ok(())
@@ -5123,14 +5187,21 @@ impl Store {
     ) -> Result<MemoryEntry, StoreError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
-        let document_id = transaction
+        let (document_id, memory_type) = transaction
             .query_row(
-                "SELECT document_id FROM memory_entries WHERE id = ?1 AND user_id = ?2",
+                "SELECT document_id, memory_type FROM memory_entries
+                 WHERE id = ?1 AND user_id = ?2",
                 params![memory_id.trim(), user_id],
-                |row| row.get::<_, Option<String>>(0),
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, String>(1)?)),
             )
             .optional()?
             .ok_or(StoreError::NotFound("memory"))?;
+        if memory_type == "reuse" {
+            return Err(StoreError::Conflict(
+                "reuse receipts cannot change the source passage; lock the original memory instead"
+                    .to_owned(),
+            ));
+        }
         transaction.execute(
             "UPDATE memory_entries SET locked = ?1 WHERE id = ?2 AND user_id = ?3",
             params![i64::from(locked), memory_id.trim(), user_id],
@@ -5162,24 +5233,32 @@ impl Store {
         }
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
-        let (question, shelf, old_document_id, old_version, interview_json) = transaction
-            .query_row(
-                "SELECT question, shelf, document_id, version, interview_json
+        let (question, shelf, old_document_id, old_version, interview_json, memory_type) =
+            transaction
+                .query_row(
+                    "SELECT question, shelf, document_id, version, interview_json, memory_type
                  FROM memory_entries
                  WHERE id = ?1 AND user_id = ?2 AND status = 'settled'",
-                params![memory_id.trim(), user_id],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, Option<String>>(2)?,
-                        as_u64(row.get(3)?)?.min(u32::MAX as u64) as u32,
-                        row.get::<_, String>(4)?,
-                    ))
-                },
-            )
-            .optional()?
-            .ok_or(StoreError::NotFound("settled memory"))?;
+                    params![memory_id.trim(), user_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            as_u64(row.get(3)?)?.min(u32::MAX as u64) as u32,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(StoreError::NotFound("settled memory"))?;
+        if memory_type == "reuse" {
+            return Err(StoreError::Conflict(
+                "reuse receipts cannot be corrected; correct the original memory instead"
+                    .to_owned(),
+            ));
+        }
         let issues = quality::assess(&question, &request.answer);
         if !issues.is_empty() {
             return Err(StoreError::Validation(format!(
@@ -8462,6 +8541,22 @@ impl Store {
         Ok(quote)
     }
 
+    /// Returns the canonical single-document quote to an accountless agent
+    /// that still holds the query-scoped capability. This exposes economics
+    /// and integrity bindings, never the locked document body.
+    pub fn x402_payment_quote_for_agent(
+        &self,
+        query_id: &str,
+        handle: &str,
+        payment_token_hash: &str,
+        policy: &PaymentQuotePolicy,
+    ) -> Result<PaymentQuote, StoreError> {
+        let connection = self.connection()?;
+        require_query_access(&connection, query_id.trim(), payment_token_hash)?;
+        drop(connection);
+        self.x402_payment_quote(query_id, handle, policy)
+    }
+
     pub fn payment_quote_by_id(&self, quote_id: &str) -> Result<PaymentQuote, StoreError> {
         self.connection()?
             .query_row(
@@ -8497,6 +8592,15 @@ impl Store {
             )
             .optional()?
             .ok_or(StoreError::DocumentNotQuoted)
+    }
+
+    /// Returns one previously committed immutable quote on the browser/x402
+    /// rail. Unlike the query/handle route, this can never mint a replacement
+    /// quote after a user has approved its exact economics and snapshot.
+    pub fn x402_payment_quote_by_id(&self, quote_id: &str) -> Result<PaymentQuote, StoreError> {
+        let quote = self.payment_quote_by_id(quote_id)?;
+        self.bind_document_payment_rail(&quote.id, "x402")?;
+        Ok(quote)
     }
 
     fn bind_document_payment_rail(
@@ -8592,8 +8696,8 @@ impl Store {
             network: quote.network.clone(),
             asset: quote.asset.clone(),
             amount_atomic: amount_atomic.to_string(),
-            owner_amount_atomic: amount_atomic.saturating_sub(1).to_string(),
-            platform_amount_atomic: "1".to_owned(),
+            owner_amount_atomic: evidence_payment_split(amount_atomic).0.to_string(),
+            platform_amount_atomic: evidence_payment_split(amount_atomic).1.to_string(),
             price_krw: quote.price_krw,
             krw_per_usdc: quote.krw_per_usdc,
             expires_at: quote.expires_at,
@@ -11999,6 +12103,38 @@ impl Store {
         })
     }
 
+    /// Recover a delivered direct document with only its immutable quote id
+    /// and the original query-scoped capability. The payer address is read
+    /// from the durable settlement rather than supplied by the local agent.
+    pub fn recover_paid_document_by_quote(
+        &self,
+        quote_id: &str,
+        payment_token_hash: &str,
+    ) -> Result<RecoveredPaidDocument, StoreError> {
+        let connection = self.connection()?;
+        let recovered = connection
+            .query_row(
+                "SELECT pq.query_id, pq.document_handle, cs.payer
+                 FROM payment_quotes pq
+                 JOIN chain_settlements cs ON cs.quote_id = pq.id
+                 WHERE pq.id = ?1 AND pq.status = 'delivered'
+                 ORDER BY cs.confirmed_at DESC LIMIT 1",
+                [quote_id.trim()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("settled payment quote"))?;
+        require_query_access(&connection, &recovered.0, payment_token_hash)?;
+        drop(connection);
+        self.recover_paid_document(&recovered.0, &recovered.1, &recovered.2, payment_token_hash)
+    }
+
     /// Returns the immutable content committed into a quote to the trusted
     /// gateway while the x402 middleware is buffering the HTTP response.
     /// Unlike `paid_document`, this does not mark delivery or expose a public
@@ -12743,6 +12879,7 @@ fn call_recommendation(
     let mut statement = connection.prepare(
         "SELECT question, shelf FROM memory_entries
          WHERE user_id = ?1 AND status = 'settled' AND locked = 0
+           AND memory_type IN ('observation', 'correction')
          ORDER BY created_at DESC LIMIT 100",
     )?;
     let memories = statement
@@ -12781,6 +12918,7 @@ fn best_agent_memory(
          FROM memory_entries m
          JOIN documents d ON d.id = m.document_id
          WHERE m.user_id = ?1 AND m.status = 'settled' AND m.locked = 0
+           AND m.memory_type IN ('observation', 'correction')
            AND d.locked = 0 AND d.category = ?2
          ORDER BY m.created_at DESC LIMIT 100",
     )?;
@@ -12915,7 +13053,7 @@ fn settle_agent_match(
           earned_krw, created_at, via, status, flags_json, interview_json,
           memory_type, importance, content_hash, reliability_score, source_ids_json)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'Auto-match', 'settled',
-                 '[]', '[]', 'observation', ?10, ?11, ?12, ?13)",
+                 '[]', '[]', 'reuse', ?10, ?11, ?12, ?13)",
         params![
             memory_id,
             user_id,
@@ -13584,8 +13722,8 @@ fn research_payment_reconciliation_from_row(
         network: row.get(8)?,
         asset: row.get(9)?,
         amount_atomic: amount_atomic.to_string(),
-        owner_amount_atomic: amount_atomic.saturating_sub(1).to_string(),
-        platform_amount_atomic: "1".to_owned(),
+        owner_amount_atomic: evidence_payment_split(amount_atomic).0.to_string(),
+        platform_amount_atomic: evidence_payment_split(amount_atomic).1.to_string(),
         recipient_wallet: row.get(11)?,
         platform_recipient_wallet: row.get(12)?,
         signed_transaction_base64: row.get(13)?,
@@ -13637,8 +13775,8 @@ fn direct_pay_sh_payment_reconciliation_from_row(
         network: row.get(7)?,
         asset: row.get(8)?,
         amount_atomic: amount_atomic.to_string(),
-        owner_amount_atomic: amount_atomic.saturating_sub(1).to_string(),
-        platform_amount_atomic: "1".to_owned(),
+        owner_amount_atomic: evidence_payment_split(amount_atomic).0.to_string(),
+        platform_amount_atomic: evidence_payment_split(amount_atomic).1.to_string(),
         recipient_wallet: row.get(10)?,
         platform_recipient_wallet: row.get(11)?,
         signed_transaction_base64: row.get(12)?,
@@ -17082,6 +17220,34 @@ fn backfill_content_hashes(connection: &Connection) -> Result<(), StoreError> {
     Ok(())
 }
 
+fn backfill_auto_match_reuse(connection: &Connection) -> Result<(), StoreError> {
+    let affected_users = {
+        let mut statement = connection.prepare(
+            "SELECT DISTINCT user_id FROM memory_entries
+             WHERE via = 'Auto-match' AND memory_type = 'observation'",
+        )?;
+        statement
+            .query_map(params![], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    if affected_users.is_empty() {
+        return Ok(());
+    }
+    connection.execute(
+        "UPDATE memory_entries SET memory_type = 'reuse'
+         WHERE via = 'Auto-match' AND memory_type = 'observation'",
+        params![],
+    )?;
+    for user_id in affected_users {
+        let reliability = author_reliability_readonly(connection, &user_id)?;
+        connection.execute(
+            "UPDATE documents SET reliability_score = ?1 WHERE author_id = ?2",
+            params![reliability, user_id],
+        )?;
+    }
+    Ok(())
+}
+
 fn maybe_create_reflection(
     transaction: &Transaction<'_>,
     user_id: &str,
@@ -17215,6 +17381,7 @@ fn ai_generation_attempt_limit(artifact_kind: &str) -> Option<u64> {
         "baseline" => Some(AI_BASELINE_GENERATION_LIMIT),
         "shelf_starters" => Some(AI_SHELF_STARTER_GENERATION_LIMIT),
         "synthesis" => Some(AI_SYNTHESIS_GENERATION_LIMIT),
+        "agent_plan" => Some(AI_AGENT_PLAN_GENERATION_LIMIT),
         _ => None,
     }
 }
@@ -17260,6 +17427,16 @@ fn krw_to_usdc_atomic(amount_krw: u64, krw_per_usdc: u64) -> Result<u64, StoreEr
     let atomic = numerator.div_ceil(denominator).max(1);
     u64::try_from(atomic)
         .map_err(|_| StoreError::Validation("payment amount is too large".to_owned()))
+}
+
+fn evidence_payment_split(amount_atomic: u64) -> (u64, u64) {
+    if amount_atomic < 2 {
+        return (amount_atomic, 0);
+    }
+    let fee = (u128::from(amount_atomic) * u128::from(EVIDENCE_PROTOCOL_FEE_BPS))
+        .div_ceil(10_000)
+        .clamp(1, u128::from(amount_atomic - 1)) as u64;
+    (amount_atomic - fee, fee)
 }
 
 fn validate_chain_settlement_request(
@@ -18375,10 +18552,17 @@ mod tests {
             .unwrap();
         assert_eq!(resource.status, "quoted");
         assert_eq!(resource.recipient_wallet, receiver);
+        let amount_atomic = resource.amount_atomic.parse::<u64>().unwrap();
+        let (expected_owner, expected_protocol) = super::evidence_payment_split(amount_atomic);
         assert_eq!(
-            resource.amount_atomic.parse::<u64>().unwrap(),
-            resource.owner_amount_atomic.parse::<u64>().unwrap() + 1
+            resource.owner_amount_atomic.parse::<u64>().unwrap(),
+            expected_owner
         );
+        assert_eq!(
+            resource.platform_amount_atomic.parse::<u64>().unwrap(),
+            expected_protocol
+        );
+        assert_eq!(expected_owner + expected_protocol, amount_atomic);
         assert!(resource.resource_path.contains(&resource.quote_id));
         assert!(
             resource
@@ -21676,9 +21860,22 @@ mod tests {
             Err(StoreError::Conflict(_))
         ));
         let verified_wallet = verify_wallet(&store, "researcher-1", 7);
+        assert!(matches!(
+            store.x402_payment_quote_for_agent(
+                &resolved.query_id,
+                handle,
+                &"b".repeat(64),
+                &policy,
+            ),
+            Err(StoreError::Unauthorized(_))
+        ));
         let quote = store
-            .x402_payment_quote(&resolved.query_id, handle, &policy)
+            .x402_payment_quote_for_agent(&resolved.query_id, handle, &payment_token_hash, &policy)
             .unwrap();
+        let immutable_quote = store.x402_payment_quote_by_id(&quote.id).unwrap();
+        assert_eq!(immutable_quote.id, quote.id);
+        assert_eq!(immutable_quote.content_hash, quote.content_hash);
+        assert_eq!(immutable_quote.amount_atomic, quote.amount_atomic);
         assert_eq!(quote.price_krw, 700);
         assert_eq!(quote.amount_atomic, "518519");
         assert_eq!(quote.pay_to, verified_wallet);
@@ -22037,6 +22234,15 @@ mod tests {
             .unwrap();
         assert_eq!(recovered_quote.id, quote.id);
         assert_eq!(recovered_quote.status, "delivered");
+        let recovered_document = store
+            .recover_paid_document_by_quote(&quote.id, &payment_token_hash)
+            .unwrap();
+        assert_eq!(recovered_document.citation.handle, *handle);
+        assert_eq!(recovered_document.settlement.quote_id, quote.id);
+        assert!(matches!(
+            store.recover_paid_document_by_quote(&quote.id, &"b".repeat(64)),
+            Err(StoreError::Unauthorized(_))
+        ));
 
         ensure_user(&store, "signature-replay-buyer");
         let open_call_policy = PaymentQuotePolicy {
@@ -23950,6 +24156,9 @@ mod tests {
         let first = create_svalbard_call(&store, "first-agent-buyer", 1);
         let submitted = submit(&store, &first.id, "agent-contributor", strong_answer()).unwrap();
         assert_eq!(submitted.memory.status, "settled");
+        let reliability_before_reuse =
+            super::author_reliability_readonly(&store.connection().unwrap(), "agent-contributor")
+                .unwrap();
         store
             .update_preferences(
                 "agent-contributor",
@@ -23974,6 +24183,114 @@ mod tests {
         assert_eq!(auto.answer, strong_answer());
         assert_eq!(auto.earned, second.unit_price);
         assert_eq!(auto.source_ids, vec![submitted.memory.id]);
+        assert_eq!(auto.memory_type, "reuse");
+        assert_eq!(
+            super::author_reliability_readonly(&store.connection().unwrap(), "agent-contributor",)
+                .unwrap(),
+            reliability_before_reuse,
+        );
+        assert!(matches!(
+            store.set_memory_locked("agent-contributor", &auto.id, true),
+            Err(StoreError::Conflict(message)) if message.contains("source passage")
+        ));
+        assert!(matches!(
+            store.correct_memory(
+                "agent-contributor",
+                &auto.id,
+                &CorrectMemoryRequest {
+                    answer: strong_answer().to_owned(),
+                },
+            ),
+            Err(StoreError::Conflict(message)) if message.contains("original memory")
+        ));
+
+        // Existing databases may contain auto-match rows written before reuse
+        // had its own type. Migration reclassifies them and repairs document
+        // reliability using only firsthand observations.
+        let connection = store.connection().unwrap();
+        connection
+            .execute(
+                "UPDATE memory_entries SET memory_type = 'observation' WHERE id = ?1",
+                [&auto.id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE documents SET reliability_score = 0.98
+                 WHERE author_id = 'agent-contributor'",
+                params![],
+            )
+            .unwrap();
+        super::backfill_auto_match_reuse(&connection).unwrap();
+        let (migrated_type, repaired_reliability): (String, f32) = connection
+            .query_row(
+                "SELECT m.memory_type, d.reliability_score
+                 FROM memory_entries m JOIN documents d ON d.id = m.document_id
+                 WHERE m.id = ?1",
+                [&auto.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(migrated_type, "reuse");
+        assert_eq!(repaired_reliability, reliability_before_reuse);
+    }
+
+    #[test]
+    fn paid_reuse_does_not_inflate_observation_count_or_trigger_reflection() {
+        let store = Store::in_memory().unwrap();
+        let contributor = "reuse-is-not-observation";
+        let first = create_svalbard_call(&store, "first-reuse-buyer", 1);
+        submit(&store, &first.id, contributor, strong_answer()).unwrap();
+        store
+            .update_preferences(
+                contributor,
+                &UpdatePreferencesRequest {
+                    auto_match: Some(true),
+                    agents: Some(true),
+                    browser_alerts: None,
+                    email_alerts: None,
+                },
+            )
+            .unwrap();
+
+        let second = create_svalbard_call(&store, "second-reuse-buyer", 1);
+        assert_eq!(second.status, "filled");
+
+        store
+            .update_preferences(
+                contributor,
+                &UpdatePreferencesRequest {
+                    auto_match: Some(true),
+                    agents: Some(false),
+                    browser_alerts: None,
+                    email_alerts: None,
+                },
+            )
+            .unwrap();
+        let third = create_svalbard_call(&store, "third-reuse-buyer", 1);
+        let distinct_answer = "During February 2025 near Ny-Alesund I used a pair of insulated La Sportiva boots for an 8 hour sensor deployment. The rigid sole gripped the icy trail well, while a dry spare sock and vapor barrier prevented the damp liner from chilling my feet on the return walk.";
+        submit(&store, &third.id, contributor, distinct_answer).unwrap();
+
+        let memories = store.list_memory(contributor).unwrap();
+        assert_eq!(
+            memories
+                .iter()
+                .filter(|memory| memory.memory_type == "observation")
+                .count(),
+            2,
+        );
+        assert_eq!(
+            memories
+                .iter()
+                .filter(|memory| memory.memory_type == "reuse")
+                .count(),
+            1,
+        );
+        assert!(
+            memories
+                .iter()
+                .all(|memory| memory.memory_type != "reflection")
+        );
     }
 
     #[test]

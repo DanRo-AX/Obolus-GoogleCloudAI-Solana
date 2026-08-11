@@ -31,6 +31,7 @@ jobs:
       - run: npm run test:unit
       - run: npm run test:pages
       - run: npm run agent:test
+      - run: npm run test:finalist-evidence
       - run: docker build --file deploy/cloud-run/web.Dockerfile --tag openshelf-web-ci:${GITHUB_SHA} .
 
   agent-orchestrator:

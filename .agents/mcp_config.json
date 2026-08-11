@@ -1,13 +1,13 @@
 {
   "mcpServers": {
-    "openshelf": {
+    "obulus": {
       "command": "node",
-      "args": ["integrations/antigravity/openshelf/runtime/server.mjs", "mcp"],
+      "args": ["apps/obulus-local-agent/src/cli.mjs", "mcp"],
       "cwd": "."
     },
     "pay": {
       "command": "node",
-      "args": ["integrations/antigravity/openshelf/runtime/pay-compat.mjs"],
+      "args": ["apps/obulus-local-agent/src/pay-mcp.mjs"],
       "cwd": "."
     }
   }

@@ -1,7 +1,19 @@
 import { createHash } from "node:crypto";
 
 export type PaymentRouteIdentity =
-  | { kind: "document"; queryId: string; handle: string; key: string }
+  | {
+      kind: "document";
+      selector: "query";
+      queryId: string;
+      handle: string;
+      key: string;
+    }
+  | {
+      kind: "document";
+      selector: "quote";
+      quoteId: string;
+      key: string;
+    }
   | { kind: "bundle"; quoteId: string; key: string }
   | { kind: "open_call"; quoteId: string; key: string };
 
@@ -153,9 +165,21 @@ export function paymentIdentityFromPath(path: string): PaymentRouteIdentity {
     if (!queryId || !handle) throw new Error("query id and document handle are required");
     return {
       kind: "document",
+      selector: "query",
       queryId,
       handle,
       key: `document\u0000${queryId}\u0000${handle}`,
+    };
+  }
+  const documentQuoteMatch = pathname.match(/^\/api\/v1\/paid-quotes\/([^/]+)$/);
+  if (documentQuoteMatch) {
+    const quoteId = decodeURIComponent(documentQuoteMatch[1]);
+    if (!quoteId) throw new Error("document payment quote id is required");
+    return {
+      kind: "document",
+      selector: "quote",
+      quoteId,
+      key: `document_quote\u0000${quoteId}`,
     };
   }
   const bundleMatch = pathname.match(/^\/api\/v1\/paid-bundles\/([^/]+)$/);

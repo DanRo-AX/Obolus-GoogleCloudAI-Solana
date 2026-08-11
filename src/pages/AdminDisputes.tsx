@@ -13,10 +13,11 @@ import {
 import { useUi } from '@/state/ui'
 import { shortKey } from '@/state/wallet'
 import { useT } from '@/i18n'
+import { AuthUnavailable } from '@/components/AuthUnavailable'
 
 export default function AdminDisputes() {
   const t = useT()
-  const { account, authReady, refreshLedger } = useUi()
+  const { account, authReady, authError, retryAuth, refreshLedger } = useUi()
   const [cases, setCases] = useState<DisputeCase[]>([])
   const [feedback, setFeedback] = useState<DocumentFeedback[]>([])
   const [notes, setNotes] = useState<Record<string, string>>({})
@@ -41,6 +42,9 @@ export default function AdminDisputes() {
       .finally(() => setLoading(false))
   }, [account?.role, t])
 
+  if (authReady && authError && !account) {
+    return <AuthUnavailable message={authError} onRetry={retryAuth} />
+  }
   if (authReady && account?.role !== 'admin') {
     return <Navigate to="/dashboard" replace />
   }

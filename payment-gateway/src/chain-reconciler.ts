@@ -10,7 +10,7 @@ import {
   verifySignature,
 } from "@solana/kit";
 import { Transaction, VersionedTransaction } from "@solana/web3.js";
-import { paymentMemo } from "./payment-routing.js";
+import { paymentMemo, type PaymentRouteIdentity } from "./payment-routing.js";
 import type { DurableSettlement } from "./durable-outbox.js";
 
 const MEMO_PROGRAM_ADDRESS = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
@@ -634,11 +634,12 @@ async function associatedTokenAddresses(asset: string, payTo: string): Promise<s
 function reconciliationIdentity(
   settlementKind: ReconciliationAttempt["settlementKind"],
   quoteId: string,
-) {
+): PaymentRouteIdentity {
   if (settlementKind === "document") {
-    return { kind: settlementKind, queryId: "reconciliation", handle: quoteId, key: quoteId } as const;
+    return { kind: "document", selector: "quote", quoteId, key: quoteId };
   }
-  return { kind: settlementKind, quoteId, key: quoteId } as const;
+  if (settlementKind === "bundle") return { kind: "bundle", quoteId, key: quoteId };
+  return { kind: "open_call", quoteId, key: quoteId };
 }
 
 function validateAttempt(

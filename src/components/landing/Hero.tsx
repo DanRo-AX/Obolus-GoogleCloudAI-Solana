@@ -27,7 +27,7 @@ export function Hero() {
           </h1>
           <p className="mx-auto mt-2 max-w-lg text-pretty text-[17px] font-medium text-white/80">
             {t(
-              'SHELF searches what people wrote instead of the web. ₩5 to ₩20 to open one document, and it lands in the wallet of whoever wrote it.',
+              'SHELF searches firsthand human documents instead of averaging the web. Open only the evidence you need for ₩5 to ₩25; 90% settles to its owner.',
             )}
           </p>
         </div>

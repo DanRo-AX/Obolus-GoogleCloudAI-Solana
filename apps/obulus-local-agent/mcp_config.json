@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "obulus": {
+      "command": "node",
+      "args": ["src/cli.mjs", "mcp"],
+      "cwd": "."
+    },
+    "pay": {
+      "command": "node",
+      "args": ["src/pay-mcp.mjs"],
+      "cwd": "."
+    }
+  }
+}
