@@ -1,13 +1,20 @@
 {
   "runId": "demo-2026-08-11-001",
   "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
-  "queryId": "query_demo_001",
-  "jobId": "job_demo_001",
-  "jobStatus": "completed",
+  "activityKind": "open_call_lifecycle",
+  "activityId": "call_demo_001",
+  "activityStatus": "cancelled_refunded",
   "quotes": [
     {
-      "id": "quote_demo_001",
-      "kind": "evidence",
+      "id": "call_quote_demo_001",
+      "kind": "open-call-funding",
+      "status": "funded",
+      "amountAtomic": "20",
+      "asset": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+    },
+    {
+      "id": "payout_demo_001",
+      "kind": "open-call-payout",
       "status": "delivered",
       "amountAtomic": "15",
       "asset": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
@@ -15,9 +22,18 @@
   ],
   "transactions": [
     {
-      "kind": "evidence",
+      "kind": "open-call-funding",
+      "signature": "3333333333333333333333333333333333333333333333333333333333333333",
+      "quoteIds": ["call_quote_demo_001"],
+      "status": "finalized",
+      "finalityProviderCount": 2,
+      "ownerDeltaAtomic": "20",
+      "payerDeltaAtomic": "-20"
+    },
+    {
+      "kind": "open-call-payout",
       "signature": "1111111111111111111111111111111111111111111111111111111111111111",
-      "quoteIds": ["quote_demo_001"],
+      "quoteIds": ["payout_demo_001"],
       "status": "finalized",
       "finalityProviderCount": 2,
       "ownerDeltaAtomic": "15",

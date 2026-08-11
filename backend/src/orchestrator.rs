@@ -19,11 +19,12 @@ pub const AI_BASELINE_POLICY_VERSION: &str = "general-liquidity-v1";
 pub const SHELF_STARTER_POLICY_VERSION: &str = "shelf-starter-v1";
 pub const PAID_SYNTHESIS_POLICY_VERSION: &str = "paid-evidence-v1";
 pub const AGENT_PLAN_POLICY_VERSION: &str = "bounded-tool-plan-v1";
+pub const AGENT_ACTION_POLICY_VERSION: &str = "bounded-next-action-v1";
 static HTTP_CLIENT: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
-        // The API router has a 22-second deadline. This leaves a bounded seven
-        // seconds for the independent pre-provider audit plus normal handler
-        // overhead before the outer timeout can discard a paid response.
+        // Paid synthesis and other one-call endpoints stay inside the API's
+        // 22-second outer deadline. The two planning calls use the tighter
+        // per-request override below.
         .timeout(Duration::from_secs(9))
         .build()
         .expect("orchestrator HTTP client configuration is valid")
@@ -90,6 +91,13 @@ pub fn generation_fence_namespace(policy_version: &str) -> String {
 }
 
 async fn vertex_generate(body: &Value) -> Option<(Value, String)> {
+    vertex_generate_with_timeout(body, Duration::from_secs(9)).await
+}
+
+async fn vertex_generate_with_timeout(
+    body: &Value,
+    request_timeout: Duration,
+) -> Option<(Value, String)> {
     let config = VertexConfig::from_env()?;
     let credentials = match VERTEX_CREDENTIALS.as_ref() {
         Ok(credentials) => credentials,
@@ -107,6 +115,7 @@ async fn vertex_generate(body: &Value) -> Option<(Value, String)> {
     };
     let response = match HTTP_CLIENT
         .post(&config.endpoint)
+        .timeout(request_timeout)
         .bearer_auth(token.token)
         .json(body)
         .send()
@@ -184,9 +193,6 @@ pub struct PlannedSearch {
     pub step: AgentStep,
     pub model: String,
     pub mode: String,
-    on_hit: AgentTool,
-    on_partial: AgentTool,
-    on_miss: AgentTool,
 }
 
 #[derive(Debug)]
@@ -206,9 +212,6 @@ struct SearchToolArguments {
     region: Option<String>,
     household: Option<String>,
     field: Option<String>,
-    on_hit: Option<String>,
-    on_partial: Option<String>,
-    on_miss: Option<String>,
 }
 
 /// Gemini selects a bounded research tool and may infer safe audience filters.
@@ -221,19 +224,10 @@ pub async fn plan_human_evidence_search(
 ) -> PlannedSearch {
     let body = search_plan_body(request);
     if provider_allowed
-        && let Some((payload, model)) = vertex_generate(&body).await
+        && let Some((payload, model)) =
+            vertex_generate_with_timeout(&body, Duration::from_secs(5)).await
         && let Some(arguments) = parse_search_tool_call(&payload)
     {
-        let on_hit = parse_conditional_action(
-            arguments.on_hit.as_deref(),
-            AgentTool::ProposeEvidencePurchase,
-        );
-        let on_partial = parse_conditional_action(
-            arguments.on_partial.as_deref(),
-            AgentTool::ProposeHybridResearch,
-        );
-        let on_miss =
-            parse_conditional_action(arguments.on_miss.as_deref(), AgentTool::ProposeOpenCall);
         let planned = apply_search_plan(request, arguments);
         return PlannedSearch {
             step: AgentStep {
@@ -247,9 +241,6 @@ pub async fn plan_human_evidence_search(
             request: planned,
             model,
             mode: "vertex_function_call".to_owned(),
-            on_hit,
-            on_partial,
-            on_miss,
         };
     }
 
@@ -267,33 +258,38 @@ pub async fn plan_human_evidence_search(
         },
         model: "none".to_owned(),
         mode: "deterministic_fallback".to_owned(),
-        on_hit: AgentTool::ProposeEvidencePurchase,
-        on_partial: AgentTool::ProposeHybridResearch,
-        on_miss: AgentTool::ProposeOpenCall,
     }
 }
 
-/// After deterministic retrieval, Gemini chooses the next market action from
-/// a server allowlist. The choice is checked against the actual HIT/MISS state;
-/// invalid or unavailable model output falls back to a deterministic policy.
-pub fn plan_next_market_action(
+/// After deterministic retrieval, a second Gemini function call observes only
+/// aggregate coverage state and chooses one reviewed, non-spending next action.
+/// The server checks that choice against the real HIT/PARTIAL/MISS result;
+/// unavailable or invalid provider output falls back to deterministic policy.
+pub async fn plan_next_market_action(
     response: &ResolveQuestionResponse,
-    plan: &PlannedSearch,
+    provider_allowed: bool,
 ) -> PlannedNextAction {
-    let proposed = match (response.decision, response.liquidity_state) {
-        (Decision::Hit, _) => plan.on_hit,
-        (Decision::Miss, LiquidityState::HybridCoverage) => plan.on_partial,
-        (Decision::Miss, _) => plan.on_miss,
-    };
-    let (tool, status) = if next_action_allowed(response, proposed) {
-        (proposed, AgentStepStatus::Completed)
-    } else {
-        (
-            deterministic_next_action(response),
-            AgentStepStatus::Fallback,
-        )
-    };
-    next_action(tool, plan.model.clone(), &plan.mode, status)
+    let body = next_action_body(response);
+    if provider_allowed
+        && let Some((payload, model)) =
+            vertex_generate_with_timeout(&body, Duration::from_secs(5)).await
+        && let Some(tool) = parse_next_action_tool_call(&payload)
+        && next_action_allowed(response, tool)
+    {
+        return next_action(
+            tool,
+            model,
+            "vertex_function_call",
+            AgentStepStatus::Completed,
+        );
+    }
+
+    next_action(
+        deterministic_next_action(response),
+        "none".to_owned(),
+        "deterministic_fallback",
+        AgentStepStatus::Fallback,
+    )
 }
 
 fn next_action(
@@ -349,10 +345,7 @@ fn search_plan_body(request: &ResolveQuestionRequest) -> Value {
                     "ageBand": {"type": "STRING", "enum": ["under-25", "25-34", "35-44", "45-54", "55-plus"]},
                     "region": {"type": "STRING", "enum": ["seoul", "gyeonggi", "metro", "town", "abroad"]},
                     "household": {"type": "STRING", "enum": ["alone", "partner", "kids", "parents", "shared"]},
-                    "field": {"type": "STRING", "enum": CATEGORY_IDS},
-                    "onHit": {"type": "STRING", "enum": ["propose_evidence_purchase"]},
-                    "onPartial": {"type": "STRING", "enum": ["propose_hybrid_research", "propose_open_call"]},
-                    "onMiss": {"type": "STRING", "enum": ["propose_open_call", "generate_general_baseline"]}
+                    "field": {"type": "STRING", "enum": CATEGORY_IDS}
                 }
             }
         }]}],
@@ -379,16 +372,48 @@ fn parse_search_tool_call(payload: &Value) -> Option<SearchToolArguments> {
         .flatten()
 }
 
-fn parse_conditional_action(value: Option<&str>, fallback: AgentTool) -> AgentTool {
-    match value {
-        Some("propose_evidence_purchase") => Some(AgentTool::ProposeEvidencePurchase),
-        Some("propose_hybrid_research") => Some(AgentTool::ProposeHybridResearch),
-        Some("propose_open_call") => Some(AgentTool::ProposeOpenCall),
-        Some("generate_general_baseline") => Some(AgentTool::GenerateGeneralBaseline),
-        Some("finish_without_purchase") => Some(AgentTool::FinishWithoutPurchase),
+fn next_action_body(response: &ResolveQuestionResponse) -> Value {
+    let observation = serde_json::to_string(&json!({
+        "decision": response.decision,
+        "reason": response.reason,
+        "liquidityState": response.liquidity_state,
+        "requestedDocuments": response.requested_documents,
+        "candidateCount": response.candidate_count,
+        "selectedDocumentCount": response.matches.len(),
+        "quoteAvailable": response.quote.is_some(),
+    }))
+    .expect("coverage observation is serialisable");
+    json!({
+        "systemInstruction": {"parts": [{"text": "You are Obulus's bounded research decider. Observe the aggregate retrieval result and call exactly one allowed next-action tool. Do not answer the question. You cannot set or change a price, budget, recipient, wallet, asset, network, document set, or payment. Prefer the smallest action that can make progress; finish without purchase when no economic action is justified. All payment-like proposals stop for explicit user approval and are revalidated by the server."}]},
+        "contents": [{"role": "user", "parts": [{"text": format!("Server-owned retrieval observation JSON:\n{observation}")}]}],
+        "tools": [{"functionDeclarations": [
+            {"name": "propose_evidence_purchase", "description": "Propose opening the server-selected evidence bundle; never execute payment.", "parameters": {"type": "OBJECT", "properties": {}}},
+            {"name": "propose_hybrid_research", "description": "Propose reusing partial evidence and sourcing only missing human coverage.", "parameters": {"type": "OBJECT", "properties": {}}},
+            {"name": "propose_open_call", "description": "Propose a rewarded human open call; never create or fund it.", "parameters": {"type": "OBJECT", "properties": {}}},
+            {"name": "generate_general_baseline", "description": "Offer an unpriced, non-authoritative AI baseline without private evidence.", "parameters": {"type": "OBJECT", "properties": {}}},
+            {"name": "finish_without_purchase", "description": "Stop without opening private evidence or proposing spend.", "parameters": {"type": "OBJECT", "properties": {}}}
+        ]}],
+        "toolConfig": {"functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": [
+            "propose_evidence_purchase",
+            "propose_hybrid_research",
+            "propose_open_call",
+            "generate_general_baseline",
+            "finish_without_purchase"
+        ]}},
+        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 128}
+    })
+}
+
+fn parse_next_action_tool_call(payload: &Value) -> Option<AgentTool> {
+    let (name, _) = function_call(payload)?;
+    match name {
+        "propose_evidence_purchase" => Some(AgentTool::ProposeEvidencePurchase),
+        "propose_hybrid_research" => Some(AgentTool::ProposeHybridResearch),
+        "propose_open_call" => Some(AgentTool::ProposeOpenCall),
+        "generate_general_baseline" => Some(AgentTool::GenerateGeneralBaseline),
+        "finish_without_purchase" => Some(AgentTool::FinishWithoutPurchase),
         _ => None,
     }
-    .unwrap_or(fallback)
 }
 
 fn apply_search_plan(
@@ -460,11 +485,16 @@ fn search_plan_summary(request: &ResolveQuestionRequest) -> String {
 }
 
 fn next_action_allowed(response: &ResolveQuestionResponse, tool: AgentTool) -> bool {
+    if tool == AgentTool::FinishWithoutPurchase {
+        return true;
+    }
     match response.decision {
         Decision::Hit => tool == AgentTool::ProposeEvidencePurchase,
         Decision::Miss if !response.matches.is_empty() => matches!(
             tool,
-            AgentTool::ProposeHybridResearch | AgentTool::ProposeOpenCall
+            AgentTool::ProposeHybridResearch
+                | AgentTool::ProposeOpenCall
+                | AgentTool::GenerateGeneralBaseline
         ),
         Decision::Miss => matches!(
             tool,
@@ -915,9 +945,10 @@ mod tests {
     };
 
     use super::{
-        SearchToolArguments, VertexConfig, apply_search_plan, fallback, parse_baseline_response,
-        parse_provider_response, parse_search_tool_call, parse_shelf_starters,
-        plan_human_evidence_search, plan_next_market_action, search_plan_body, validate,
+        SearchToolArguments, VertexConfig, apply_search_plan, fallback, next_action_body,
+        parse_baseline_response, parse_next_action_tool_call, parse_provider_response,
+        parse_search_tool_call, parse_shelf_starters, plan_next_market_action, search_plan_body,
+        validate,
     };
 
     fn request() -> SynthesizeAnswerRequest {
@@ -983,9 +1014,6 @@ mod tests {
                 region: Some("not-a-band".to_owned()),
                 household: None,
                 field: None,
-                on_hit: None,
-                on_partial: None,
-                on_miss: None,
             },
         );
         assert_eq!(planned.requested_documents, 5);
@@ -996,7 +1024,6 @@ mod tests {
 
     #[tokio::test]
     async fn hit_plan_stops_at_user_approval_before_any_payment_tool() {
-        let planned = plan_human_evidence_search(&resolve_request(), false).await;
         let response = ResolveQuestionResponse {
             query_id: "qry_test".to_owned(),
             payment_access_token: None,
@@ -1011,10 +1038,52 @@ mod tests {
             open_call: None,
             agent_run: None,
         };
-        let next = plan_next_market_action(&response, &planned);
+        let next = plan_next_market_action(&response, false).await;
         assert_eq!(next.tool, AgentTool::ProposeEvidencePurchase);
         assert_eq!(next.step.status, AgentStepStatus::AwaitingUserApproval);
         assert!(!next.step.summary.to_lowercase().contains("private key"));
+    }
+
+    #[test]
+    fn next_action_call_exposes_choices_but_no_spending_arguments() {
+        let response = ResolveQuestionResponse {
+            query_id: "qry_test".to_owned(),
+            payment_access_token: None,
+            decision: Decision::Miss,
+            reason: DecisionReason::NoRelevantDocuments,
+            liquidity_state: LiquidityState::AiLiquidityOnly,
+            ai_baseline_eligible: true,
+            requested_documents: 5,
+            candidate_count: 0,
+            matches: Vec::new(),
+            quote: None,
+            open_call: None,
+            agent_run: None,
+        };
+        let body = next_action_body(&response);
+        let tools = body["tools"].to_string();
+        assert!(tools.contains("propose_open_call"));
+        assert!(tools.contains("generate_general_baseline"));
+        assert!(tools.contains("finish_without_purchase"));
+        assert!(!tools.contains("amount"));
+        assert!(!tools.contains("recipient"));
+        assert!(!tools.contains("wallet"));
+
+        let allowed = json!({
+            "candidates": [{"content": {"parts": [{"functionCall": {
+                "name": "generate_general_baseline", "args": {}
+            }}]}}]
+        });
+        assert_eq!(
+            parse_next_action_tool_call(&allowed),
+            Some(AgentTool::GenerateGeneralBaseline)
+        );
+        let forbidden = json!({
+            "candidates": [{"content": {"parts": [{"functionCall": {
+                "name": "execute_payment", "args": {}
+            }}]}}]
+        });
+        assert!(parse_next_action_tool_call(&forbidden).is_none());
     }
 
     #[test]

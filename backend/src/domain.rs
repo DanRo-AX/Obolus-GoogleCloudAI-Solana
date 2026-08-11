@@ -372,6 +372,9 @@ pub struct AgentRun {
     pub objective: String,
     pub model: String,
     pub mode: String,
+    pub provider_call_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_revision: Option<String>,
     pub steps: Vec<AgentStep>,
     pub next_action: AgentTool,
     pub requires_user_approval: bool,

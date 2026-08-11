@@ -16,7 +16,7 @@ for (const assetName of assetNames) {
 }
 
 const pitch = await readFile('dist/pitch/index.html', 'utf8')
-for (const marker of ['data-title="표지"', 'id="liveProofStatus"', '총 356개 테스트']) {
+for (const marker of ['data-title="표지"', 'id="liveProofStatus"', '총 362개 테스트']) {
   if (!pitch.includes(marker)) throw new Error(`staged pitch is missing ${marker}`)
 }
 for (const path of [

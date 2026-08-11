@@ -52,6 +52,7 @@ if (args.command === 'prepare') {
   process.exit(0)
 }
 
+const contribution = loadContribution(args.contributionFile, stateDir)
 const rpcUrls = independentRpcUrls(process.env.OPENSHELF_FINALIST_RPC_URLS)
 const state = loadOrCreateWallets(statePath)
 state.runNonce ??= randomUUID()
@@ -68,13 +69,13 @@ if (buyerBalance === 0n) {
 
 const buyerSession = await walletSession(api, buyer)
 const callInput = {
-  question: '성수동에서 평일 점심 줄을 피하려면 실제로 어디에 가나요?',
-  unitPrice: 5,
-  target: 2,
+  question: contribution.question,
+  unitPrice: contribution.unitPrice,
+  target: contribution.target,
   chatId: `finalist-${buyer.publicKey.toBase58().slice(0, 10)}-${state.runNonce}`,
-  shelf: '성수동 직장인 점심',
-  category: 'food',
-  filters: { region: 'seoul', field: 'food' },
+  shelf: contribution.shelf,
+  category: contribution.category,
+  filters: contribution.filters,
 }
 let quote = await apiJson(`${api}/api/v1/open-call-funding-quotes`, {
   method: 'POST',
@@ -143,12 +144,7 @@ const profile = await apiJson(`${api}/api/v1/profile`, {
   cookie: contributorSession.cookie,
   body: {
     handle,
-    ageBand: '25-34',
-    region: 'seoul',
-    household: 'alone',
-    field: 'food',
-    years: '3-7',
-    speaksTo: ['food'],
+    ...contribution.profile,
     wallet: contributor.publicKey.toBase58(),
     autoMatch: true,
     agents: false,
@@ -173,12 +169,8 @@ if (!payout) {
     method: 'POST',
     cookie: contributorSession.cookie,
     body: {
-      answer: '저는 2025년 봄부터 성수동 사무실에서 일했습니다. 화요일에는 오전 11시 40분에 나와 서울숲역 쪽으로 7분 정도 걷습니다. 골목 안 국수집은 한 그릇에 9,000원이고 주문 뒤 10분 안에 나와서 보통 12시 25분 전에 자리로 돌아옵니다.',
-      interviewResponses: [{
-        questionId: 'last-visit',
-        prompt: '이 경로를 가장 최근에 직접 이용한 때는 언제인가요?',
-        answer: '2026년 8월 첫째 주 화요일입니다.',
-      }],
+      answer: contribution.answer,
+      interviewResponses: contribution.interviewResponses,
     },
   })
   if (submission.issues?.length || submission.memory?.status !== 'settled') {
@@ -265,9 +257,9 @@ if (refundOwnerDelta !== BigInt(refund.amountAtomic)) {
 const run = {
   runId: `hosted-devnet-${Date.now()}`,
   network: DEVNET,
-  queryId: openCallId,
-  jobId: quote.id,
-  jobStatus: 'cancelled_refunded',
+  activityKind: 'open_call_lifecycle',
+  activityId: openCallId,
+  activityStatus: 'cancelled_refunded',
   quotes: [{
     id: quote.id,
     kind: 'open-call-funding',
@@ -325,8 +317,8 @@ console.log(JSON.stringify({
   status: 'ready-for-evidence-recorder',
   network: DEVNET,
   runId: run.runId,
-  queryId: run.queryId,
-  jobId: run.jobId,
+  activityKind: run.activityKind,
+  activityId: run.activityId,
   payoutClaimId: payout.id,
   payoutSignature: payout.transactionSignature,
   refundClaimId: refund.id,
@@ -343,6 +335,7 @@ function parseArgs(values) {
     apiOrigin: DEFAULT_API,
     gatewayOrigin: DEFAULT_GATEWAY,
     rpcPrimary: 'https://api.devnet.solana.com',
+    contributionFile: null,
   }
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index]
@@ -352,10 +345,14 @@ function parseArgs(values) {
     else if (value === '--api-origin') result.apiOrigin = origin(required(values, ++index, value))
     else if (value === '--gateway-origin') result.gatewayOrigin = origin(required(values, ++index, value))
     else if (value === '--rpc-primary') result.rpcPrimary = required(values, ++index, value)
+    else if (value === '--contribution-file') result.contributionFile = required(values, ++index, value)
     else stop(`unknown argument: ${value}`)
   }
   if (!['prepare', 'run'].includes(result.command)) stop('choose exactly one of --prepare or --run')
   if (!result.stateDir) stop('--state-dir is required')
+  if (result.command === 'run' && !result.contributionFile) {
+    stop('--contribution-file is required for --run; its attestations are operator declarations, not cryptographic authorship proof')
+  }
   return result
 }
 
@@ -385,6 +382,111 @@ function safeStateDirectory(value) {
   mkdirSync(directory, { recursive: true, mode: 0o700 })
   chmodSync(directory, 0o700)
   return directory
+}
+
+function loadContribution(value, stateDirectory) {
+  const path = resolve(value)
+  if (!path.startsWith(`${stateDirectory}${sep}`)) {
+    stop('contribution file must be inside the dedicated state directory')
+  }
+  if (!existsSync(path)) stop('contribution file does not exist')
+  const metadata = lstatSync(path)
+  if (metadata.isSymbolicLink() || !metadata.isFile()) {
+    stop('contribution file must be a regular file, not a link')
+  }
+  if ((metadata.mode & 0o077) !== 0) stop('contribution file permissions must be 0600')
+  if (metadata.size <= 0 || metadata.size > 64 * 1024) {
+    stop('contribution file must be between 1 byte and 64 KiB')
+  }
+  let contribution
+  try {
+    contribution = JSON.parse(readFileSync(path, 'utf8'))
+  } catch {
+    stop('contribution file must contain valid JSON')
+  }
+  const categories = new Set(['life', 'food', 'family', 'health', 'business', 'sales', 'engineering', 'education', 'sports', 'travel', 'money'])
+  const ageBands = new Set(['under-25', '25-34', '35-44', '45-54', '55-plus'])
+  const regions = new Set(['seoul', 'gyeonggi', 'metro', 'town', 'abroad'])
+  const households = new Set(['alone', 'partner', 'kids', 'parents', 'shared'])
+  const yearBands = new Set(['under-1', '1-3', '3-7', '7-plus'])
+  const text = (field, minimum, maximum) => {
+    const candidate = String(contribution[field] ?? '').trim()
+    if (candidate.length < minimum || candidate.length > maximum) {
+      stop(`contribution ${field} must be ${minimum}-${maximum} characters`)
+    }
+    return candidate
+  }
+  const question = text('question', 8, 1_000)
+  const shelf = text('shelf', 3, 120)
+  const answer = text('answer', 80, 10_000)
+  const category = String(contribution.category ?? '')
+  if (!categories.has(category)) stop('contribution category is unsupported')
+  const unitPrice = Number(contribution.unitPrice)
+  if (![5, 10, 15, 25, 100, 300, 500, 700, 800, 1_000].includes(unitPrice)) {
+    stop('contribution unitPrice must use a hosted Pay.sh price band')
+  }
+  const target = Number(contribution.target)
+  if (!Number.isInteger(target) || target < 2 || target > 20) {
+    stop('contribution target must be an integer from 2 to 20 so the run can prove payout and refund')
+  }
+  if (contribution.authorAttestation !== true || contribution.usageConsent !== true) {
+    stop('the human author must attest factual authorship and consent to demo storage and paid opening')
+  }
+  const profile = contribution.profile
+  if (!profile || typeof profile !== 'object' || Array.isArray(profile)) {
+    stop('contribution profile is required')
+  }
+  for (const field of ['ageBand', 'region', 'household', 'field', 'years']) {
+    if (typeof profile[field] !== 'string' || !profile[field].trim()) {
+      stop(`contribution profile.${field} is required`)
+    }
+  }
+  if (!Array.isArray(profile.speaksTo) || !profile.speaksTo.includes(category)) {
+    stop('contribution profile.speaksTo must include the call category')
+  }
+  if (!ageBands.has(profile.ageBand)
+    || !regions.has(profile.region)
+    || !households.has(profile.household)
+    || !categories.has(profile.field)
+    || !yearBands.has(profile.years)
+    || new Set(profile.speaksTo).size !== profile.speaksTo.length
+    || profile.speaksTo.some((field) => !categories.has(field))) {
+    stop('contribution profile contains an unsupported demographic band or field')
+  }
+  const filters = contribution.filters ?? { field: category }
+  if (!filters || typeof filters !== 'object' || Array.isArray(filters)
+    || (filters.ageBand !== undefined && !ageBands.has(filters.ageBand))
+    || (filters.region !== undefined && !regions.has(filters.region))
+    || (filters.household !== undefined && !households.has(filters.household))
+    || (filters.field !== undefined && !categories.has(filters.field))
+    || (filters.category !== undefined && !categories.has(filters.category))
+    || (filters.maxUnitPriceKrw !== undefined
+      && (!Number.isSafeInteger(filters.maxUnitPriceKrw) || filters.maxUnitPriceKrw < 0 || filters.maxUnitPriceKrw > 10_000_000))) {
+    stop('contribution filters contain an unsupported value')
+  }
+  const interviewResponses = contribution.interviewResponses
+  if (!Array.isArray(interviewResponses) || !(1 <= interviewResponses.length && interviewResponses.length <= 4)) {
+    stop('contribution interviewResponses must contain 1-4 factual answers')
+  }
+  for (const response of interviewResponses) {
+    if (!response || typeof response !== 'object'
+      || !String(response.questionId ?? '').trim()
+      || !String(response.prompt ?? '').trim()
+      || !String(response.answer ?? '').trim()) {
+      stop('each contribution interview response requires questionId, prompt, and answer')
+    }
+  }
+  return {
+    question,
+    shelf,
+    answer,
+    category,
+    unitPrice,
+    target,
+    filters,
+    profile,
+    interviewResponses,
+  }
 }
 
 function loadOrCreateWallets(path) {

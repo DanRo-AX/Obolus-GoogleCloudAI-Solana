@@ -930,7 +930,7 @@ async fn resolve_question(
             state
                 .store
                 .claim_ai_generation("agent_plan", scope_id, &input_hash, &[])?
-        && authorize_model_call(
+        && authorize_agent_model_call(
             &state,
             "agent_plan",
             scope_id,
@@ -966,8 +966,62 @@ async fn resolve_question(
     let resolver =
         Resolver::new(state.store.documents()?).with_evidence_edges(state.store.evidence_edges()?);
     let mut response = resolver.resolve(planned.request.clone())?;
-    let next = orchestrator::plan_next_market_action(&response, &planned);
     let query_id = response.query_id.clone();
+    let action_provider_fence =
+        orchestrator::generation_fence_namespace(orchestrator::AGENT_ACTION_POLICY_VERSION);
+    let action_input_hash = token_hash(
+        &serde_json::to_string(&serde_json::json!({
+            "providerFence": action_provider_fence,
+            "queryId": &query_id,
+            "decision": response.decision,
+            "reason": response.reason,
+            "liquidityState": response.liquidity_state,
+            "requestedDocuments": response.requested_documents,
+            "candidateCount": response.candidate_count,
+            "selectedDocumentCount": response.matches.len(),
+            "quoteAvailable": response.quote.is_some(),
+        }))
+        .expect("agent next-action input is serialisable"),
+    );
+    let mut action_provider_window = None;
+    if let Some(scope_id) = planner_scope.as_deref()
+        && let AiGenerationClaim::Acquired { window_started_at } =
+            state
+                .store
+                .claim_ai_generation("agent_plan", scope_id, &action_input_hash, &[])?
+        && authorize_agent_model_call(
+            &state,
+            "agent_plan",
+            scope_id,
+            &action_input_hash,
+            window_started_at,
+            &action_provider_fence,
+        )
+        .await
+        .is_ok()
+    {
+        action_provider_window = Some((scope_id.to_owned(), window_started_at));
+    }
+    let next =
+        orchestrator::plan_next_market_action(&response, action_provider_window.is_some()).await;
+    if let Some((scope_id, window_started_at)) = action_provider_window {
+        if next.mode == "vertex_function_call" {
+            state.store.complete_ai_generation(
+                "agent_plan",
+                &scope_id,
+                &action_input_hash,
+                window_started_at,
+                None,
+            )?;
+        } else {
+            state.store.fail_ai_generation(
+                "agent_plan",
+                &scope_id,
+                &action_input_hash,
+                window_started_at,
+            )?;
+        }
+    }
     let mut steps = vec![planned.step];
     steps.push(AgentStep {
         sequence: 2,
@@ -982,22 +1036,34 @@ async fn resolve_question(
         artifact_ref: Some(query_id.clone()),
     });
     steps.push(next.step);
-    let mode = if planned.mode == "vertex_function_call" || next.mode == "vertex_function_call" {
-        "vertex_tools_with_deterministic_guards"
-    } else {
-        "deterministic_fallback"
+    let mode = match (planned.mode.as_str(), next.mode.as_str()) {
+        ("vertex_function_call", "vertex_function_call") => {
+            "vertex_two_stage_with_deterministic_guards"
+        }
+        ("vertex_function_call", _) | (_, "vertex_function_call") => {
+            "partial_vertex_with_deterministic_fallback"
+        }
+        _ => "deterministic_fallback",
     };
     let model = if planned.model != "none" {
         planned.model
     } else {
         next.model
     };
-    response.agent_run = Some(AgentRun {
+    let provider_call_count = usize::from(planned.mode == "vertex_function_call")
+        + usize::from(next.mode == "vertex_function_call");
+    let runtime_revision = std::env::var("K_REVISION")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    let agent_run = AgentRun {
         id: agent_run_id,
         objective: "Find the smallest trustworthy human-evidence set, then choose the next safe market action."
             .to_owned(),
         model,
         mode: mode.to_owned(),
+        provider_call_count,
+        runtime_revision: runtime_revision.clone(),
         steps,
         next_action: next.tool,
         requires_user_approval: matches!(
@@ -1006,7 +1072,17 @@ async fn resolve_question(
                 | AgentTool::ProposeHybridResearch
                 | AgentTool::ProposeOpenCall
         ),
-    });
+    };
+    tracing::info!(
+        agent_run_id = %agent_run.id,
+        query_id = %query_id,
+        runtime_revision = runtime_revision.as_deref().unwrap_or("local"),
+        provider_call_count,
+        mode,
+        model = %agent_run.model,
+        "bounded research run completed"
+    );
+    response.agent_run = Some(agent_run);
     let payment_access_token = random_token();
     state.store.record_resolution(
         &question,
@@ -1049,6 +1125,46 @@ async fn authorize_model_call(
         return Err(ApiError::service_unavailable(audit_error));
     }
     Ok(())
+}
+
+/// A resolve request performs two sequential audit + provider stages under the
+/// router's 22-second deadline. Each audit gets a tighter budget so a slow GCS
+/// write degrades to deterministic policy instead of consuming the whole
+/// request. A timed-out claim is explicitly released before returning.
+async fn authorize_agent_model_call(
+    state: &AppState,
+    operation: &str,
+    scope_id: &str,
+    input_hash: &str,
+    window_started_at: u64,
+    provider_fence: &str,
+) -> Result<(), ApiError> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        authorize_model_call(
+            state,
+            operation,
+            scope_id,
+            input_hash,
+            window_started_at,
+            provider_fence,
+        ),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            state.store.release_ai_generation_before_provider(
+                operation,
+                scope_id,
+                input_hash,
+                window_started_at,
+            )?;
+            Err(ApiError::service_unavailable(
+                "model-call audit exceeded the bounded planning deadline",
+            ))
+        }
+    }
 }
 
 async fn generate_ai_baseline(
