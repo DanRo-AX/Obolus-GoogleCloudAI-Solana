@@ -1,4 +1,5 @@
 import { LocalAgentError } from './errors.mjs'
+import { contributorTools } from './contributor-tools.mjs'
 
 const object = (properties = {}, required = []) => ({
   type: 'object',
@@ -10,7 +11,7 @@ const string = (description, extra = {}) => ({ type: 'string', description, ...e
 const integer = (description, extra = {}) => ({ type: 'integer', description, ...extra })
 const stringArray = (description) => ({ type: 'array', description, items: { type: 'string' } })
 
-export const tools = [
+const buyerTools = [
   {
     name: 'local_privacy_status',
     description:
@@ -83,9 +84,18 @@ export const tools = [
   {
     name: 'forget_local_query',
     description: 'Delete one local query capability, or all local state when queryId is omitted.',
-    inputSchema: object({ queryId: string('Optional query id to forget.') }),
+    inputSchema: object(
+      {
+        queryId: string('Optional query id to forget.'),
+        confirmation: string('FORGET <queryId> 또는 FORGET ALL LOCAL OBULUS DATA 형식의 사용자 확인.'),
+      },
+      ['confirmation'],
+    ),
+    annotations: { destructiveHint: true },
   },
 ]
+
+export const tools = [...buyerTools, ...contributorTools]
 
 export async function callTool(name, args, marketplace) {
   const tool = tools.find((candidate) => candidate.name === name)
@@ -105,9 +115,15 @@ export async function callTool(name, args, marketplace) {
     case 'synthesize_paid_evidence':
       return marketplace.synthesize(args)
     case 'forget_local_query':
+      if (
+        args.confirmation !==
+        (args.queryId ? `FORGET ${args.queryId}` : 'FORGET ALL LOCAL OBULUS DATA')
+      ) {
+        throw new LocalAgentError('로컬 데이터 삭제 확인 문구가 일치하지 않습니다.', 'confirmation_required', 403)
+      }
       return marketplace.forget(args.queryId)
     default:
-      throw new LocalAgentError(`Unknown tool: ${name}`, 'tool_not_found', 404)
+      return marketplace.callAuthenticatedTool(name, args)
   }
 }
 

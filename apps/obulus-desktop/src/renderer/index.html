@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Obulus</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-drag"></div>
+        <div class="brand-row">
+          <span class="brand-mark">O</span>
+          <strong>OBULUS</strong>
+          <span class="local-pill">LOCAL</span>
+        </div>
+        <button id="new-chat" class="new-chat" type="button"><span>＋</span> 새 리서치</button>
+        <label class="search-box">
+          <span>⌕</span>
+          <input id="conversation-search" type="search" placeholder="대화 검색" autocomplete="off" />
+        </label>
+        <div class="history-label">최근 작업</div>
+        <nav id="conversation-list" class="conversation-list" aria-label="리서치 대화"></nav>
+        <div class="sidebar-bottom">
+          <button id="open-tools" class="sidebar-action" type="button"><span>⌘</span> 연결 및 도구</button>
+          <button id="open-settings" class="sidebar-action" type="button"><span>⚙</span> 설정</button>
+          <div class="custody-note"><span class="status-dot"></span> 키와 승인 권한은 이 기기에 보관</div>
+        </div>
+      </aside>
+
+      <main class="chat-workspace">
+        <header class="chat-header">
+          <div>
+            <div id="conversation-title" class="conversation-title">새 리서치</div>
+            <div id="conversation-subtitle" class="conversation-subtitle">사람의 경험을 검색하고 필요한 근거만 결제합니다</div>
+          </div>
+          <div class="header-actions">
+            <span id="api-chip" class="status-chip"><i></i> 연결 확인 중</span>
+            <button id="toggle-inspector" class="icon-button" type="button" aria-label="작업 상태 열기">⋯</button>
+          </div>
+        </header>
+
+        <section id="chat-scroll" class="chat-scroll" aria-live="polite">
+          <div id="empty-state" class="empty-state">
+            <div class="empty-mark">O</div>
+            <h1>어떤 사람들의 경험이<br />필요한가요?</h1>
+            <p>Obulus Agent가 질문을 구조화하고, 관련 있는 인간 DB를 무료로 찾은 뒤, 열람할 근거와 정확한 비용을 먼저 보여줍니다.</p>
+            <div class="prompt-grid">
+              <button class="prompt-card" type="button" data-prompt="파리에 사는 20대 직장인은 평일 저녁에 어떤 음식을 실제로 선택하고, 관광객용 메뉴의 어떤 표현을 피하나요?">
+                <strong>지역 소비자 경험</strong><span>파리 현지인의 최근 식사 선택 조사</span>
+              </button>
+              <button class="prompt-card" type="button" data-prompt="성수동 팝업스토어를 최근 방문한 사람들이 구매를 포기한 순간과 이유를 찾아줘.">
+                <strong>제품·브랜드 조사</strong><span>구매 포기 맥락과 반복 패턴 탐색</span>
+              </button>
+              <button class="prompt-card" type="button" data-prompt="현재 검색 가능한 근거가 부족하면, 필요한 대상과 보상을 제안하고 Open Call까지 준비해줘.">
+                <strong>새로운 인간 데이터 수집</strong><span>검색 공백을 Open Call로 전환</span>
+              </button>
+            </div>
+          </div>
+          <div id="messages" class="messages"></div>
+        </section>
+
+        <footer class="composer-area">
+          <form id="composer" class="composer">
+            <textarea id="message-input" rows="1" maxlength="20000" placeholder="Obulus에게 리서치 작업을 요청하세요…" aria-label="메시지"></textarea>
+            <div class="composer-toolbar">
+              <div class="capability-row">
+                <span>검색</span><span>Open Call</span><span>메모리</span><span>Pay.sh</span>
+              </div>
+              <button id="send-message" class="send-button" type="submit" aria-label="보내기">↑</button>
+              <button id="stop-agent" class="stop-button hidden" type="button" aria-label="중지">■</button>
+            </div>
+          </form>
+          <p class="composer-note">결제·공고·삭제는 Agent가 임의로 실행하지 않으며, 정확한 조건을 확인한 뒤 별도 승인이 필요합니다.</p>
+        </footer>
+      </main>
+
+      <aside id="inspector" class="inspector">
+        <div class="inspector-head">
+          <div><span class="mono-label">RUNTIME</span><h2>작업 상태</h2></div>
+          <button id="close-inspector" class="icon-button" type="button" aria-label="닫기">×</button>
+        </div>
+        <section class="runtime-card">
+          <div class="runtime-row"><span>Obulus API</span><strong id="api-status">확인 중</strong></div>
+          <div class="runtime-row"><span>Claude</span><strong id="ai-status">확인 중</strong></div>
+          <div class="runtime-row"><span>Pay.sh</span><strong id="pay-status">확인 중</strong></div>
+          <div class="runtime-row"><span>로컬 지갑</span><strong id="pay-account-status">확인 중</strong></div>
+          <div class="runtime-row"><span>Obulus 계정</span><strong id="account-status">연결 안 됨</strong></div>
+        </section>
+        <section class="activity-section">
+          <div class="section-title"><span class="mono-label">AGENT TRACE</span><span id="tool-count">0 calls</span></div>
+          <div id="activity-list" class="activity-list">
+            <p class="activity-empty">도구를 실행하면 판단 과정과 결과가 여기에 표시됩니다.</p>
+          </div>
+        </section>
+        <section class="boundary-card">
+          <span class="mono-label">LOCAL CUSTODY</span>
+          <h3>AI는 키를 보지 못합니다.</h3>
+          <p>Claude는 도구 이름과 결과만 받습니다. Pay.sh 키는 OS 보안 저장소에 남고, 승인된 1회 결제만 로컬 프로세스가 실행합니다.</p>
+        </section>
+      </aside>
+    </div>
+
+    <dialog id="settings-dialog" class="sheet-dialog">
+      <div class="settings-sheet">
+        <header class="sheet-header"><div><span class="mono-label">LOCAL SETUP</span><h2>Obulus 연결 및 보안</h2></div><button class="icon-button close-dialog" type="button">×</button></header>
+        <div class="settings-grid">
+          <section class="setting-card">
+            <span class="step-number">01</span>
+            <h3>Claude 에이전트</h3>
+            <p>팀이 제공한 Claude API 키를 macOS Keychain으로 암호화해 이 기기에만 저장합니다. 렌더러와 MCP 출력에는 노출하지 않습니다.</p>
+            <label for="claude-key">Claude API 키</label>
+            <input id="claude-key" type="password" placeholder="sk-ant-…" autocomplete="off" />
+            <button id="save-claude-key" class="primary-button" type="button">암호화해 저장</button>
+            <button id="remove-claude-key" class="text-button" type="button">저장된 키 제거</button>
+          </section>
+          <section class="setting-card">
+            <span class="step-number">02</span>
+            <h3>Pay.sh 로컬 지갑</h3>
+            <p>개인키는 Pay.sh가 OS 보안 저장소에서 관리합니다. Obulus 서버나 Claude로 전송되지 않습니다.</p>
+            <button id="create-pay-account" class="primary-button" type="button">로컬 Pay.sh 계정 만들기</button>
+            <label class="check-row"><input id="age-confirmed" type="checkbox" /> 만 14세 이상임을 확인합니다</label>
+            <button id="connect-obulus-account" class="secondary-button" type="button">Pay.sh 서명으로 Obulus 로그인</button>
+            <button id="disconnect-obulus-account" class="text-button" type="button">Obulus 계정 연결 해제</button>
+          </section>
+          <section class="setting-card wide">
+            <span class="step-number">03</span>
+            <h3>Codex·Claude에 MCP 설치</h3>
+            <p><b>obulus</b>는 검색·Open Call·메모리·수익 도구를, <b>obulus-pay</b>는 준비된 1회 결제만 제공합니다. 모든 URL에 결제할 수 있는 공식 Pay MCP는 기본 설치하지 않습니다.</p>
+            <div class="button-row">
+              <button class="secondary-button install-mcp" data-client="codex" type="button">Codex에 설치</button>
+              <button class="secondary-button install-mcp" data-client="claude" type="button">Claude에 설치</button>
+            </div>
+            <label class="check-row"><input id="include-official-pay" type="checkbox" /> 고급 사용자용 공식 Pay.sh MCP도 함께 설치</label>
+          </section>
+        </div>
+        <p id="settings-status" class="inline-status"></p>
+      </div>
+    </dialog>
+
+    <dialog id="payment-dialog" class="sheet-dialog">
+      <div class="payment-sheet">
+        <header class="sheet-header"><div><span class="mono-label">EXACT ONE-TIME PAYMENT</span><h2>Pay.sh 결제 승인</h2></div><button class="icon-button close-dialog" type="button">×</button></header>
+        <p class="payment-intro">문서·금액·네트워크·수취인은 이미 고정되었습니다. 아래 조건이 바뀌면 결제가 거절됩니다.</p>
+        <dl id="payment-details" class="payment-details"></dl>
+        <label for="confirmation">표시된 확인 문구를 직접 입력하세요</label>
+        <input id="confirmation" type="text" autocomplete="off" spellcheck="false" />
+        <div class="payment-actions"><button class="secondary-button close-dialog" type="button">취소</button><button id="execute-payment" class="primary-button" type="button">로컬 Pay.sh로 결제</button></div>
+        <p id="payment-status" class="inline-status"></p>
+      </div>
+    </dialog>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>

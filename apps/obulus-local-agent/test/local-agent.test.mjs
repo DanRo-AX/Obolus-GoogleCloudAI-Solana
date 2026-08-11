@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { runtimeConfig } from '../src/config.mjs'
-import { approvePaymentIntent } from '../src/approval.mjs'
+import { approvePaymentIntent, paymentApprovalPreview } from '../src/approval.mjs'
 import { DEVNET_NETWORK, DEVNET_USDC } from '../src/constants.mjs'
 import { LocalMarketplace } from '../src/marketplace.mjs'
 import { handleMcpRequest } from '../src/mcp.mjs'
@@ -44,9 +44,9 @@ test('strict privacy blocks identifiers and redact mode removes them locally', (
   assert.deepEqual(minimized.redactions, ['email address'])
 })
 
-test('buyer MCP exposes no account, contributor-profile, Phantom, or signing tool', async () => {
+test('MCP exposes the complete buyer and contributor workflow without a generic signing tool', async () => {
   const names = tools.map((tool) => tool.name)
-  assert.deepEqual(names, [
+  assert.deepEqual(names.slice(0, 7), [
     'local_privacy_status',
     'search_human_evidence',
     'generate_ai_baseline',
@@ -55,12 +55,16 @@ test('buyer MCP exposes no account, contributor-profile, Phantom, or signing too
     'synthesize_paid_evidence',
     'forget_local_query',
   ])
-  assert.equal(names.some((name) => /auth|profile|wallet|sign|phantom/i.test(name)), false)
+  assert.equal(names.includes('prepare_open_call'), true)
+  assert.equal(names.includes('manage_memory'), true)
+  assert.equal(names.includes('earnings_and_claims'), true)
+  assert.equal(names.includes('submit_human_answer'), true)
+  assert.equal(names.some((name) => /private.?key|seed|generic.?pay|sign.?transaction|phantom/i.test(name)), false)
   const response = await handleMcpRequest(
     { jsonrpc: '2.0', id: 1, method: 'tools/list' },
     {},
   )
-  assert.equal(response.result.tools.length, 7)
+  assert.equal(response.result.tools.length, 26)
 })
 
 test('search is accountless, stores only a local capability, and returns no token', async (context) => {
@@ -100,6 +104,58 @@ test('search is accountless, stores only a local capability, and returns no toke
   assert.equal(stored.queries.query_1.paymentAccessToken, 'local-only-capability')
   assert.equal(JSON.stringify(stored).includes('Paris residents'), false)
   assert.equal((await stat(config.statePath)).mode & 0o777, 0o600)
+})
+
+test('contributor tools add the locally stored bearer session only to authenticated endpoints', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'obulus-local-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const requests = []
+  const config = fixtureConfig(directory)
+  const marketplace = new LocalMarketplace(config, {
+    fetchImpl: async (url, init = {}) => {
+      requests.push({ url: String(url), init })
+      return jsonResponse({ id: 'wallet-user', email: 'hidden@wallet.obulus.local' })
+    },
+  })
+  await marketplace.setSession('s'.repeat(64), { id: 'wallet-user' })
+  const status = await marketplace.accountStatus()
+  assert.equal(status.connected, true)
+  assert.equal(new Headers(requests[0].init.headers).get('authorization'), `Bearer ${'s'.repeat(64)}`)
+  assert.equal(JSON.stringify(status).includes('s'.repeat(64)), false)
+  await marketplace.clearSession()
+  assert.equal((await readState(config)).sessionToken, null)
+})
+
+test('profile edits preserve an already verified Pay.sh payout wallet', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'obulus-local-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const requests = []
+  const config = fixtureConfig(directory)
+  const wallet = '11111111111111111111111111111111'
+  const marketplace = new LocalMarketplace(config, {
+    fetchImpl: async (url, init = {}) => {
+      requests.push({ url: String(url), init })
+      if (requests.length === 1) return jsonResponse({ handle: 'HUMAN', wallet, walletVerified: true })
+      return jsonResponse({ handle: 'HUMAN', wallet, walletVerified: true })
+    },
+  })
+  await marketplace.setSession('s'.repeat(64), { id: 'wallet-user' })
+  await marketplace.callAuthenticatedTool('update_profile', {
+    handle: 'human',
+    ageBand: '25-34',
+    region: 'abroad',
+    household: 'alone',
+    field: 'food',
+    years: '3-7',
+    speaksTo: ['food', 'travel'],
+    autoMatch: true,
+    agents: true,
+    browserAlerts: true,
+    emailAlerts: false,
+  })
+  assert.equal(requests[0].url, 'https://api.example.com/api/v1/profile')
+  assert.equal(requests[1].url, 'https://api.example.com/api/v1/profile')
+  assert.equal(JSON.parse(requests[1].init.body).wallet, wallet)
 })
 
 test('concurrent MCP searches preserve every local recovery capability', async (context) => {
@@ -368,6 +424,86 @@ test('bundle quote must match the canonical query, economics, Devnet, and select
   )
 })
 
+test('Open Call prepares and executes only the exact authenticated escrow quote', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'obulus-local-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const config = fixtureConfig(directory)
+  const now = 1_000
+  const quote = {
+    id: 'open_quote_1',
+    payTo: '11111111111111111111111111111111',
+    network: DEVNET_NETWORK,
+    asset: DEVNET_USDC,
+    amountAtomic: '55556',
+    totalPriceKrw: 75,
+    krwPerUsdc: 1_350,
+    expiresAt: now + 60_000,
+    resourcePath: '/api/v1/funded-open-calls/open_quote_1',
+    payloadHash: 'b'.repeat(64),
+    status: 'quoted',
+    openCallId: null,
+  }
+  const requests = []
+  const marketplace = new LocalMarketplace(config, {
+    now: () => now,
+    fetchImpl: async (url, init = {}) => {
+      requests.push({ url: String(url), init })
+      return requests.length === 1 ? jsonResponse(quote, 201) : jsonResponse({ quote }, 402)
+    },
+  })
+  await marketplace.setSession('s'.repeat(64), { id: 'wallet-user' })
+  const plan = await marketplace.prepareOpenCall({
+    question: '파리 현지 직장인의 평일 저녁 식사 경험을 알려주세요',
+    unitPriceKrw: 25,
+    target: 3,
+    shelf: '파리 현지 직장인',
+    category: 'food',
+    filters: { region: 'abroad' },
+  })
+  assert.equal(requests[0].url, 'https://api.example.com/api/v1/open-call-funding-quotes')
+  assert.equal(new Headers(requests[0].init.headers).get('authorization'), `Bearer ${'s'.repeat(64)}`)
+  assert.deepEqual(JSON.parse(requests[0].init.body), {
+    question: '파리 현지 직장인의 평일 저녁 식사 경험을 알려주세요',
+    unitPrice: 25,
+    target: 3,
+    chatId: plan.chatId,
+    shelf: '파리 현지 직장인',
+    category: 'food',
+    filters: { region: 'abroad' },
+  })
+  assert.equal(requests[1].url, `https://pay.example.com${quote.resourcePath}`)
+  const preview = await paymentApprovalPreview(config, plan.intentId, { now: () => now })
+  assert.equal(preview.openCallTarget, 3)
+  assert.equal(preview.openCallUnitPriceKrw, 25)
+  assert.equal(preview.totalPriceKrw, 75)
+
+  await approvePaymentIntent(config, plan.intentId, {
+    now: () => now,
+    confirm: ({ phrase }) => phrase === preview.confirmationPhrase,
+  })
+  const receipt = await executeApprovedIntent(config, plan.intentId, {
+    now: () => now,
+    env: {
+      OBULUS_PAY_COMMAND: '/trusted/pay',
+      OBULUS_ALLOW_PAY_OVERRIDE: '1',
+    },
+    runner: async () => ({
+      stdout: JSON.stringify({
+        quoteId: quote.id,
+        status: 'settling',
+        target: 3,
+        unitPriceKrw: 25,
+        totalPriceKrw: 75,
+        network: DEVNET_NETWORK,
+        mode: 'open_call_escrow',
+      }),
+      stderr: '',
+    }),
+  })
+  assert.equal(receipt.receipt.kind, 'open_call')
+  assert.equal(receipt.receipt.totalPriceKrw, 75)
+})
+
 test('Pay.sh resolves an explicit trusted command without Phantom dependencies', () => {
   assert.deepEqual(payInvocation({ OBULUS_PAY_COMMAND: '/trusted/pay', OBULUS_ALLOW_PAY_OVERRIDE: '1' }), {
     command: '/trusted/pay',
@@ -401,6 +537,25 @@ test('interactive approval rejects an intent changed while the user is reading i
     }),
     (error) => error.code === 'intent_changed',
   )
+})
+
+test('desktop approval preview exposes economics but never the executable capability', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'obulus-local-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const config = fixtureConfig(directory)
+  await updateState(config, (state) => {
+    state.paymentIntents.intent_preview_12345678 = fixtureIntent()
+    return state
+  })
+  const preview = await paymentApprovalPreview(config, 'intent_preview_12345678', {
+    now: () => 1_000,
+  })
+  assert.equal(preview.amountUsdc, '0.014815')
+  assert.equal(preview.totalPriceKrw, 20)
+  assert.deepEqual(preview.documentHandles, ['human_2'])
+  assert.equal(preview.confirmationPhrase, 'APPROVE 12345678')
+  assert.equal(Object.hasOwn(preview, 'paymentUrl'), false)
+  assert.equal(JSON.stringify(preview).includes('capability'), false)
 })
 
 test('local capabilities cannot be deleted during Pay.sh execution', async (context) => {

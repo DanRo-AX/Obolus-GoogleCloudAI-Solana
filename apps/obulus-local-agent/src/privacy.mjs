@@ -22,7 +22,28 @@ const SECRET_PATTERNS = [
 ]
 
 const SECRET_KEYS =
-  /(?:password|private.?key|secret.?key|seed|mnemonic|recovery.?phrase|paymentAccessToken|sessionToken|signedTransaction|authorization|cookie)/iu
+  /(?:email|phone|password|private.?key|secret.?key|seed|mnemonic|recovery.?phrase|paymentAccessToken|sessionToken|signedTransaction|authorization|cookie)/iu
+
+export function protectAgentMessage(message) {
+  if (typeof message !== 'string' || !message.trim() || message.length > 20_000) {
+    throw new LocalAgentError('The agent message must contain 1-20000 characters.', 'invalid_message')
+  }
+  const findings = []
+  for (const { label, pattern } of SECRET_PATTERNS) {
+    pattern.lastIndex = 0
+    if (pattern.test(message)) findings.push(label)
+  }
+  const uniqueFindings = [...new Set(findings)]
+  if (uniqueFindings.length) {
+    throw new LocalAgentError(
+      `Claude로 보내기 전에 직접 식별자 또는 비밀정보를 제거하세요: ${uniqueFindings.join(', ')}.`,
+      'sensitive_agent_message_blocked',
+      400,
+      { findings: uniqueFindings },
+    )
+  }
+  return message.trim()
+}
 
 export function minimizeQuestion(question, mode = 'strict') {
   if (typeof question !== 'string' || question.trim().length < 8 || question.length > 1_000) {

@@ -48,7 +48,7 @@ export async function handlePayMcpRequest(request, config, options = {}) {
       result: {
         protocolVersion: '2025-06-18',
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'obulus-approved-pay', version: '0.1.0' },
+        serverInfo: { name: 'obulus-approved-pay', version: '0.2.0' },
         instructions:
           'This server cannot prepare or alter payments. It executes only a locally stored, interactively approved, one-time Obulus intent through Pay.sh.',
       },

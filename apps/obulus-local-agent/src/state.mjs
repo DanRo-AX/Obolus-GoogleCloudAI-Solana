@@ -6,7 +6,14 @@ import { MAX_QUERY_AGE_MS, STATE_VERSION } from './constants.mjs'
 import { LocalAgentError } from './errors.mjs'
 
 export function emptyState() {
-  return { version: STATE_VERSION, queries: {}, paymentIntents: {} }
+  return {
+    version: STATE_VERSION,
+    sessionToken: null,
+    user: null,
+    queries: {},
+    paymentIntents: {},
+    conversations: {},
+  }
 }
 
 export async function readState(config) {
@@ -123,7 +130,18 @@ function normalizeState(value) {
     value?.paymentIntents && typeof value.paymentIntents === 'object'
       ? value.paymentIntents
       : {}
-  return { version: STATE_VERSION, queries, paymentIntents }
+  const conversations =
+    value?.conversations && typeof value.conversations === 'object'
+      ? value.conversations
+      : {}
+  return {
+    version: STATE_VERSION,
+    sessionToken: typeof value?.sessionToken === 'string' ? value.sessionToken : null,
+    user: value?.user && typeof value.user === 'object' ? value.user : null,
+    queries,
+    paymentIntents,
+    conversations,
+  }
 }
 
 async function rejectSymbolicLink(path) {

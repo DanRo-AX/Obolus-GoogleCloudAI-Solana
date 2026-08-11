@@ -700,6 +700,13 @@ pub struct WalletAuthVerifyRequest {
     pub age_confirmed_14: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WalletAuthSiwxRequest {
+    #[serde(default)]
+    pub age_confirmed_14: bool,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WalletChallenge {
@@ -1486,6 +1493,18 @@ pub struct AuthResponse {
     pub user: UserAccount,
     pub balance: BalanceSummary,
     pub wallet: Option<String>,
+}
+
+/// Session response intended for a local desktop/MCP client. The bearer token
+/// is returned only after Pay.sh proves local wallet ownership through SIWX.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentAuthResponse {
+    pub user: UserAccount,
+    pub balance: BalanceSummary,
+    pub wallet: String,
+    pub session_token: String,
+    pub expires_at: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -17,7 +17,36 @@ export function runtimeConfig(env = process.env) {
     payAccount: checkedPayAccount(
       env.OBULUS_PAY_ACCOUNT || env.OPENSHELF_PAY_ACCOUNT || '',
     ),
+    anthropicApiKey: checkedOptionalSecret(
+      env.OBULUS_CLAUDE_API_KEY || env.ANTHROPIC_API_KEY || '',
+      'Claude API key',
+    ),
+    anthropicBaseUrl: checkedOptionalOrigin(env.OBULUS_CLAUDE_BASE_URL || ''),
+    anthropicModel: checkedModel(env.OBULUS_CLAUDE_MODEL || 'claude-sonnet-4-5'),
   }
+}
+
+function checkedOptionalSecret(value, label) {
+  const secret = String(value || '').trim()
+  if (!secret) return null
+  if (secret.length < 16 || secret.length > 2_048 || secret.includes('\n')) {
+    throw new Error(`${label} is malformed`)
+  }
+  return secret
+}
+
+function checkedOptionalOrigin(value) {
+  const origin = String(value || '').trim()
+  if (!origin) return null
+  return checkedOrigin(origin, 'OBULUS_CLAUDE_BASE_URL')
+}
+
+function checkedModel(value) {
+  const model = String(value || '').trim()
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(model)) {
+    throw new Error('OBULUS_CLAUDE_MODEL is malformed')
+  }
+  return model
 }
 
 function checkedPayAccount(value) {

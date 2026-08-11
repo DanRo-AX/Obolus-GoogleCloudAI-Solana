@@ -2,7 +2,33 @@ import { randomUUID } from 'node:crypto'
 import { createInterface } from 'node:readline/promises'
 
 import { LocalAgentError } from './errors.mjs'
-import { requirePaymentIntent, updateState } from './state.mjs'
+import { readState, requirePaymentIntent, updateState } from './state.mjs'
+
+export async function paymentApprovalPreview(config, intentId, options = {}) {
+  const now = options.now?.() ?? Date.now()
+  const state = await readState(config)
+  const intent = requirePaymentIntent(state, intentId, now)
+  const binding = intent.approvalBinding
+  return {
+    intentId,
+    status: intent.status,
+    purpose: intent.purpose,
+    amountAtomic: intent.amountAtomic,
+    amountUsdc: atomicToUsdc(intent.amountAtomic),
+    totalPriceKrw: binding.totalPriceKrw ?? binding.priceKrw,
+    documentCount: binding.documentHandles?.length ?? (binding.documentHandle ? 1 : null),
+    documentHandles: binding.documentHandles ?? (binding.documentHandle ? [binding.documentHandle] : []),
+    openCallTarget: binding.target ?? null,
+    openCallUnitPriceKrw: binding.unitPriceKrw ?? null,
+    network: intent.network,
+    asset: intent.asset,
+    recipient: intent.payTo,
+    payAccount: intent.payAccount,
+    quoteId: intent.quoteId,
+    expiresAt: intent.expiresAt,
+    confirmationPhrase: approvalPhrase(intentId),
+  }
+}
 
 export async function approvePaymentIntent(config, intentId, options = {}) {
   const now = options.now?.() ?? Date.now()
@@ -20,7 +46,7 @@ export async function approvePaymentIntent(config, intentId, options = {}) {
     return state
   })
 
-  const phrase = `APPROVE ${intentId.slice(-8)}`
+  const phrase = approvalPhrase(intentId)
   const summary = [
     'Obulus one-time Pay.sh approval',
     `Purpose: ${snapshot.purpose}`,
@@ -58,6 +84,17 @@ export async function approvePaymentIntent(config, intentId, options = {}) {
     return state
   })
   return { intentId, status: 'approved', expiresAt: snapshot.expiresAt }
+}
+
+function approvalPhrase(intentId) {
+  return `APPROVE ${intentId.slice(-8)}`
+}
+
+function atomicToUsdc(value) {
+  const atomic = BigInt(value)
+  const whole = atomic / 1_000_000n
+  const fraction = (atomic % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '')
+  return fraction ? `${whole}.${fraction}` : whole.toString()
 }
 
 function approvalFingerprint(intent) {

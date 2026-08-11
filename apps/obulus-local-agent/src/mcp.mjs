@@ -5,7 +5,7 @@ import { redactModelSecrets } from './privacy.mjs'
 import { callTool, tools } from './tools.mjs'
 
 const instructions =
-  'Accountless Obulus buyer client. Search sends only a minimized question and coarse filters. Never request email, profile, password, Phantom, seed phrase, or private key. Obulus tools never sign. After preparing a quote, ask the user to run the displayed interactive approval command. The separate Pay MCP accepts only that exact one-time intent id.'
+  'Local-custody Obulus research and contributor client. Free search sends only a minimized question and coarse filters. Contributor tools require a Pay.sh-SIWX session created in the Obulus app. Never request a password, Phantom, seed phrase, or private key. Never invent human experience. Obulus tools never sign or spend; the separate obulus-pay MCP accepts only an exact one-time intent after interactive user approval.'
 
 export async function runMcp(marketplace, input = process.stdin, output = process.stdout) {
   const lines = createInterface({ input, crlfDelay: Infinity, terminal: false })
@@ -38,7 +38,7 @@ export async function handleMcpRequest(request, marketplace) {
           capabilities: { tools: { listChanged: false } },
           instructions,
           _meta: {
-            'io.modelcontextprotocol/serverInfo': { name: 'obulus-local', version: '0.1.0' },
+            'io.modelcontextprotocol/serverInfo': { name: 'obulus-local', version: '0.2.0' },
           },
         },
       }
@@ -50,7 +50,7 @@ export async function handleMcpRequest(request, marketplace) {
         result: {
           protocolVersion: '2025-06-18',
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: 'obulus-local', version: '0.1.0' },
+          serverInfo: { name: 'obulus-local', version: '0.2.0' },
           instructions,
         },
       }

@@ -43,6 +43,8 @@ export function payChildEnvironment(env = process.env) {
     'XDG_CONFIG_HOME',
     'SSL_CERT_FILE',
     'SSL_CERT_DIR',
+    'DBUS_SESSION_BUS_ADDRESS',
+    'XDG_RUNTIME_DIR',
     'SYSTEMROOT',
     'WINDIR',
   ]
