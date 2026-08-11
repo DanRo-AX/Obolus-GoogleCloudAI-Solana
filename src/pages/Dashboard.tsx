@@ -782,15 +782,21 @@ export default function Dashboard() {
                     )}
                   >
                   <div className="flex items-center justify-between gap-3">
-                    <span className="flex min-w-0 items-center gap-2">
+                    <span className="flex min-w-0 items-center gap-2 overflow-hidden">
                       <span
                         className="size-2 shrink-0 rounded-[1px]"
                         style={{ backgroundColor: cat?.accent }}
                       />
-                      <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                      <span className="truncate font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
                         {cat?.label ? t(cat.label) : null}
                       </span>
-                      <Badge className="truncate px-1.5 py-0 uppercase tracking-[1px]" title={order.shelf}>
+                      <Badge
+                        className={cn(
+                          'min-w-0 truncate px-1.5 py-0 uppercase tracking-[1px]',
+                          compactCards && 'hidden',
+                        )}
+                        title={order.shelf}
+                      >
                         {order.shelf}
                       </Badge>
                     </span>
