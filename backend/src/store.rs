@@ -8541,6 +8541,22 @@ impl Store {
         Ok(quote)
     }
 
+    /// Returns the canonical single-document quote to an accountless agent
+    /// that still holds the query-scoped capability. This exposes economics
+    /// and integrity bindings, never the locked document body.
+    pub fn x402_payment_quote_for_agent(
+        &self,
+        query_id: &str,
+        handle: &str,
+        payment_token_hash: &str,
+        policy: &PaymentQuotePolicy,
+    ) -> Result<PaymentQuote, StoreError> {
+        let connection = self.connection()?;
+        require_query_access(&connection, query_id.trim(), payment_token_hash)?;
+        drop(connection);
+        self.x402_payment_quote(query_id, handle, policy)
+    }
+
     pub fn payment_quote_by_id(&self, quote_id: &str) -> Result<PaymentQuote, StoreError> {
         self.connection()?
             .query_row(
@@ -21803,8 +21819,17 @@ mod tests {
             Err(StoreError::Conflict(_))
         ));
         let verified_wallet = verify_wallet(&store, "researcher-1", 7);
+        assert!(matches!(
+            store.x402_payment_quote_for_agent(
+                &resolved.query_id,
+                handle,
+                &"b".repeat(64),
+                &policy,
+            ),
+            Err(StoreError::Unauthorized(_))
+        ));
         let quote = store
-            .x402_payment_quote(&resolved.query_id, handle, &policy)
+            .x402_payment_quote_for_agent(&resolved.query_id, handle, &payment_token_hash, &policy)
             .unwrap();
         assert_eq!(quote.price_krw, 700);
         assert_eq!(quote.amount_atomic, "518519");

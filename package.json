@@ -19,6 +19,11 @@
     "pay:image:gcloud": "docker build -f pay/Dockerfile -t openshelf-pay:gcp-kms .",
     "pay:version": "npx --yes @solana/pay@1.0.26 --version",
     "agent:test": "node --test integrations/antigravity/openshelf/runtime/*.test.mjs",
+    "local-agent:test": "node --test apps/obulus-local-agent/test/*.test.mjs",
+    "local-agent:doctor": "node apps/obulus-local-agent/src/cli.mjs doctor",
+    "local-agent:tools": "node apps/obulus-local-agent/src/cli.mjs tools",
+    "local-agent:mcp": "node apps/obulus-local-agent/src/cli.mjs mcp",
+    "local-agent:approve": "node apps/obulus-local-agent/src/cli.mjs approve",
     "test:finalist-evidence": "node --test scripts/finalist-evidence.test.mjs",
     "finalist:verify-infra": "node scripts/verify-finalist-infra.mjs",
     "finalist:guard-promotion": "node scripts/guard-cloud-run-promotion.mjs",
@@ -39,7 +44,7 @@
     "build:web": "tsc -b tsconfig.app.json tsconfig.node.json && vite build",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "check:all": "npm run build && npm run verify:pages-bundle && npm run typecheck:pages && npm run lint && npm run test:unit && npm run test:pages && npm run agent:test && npm run test:finalist-evidence && npm --prefix payment-gateway run typecheck && npm --prefix payment-gateway run test && npm --prefix agent-orchestrator run typecheck && npm --prefix agent-orchestrator run test && cargo test --manifest-path backend/Cargo.toml && cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings",
+    "check:all": "npm run build && npm run verify:pages-bundle && npm run typecheck:pages && npm run lint && npm run test:unit && npm run test:pages && npm run agent:test && npm run local-agent:test && npm run test:finalist-evidence && npm --prefix payment-gateway run typecheck && npm --prefix payment-gateway run test && npm --prefix agent-orchestrator run typecheck && npm --prefix agent-orchestrator run test && cargo test --manifest-path backend/Cargo.toml && cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings",
     "preview": "vite preview"
   },
   "dependencies": {

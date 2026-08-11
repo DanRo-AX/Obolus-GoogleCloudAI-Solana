@@ -245,7 +245,11 @@ type PaymentQuote = {
   krwPerUsdc: number;
   expiresAt: number;
   resourcePath: string;
+  canonicalUrl: string;
+  contentHash: string;
+  documentVersion: number;
   status: string;
+  consentVersion: string;
 };
 
 type PaymentBundleQuote = {

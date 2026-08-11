@@ -261,6 +261,29 @@ the fully static fallback.
 
 ### Agents (Antigravity and plain MCP)
 
+The repository-root `.agents/mcp_config.json` uses the standalone, buyer-only
+[`apps/obulus-local-agent`](apps/obulus-local-agent) path. It requires no Obulus
+account, email, profile, Phantom session, or server-held signing key. Search
+sends only a minimized question and coarse filters; query capabilities remain
+in a mode-`0600` local file, and real signatures are delegated to the separate
+Pay.sh process. The model-facing payment MCP exposes no arbitrary URL or
+headers: it can execute only a locally stored intent that the user approved in
+an interactive terminal.
+
+```bash
+npm run local-agent:doctor
+npm run local-agent:tools
+npm run local-agent:mcp
+# after the MCP prepares intent_... in another terminal
+npm run local-agent:approve -- intent_...
+```
+
+This is local key custody and data minimization, not on-chain anonymity. The
+public payer address and transaction receipt necessarily remain visible during
+Solana settlement. The app README documents the complete trust boundary.
+
+The fuller Antigravity plugin remains available for the contributor lifecycle:
+
 ```bash
 agy plugin install ./integrations/antigravity/openshelf
 npm run agent:doctor
@@ -335,6 +358,7 @@ frontend, agent-orchestrator, payment-gateway, and backend jobs separately. See
 | `payment-gateway/` | The x402 v2 gateway: quotes, verify/settle delegation, payout and escrow workers. |
 | `agent-orchestrator/` | The Cloud Run agent that pays each document's Pay.sh challenge. |
 | `pay/` | Pay.sh paywall definitions, Dockerfile, and the Cloud Build + GCP KMS deployment. |
+| `apps/obulus-local-agent/` | Accountless buyer MCP: local capabilities, privacy guard, exact quote validation, and Pay.sh handoff without Phantom. |
 | `integrations/antigravity/openshelf/` | The plugin: 24 MCP tools, skills, and the Pay handshake adapter. |
 | `docs/` | Threat model, account linking, Pay.sh deployment, code review, ranking notes. |
 | `architecture.html` | System architecture and ERD, as one openable file. |

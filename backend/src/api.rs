@@ -500,6 +500,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(payment_bundle_quote_for_agent),
         )
         .route(
+            "/api/v1/agent-payment-quotes/{query_id}/{handle}",
+            get(payment_quote_for_agent),
+        )
+        .route(
             "/api/v1/prepaid/withdrawals",
             post(create_prepaid_withdrawal),
         )
@@ -2018,6 +2022,23 @@ async fn payment_bundle_quote_for_agent(
                 .store
                 .payment_bundle_quote_for_agent(&id, &token_hash(access_token))?,
         ),
+    ))
+}
+
+async fn payment_quote_for_agent(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((query_id, handle)): Path<(String, String)>,
+) -> Result<(HeaderMap, Json<PaymentQuote>), ApiError> {
+    let access_token = query_access_token(&headers)?;
+    Ok((
+        private_no_store_headers(),
+        Json(state.store.x402_payment_quote_for_agent(
+            &query_id,
+            &handle,
+            &token_hash(access_token),
+            &state.payment_policy,
+        )?),
     ))
 }
 
