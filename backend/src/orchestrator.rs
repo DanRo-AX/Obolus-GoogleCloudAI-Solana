@@ -400,7 +400,10 @@ fn next_action_body(response: &ResolveQuestionResponse) -> Value {
             "generate_general_baseline",
             "finish_without_purchase"
         ]}},
-        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 128}
+        // Gemini 2.5 Flash counts internal thinking against this ceiling. A
+        // 128-token ceiling can end with MAX_TOKENS before the model emits its
+        // tiny function call, so keep the same bounded ceiling as stage one.
+        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 512}
     })
 }
 
@@ -1061,6 +1064,7 @@ mod tests {
             agent_run: None,
         };
         let body = next_action_body(&response);
+        assert_eq!(body["generationConfig"]["maxOutputTokens"], 512);
         let tools = body["tools"].to_string();
         assert!(tools.contains("propose_open_call"));
         assert!(tools.contains("generate_general_baseline"));
