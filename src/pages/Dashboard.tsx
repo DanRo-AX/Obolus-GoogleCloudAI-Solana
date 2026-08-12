@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Check,
@@ -14,6 +14,7 @@ import {
   Sparkles,
   ShieldAlert,
   UserRound,
+  X,
   type LucideIcon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -100,6 +101,34 @@ function matchesSearch(order: Order, query: string, t: (en: string) => string): 
   return haystack.includes(query)
 }
 
+/**
+ * The "Who answers" targeting line — shared by the card body and the
+ * question-preview modal so both read an order's filters the same way.
+ * `null` when the call has no active filters, so callers can skip the row.
+ */
+function whoAnswersLine(order: Order, t: (en: string) => string): string | null {
+  if (!order.filters || !Object.values(order.filters).some(Boolean)) return null
+  return Object.entries(order.filters)
+    .filter(([, value]) => Boolean(value))
+    .map(([key, value]) => {
+      if (key === 'category' || key === 'field') {
+        const filterCat = CATEGORY_BY_ID[value as CategoryId]
+        const prefix = key === 'field' ? t('Field') : t('Category')
+        return `${prefix} ${filterCat?.label ? t(filterCat.label) : value}`
+      }
+      if (key === 'ageBand' || key === 'region' || key === 'household') {
+        const options =
+          key === 'ageBand' ? AGE_BANDS : key === 'region' ? REGIONS : HOUSEHOLDS
+        const prefix =
+          key === 'ageBand' ? t('Age') : key === 'region' ? t('Region') : t('Household')
+        const filterOption = options.find((o) => o.value === value)
+        return `${prefix} ${filterOption ? t(filterOption.label) : value}`
+      }
+      return `${key.replace(/([A-Z])/g, ' $1')} ${value}`
+    })
+    .join(' · ')
+}
+
 export default function Dashboard() {
   const {
     orders,
@@ -131,6 +160,7 @@ export default function Dashboard() {
   const [query, setQuery] = useState('')
   const [hideFilled, setHideFilled] = useState(false)
   const [opening, setOpening] = useState<string | null>(null)
+  const [previewOrder, setPreviewOrder] = useState<Order | null>(null)
   const [answerPanels, setAnswerPanels] = useState<Record<string, ChatAnswer[]>>({})
   const [answersLoading, setAnswersLoading] = useState<string | null>(null)
   const [answersError, setAnswersError] = useState<Record<string, string>>({})
@@ -200,6 +230,13 @@ export default function Dashboard() {
     } finally {
       setSubmittingStarter(null)
     }
+  }
+
+  /** Runs after "참여 시작" is confirmed in the question-preview modal. */
+  function startAnswering(order: Order) {
+    setPreviewOrder(null)
+    setOpening(order.id)
+    window.setTimeout(() => navigate(`/answer/${order.id}`), 620)
   }
 
   async function toggleAnswers(order: Order) {
@@ -655,6 +692,7 @@ export default function Dashboard() {
                 (order.reservedSlots ?? 0) - (order.reservationExpiresAt ? 1 : 0),
               )
               const fullyReserved = reservedByOthers >= remaining && !order.reservationExpiresAt
+              const who = whoAnswersLine(order, t)
               return (
                 <div
                   key={order.id}
@@ -666,23 +704,26 @@ export default function Dashboard() {
                   )}
                 >
                   <div
-                    className="relative h-[248px] shrink-0 overflow-hidden"
+                    className="relative h-[165px] shrink-0 overflow-hidden"
                     style={{ background: cardGradient(`${order.shelf}::${order.question}`) }}
                   >
                     {/* The asker's avatar (deterministic from the shelf name, so the
                         same contributor always shows the same face), sitting inside
-                        the banner's lower-left rather than hanging below it. */}
+                        the banner's lower-left rather than hanging below it. Sized
+                        down from the original size-[72px]/63 pair to match the
+                        shorter banner, kept large enough to stay the focal point
+                        the founder wanted. */}
                     <span
-                      className="absolute bottom-4 left-4 flex size-[72px] items-center justify-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-[0_1px_3px_rgba(20,20,25,0.18)]"
+                      className="absolute bottom-3 left-3 flex size-16 items-center justify-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-[0_1px_3px_rgba(20,20,25,0.18)]"
                       aria-hidden="true"
                     >
                       <Avatar
                         config={deterministicAvatar(order.shelf)}
-                        size={63}
+                        size={54}
                       />
                     </span>
                   </div>
-                  <div className="flex flex-1 flex-col px-4 pb-4 pt-7">
+                  <div className="flex flex-1 flex-col px-4 pb-4 pt-5">
                   <div className="flex items-center justify-between gap-3">
                     <span className="flex min-w-0 items-center gap-2 overflow-hidden">
                       {/* Category glyph lives in the body now, not the photo
@@ -712,49 +753,41 @@ export default function Dashboard() {
                     </span>
                   </div>
 
-                  <p className="mt-1.5 text-[15px] leading-relaxed text-foreground">
+                  {/* The question is the point of the card — it gets the
+                      weight and the room, clamped to two lines so a long ask
+                      never pushes the rest of the card down. The full text
+                      only ever shows uncut in the preview modal. */}
+                  <p className="mt-2 line-clamp-2 text-[15px] font-medium leading-snug text-foreground">
                     {order.question}
                   </p>
-                  {order.filters && Object.values(order.filters).some(Boolean) ? (
-                    <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                      {t('Who answers')} · {Object.entries(order.filters)
-                        .filter(([, value]) => Boolean(value))
-                        .map(([key, value]) => {
-                          if (key === 'category' || key === 'field') {
-                            const filterCat = CATEGORY_BY_ID[value as CategoryId]
-                            const prefix = key === 'field' ? t('Field') : t('Category')
-                            return `${prefix} ${filterCat?.label ? t(filterCat.label) : value}`
-                          }
-                          if (key === 'ageBand' || key === 'region' || key === 'household') {
-                            const options =
-                              key === 'ageBand' ? AGE_BANDS : key === 'region' ? REGIONS : HOUSEHOLDS
-                            const prefix =
-                              key === 'ageBand' ? t('Age') : key === 'region' ? t('Region') : t('Household')
-                            const filterOption = options.find((o) => o.value === value)
-                            return `${prefix} ${filterOption ? t(filterOption.label) : value}`
-                          }
-                          return `${key.replace(/([A-Z])/g, ' $1')} ${value}`
-                        })
-                        .join(' · ')}
-                    </p>
-                  ) : null}
-                  <div className="mt-3 flex items-center gap-3">
-                    {/* A thin, square-ended bar rather than a pill — Linear's
-                        progress language stays close to a hairline rule. */}
-                    <div className="h-1 flex-1 overflow-hidden rounded-[2px] bg-foreground/10">
-                      <div
-                        className="h-full rounded-[2px] bg-[#0F766E] transition-[width] duration-500"
-                        style={{
-                          width: `${Math.round((order.answered / order.target) * 100)}%`,
-                        }}
-                      />
+
+                  {/* Everything below the question is plumbing, not the
+                      point — a hairline separates it so the eye lands on
+                      the question first. */}
+                  <div className="mt-3 space-y-2.5 border-t border-border/60 pt-3">
+                    {who ? (
+                      <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground/85">
+                        {t('Who answers')} · {who}
+                      </p>
+                    ) : null}
+                    <div className="flex items-center gap-3">
+                      {/* A thin, square-ended bar rather than a pill — Linear's
+                          progress language stays close to a hairline rule. */}
+                      <div className="h-1 flex-1 overflow-hidden rounded-[2px] bg-foreground/10">
+                        <div
+                          className="h-full rounded-[2px] bg-[#0F766E] transition-[width] duration-500"
+                          style={{
+                            width: `${Math.round((order.answered / order.target) * 100)}%`,
+                          }}
+                        />
+                      </div>
+                      <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                        {order.answered}/{order.target}
+                        {reservedByOthers > 0 ? (
+                          <> · {reservedByOthers} {t('slots held')}</>
+                        ) : null}
+                      </span>
                     </div>
-                    <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                      {order.answered}/{order.target}
-                      {reservedByOthers > 0 ? (
-                        <> · {reservedByOthers} {t('slots held')}</>
-                      ) : null}
-                    </span>
                   </div>
 
                   {/* Meta + the per-row CTA share one line — a quiet trailing
@@ -786,11 +819,7 @@ export default function Dashboard() {
                             navigate('/onboarding')
                             return
                           }
-                          setOpening(order.id)
-                          window.setTimeout(
-                            () => navigate(`/answer/${order.id}`),
-                            620,
-                          )
+                          setPreviewOrder(order)
                         }}
                         disabled={
                           opening === order.id ||
@@ -889,6 +918,140 @@ export default function Dashboard() {
           </div>
           )}
           </div>
+        </div>
+      </div>
+
+      {previewOrder ? (
+        <QuestionPreviewModal
+          order={previewOrder}
+          t={t}
+          onClose={() => setPreviewOrder(null)}
+          onStart={() => startAnswering(previewOrder)}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * The question-preview step "참여하기" opens before it commits to
+ * `/answer/:id` — a hand-rolled overlay (no Dialog primitive in the app)
+ * that shows the full, unclamped question plus everything the card itself
+ * only summarises. Esc and a backdrop click both cancel; only "참여 시작"
+ * hands off to `onStart`, which runs the existing pick-up-and-navigate flow.
+ */
+function QuestionPreviewModal({
+  order,
+  onClose,
+  onStart,
+  t,
+}: {
+  order: Order
+  onClose: () => void
+  onStart: () => void
+  t: (en: string) => string
+}) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  const cat = CATEGORY_BY_ID[order.category]
+  const who = whoAnswersLine(order, t)
+  const remaining = Math.max(0, order.target - order.answered)
+  const reservedByOthers = Math.max(
+    0,
+    (order.reservedSlots ?? 0) - (order.reservationExpiresAt ? 1 : 0),
+  )
+
+  useEffect(() => {
+    panelRef.current?.focus()
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="survey-preview-question"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+        className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-[10px] border border-border bg-card p-5 shadow-lg outline-none"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+            {t('Survey preview')}
+          </p>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t('Close')}
+            className="-m-1.5 flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="mt-3 flex min-w-0 items-center gap-2 overflow-hidden">
+          <CategoryIcon
+            id={order.category}
+            className="size-3.5 shrink-0"
+            style={{ color: cat?.accent ?? 'var(--muted-foreground)' }}
+          />
+          <span className="truncate font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+            {cat?.label ? t(cat.label) : null}
+          </span>
+          <Badge className="min-w-0 truncate px-1.5 py-0 uppercase tracking-[1px]" title={order.shelf}>
+            {order.shelf}
+          </Badge>
+        </div>
+
+        {/* The full question, never clamped — the card's line-clamp-2 is
+            purely a list-density concession. */}
+        <h2 id="survey-preview-question" className="mt-3 text-base font-medium leading-snug text-foreground">
+          {order.question}
+        </h2>
+
+        <p className="mt-3 border-t border-border/60 pt-3 font-mono text-xs text-muted-foreground">
+          {t('Per answer')}{' '}
+          <span className="text-foreground">
+            {order.unitPrice === 0 ? '₩0' : `₩${order.unitPrice.toLocaleString()}`}
+          </span>
+        </p>
+
+        {who ? (
+          <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+            {t('Who answers')} · {who}
+          </p>
+        ) : null}
+
+        <div className="mt-3 flex items-center gap-3">
+          <div className="h-1 flex-1 overflow-hidden rounded-[2px] bg-foreground/10">
+            <div
+              className="h-full rounded-[2px] bg-[#0F766E] transition-[width] duration-500"
+              style={{ width: `${Math.round((order.answered / order.target) * 100)}%` }}
+            />
+          </div>
+          <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+            {order.answered}/{order.target}
+            {reservedByOthers > 0 ? (
+              <> · {reservedByOthers} {t('slots held')}</>
+            ) : null}
+          </span>
+        </div>
+
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <Button variant="monoGhost" size="mono" onClick={onClose}>
+            {t('Cancel')}
+          </Button>
+          <Button variant="mono" size="mono" onClick={onStart} disabled={remaining <= 0}>
+            {t('Start answering')}
+          </Button>
         </div>
       </div>
     </div>
