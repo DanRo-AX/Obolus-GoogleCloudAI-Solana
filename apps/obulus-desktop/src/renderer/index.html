@@ -15,11 +15,19 @@
       <aside class="sidebar">
         <div class="sidebar-drag"></div>
         <div class="brand-row">
-          <span class="brand-mark">O</span>
-          <strong>OBULUS</strong>
+          <span class="brand-mark" aria-hidden="true">
+            <svg class="obulus-glyph" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10.5" fill="none" stroke="currentColor" stroke-width="2" />
+              <rect x="5" y="16.2" width="14" height="2.1" fill="currentColor" />
+              <rect x="6.5" y="7.6" width="2.5" height="8.6" fill="currentColor" />
+              <rect x="9.8" y="9.2" width="2.5" height="7" fill="currentColor" />
+              <path d="M15.4 8L17.75 8.65L15.55 16.2L13.2 15.55Z" fill="currentColor" />
+            </svg>
+          </span>
+          <strong>Obulus</strong>
           <span class="local-pill">LOCAL</span>
         </div>
-        <button id="new-chat" class="new-chat" type="button"><span>＋</span> 새 리서치</button>
+        <button id="new-chat" class="new-chat" type="button"><span>＋</span> 새 질문</button>
         <label class="search-box">
           <span>⌕</span>
           <input id="conversation-search" type="search" placeholder="대화 검색" autocomplete="off" />
@@ -47,18 +55,27 @@
 
         <section id="chat-scroll" class="chat-scroll" aria-live="polite">
           <div id="empty-state" class="empty-state">
-            <div class="empty-mark">O</div>
-            <h1>어떤 사람들의 경험이<br />필요한가요?</h1>
-            <p>Obulus Agent가 질문을 구조화하고, 관련 있는 인간 DB를 무료로 찾은 뒤, 열람할 근거와 정확한 비용을 먼저 보여줍니다.</p>
+            <div class="empty-mark" aria-hidden="true">
+              <svg class="obulus-glyph" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10.5" fill="none" stroke="currentColor" stroke-width="2" />
+                <rect x="5" y="16.2" width="14" height="2.1" fill="currentColor" />
+                <rect x="6.5" y="7.6" width="2.5" height="8.6" fill="currentColor" />
+                <rect x="9.8" y="9.2" width="2.5" height="7" fill="currentColor" />
+                <path d="M15.4 8L17.75 8.65L15.55 16.2L13.2 15.55Z" fill="currentColor" />
+              </svg>
+            </div>
+            <span class="empty-eyebrow">HUMAN EVIDENCE NETWORK</span>
+            <h1>사람의 실제 경험을<br />검색하세요.</h1>
+            <p>질문을 입력하면 Obulus Agent가 조건에 맞는 인간 DB를 무료로 검색합니다. 원문은 미리 보지 않고, 답변에 필요한 근거와 정확한 가격부터 확인합니다.</p>
             <div class="prompt-grid">
               <button class="prompt-card" type="button" data-prompt="파리에 사는 20대 직장인은 평일 저녁에 어떤 음식을 실제로 선택하고, 관광객용 메뉴의 어떤 표현을 피하나요?">
-                <strong>지역 소비자 경험</strong><span>파리 현지인의 최근 식사 선택 조사</span>
+                <small>01 / LOCAL INSIGHT</small><strong>지역 소비자 경험</strong><span>파리 현지인의 최근 식사 선택 조사</span>
               </button>
               <button class="prompt-card" type="button" data-prompt="성수동 팝업스토어를 최근 방문한 사람들이 구매를 포기한 순간과 이유를 찾아줘.">
-                <strong>제품·브랜드 조사</strong><span>구매 포기 맥락과 반복 패턴 탐색</span>
+                <small>02 / PRODUCT RESEARCH</small><strong>제품·브랜드 조사</strong><span>구매 포기 순간과 반복 패턴 탐색</span>
               </button>
               <button class="prompt-card" type="button" data-prompt="현재 검색 가능한 근거가 부족하면, 필요한 대상과 보상을 제안하고 Open Call까지 준비해줘.">
-                <strong>새로운 인간 데이터 수집</strong><span>검색 공백을 Open Call로 전환</span>
+                <small>03 / OPEN CALL</small><strong>새로운 인간 근거 모집</strong><span>부족한 대상에게 질문을 보내고 보상 설계</span>
               </button>
             </div>
           </div>
@@ -67,10 +84,11 @@
 
         <footer class="composer-area">
           <form id="composer" class="composer">
+            <div class="composer-label"><i></i><span>OBULUS AGENT</span></div>
             <textarea id="message-input" rows="1" maxlength="20000" placeholder="Obulus에게 리서치 작업을 요청하세요…" aria-label="메시지"></textarea>
             <div class="composer-toolbar">
               <div class="capability-row">
-                <span>검색</span><span>Open Call</span><span>메모리</span><span>Pay.sh</span>
+                <span>검색</span><span>OPEN CALL</span><span>메모리</span><span>PAY.SH</span>
               </div>
               <button id="send-message" class="send-button" type="submit" aria-label="보내기">↑</button>
               <button id="stop-agent" class="stop-button hidden" type="button" aria-label="중지">■</button>
@@ -82,7 +100,7 @@
 
       <aside id="inspector" class="inspector">
         <div class="inspector-head">
-          <div><span class="mono-label">RUNTIME</span><h2>작업 상태</h2></div>
+          <div><span class="mono-label">AGENT RUNTIME</span><h2>작업 상태</h2></div>
           <button id="close-inspector" class="icon-button" type="button" aria-label="닫기">×</button>
         </div>
         <section class="runtime-card">
@@ -93,7 +111,7 @@
           <div class="runtime-row"><span>Obulus 계정</span><strong id="account-status">연결 안 됨</strong></div>
         </section>
         <section class="activity-section">
-          <div class="section-title"><span class="mono-label">AGENT TRACE</span><span id="tool-count">0 calls</span></div>
+          <div class="section-title"><span class="mono-label">TOOL CALLS</span><span id="tool-count">0 calls</span></div>
           <div id="activity-list" class="activity-list">
             <p class="activity-empty">도구를 실행하면 판단 과정과 결과가 여기에 표시됩니다.</p>
           </div>
@@ -108,7 +126,7 @@
 
     <dialog id="settings-dialog" class="sheet-dialog">
       <div class="settings-sheet">
-        <header class="sheet-header"><div><span class="mono-label">LOCAL SETUP</span><h2>Obulus 연결 및 보안</h2></div><button class="icon-button close-dialog" type="button">×</button></header>
+        <header class="sheet-header"><div><span class="mono-label">LOCAL AGENT SETUP</span><h2>Obulus 로컬 에이전트 설정</h2><p>Claude, Pay.sh, MCP를 한 번 연결하면 모든 리서치 작업을 이 앱과 로컬 에이전트에서 실행할 수 있습니다.</p></div><button class="icon-button close-dialog" type="button">×</button></header>
         <div class="settings-grid">
           <section class="setting-card">
             <span class="step-number">01</span>

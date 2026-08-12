@@ -302,7 +302,12 @@ function appendMessage(role, text, streaming = false) {
   if (role === 'assistant') {
     const head = document.createElement('div')
     head.className = 'message-head'
-    head.textContent = 'OBULUS AGENT'
+    const mark = document.createElement('span')
+    mark.className = 'message-agent-mark'
+    mark.innerHTML = '<svg class="obulus-glyph" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="5" y="16.2" width="14" height="2.1" fill="currentColor"/><rect x="6.5" y="7.6" width="2.5" height="8.6" fill="currentColor"/><rect x="9.8" y="9.2" width="2.5" height="7" fill="currentColor"/><path d="M15.4 8L17.75 8.65L15.55 16.2L13.2 15.55Z" fill="currentColor"/></svg>'
+    const label = document.createElement('span')
+    label.textContent = 'OBULUS AGENT'
+    head.append(mark, label)
     row.append(head, body)
   } else row.append(body)
   byId('messages').append(row)

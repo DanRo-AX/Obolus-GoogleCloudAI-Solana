@@ -7,10 +7,11 @@
   "type": "module",
   "main": "src/main.mjs",
   "scripts": {
-    "dev": "electron .",
+    "dev": "npm run stage:assets && electron .",
+    "stage:assets": "node scripts/stage-assets.mjs",
     "stage:pay": "node scripts/stage-pay.mjs",
     "test": "node --test test/*.test.mjs",
-    "dist:mac": "npm run stage:pay && electron-builder --mac dmg zip"
+    "dist:mac": "npm run stage:assets && npm run stage:pay && electron-builder --mac dmg zip"
   },
   "dependencies": {
     "@obulus/local-agent": "file:../obulus-local-agent"
@@ -25,6 +26,7 @@
     "asar": true,
     "files": [
       "src/**/*",
+      "build/fonts/**/*",
       "package.json"
     ],
     "extraResources": [

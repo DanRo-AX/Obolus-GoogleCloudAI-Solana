@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { desktopFonts, stageDesktopAssets } from '../scripts/stage-assets.mjs'
 import { stagePayBinary } from '../scripts/stage-pay.mjs'
 import { browserPreferences, isAllowedNavigation } from '../src/security.mjs'
 import { readSecureSettings, writeClaudeApiKey } from '../src/secure-settings.mjs'
@@ -36,6 +37,24 @@ test('packaging stages only the pinned Pay.sh version and records its checksum',
   assert.equal(result.version, '0.26.0')
   assert.equal(await readFile(target, 'utf8'), 'trusted-pay-binary')
   assert.equal((await readFile(checksumTarget, 'utf8')).trim(), result.digest)
+})
+
+test('packaging stages the same fonts used by the Obulus web product', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'obulus-desktop-fonts-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const sourceDirectory = join(directory, 'source')
+  const targetDirectory = join(directory, 'target')
+  await mkdir(sourceDirectory, { recursive: true })
+  await Promise.all(
+    desktopFonts.map(async (name) => {
+      const path = join(sourceDirectory, name)
+      await writeFile(path, `font:${name}`)
+    }),
+  )
+  await stageDesktopAssets({ sourceDirectory, targetDirectory })
+  for (const name of desktopFonts) {
+    assert.equal(await readFile(join(targetDirectory, name), 'utf8'), `font:${name}`)
+  }
 })
 
 test('renderer CSP forbids network and inline scripts', async () => {
