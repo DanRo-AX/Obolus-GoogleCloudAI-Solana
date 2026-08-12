@@ -12,6 +12,8 @@ import {
   ShieldAlert,
   Wallet,
 } from 'lucide-react'
+import { Avatar } from '@/components/Avatar'
+import { AvatarPicker } from '@/components/AvatarPicker'
 import { Button } from '@/components/ui/button'
 import { Banner } from '@/components/ui/primitives'
 import { CATEGORIES, type CategoryId } from '@/data/categories'
@@ -28,6 +30,7 @@ import {
   type Option,
 } from '@/data/onboarding'
 import { useT } from '@/i18n'
+import { deterministicAvatar, type AvatarConfig } from '@/lib/avatar'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
 import {
@@ -54,6 +57,13 @@ export default function Onboarding() {
 
   const [step, setStep] = useState(0)
   const [handle, setHandle] = useState(() => profile?.handle ?? suggestHandle())
+  const [avatar, setAvatar] = useState<AvatarConfig>(
+    () => profile?.avatar ?? deterministicAvatar(handle),
+  )
+  // Until the picker is touched, the avatar just follows the handle — so
+  // shuffling the handle also shuffles its default avatar. Once someone
+  // randomizes, cycles a layer, or uploads a photo, their choice sticks.
+  const avatarTouched = useRef(Boolean(profile?.avatar))
   const [ageBand, setAgeBand] = useState(profile?.ageBand ?? '')
   const [region, setRegion] = useState(profile?.region ?? '')
   const [household, setHousehold] = useState(profile?.household ?? '')
@@ -72,6 +82,16 @@ export default function Onboarding() {
     payoutInitialised.current = true
     setPayoutWallet(profile?.wallet ?? authWallet ?? '')
   }, [authReady, authWallet, profile?.wallet])
+
+  useEffect(() => {
+    if (avatarTouched.current) return
+    setAvatar(deterministicAvatar(handle))
+  }, [handle])
+
+  const changeAvatar = (next: AvatarConfig) => {
+    avatarTouched.current = true
+    setAvatar(next)
+  }
 
   const TOTAL = 6
 
@@ -111,6 +131,7 @@ export default function Onboarding() {
         years,
         speaksTo,
         wallet: payoutWallet || undefined,
+        avatar,
       })
       setDone(true)
       window.setTimeout(() => navigate('/dashboard'), 1400)
@@ -152,9 +173,7 @@ export default function Onboarding() {
     return (
       <div className="flex flex-1 items-center justify-center px-6">
         <div className="flex max-w-md flex-col items-center gap-4 text-center">
-          <span className="flex size-11 items-center justify-center rounded-full bg-[#0F766E]/12">
-            <Check className="size-5 text-[#0F766E]" />
-          </span>
+          <Avatar config={avatar} size={64} />
           <h1 className="font-display text-2xl font-medium">
             {t('You are')} {handle.trim().toUpperCase()}
           </h1>
@@ -196,7 +215,7 @@ export default function Onboarding() {
             <Screen
               title={t('Pick a handle')}
               note={t(
-                'This is the whole identity an asker sees beside your passage. No name, no email, no photo — ever.',
+                'This is the whole identity an asker sees beside your passage — your handle and an avatar, never your name or email.',
               )}
             >
               <div className="flex items-center gap-2">
@@ -215,6 +234,14 @@ export default function Onboarding() {
                   <Dice5 className="size-3.5" />
                   {t('Shuffle')}
                 </Button>
+              </div>
+              <div>
+                <p className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+                  {t('Avatar')}
+                </p>
+                <div className="mt-2">
+                  <AvatarPicker value={avatar} onChange={changeAvatar} fallbackSeed={handle} />
+                </div>
               </div>
             </Screen>
           ) : null}

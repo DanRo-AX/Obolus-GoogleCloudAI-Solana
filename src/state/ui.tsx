@@ -9,6 +9,7 @@ import {
 } from 'react'
 import { categoryFor, type CategoryId } from '@/data/categories'
 import { STRIKE_LIMIT } from '@/data/onboarding'
+import type { AvatarConfig } from '@/lib/avatar'
 import {
   BACKEND_ENABLED,
   cancelOpenCall,
@@ -161,6 +162,12 @@ export type Profile = {
   agreedAt: number
   browserAlerts?: boolean
   emailAlerts?: boolean
+  /**
+   * Notion-style parts config or an uploaded image. Falls back to
+   * `deterministicAvatar(handle)` client-side when unset, so a profile saved
+   * before this field existed still renders one.
+   */
+  avatar?: AvatarConfig
 }
 
 /** One line of the memory stream. Recent entries carry more weight. */
@@ -306,6 +313,7 @@ function profileFromServer(profile: ServerProfile): Profile {
     agreedAt: profile.agreedAt,
     browserAlerts: profile.browserAlerts,
     emailAlerts: profile.emailAlerts,
+    avatar: profile.avatar,
   }
 }
 
@@ -840,6 +848,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           years: profile.years,
           speaksTo: profile.speaksTo,
           wallet,
+          avatar: profile.avatar,
         },
         {
           autoMatch,

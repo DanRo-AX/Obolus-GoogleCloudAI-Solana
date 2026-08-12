@@ -13,6 +13,8 @@ import {
   Unlock,
   Wallet,
 } from 'lucide-react'
+import { Avatar } from '@/components/Avatar'
+import { AvatarPicker } from '@/components/AvatarPicker'
 import { Button } from '@/components/ui/button'
 import {
   Badge,
@@ -25,6 +27,7 @@ import {
 import { AUTO_MATCH_STRIKE_LIMIT, STRIKE_LIMIT } from '@/data/onboarding'
 import { useT } from '@/i18n'
 import { exportAccount, setMemoryLocked, withdrawPrepaidBalance } from '@/lib/api'
+import { deterministicAvatar, type AvatarConfig } from '@/lib/avatar'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/state/ui'
 import { getPhantom, shortKey, useWallet } from '@/state/wallet'
@@ -48,6 +51,7 @@ export default function Memory() {
     balance,
     verifyPayoutWallet,
     deleteCurrentAccount,
+    saveProfile,
   } = useUi()
   const navigate = useNavigate()
   const t = useT()
@@ -180,6 +184,48 @@ export default function Memory() {
     }
   }
 
+  const [avatarPanelOpen, setAvatarPanelOpen] = useState(false)
+  const [avatarDraft, setAvatarDraft] = useState<AvatarConfig | null>(null)
+  const [savingAvatar, setSavingAvatar] = useState(false)
+  const [avatarError, setAvatarError] = useState<string | null>(null)
+
+  const openAvatarPanel = () => {
+    if (!profile) return
+    setAvatarDraft(profile.avatar ?? deterministicAvatar(profile.handle))
+    setAvatarError(null)
+    setAvatarPanelOpen(true)
+  }
+
+  const saveAvatar = async () => {
+    if (!profile || !avatarDraft || savingAvatar) return
+    setSavingAvatar(true)
+    setAvatarError(null)
+    try {
+      await saveProfile({
+        handle: profile.handle,
+        ageBand: profile.ageBand,
+        region: profile.region,
+        household: profile.household,
+        field: profile.field,
+        years: profile.years,
+        speaksTo: profile.speaksTo,
+        wallet: profile.wallet,
+        browserAlerts: profile.browserAlerts,
+        emailAlerts: profile.emailAlerts,
+        avatar: avatarDraft,
+      })
+      setAvatarPanelOpen(false)
+    } catch (error) {
+      setAvatarError(
+        error instanceof Error
+          ? error.message
+          : t('The avatar did not save. Try it again.'),
+      )
+    } finally {
+      setSavingAvatar(false)
+    }
+  }
+
   const settled = memory.filter((m) => m.status !== 'voided')
   const total =
     earnings?.accruedKrw ?? settled.reduce((sum, entry) => sum + entry.earned, 0)
@@ -223,7 +269,22 @@ export default function Memory() {
     <div className="page-enter flex-1 overflow-y-auto">
       <div className="space-y-6 p-4 sm:p-6">
         <div className="flex min-h-8 items-center justify-between gap-4">
-          <h1 className="font-sans text-base font-medium">{t('My shelf')}</h1>
+          <div className="flex items-center gap-3">
+            {profile ? (
+              <button
+                type="button"
+                onClick={() => (avatarPanelOpen ? setAvatarPanelOpen(false) : openAvatarPanel())}
+                aria-label={t('Change avatar')}
+                className="cursor-pointer rounded-full outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring/50"
+              >
+                <Avatar
+                  config={profile.avatar ?? deterministicAvatar(profile.handle)}
+                  size={36}
+                />
+              </button>
+            ) : null}
+            <h1 className="font-sans text-base font-medium">{t('My shelf')}</h1>
+          </div>
           <div className="flex items-center gap-2">
             <Button
               variant="monoGhost"
@@ -248,6 +309,45 @@ export default function Memory() {
           <p className="rounded-[4px] border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
             {memoryActionError}
           </p>
+        ) : null}
+
+        {avatarPanelOpen && avatarDraft ? (
+          <div className="rounded-[6px] border border-border bg-card p-4">
+            <p className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+              {t('Change avatar')}
+            </p>
+            <div className="mt-3">
+              <AvatarPicker
+                value={avatarDraft}
+                onChange={setAvatarDraft}
+                fallbackSeed={profile?.handle}
+              />
+            </div>
+            {avatarError ? (
+              <p className="mt-3 text-sm text-destructive">{avatarError}</p>
+            ) : null}
+            <div className="mt-4 flex gap-2">
+              <Button
+                variant="mono"
+                size="monoSm"
+                disabled={savingAvatar}
+                onClick={() => void saveAvatar()}
+              >
+                {savingAvatar ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : null}
+                {savingAvatar ? t('Saving…') : t('Save avatar')}
+              </Button>
+              <Button
+                variant="monoGhost"
+                size="monoSm"
+                disabled={savingAvatar}
+                onClick={() => setAvatarPanelOpen(false)}
+              >
+                {t('Cancel')}
+              </Button>
+            </div>
+          </div>
         ) : null}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
