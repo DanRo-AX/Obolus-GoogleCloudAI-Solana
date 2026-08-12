@@ -19,6 +19,9 @@ import { Button } from '@/components/ui/button'
 import { CategoryIcon } from '@/components/CategoryIcon'
 import {
   Badge,
+  Banner,
+  bannerToneStyle,
+  Chip,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -483,7 +486,10 @@ export default function Dashboard() {
         ) : null}
 
         {profile && tab === 'open' ? (
-          <section className="rounded-[6px] border border-[#6D5BD0]/25 bg-[#6D5BD0]/[0.035] p-4">
+          <section
+            className="rounded-[6px] border p-4"
+            style={bannerToneStyle('violet')}
+          >
             <div className="flex flex-wrap items-start gap-3">
               <Sparkles className="mt-0.5 size-4 text-[#5540BE]" />
               <div className="min-w-0 flex-1">
@@ -584,7 +590,7 @@ export default function Dashboard() {
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  className="flex h-11 cursor-pointer items-center gap-2 rounded-[2px] border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9"
+                  className="flex h-11 cursor-pointer items-center gap-2 rounded-[4px] border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9"
                 >
                   {t('Sort')}
                   <span className="text-foreground">{t(activeSort.label)}</span>
@@ -638,6 +644,7 @@ export default function Dashboard() {
                 onClick={() => setCategory(c.id)}
                 label={t(c.label)}
                 count={counts.get(c.id) ?? 0}
+                category={c.id}
                 accent={c.accent}
               />
             ))}
@@ -675,7 +682,7 @@ export default function Dashboard() {
         </div>
 
         {suspended ? (
-          <div className="flex flex-wrap items-center gap-3 rounded-[6px] border border-destructive/30 bg-destructive/[0.05] px-4 py-3">
+          <Banner tone="destructive" className="flex flex-wrap items-center gap-3 px-4 py-3">
             <ShieldAlert className="size-4 shrink-0 text-destructive" />
             <p className="text-sm leading-relaxed text-muted-foreground">
               <span className="font-medium text-destructive">
@@ -686,11 +693,11 @@ export default function Dashboard() {
             <Button asChild variant="monoMuted" size="monoSm" className="ml-auto">
               <Link to="/memory">{t('Review the strikes')}</Link>
             </Button>
-          </div>
+          </Banner>
         ) : null}
 
         {!profile && tab === 'open' ? (
-          <div className="flex flex-wrap items-center gap-3 rounded-[6px] border border-border bg-foreground/[0.03] px-4 py-3">
+          <Banner tone="neutral" className="flex flex-wrap items-center gap-3 px-4 py-3">
             <UserRound className="size-4 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
               {/* Signed in already? Then never ask for another account — the
@@ -709,7 +716,7 @@ export default function Dashboard() {
                 {account ? t('Set up profile') : t('Connect wallet')}
               </Link>
             </Button>
-          </div>
+          </Banner>
         ) : null}
 
         {list.length === 0 ? (
@@ -1034,7 +1041,7 @@ function SegTab({
       type="button"
       onClick={onClick}
       className={cn(
-        'flex h-11 cursor-pointer items-center gap-2 rounded-[2px] px-3 font-mono text-xs font-medium uppercase tracking-[1px] transition-colors sm:h-9',
+        'flex h-11 cursor-pointer items-center gap-2 rounded-[4px] px-3 font-mono text-xs font-medium uppercase tracking-[1px] transition-colors sm:h-9',
         active
           ? 'border border-foreground/80 bg-foreground/85 text-background'
           : 'border border-transparent text-muted-foreground hover:bg-muted hover:text-foreground',
@@ -1051,12 +1058,14 @@ function CatTab({
   onClick,
   label,
   count,
+  category,
   accent,
 }: {
   active: boolean
   onClick: () => void
   label: string
   count: number
+  category?: CategoryId
   accent?: string
 }) {
   return (
@@ -1073,15 +1082,19 @@ function CatTab({
         count === 0 && !active && 'opacity-45',
       )}
     >
-      {accent ? (
-        <span
-          className="size-1.5 shrink-0 rounded-[1px]"
-          style={{ backgroundColor: accent }}
+      {category ? (
+        // The same Material icon as the card badge, shrunk to an inline
+        // glyph — the rail reads as the card grid's index instead of a
+        // separate color-coded list.
+        <CategoryIcon
+          id={category}
+          className="size-3.5 shrink-0"
+          style={{ color: accent }}
         />
       ) : (
-        /* The 'All' tab has no accent, but the rail still needs its labels
-           to start on the same vertical line. */
-        <span className="size-1.5 shrink-0" />
+        /* The 'All' tab has no category, but the rail still needs its
+           labels to start on the same vertical line. */
+        <span className="size-3.5 shrink-0" />
       )}
       <span className="truncate">{label}</span>
       <span className="ml-auto pl-1 font-mono text-[11px] tabular-nums text-muted-foreground">
@@ -1102,22 +1115,13 @@ function FilterChip({
   label: string
   muted?: boolean
 }) {
+  // Thin wrapper over the shared Chip so every filter/sort/tab control in
+  // this toolbar — and the "With opens" toggle on /archive — share one
+  // shape (see src/components/ui/primitives.tsx).
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        // Linear's filter row uses small rectangular toggles, not pills —
-        // pill radius is reserved for status/count tokens (see Badge).
-        'h-10 cursor-pointer rounded-[6px] border px-3 font-mono text-[11px] uppercase tracking-[1px] transition-colors sm:h-7',
-        active
-          ? 'border-foreground/70 bg-foreground/[0.06] text-foreground'
-          : 'border-border text-muted-foreground hover:border-foreground/25 hover:text-foreground',
-        muted && 'opacity-60',
-      )}
-    >
+    <Chip active={active} muted={muted} onClick={onClick}>
       {label}
-    </button>
+    </Chip>
   )
 }
 
@@ -1147,7 +1151,7 @@ function ColumnToggle({
     <div
       role="group"
       aria-label={t('Columns per row')}
-      className="flex h-11 items-stretch overflow-hidden rounded-[2px] border border-border sm:h-9"
+      className="flex h-11 items-stretch overflow-hidden rounded-[4px] border border-border sm:h-9"
     >
       <button
         type="button"

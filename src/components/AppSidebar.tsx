@@ -1,5 +1,6 @@
 import { NavLink, Link } from 'react-router-dom'
 import { Activity, LogIn, LogOut, PanelLeft, ShieldCheck } from 'lucide-react'
+import { BrandMark } from '@/components/ui/BrandMark'
 import { Button } from '@/components/ui/button'
 import { CATEGORY_BY_ID } from '@/data/categories'
 import { NAV_ITEMS } from '@/data/nav'
@@ -11,19 +12,6 @@ import { shortKey, useWallet } from '@/state/wallet'
 
 const MENU_BUTTON =
   'peer/menu-button flex w-full items-center gap-2 overflow-hidden text-left font-medium outline-hidden transition-[width,height,padding] focus-visible:ring-2 focus-visible:ring-sidebar-ring active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:shrink-0'
-
-function WorkspaceMark({ size = 'size-8' }: { size?: string }) {
-  return (
-    <span
-      className={cn(
-        size,
-        'flex shrink-0 items-center justify-center rounded-[9px] bg-foreground',
-      )}
-    >
-      <img className="invert" src="/OBOLUS-MARK-SM.svg" alt="Obolus" width={20} height={20} />
-    </span>
-  )
-}
 
 /**
  * Signed-in state. The strike counter sits here on purpose — a three-strike
@@ -137,7 +125,7 @@ function LiveStrip() {
 function LangSwitch() {
   const { lang, setLang } = useLang()
   return (
-    <div className="flex items-center gap-0.5 rounded-[3px] border border-border bg-card p-0.5">
+    <div className="flex items-center gap-0.5 rounded-[4px] border border-border bg-card p-0.5">
       {(['en', 'ko'] as const).map((code) => (
         <button
           key={code}
@@ -145,7 +133,7 @@ function LangSwitch() {
           onClick={() => setLang(code)}
           aria-pressed={lang === code}
           className={cn(
-            'flex-1 cursor-pointer rounded-[2px] py-1 font-mono text-[10px] uppercase tracking-[1px] transition-colors',
+            'flex-1 cursor-pointer rounded-[3px] py-1 font-mono text-[10px] uppercase tracking-[1px] transition-colors',
             lang === code
               ? 'bg-foreground text-background'
               : 'text-muted-foreground hover:text-foreground',
@@ -219,7 +207,7 @@ export function AppSidebar() {
                     )}
                   >
                     <div className="flex aspect-square size-8 items-center justify-center">
-                      <WorkspaceMark />
+                      <BrandMark />
                     </div>
                     <span className="truncate text-[15px] font-semibold tracking-[-0.02em]">
                       Obolus
