@@ -693,6 +693,17 @@ export default function Dashboard() {
               )
               const fullyReserved = reservedByOthers >= remaining && !order.reservationExpiresAt
               const who = whoAnswersLine(order, t)
+              // The who-answers line only earns its place when it adds real
+              // targeting beyond the category badge already shown above —
+              // a call filtered on nothing but its own category would just
+              // repeat the meta row as noise.
+              const hasNarrowFilters = Boolean(
+                order.filters &&
+                  (order.filters.ageBand ||
+                    order.filters.region ||
+                    order.filters.household ||
+                    order.filters.field),
+              )
               return (
                 <div
                   key={order.id}
@@ -728,76 +739,86 @@ export default function Dashboard() {
                       </span>
                     ) : null}
                   </div>
-                  <div className="flex flex-1 flex-col px-4 pb-4 pt-5">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="flex min-w-0 items-center gap-2 overflow-hidden">
-                      {/* Category glyph lives in the body now, not the photo
-                          banner — variant 7's banner stays image-only. */}
-                      <CategoryIcon
-                        id={order.category}
-                        className="size-3.5 shrink-0"
-                        style={{ color: cat?.accent ?? 'var(--muted-foreground)' }}
-                      />
-                      <span className="truncate font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                        {cat?.label ? t(cat.label) : null}
-                      </span>
-                      <Badge
-                        className="min-w-0 truncate px-1.5 py-0 uppercase tracking-[1px]"
-                        title={order.shelf}
-                      >
-                        {order.shelf}
-                      </Badge>
+                  <div className="flex flex-1 flex-col px-4 pb-4 pt-4">
+                  {/* The question is the point of the card — primary weight,
+                      first thing the eye lands on, clamped to two lines so a
+                      long ask never pushes the rest of the card down. The
+                      full text only ever shows uncut in the preview modal. */}
+                  <p className="line-clamp-2 text-[16px] font-semibold leading-snug tracking-[-0.006em] text-foreground">
+                    {order.question}
+                  </p>
+
+                  {/* Meta row — demoted now that the question leads.
+                      Category and shelf collapse into one small muted
+                      string instead of a glyph plus a separately-padded
+                      pill, so a long shelf name ("가게를 3년째 운영합니다")
+                      truncates cleanly with the rest of the line instead of
+                      clipping mid-word inside its own badge. */}
+                  <span
+                    className="mt-1.5 flex min-w-0 items-center gap-1.5 overflow-hidden"
+                    title={cat?.label ? `${t(cat.label)} · ${order.shelf}` : order.shelf}
+                  >
+                    <CategoryIcon
+                      id={order.category}
+                      className="size-3 shrink-0 opacity-70"
+                      style={{ color: cat?.accent ?? 'var(--muted-foreground)' }}
+                    />
+                    <span className="truncate font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground/80">
+                      {cat?.label ? t(cat.label) : null}
+                      {order.shelf ? ` · ${order.shelf}` : null}
                     </span>
-                    <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                      {t('Per answer')}{' '}
-                      <span className="text-foreground">
+                  </span>
+
+                  {/* Price is the reason to read this card at all — it gets
+                      real foreground weight and a real number size, paired
+                      with the fraction so both stats land in one glance.
+                      A hairline separates this from the meta line above so
+                      the eye treats it as its own block, not a continuation. */}
+                  <div className="mt-3 flex items-end justify-between gap-3 border-t border-border/60 pt-3">
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-xl font-semibold tabular-nums text-foreground">
                         {order.unitPrice === 0
                           ? '₩0'
                           : `₩${order.unitPrice.toLocaleString()}`}
                       </span>
-                    </span>
-                  </div>
-
-                  {/* The question is the point of the card — it gets the
-                      weight and the room, clamped to two lines so a long ask
-                      never pushes the rest of the card down. The full text
-                      only ever shows uncut in the preview modal. */}
-                  <p className="mt-2 line-clamp-2 text-[15px] font-medium leading-snug text-foreground">
-                    {order.question}
-                  </p>
-
-                  {/* Everything below the question is plumbing, not the
-                      point — a hairline separates it so the eye lands on
-                      the question first. */}
-                  <div className="mt-3 space-y-2.5 border-t border-border/60 pt-3">
-                    {who ? (
-                      <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground/85">
-                        {t('Who answers')} · {who}
-                      </p>
-                    ) : null}
-                    <div className="flex items-center gap-3">
-                      {/* A thin, square-ended bar rather than a pill — Linear's
-                          progress language stays close to a hairline rule. */}
-                      <div className="h-1 flex-1 overflow-hidden rounded-[2px] bg-foreground/10">
-                        <div
-                          className="h-full rounded-[2px] bg-[#0F766E] transition-[width] duration-500"
-                          style={{
-                            width: `${Math.round((order.answered / order.target) * 100)}%`,
-                          }}
-                        />
-                      </div>
-                      <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                        {order.answered}/{order.target}
-                        {reservedByOthers > 0 ? (
-                          <> · {reservedByOthers} {t('slots held')}</>
-                        ) : null}
+                      <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                        {t('Per answer')}
                       </span>
+                    </div>
+                    <div className="flex flex-col items-end gap-0.5">
+                      <span className="font-mono text-sm font-semibold tabular-nums text-foreground">
+                        {order.answered}/{order.target} {t('answered')}
+                      </span>
+                      {reservedByOthers > 0 ? (
+                        <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                          {reservedByOthers} {t('slots held')}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
 
-                  {/* Meta + the per-row CTA share one line — a quiet trailing
-                      action instead of a full-width button block repeated
-                      down the page for every open call. */}
+                  {/* A thin, square-ended bar rather than a pill — Linear's
+                      progress language stays close to a hairline rule, now
+                      sitting under a legible number instead of carrying the
+                      whole state on its own. */}
+                  <div className="mt-1.5 h-1 overflow-hidden rounded-[2px] bg-foreground/10">
+                    <div
+                      className="h-full rounded-[2px] bg-[#0F766E] transition-[width] duration-500"
+                      style={{
+                        width: `${Math.round((order.answered / order.target) * 100)}%`,
+                      }}
+                    />
+                  </div>
+
+                  {who && hasNarrowFilters ? (
+                    <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground/85">
+                      {t('Who answers')} · {who}
+                    </p>
+                  ) : null}
+
+                  {/* Meta + the per-row CTA share one line — the timestamp
+                      stays a quiet caption while the button reads as the
+                      card's one real action. */}
                   <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
                     <Clock className="size-3" />
                     {relative(order.createdAt, t)}
@@ -816,7 +837,7 @@ export default function Dashboard() {
 
                     {tab === 'open' && !done ? (
                       <Button
-                        variant="monoMuted"
+                        variant="mono"
                         size="monoSm"
                         className="ml-auto shrink-0 font-sans normal-case tracking-normal"
                         onClick={() => {

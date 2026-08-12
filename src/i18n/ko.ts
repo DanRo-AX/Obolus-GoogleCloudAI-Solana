@@ -852,6 +852,7 @@ export const KO: Record<string, string> = {
   'Your wallet is the account': '지갑이 곧 계정',
   'Your wallet pays each author, per open': '열기 1회마다 저자에게 직접',
   'across': '',
+  'answered': '참여',
   'answers return': '답변이 돌아옴',
   'answers ·': '건 설문 · 답변 1건에',
   'append-only · accrued': '추가 전용 · 누적',
