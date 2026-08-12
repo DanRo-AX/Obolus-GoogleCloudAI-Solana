@@ -1,4 +1,5 @@
 import {
+  ArrowLeftRight,
   FileText,
   LayoutDashboard,
   Radar,
@@ -22,6 +23,7 @@ export type NavItem = {
 export const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Ask', Icon: MessageSquarePlus, end: true },
   { to: '/archive', label: 'Receipts', Icon: Archive },
+  { to: '/transactions', label: 'Transactions', Icon: ArrowLeftRight },
   { to: '/dashboard', label: 'Open calls', Icon: LayoutDashboard },
   { to: '/memory', label: 'My shelf', Icon: Notebook },
   { to: '/coverage', label: 'Thin shelves', Icon: Radar },
