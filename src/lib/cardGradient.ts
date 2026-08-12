@@ -28,16 +28,16 @@
 export const GRADIENT_FEEL_FLOOR = 50
 
 const PALETTE = [
-  '#7C6FF2', // violet
-  '#9B6FF2', // purple
-  '#C46FE0', // orchid
-  '#F26FA8', // pink
-  '#F2806F', // coral
-  '#F2A76F', // amber
-  '#54A2FF', // blue
-  '#4FC3E8', // sky
-  '#3FD1C0', // teal
-  '#4FD189', // emerald
+  '#5B4BE0', // violet
+  '#7C3FE4', // purple
+  '#B23CD6', // orchid
+  '#E23C86', // magenta
+  '#E8443C', // red
+  '#F2843C', // orange
+  '#2C7BE5', // blue
+  '#1C9FD6', // sky
+  '#12B5A6', // teal
+  '#1FB56B', // emerald
 ] as const
 
 /** Hashed anchor points for the two radial layers, kept away from dead-center so hues visibly cross. */
@@ -92,11 +92,18 @@ export function cardGradient(seed: string): string {
 
   const [x1, y1] = POSITIONS[pick(key, 'pos1', POSITIONS.length)]
   const [x2, y2] = POSITIONS[pick(key, 'pos2', POSITIONS.length)]
+  // Third hue anchors the opposite-ish corner and runs darker, so the banner
+  // reads like a photo — two saturated hues meeting with one shaded corner —
+  // rather than a pale wash. White is kept to a small central highlight only.
+  const [x3, y3] = POSITIONS[pick(key, 'pos3', POSITIONS.length)]
   const angle = ANGLES[pick(key, 'angle', ANGLES.length)]
 
   return [
-    `radial-gradient(circle at ${x1}% ${y1}%, color-mix(in oklab, ${c1} 55%, white) 0%, transparent 62%)`,
-    `radial-gradient(circle at ${x2}% ${y2}%, color-mix(in oklab, ${c2} 48%, white) 0%, transparent 58%)`,
-    `linear-gradient(${angle}deg, color-mix(in oklab, ${c3} 32%, white), color-mix(in oklab, ${c1} 16%, white))`,
+    // central highlight — the bright meeting point, small and soft
+    `radial-gradient(120% 90% at 50% 42%, color-mix(in oklab, white 55%, transparent) 0%, transparent 45%)`,
+    `radial-gradient(circle at ${x1}% ${y1}%, color-mix(in oklab, ${c1} 88%, white) 0%, transparent 66%)`,
+    `radial-gradient(circle at ${x2}% ${y2}%, color-mix(in oklab, ${c2} 86%, white) 0%, transparent 62%)`,
+    `radial-gradient(circle at ${x3}% ${y3}%, color-mix(in oklab, ${c3} 30%, black) 0%, transparent 70%)`,
+    `linear-gradient(${angle}deg, color-mix(in oklab, ${c1} 82%, black), color-mix(in oklab, ${c2} 80%, white))`,
   ].join(', ')
 }
