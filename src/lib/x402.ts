@@ -56,7 +56,6 @@ const DEVNET_NETWORK = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
 const DEVNET_RPC_BACKOFF_MS = [1_500, 3_000, 6_000]
 const PENDING_OPEN_CALL_KEY = 'openshelf:pending-funded-open-call:v1'
 const PENDING_RESEARCH_KEY = 'openshelf:pending-research-job:v1'
-const PREPAID_SESSION_KEY = 'openshelf:prepaid-wallet-session:v1'
 const DEFAULT_TOP_UP_ATOMIC = prepaidTopUpAtomic(import.meta.env.VITE_PREPAID_TOPUP_USDC)
 
 export class PaymentError extends Error {
@@ -287,6 +286,25 @@ type StoredPrepaidSession = {
   expiresAt: number
 }
 
+/**
+ * Tab-scoped, memory-only holder for the prepaid wallet session token.
+ *
+ * The Rust API also sets an HttpOnly cookie for this token (see
+ * backend/src/api.rs's create_prepaid_session), which is the preferred
+ * channel and the only one used for direct browser-to-Rust calls. This
+ * in-memory value exists only because a request that must reach the
+ * payment-gateway service (a different origin from the Rust API in local
+ * dev, and outside this fix's Rust + frontend scope) still needs the raw
+ * token to attach as the `x-openshelf-wallet-session` header explicitly —
+ * the browser will not forward an HttpOnly cookie as a custom header, and
+ * the gateway does not (yet) read the cookie itself. Unlike the old
+ * `localStorage` persistence, this value never survives a reload, a new
+ * tab, or a script that merely reads storage — it exists only in this
+ * module's memory for the lifetime of the current page. See GitHub issue
+ * #46.
+ */
+let tabPrepaidWalletSession: StoredPrepaidSession | null = null
+
 async function openOverX402(req: OpenRequest): Promise<OpenResult> {
   const provider = getPhantom()
   if (!provider?.publicKey) {
@@ -335,7 +353,7 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
       })
     let prepared = await prepare(walletSession.token)
     if (prepared.status === 401) {
-      window.localStorage.removeItem(PREPAID_SESSION_KEY)
+      tabPrepaidWalletSession = null
       walletSession = await ensurePrepaidWalletSession(provider, connectedPayer)
       prepared = await prepare(walletSession.token)
     }
@@ -514,7 +532,7 @@ async function ensurePrepaidWalletSession(
       'This wallet cannot sign the one-time prepaid spending authorization message.',
     )
   }
-  const challenge = await createWalletAuthChallenge(wallet)
+  const challenge = await createWalletAuthChallenge(wallet, 'prepaid_spend_v1')
   const signed = await provider.signMessage(
     new TextEncoder().encode(challenge.message),
     'utf8',
@@ -526,18 +544,15 @@ async function ensurePrepaidWalletSession(
     getBase58Decoder().decode(bytes),
   )
   const stored = { wallet: session.wallet, token: session.token, expiresAt: session.expiresAt }
-  window.localStorage.setItem(PREPAID_SESSION_KEY, JSON.stringify(stored))
+  // No localStorage/sessionStorage: the server already set the HttpOnly
+  // cookie that is this token's durable copy. This module-level variable is
+  // only the tab-scoped fallback documented above tabPrepaidWalletSession.
+  tabPrepaidWalletSession = stored
   return stored
 }
 
 function readPrepaidWalletSession(): StoredPrepaidSession | null {
-  try {
-    return JSON.parse(
-      window.localStorage.getItem(PREPAID_SESSION_KEY) ?? 'null',
-    ) as StoredPrepaidSession | null
-  } catch {
-    return null
-  }
+  return tabPrepaidWalletSession
 }
 
 function readPendingResearchJob(): PendingResearchJob | null {
