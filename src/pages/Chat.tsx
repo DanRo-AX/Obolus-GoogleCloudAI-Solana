@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { Composer } from '@/components/Composer'
 import { Button } from '@/components/ui/button'
+import { Banner, bannerToneStyle } from '@/components/ui/primitives'
 import { useT } from '@/i18n'
 import {
   getChatAnswers,
@@ -705,7 +706,7 @@ export default function Chat() {
                   }
                 >
                   {aiBaselineStatus === 'loading' ? (
-                    <div className="w-full rounded-[5px] border border-[#6D5BD0]/20 bg-[#6D5BD0]/[0.04] p-4">
+                    <Banner tone="violet" className="w-full">
                       <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[1px] text-[#5540BE]">
                         <Loader2 className="size-3 animate-spin" />
                         {t('AI liquidity · preparing general context')}
@@ -713,7 +714,7 @@ export default function Chat() {
                       <p className="mt-2 text-sm leading-6 text-muted-foreground">
                         {t('This will not count as human coverage or become a sellable document.')}
                       </p>
-                    </div>
+                    </Banner>
                   ) : null}
                   {aiBaseline ? <AiBaselineCard baseline={aiBaseline} /> : null}
                   {aiBaselineStatus === 'unavailable' ? (
@@ -916,7 +917,7 @@ export default function Chat() {
 function AiBaselineCard({ baseline }: { baseline: AiBaseline }) {
   const t = useT()
   return (
-    <section className="w-full rounded-[6px] border border-[#6D5BD0]/25 bg-[#6D5BD0]/[0.045] p-4 text-left">
+    <section className="w-full rounded-[6px] border p-4 text-left" style={bannerToneStyle('violet')}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[1px] text-[#5540BE]">
           <Sparkles className="size-3" />
