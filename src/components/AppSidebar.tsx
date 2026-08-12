@@ -1,7 +1,8 @@
 import { NavLink, Link } from 'react-router-dom'
-import { Activity, LogIn, LogOut, PanelLeft, ShieldCheck } from 'lucide-react'
+import { Activity, LogIn, LogOut, PanelLeft, ShieldCheck, UserRound } from 'lucide-react'
 import { BrandMark } from '@/components/ui/BrandMark'
 import { Button } from '@/components/ui/button'
+import { Chip } from '@/components/ui/primitives'
 import { CATEGORY_BY_ID } from '@/data/categories'
 import { NAV_ITEMS } from '@/data/nav'
 import { STRIKE_LIMIT } from '@/data/onboarding'
@@ -29,37 +30,34 @@ function ProfileChip({ onSignOut }: { onSignOut: () => Promise<void> }) {
         suspended ? 'border-destructive/40' : 'border-border',
       )}
     >
-      <div className="flex items-center gap-2">
-        <span
-          className="size-2 shrink-0 rounded-[1px]"
-          style={{ backgroundColor: cat?.accent }}
-        />
-        <span className="truncate font-mono text-[11px] tracking-[1px] text-foreground">
-          {profile.handle}
+      {/* Avatar slot + handle + status caption, one tidy row instead of a
+          bare color dot next to bare text. */}
+      <div className="flex items-center gap-2.5">
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-card">
+          <UserRound className="size-3.5" style={{ color: cat?.accent ?? 'var(--muted-foreground)' }} />
         </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-mono text-[11px] tracking-[1px] text-foreground">
+            {profile.handle}
+          </p>
+          <p className="truncate font-mono text-[9px] uppercase tracking-[0.8px] text-muted-foreground">
+            {suspended
+              ? t('Suspended')
+              : `${profile.speaksTo.length} ${t('shelves')}`}
+            {' · '}
+            <span className={cn(profile.strikes > 0 && 'text-destructive')}>
+              {t('strike')} {profile.strikes} {t('of')} {STRIKE_LIMIT}
+            </span>
+          </p>
+        </div>
         <button
           type="button"
           onClick={() => void onSignOut()}
           aria-label={t('Disconnect Phantom')}
-          className="ml-auto cursor-pointer text-muted-foreground/60 transition-colors hover:text-foreground"
+          className="shrink-0 cursor-pointer text-muted-foreground/60 transition-colors hover:text-foreground"
         >
           <LogOut className="size-3.5" />
         </button>
-      </div>
-      <div className="mt-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-        <span className="truncate">
-          {suspended
-            ? t('Suspended')
-            : `${profile.speaksTo.length} ${t('shelves')}`}
-        </span>
-        <span
-          className={cn(
-            'tabular-nums',
-            profile.strikes > 0 && 'text-destructive',
-          )}
-        >
-          {t('strike')} {profile.strikes} {t('of')} {STRIKE_LIMIT}
-        </span>
       </div>
       <div className="mt-2 border-t border-border/70 pt-2 font-mono text-[9px] leading-relaxed text-muted-foreground">
         <p className="mt-0.5 truncate uppercase tracking-[0.7px]">
@@ -88,16 +86,20 @@ function LiveStrip() {
 
   return (
     <div className="flex flex-col divide-y divide-border/70 border-y border-border/70">
+      {/* Earnings is the number that brings somebody back — it gets the
+          stat treatment (small caption, big tabular figure) instead of
+          sharing a text row with the call count below it. */}
       <Link
         to="/memory"
-        className="flex items-baseline justify-between gap-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground"
+        className="flex flex-col gap-0.5 px-2.5 py-2.5 transition-colors hover:bg-foreground/[0.03]"
       >
-        <span>{profile ? t('Earned') : t('Paid out')}</span>
-        <span className="tabular-nums text-foreground">
+        <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+          {profile ? t('Earned') : t('Paid out')}
+        </span>
+        <span className="font-host text-lg font-medium leading-none tabular-nums text-foreground">
           ₩{earned.toLocaleString()}
           {held ? (
-            <span className="text-muted-foreground">
-              {' '}
+            <span className="ml-1 font-mono text-[10px] font-normal normal-case tracking-normal text-muted-foreground">
               · ₩{held.toLocaleString()} {t('held')}
             </span>
           ) : null}
@@ -105,7 +107,7 @@ function LiveStrip() {
       </Link>
       <Link
         to="/dashboard"
-        className="flex items-baseline justify-between gap-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground"
+        className="flex items-baseline justify-between gap-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-foreground/[0.03] hover:text-foreground"
       >
         <span>{profile ? t('Fit you') : t('Open now')}</span>
         <span
@@ -121,26 +123,24 @@ function LiveStrip() {
   )
 }
 
-/** Two languages, one control. A select would be heavier than the choice. */
+/**
+ * Two languages, one control — now the same Chip grammar as the dashboard's
+ * filter row instead of a bespoke pill-in-a-tray.
+ */
 function LangSwitch() {
   const { lang, setLang } = useLang()
   return (
-    <div className="flex items-center gap-0.5 rounded-[4px] border border-border bg-card p-0.5">
+    <div className="flex items-center gap-1.5">
       {(['en', 'ko'] as const).map((code) => (
-        <button
+        <Chip
           key={code}
-          type="button"
+          active={lang === code}
           onClick={() => setLang(code)}
           aria-pressed={lang === code}
-          className={cn(
-            'flex-1 cursor-pointer rounded-[3px] py-1 font-mono text-[10px] uppercase tracking-[1px] transition-colors',
-            lang === code
-              ? 'bg-foreground text-background'
-              : 'text-muted-foreground hover:text-foreground',
-          )}
+          className="h-8 flex-1 justify-center"
         >
           {code === 'en' ? 'EN' : '한국어'}
-        </button>
+        </Chip>
       ))}
     </div>
   )

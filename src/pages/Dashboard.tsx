@@ -133,6 +133,34 @@ function notificationCaption(kind: string, t: (en: string) => string) {
   return en ? t(en) : kind
 }
 
+const NOTIFICATION_ICON: Partial<Record<ContributorNotification['kind'], LucideIcon>> = {
+  call_available: Bell,
+  auto_matched: Bot,
+  answer_received: MessageSquareText,
+  call_filled: Check,
+}
+
+/**
+ * A category-tinted CategoryIcon when the notification still points at an
+ * open call on the board — the same glyph as that call's card badge, so the
+ * alert and the card it links to read as one object. A closed call, or a
+ * notification with no open call at all, falls back to a plain kind icon.
+ */
+function notificationVisual(
+  notification: ContributorNotification,
+  orders: Order[],
+): { category?: CategoryId; accent?: string; Icon?: LucideIcon } {
+  const order = notification.openCallId
+    ? orders.find((o) => o.id === notification.openCallId)
+    : undefined
+  if (order) {
+    return { category: order.category, accent: CATEGORY_BY_ID[order.category]?.accent }
+  }
+  return {
+    Icon: NOTIFICATION_ICON[notification.kind as ContributorNotification['kind']] ?? Bell,
+  }
+}
+
 function notificationBody(n: ContributorNotification, lang: 'en' | 'ko'): string {
   if (lang !== 'ko') return n.body
   if (n.kind === 'auto_matched') {
@@ -394,54 +422,56 @@ export default function Dashboard() {
         </div>
 
         {profile ? (
-          <div className="divide-y divide-border border-y border-border lg:divide-y-0 lg:divide-x lg:flex">
-            <div className="py-3 lg:flex-1 lg:px-4 lg:first:pl-0 lg:py-0">
-              <AlertPreference
-                icon={Bell}
-                label={t('Browser alerts')}
-                detail={t('Alerts this browser when an open call in your fields is posted.')}
-                checked={
-                  profile.browserAlerts === true &&
-                  typeof Notification !== 'undefined' &&
-                  Notification.permission === 'granted'
-                }
-                onChange={(value) => {
-                  setAlertError(null)
-                  void setBrowserAlerts(value).catch((error) =>
-                    setAlertError(error instanceof Error ? error.message : t('The switch did not move. Try it again.')),
-                  )
-                }}
-              />
-            </div>
-            {emailAlertsAvailable ? (
-              <div className="py-3 lg:flex-1 lg:px-4">
+          <Banner tone="neutral" className="overflow-hidden p-0">
+            <div className="divide-y divide-border/60 lg:divide-y-0 lg:divide-x lg:divide-border/60 lg:flex">
+              <div className="px-4 py-3 lg:flex-1">
                 <AlertPreference
-                  icon={Mail}
-                  label={t('Email alerts')}
-                  detail={t('Emails you the open calls that match your fields.')}
-                  checked={profile.emailAlerts === true}
+                  icon={Bell}
+                  label={t('Browser alerts')}
+                  detail={t('Alerts this browser when an open call in your fields is posted.')}
+                  checked={
+                    profile.browserAlerts === true &&
+                    typeof Notification !== 'undefined' &&
+                    Notification.permission === 'granted'
+                  }
                   onChange={(value) => {
                     setAlertError(null)
-                    void setEmailAlerts(value).catch((error) =>
+                    void setBrowserAlerts(value).catch((error) =>
                       setAlertError(error instanceof Error ? error.message : t('The switch did not move. Try it again.')),
                     )
                   }}
                 />
               </div>
-            ) : null}
-            <div className="py-3 lg:flex-1 lg:px-4 lg:last:pr-0">
-              <AlertPreference
-                icon={Bot}
-                label={t('Reuse from my shelf')}
-                detail={t('Reuses an answer you already wrote, only when a call matches it 82% or more.')}
-                checked={agents}
-                onChange={setAgents}
-              />
+              {emailAlertsAvailable ? (
+                <div className="px-4 py-3 lg:flex-1">
+                  <AlertPreference
+                    icon={Mail}
+                    label={t('Email alerts')}
+                    detail={t('Emails you the open calls that match your fields.')}
+                    checked={profile.emailAlerts === true}
+                    onChange={(value) => {
+                      setAlertError(null)
+                      void setEmailAlerts(value).catch((error) =>
+                        setAlertError(error instanceof Error ? error.message : t('The switch did not move. Try it again.')),
+                      )
+                    }}
+                  />
+                </div>
+              ) : null}
+              <div className="px-4 py-3 lg:flex-1">
+                <AlertPreference
+                  icon={Bot}
+                  label={t('Reuse from my shelf')}
+                  detail={t('Reuses an answer you already wrote, only when a call matches it 82% or more.')}
+                  checked={agents}
+                  onChange={setAgents}
+                />
+              </div>
             </div>
             {alertError ? (
-              <p className="pb-3 text-sm text-destructive lg:px-4">{alertError}</p>
+              <p className="border-t border-border/60 px-4 py-2.5 text-sm text-destructive">{alertError}</p>
             ) : null}
-          </div>
+          </Banner>
         ) : null}
 
         {unread.length ? (
@@ -460,27 +490,40 @@ export default function Dashboard() {
               </button>
             </div>
             <div className="divide-y divide-border border-y border-border">
-              {unread.slice(0, 3).map((notification) => (
-                <Link
-                  key={notification.id}
-                  to={notification.kind === 'call_available' && notification.openCallId
-                    ? `/answer/${notification.openCallId}`
-                    : '/dashboard'}
-                  onClick={() => void markNotificationsRead([notification.id])}
-                  className="flex items-center gap-3 py-2.5 transition-colors hover:bg-foreground/[0.03]"
-                >
-                  <span className="size-1.5 shrink-0 rounded-full bg-[#0F766E]" />
-                  <span className="shrink-0 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                    {notificationCaption(notification.kind, t)}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                    {notificationBody(notification, lang)}
-                  </span>
-                  <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
-                    {relative(notification.createdAt, t)}
-                  </span>
-                </Link>
-              ))}
+              {unread.slice(0, 3).map((notification) => {
+                const visual = notificationVisual(notification, orders)
+                return (
+                  <Link
+                    key={notification.id}
+                    to={notification.kind === 'call_available' && notification.openCallId
+                      ? `/answer/${notification.openCallId}`
+                      : '/dashboard'}
+                    onClick={() => void markNotificationsRead([notification.id])}
+                    className="flex items-center gap-3 px-1 py-3 transition-colors hover:bg-foreground/[0.035]"
+                  >
+                    <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-card">
+                      {visual.category ? (
+                        <CategoryIcon
+                          id={visual.category}
+                          className="size-3.5"
+                          style={{ color: visual.accent }}
+                        />
+                      ) : visual.Icon ? (
+                        <visual.Icon className="size-3.5 text-muted-foreground" />
+                      ) : null}
+                    </span>
+                    <Badge className="shrink-0 uppercase tracking-[1px]">
+                      {notificationCaption(notification.kind, t)}
+                    </Badge>
+                    <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                      {notificationBody(notification, lang)}
+                    </span>
+                    <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
+                      {relative(notification.createdAt, t)}
+                    </span>
+                  </Link>
+                )
+              })}
             </div>
           </div>
         ) : null}
@@ -491,7 +534,18 @@ export default function Dashboard() {
             style={bannerToneStyle('violet')}
           >
             <div className="flex flex-wrap items-start gap-3">
-              <Sparkles className="mt-0.5 size-4 text-[#5540BE]" />
+              {/* Same gradient-patch-plus-overlapping-badge grammar as the
+                  card header (categoryBannerStyle), miniaturised into a
+                  leading avatar — this callout is not a category, but it
+                  should still visually rhyme with the cards below it. */}
+              <span
+                className="relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-[8px]"
+                style={categoryBannerStyle('#6D5BD0')}
+              >
+                <span className="absolute -bottom-1 -left-1 flex size-6 items-center justify-center rounded-full border border-border bg-card shadow-[0_1px_3px_rgba(20,20,25,0.12)]">
+                  <Sparkles className="size-3.5 text-[#5540BE]" />
+                </span>
+              </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">{t('Build human supply before a buyer arrives')}</p>
                 <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
