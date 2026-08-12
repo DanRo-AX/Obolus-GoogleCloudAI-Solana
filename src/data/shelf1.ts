@@ -74,9 +74,19 @@ export const OPEN_PROBLEMS: OpenProblem[] = [
     body: 'If twelve documents fit a call that needs seven, something has to choose. The ranker already weighs relevance, trust, freshness, personalized PageRank, author diversity, and budget. What it does not do yet is hold up against someone gaming it: the weights are not calibrated against outcomes, the evidence is not identity-resistant, and Sybil and spam have to be measured continuously rather than once.',
   },
   {
+    status: 'Open',
+    title: 'Three strikes instead of an ID check',
+    body: 'Sign-up needs a wallet, not proof of identity, so nothing confirms who is actually behind an answer. Quality is held by a conduct ladder instead: a false claim or a low-quality answer earns a strike, and three strikes suspend the account from answering. The rating and dispute loop feeds the same ladder, so a bad answer still costs something even without a name behind it.',
+  },
+  {
     status: 'Next',
     title: 'Low-effort answers',
     body: 'In already: specificity checks, the short interviews, reports, three strikes, passage locks, and disputes. Not in: proof that a person is a person, and independent verification that an answer held up. A hard identity check would settle both and would also stop people connecting a wallet at all, so real names stay out of the product and the strikes and the rating loop carry it until then.',
+  },
+  {
+    status: 'Next',
+    title: 'A verified tier, at triple the price',
+    body: 'Coming later: a verified-member tier, with some open calls accepting only verified answers. The floor price triples — open answers move from ₩300–900 to ₩1,500 and up, typically ₩1,500–3,000, and document opens move from ₩5–20 to ₩30–100. Verified supply is scarce and askers will pay more for it, which is also the incentive to get verified; how verification itself will work is not decided yet.',
   },
 ]
 
@@ -277,7 +287,7 @@ export const SECTIONS: Section[] = [
     blocks: [
       {
         kind: 'p',
-        text: 'Four things are open. The first one is the one that decides whether any of the rest matters.',
+        text: 'Six things are open. The first one is the one that decides whether any of the rest matters.',
       },
     ],
   },
