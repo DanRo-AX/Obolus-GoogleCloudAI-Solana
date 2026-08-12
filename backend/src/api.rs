@@ -47,8 +47,9 @@ use crate::{
         SubmitDocumentFeedbackRequest, SubmitShelfStarterAnswerRequest,
         SubmitShelfStarterAnswerResponse, SynthesizeAnswerRequest, SynthesizeAnswerResponse,
         SynthesizePaidAnswerRequest, UpdateMemoryRequest, UpdatePreferencesRequest,
-        UpsertProfileRequest, UserAccount, UserProfile, VerifyWalletRequest,
-        WalletAuthVerifyRequest, WalletChallenge, WalletChallengeRequest, WalletSiwxLink,
+        UpsertProfileRequest, UserAccount, UserProfile, VerifyWalletRequest, WalletAuthChallenge,
+        WalletAuthChallengeRequest, WalletAuthVerifyRequest, WalletChallenge,
+        WalletChallengePurpose, WalletChallengeRequest, WalletSiwxLink,
     },
     environment::{
         boolean_value, managed_runtime_environment, monotonic_unix_time_ms, unsigned_integer_value,
@@ -64,7 +65,21 @@ use crate::{
 
 const SESSION_COOKIE: &str = "openshelf_session";
 const PREPAID_SESSION_HEADER: &str = "x-openshelf-wallet-session";
+/// Same-origin HttpOnly cookie carrying the prepaid wallet session token,
+/// added alongside PREPAID_SESSION_HEADER (GitHub issue #46). Direct
+/// browser-to-Rust calls (payment_bundle_quote_for_payer) can rely on the
+/// cookie alone; requests that must reach the separate payment-gateway
+/// service (a different origin in local dev, and outside this fix's Rust +
+/// frontend scope to modify) still carry the header explicitly. See
+/// prepaid_session_token below and src/lib/x402.ts's tab-scoped in-memory
+/// fallback.
+const PREPAID_SESSION_COOKIE: &str = "openshelf_prepaid_session";
 const SESSION_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
+/// Reduced from an earlier 30-day default (GitHub issue #46): a bearer able
+/// to spend deposited prepaid credit for a month is a large blast radius if
+/// leaked. Keep in sync with the validation upper bound in
+/// Store::issue_prepaid_wallet_session.
+const PREPAID_SESSION_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 const INTERNAL_TOKEN_HEADER: &str = "x-openshelf-internal-token";
 const RESEARCH_PROTOCOL_HEADER: &str = "x-openshelf-research-protocol";
 const RESEARCH_PROTOCOL_VERSION: &str = "durable-mpp-v2";
@@ -773,14 +788,18 @@ async fn login(
 
 async fn create_wallet_auth_challenge(
     State(state): State<Arc<AppState>>,
-    Json(request): Json<WalletChallengeRequest>,
-) -> Result<(StatusCode, HeaderMap, Json<WalletChallenge>), ApiError> {
+    Json(request): Json<WalletAuthChallengeRequest>,
+) -> Result<(StatusCode, HeaderMap, Json<WalletAuthChallenge>), ApiError> {
+    state.store.wallet_challenge_rate_limited(&request.wallet)?;
     let challenge = state.store.create_wallet_auth_challenge(
         &request.wallet,
         &random_token(),
         &state.frontend_origin,
         5 * 60 * 1_000,
+        request.purpose,
+        &state.payment_policy,
     )?;
+    state.store.note_wallet_challenge_attempt(&request.wallet)?;
     Ok((
         StatusCode::CREATED,
         private_no_store_headers(),
@@ -793,9 +812,17 @@ async fn verify_wallet_auth(
     Json(request): Json<WalletAuthVerifyRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let wallet = request.wallet.trim();
-    state
-        .store
-        .consume_wallet_auth_challenge(wallet, &request.challenge_id, &request.signature)?;
+    state.store.wallet_challenge_rate_limited(wallet)?;
+    if let Err(error) = state.store.consume_wallet_auth_challenge(
+        wallet,
+        &request.challenge_id,
+        &request.signature,
+        WalletChallengePurpose::WalletLoginV1,
+    ) {
+        state.store.note_wallet_challenge_attempt(wallet)?;
+        return Err(error.into());
+    }
+    state.store.clear_wallet_challenge_attempts(wallet)?;
 
     let mut created = false;
     let user = if let Some(user) = state.store.wallet_identity(wallet)? {
@@ -876,7 +903,8 @@ async fn logout(
         state.store.revoke_session(&hash)?;
     }
     let mut response_headers = HeaderMap::new();
-    response_headers.insert(header::SET_COOKIE, expired_session_cookie(&state)?);
+    response_headers.append(header::SET_COOKIE, expired_session_cookie(&state)?);
+    response_headers.append(header::SET_COOKIE, expired_prepaid_cookie(&state)?);
     Ok((StatusCode::NO_CONTENT, response_headers))
 }
 
@@ -1886,7 +1914,8 @@ async fn delete_account(
     let user = authenticated(&state, &headers)?;
     state.store.delete_account(&user.id)?;
     let mut response_headers = HeaderMap::new();
-    response_headers.insert(header::SET_COOKIE, expired_session_cookie(&state)?);
+    response_headers.append(header::SET_COOKIE, expired_session_cookie(&state)?);
+    response_headers.append(header::SET_COOKIE, expired_prepaid_cookie(&state)?);
     Ok((StatusCode::NO_CONTENT, response_headers))
 }
 
@@ -2077,23 +2106,39 @@ async fn create_prepaid_session(
     Json(request): Json<CreatePrepaidSessionRequest>,
 ) -> Result<(StatusCode, HeaderMap, Json<PrepaidWalletSession>), ApiError> {
     let user = authenticated(&state, &headers)?;
-    state.store.consume_wallet_auth_challenge(
-        &request.wallet,
+    let wallet = request.wallet.trim().to_owned();
+    state.store.wallet_challenge_rate_limited(&wallet)?;
+    if let Err(error) = state.store.consume_wallet_auth_challenge(
+        &wallet,
         &request.challenge_id,
         &request.signature,
-    )?;
+        WalletChallengePurpose::PrepaidSpendV1,
+    ) {
+        state.store.note_wallet_challenge_attempt(&wallet)?;
+        return Err(error.into());
+    }
+    state.store.clear_wallet_challenge_attempts(&wallet)?;
     let session = state.store.issue_prepaid_wallet_session(
         &user.id,
-        &request.wallet,
+        &wallet,
         &random_token(),
-        30 * 24 * 60 * 60 * 1_000,
+        PREPAID_SESSION_TTL_MS,
         &state.payment_policy,
     )?;
-    Ok((
-        StatusCode::CREATED,
-        private_no_store_headers(),
-        Json(session),
-    ))
+    let mut cookie = format!(
+        "{PREPAID_SESSION_COOKIE}={}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}",
+        session.token,
+        PREPAID_SESSION_TTL_MS / 1_000
+    );
+    if state.secure_cookies {
+        cookie.push_str("; Secure");
+    }
+    let mut response_headers = private_no_store_headers();
+    response_headers.insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&cookie).map_err(ApiError::internal)?,
+    );
+    Ok((StatusCode::CREATED, response_headers, Json(session)))
 }
 
 async fn prepaid_balance(
@@ -2117,18 +2162,14 @@ async fn payment_bundle_quote_for_payer(
     Path(id): Path<String>,
 ) -> Result<(HeaderMap, Json<PaymentBundleQuote>), ApiError> {
     let access_token = query_access_token(&headers)?;
-    let wallet_session = headers
-        .get(PREPAID_SESSION_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+    let wallet_session = prepaid_session_token(&headers)
         .ok_or_else(|| ApiError::unauthorized("prepaid wallet session is required"))?;
     Ok((
         private_no_store_headers(),
         Json(state.store.payment_bundle_quote_for_payer(
             &id,
             &token_hash(access_token),
-            &token_hash(wallet_session),
+            &token_hash(&wallet_session),
         )?),
     ))
 }
@@ -2997,6 +3038,15 @@ fn expired_session_cookie(state: &AppState) -> Result<HeaderValue, ApiError> {
     HeaderValue::from_str(&cookie).map_err(ApiError::internal)
 }
 
+fn expired_prepaid_cookie(state: &AppState) -> Result<HeaderValue, ApiError> {
+    let mut cookie =
+        format!("{PREPAID_SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+    if state.secure_cookies {
+        cookie.push_str("; Secure");
+    }
+    HeaderValue::from_str(&cookie).map_err(ApiError::internal)
+}
+
 fn authenticated(state: &AppState, headers: &HeaderMap) -> Result<UserAccount, ApiError> {
     let token =
         session_token(headers).ok_or_else(|| ApiError::unauthorized("sign in to continue"))?;
@@ -3028,6 +3078,33 @@ fn session_token(headers: &HeaderMap) -> Option<String> {
             cookies.split(';').find_map(|cookie| {
                 let (name, value) = cookie.trim().split_once('=')?;
                 (name == SESSION_COOKIE).then(|| value.to_owned())
+            })
+        })
+}
+
+/// Mirrors session_token's header-or-cookie precedence for the prepaid
+/// wallet session. The explicit header stays supported first because the
+/// payment-gateway service (a separate origin from Rust in local dev, and
+/// outside this fix's Rust + frontend scope) forwards the browser's raw
+/// header value rather than a cookie; the HttpOnly cookie set by
+/// create_prepaid_session is checked as a same-origin fallback for direct
+/// browser-to-Rust calls. See GitHub issue #46.
+fn prepaid_session_token(headers: &HeaderMap) -> Option<String> {
+    if let Some(token) = headers
+        .get(PREPAID_SESSION_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(token.to_owned());
+    }
+    headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split(';').find_map(|cookie| {
+                let (name, value) = cookie.trim().split_once('=')?;
+                (name == PREPAID_SESSION_COOKIE).then(|| value.to_owned())
             })
         })
 }
@@ -3329,6 +3406,7 @@ impl From<StoreError> for ApiError {
             StoreError::Validation(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid_request"),
             StoreError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             StoreError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            StoreError::RateLimited(_) => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             StoreError::DocumentNotQuoted => (StatusCode::FORBIDDEN, "document_not_quoted"),
             StoreError::Database(_) | StoreError::Io(_) | StoreError::LockPoisoned => {
                 tracing::error!(error = %error, "backend store error");
@@ -3444,7 +3522,8 @@ mod tests {
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
                         json!({
-                            "wallet": "FhRsUMzQieS8TXacCaGhLZrFNEQrUwqGkYBVzLeiUP8H"
+                            "wallet": "FhRsUMzQieS8TXacCaGhLZrFNEQrUwqGkYBVzLeiUP8H",
+                            "purpose": "wallet_login_v1"
                         })
                         .to_string(),
                     ))
@@ -3508,7 +3587,9 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/auth/wallet/challenge")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(json!({ "wallet": wallet }).to_string()))
+                    .body(Body::from(
+                        json!({ "wallet": wallet, "purpose": "wallet_login_v1" }).to_string(),
+                    ))
                     .unwrap(),
             )
             .await
@@ -3710,7 +3791,9 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/auth/wallet/challenge")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(json!({ "wallet": wallet }).to_string()))
+                    .body(Body::from(
+                        json!({ "wallet": wallet, "purpose": "wallet_login_v1" }).to_string(),
+                    ))
                     .unwrap(),
             )
             .await
@@ -3752,6 +3835,63 @@ mod tests {
             serde_json::from_slice(&signed_in.into_body().collect().await.unwrap().to_bytes())
                 .unwrap();
         assert_eq!(signed_in_body["user"]["id"], user_id);
+    }
+
+    /// GitHub issue #46 acceptance criterion: a login challenge cannot mint a
+    /// prepaid session, enforced end to end over HTTP (the store-level
+    /// enforcement is covered separately in store::tests).
+    #[tokio::test]
+    async fn wallet_login_challenge_cannot_be_redeemed_at_the_prepaid_session_endpoint() {
+        let app = demo_app();
+        let cookie = register(&app, "prepaid-purpose-guard@example.com").await;
+        let signing_key = SigningKey::from_bytes(&[108_u8; 32]);
+        let wallet = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
+
+        let challenge_response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/auth/wallet/challenge")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({ "wallet": wallet, "purpose": "wallet_login_v1" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(challenge_response.status(), StatusCode::CREATED);
+        let challenge: Value = serde_json::from_slice(
+            &challenge_response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .unwrap();
+        assert_eq!(challenge["purpose"], "wallet_login_v1");
+        let message = challenge["message"].as_str().unwrap();
+        let signature =
+            bs58::encode(signing_key.sign(message.as_bytes()).to_bytes()).into_string();
+
+        let prepaid_attempt = app
+            .oneshot(
+                Request::post("/api/v1/prepaid/session")
+                    .header(header::COOKIE, &cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "wallet": wallet,
+                            "challengeId": challenge["id"],
+                            "signature": signature
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(prepaid_attempt.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

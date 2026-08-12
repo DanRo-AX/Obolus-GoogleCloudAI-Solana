@@ -34,7 +34,8 @@ use crate::{
         ReviewDocumentFeedbackRequest, SearchFilters, Settlement, SettlementOperationsMetrics,
         ShelfStarter, ShelfStarterDraft, SiwxPayload, SubmitAnswerResponse,
         SubmitDocumentFeedbackRequest, SubmitShelfStarterAnswerResponse, UpdatePreferencesRequest,
-        UpsertProfileRequest, UserAccount, UserProfile, WalletChallenge,
+        UpsertProfileRequest, UserAccount, UserProfile, WalletAuthChallenge, WalletChallenge,
+        WalletChallengePurpose,
     },
     environment::{boolean_value, managed_runtime_environment, monotonic_unix_time_ms},
     params, quality, seed,
@@ -48,6 +49,13 @@ const AGENT_MATCH_THRESHOLD: f32 = 0.82;
 const SIGNUP_CREDIT_KRW: u64 = 100_000;
 const LOGIN_FAILURE_WINDOW_MS: u64 = 15 * 60 * 1_000;
 const LOGIN_BLOCK_MS: u64 = 15 * 60 * 1_000;
+/// Wallet challenge creation and verification attempts allowed per wallet in
+/// `WALLET_CHALLENGE_WINDOW_MS` before `wallet_challenge_rate_limited` blocks
+/// further attempts for `WALLET_CHALLENGE_BLOCK_MS`. There was no rate limit
+/// on either endpoint before GitHub issue #46.
+const WALLET_CHALLENGE_LIMIT: u64 = 20;
+const WALLET_CHALLENGE_WINDOW_MS: u64 = 10 * 60 * 1_000;
+const WALLET_CHALLENGE_BLOCK_MS: u64 = 15 * 60 * 1_000;
 const MAX_PREPAID_TOP_UP_ATOMIC: u64 = 1_000 * 1_000_000;
 const QUERY_TOKEN_TTL_MS: u64 = 24 * 60 * 60 * 1_000;
 const AI_GENERATION_BUDGET_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
@@ -191,6 +199,8 @@ pub enum StoreError {
     Conflict(String),
     #[error("{0}")]
     Unauthorized(String),
+    #[error("{0}")]
+    RateLimited(String),
     #[error("document was not quoted for this query")]
     DocumentNotQuoted,
 }
@@ -2096,6 +2106,25 @@ impl Store {
                  ON prepaid_wallet_sessions(wallet, expires_at DESC);
              CREATE INDEX IF NOT EXISTS idx_prepaid_ledger_wallet
                  ON prepaid_ledger(wallet, created_at DESC);",
+        )?;
+        // GitHub issue #46: wallet_auth_challenges rows were purpose-less, so
+        // a login proof and a prepaid-spend proof were interchangeable.
+        // Existing/legacy rows predate purpose tagging and were only ever
+        // used for login, so they default to wallet_login_v1.
+        add_column_if_missing(
+            connection,
+            "wallet_auth_challenges",
+            "purpose",
+            "TEXT NOT NULL DEFAULT 'wallet_login_v1'",
+        )?;
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS wallet_challenge_limits (
+                 wallet TEXT PRIMARY KEY,
+                 attempt_count INTEGER NOT NULL,
+                 window_started_at INTEGER NOT NULL,
+                 blocked_until INTEGER NOT NULL,
+                 updated_at INTEGER NOT NULL
+             );",
         )?;
         add_column_if_missing(
             connection,
@@ -5661,7 +5690,9 @@ impl Store {
         nonce: &str,
         origin: &str,
         ttl_ms: u64,
-    ) -> Result<WalletChallenge, StoreError> {
+        purpose: WalletChallengePurpose,
+        policy: &PaymentQuotePolicy,
+    ) -> Result<WalletAuthChallenge, StoreError> {
         let wallet = wallet.trim();
         let nonce = nonce.trim();
         let origin = origin.trim();
@@ -5693,9 +5724,49 @@ impl Store {
         let now = now_ms();
         let expires_at = now.saturating_add(ttl_ms);
         let id = new_id("wallet_auth_challenge");
-        let message = format!(
-            "OBOLUS wallet sign in\nOrigin: {origin}\nWallet: {wallet}\nChallenge: {id}\nNonce: {nonce}\nExpires: {expires_at}"
-        );
+        // The purpose is baked into the signed bytes themselves (not just the
+        // database row) so Phantom's own prompt visibly distinguishes a plain
+        // sign-in from a spending authorization, and so a captured signature
+        // cannot be replayed against a different purpose even if the stored
+        // row were somehow altered. See GitHub issue #46.
+        let message = match purpose {
+            WalletChallengePurpose::WalletLoginV1 => format!(
+                "OBOLUS wallet sign in\n\
+                 Purpose: {purpose}\n\
+                 This signature only proves wallet ownership for Obolus sign-in. It authorizes no spending and is not a Solana transaction.\n\
+                 Origin: {origin}\n\
+                 Wallet: {wallet}\n\
+                 Challenge: {id}\n\
+                 Nonce: {nonce}\n\
+                 Expires: {expires_at}"
+            ),
+            WalletChallengePurpose::PrepaidSpendV1 => {
+                validate_payment_policy(policy)?;
+                let pay_to = policy.bundle_recipient.as_deref().ok_or_else(|| {
+                    StoreError::Conflict(
+                        "prepaid authorization requires OPENSHELF_BUNDLE_RECEIVER".to_owned(),
+                    )
+                })?;
+                format!(
+                    "OBOLUS prepaid spending authorization\n\
+                     Purpose: {purpose}\n\
+                     This authorizes ONLY Obolus prepaid credit spending. It is not a sign-in and not a Solana transaction.\n\
+                     Origin: {origin}\n\
+                     Wallet: {wallet}\n\
+                     Network: {network}\n\
+                     Asset: {asset}\n\
+                     Recipient: {pay_to}\n\
+                     Service: Obolus flash-research document purchases only\n\
+                     Spend limit: bounded to your deposited Obolus prepaid balance for this wallet; this authorization can never draw more than you have deposited\n\
+                     Challenge: {id}\n\
+                     Nonce: {nonce}\n\
+                     Expires: {expires_at}\n\
+                     This signature never grants a Solana private key, SPL delegate, token-account authority, or withdrawal capability.",
+                    network = policy.network.trim(),
+                    asset = policy.asset.trim(),
+                )
+            }
+        };
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
         transaction.execute(
@@ -5704,24 +5775,39 @@ impl Store {
         )?;
         transaction.execute(
             "INSERT INTO wallet_auth_challenges
-             (id, wallet, message, expires_at, consumed_at, created_at)
-             VALUES (?1, ?2, ?3, ?4, NULL, ?5)",
-            params![id, wallet, message, as_i64(expires_at)?, as_i64(now)?],
+             (id, wallet, message, purpose, expires_at, consumed_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)",
+            params![
+                id,
+                wallet,
+                message,
+                purpose.as_str(),
+                as_i64(expires_at)?,
+                as_i64(now)?
+            ],
         )?;
         transaction.commit()?;
-        Ok(WalletChallenge {
+        Ok(WalletAuthChallenge {
             id,
             wallet: wallet.to_owned(),
             message,
+            purpose,
             expires_at,
         })
     }
 
+    /// `expected_purpose` is supplied by the calling endpoint, never by the
+    /// client request body, so the server (not the caller) decides which
+    /// authority a proof may exercise. A challenge whose stored purpose does
+    /// not match is rejected even if the signature itself is valid — this is
+    /// what stops a login proof from minting a prepaid session or vice versa
+    /// (GitHub issue #46 acceptance criteria).
     pub fn consume_wallet_auth_challenge(
         &self,
         wallet: &str,
         challenge_id: &str,
         signature: &str,
+        expected_purpose: WalletChallengePurpose,
     ) -> Result<(), StoreError> {
         let wallet = wallet.trim();
         let challenge_id = challenge_id.trim();
@@ -5734,16 +5820,17 @@ impl Store {
         let now = now_ms();
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
-        let (message, expires_at, consumed_at) = transaction
+        let (message, purpose, expires_at, consumed_at) = transaction
             .query_row(
-                "SELECT message, expires_at, consumed_at
+                "SELECT message, purpose, expires_at, consumed_at
                  FROM wallet_auth_challenges WHERE id = ?1 AND wallet = ?2",
                 params![challenge_id, wallet],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
-                        as_u64(row.get(1)?)?,
-                        row.get::<_, Option<i64>>(2)?.map(as_u64).transpose()?,
+                        row.get::<_, String>(1)?,
+                        as_u64(row.get(2)?)?,
+                        row.get::<_, Option<i64>>(3)?.map(as_u64).transpose()?,
                     ))
                 },
             )
@@ -5759,6 +5846,11 @@ impl Store {
                 "this wallet sign-in challenge has expired".to_owned(),
             ));
         }
+        if purpose != expected_purpose.as_str() {
+            return Err(StoreError::Unauthorized(
+                "this wallet proof was not issued for this action".to_owned(),
+            ));
+        }
         verify_solana_signature(wallet, message.as_bytes(), signature)?;
         let changed = transaction.execute(
             "UPDATE wallet_auth_challenges SET consumed_at = ?1
@@ -5771,6 +5863,104 @@ impl Store {
             ));
         }
         transaction.commit()?;
+        Ok(())
+    }
+
+    /// Mirrors `check_login_allowed`/`record_login_failure`/`clear_login_failures`
+    /// for wallet challenge creation and verification. There was no rate
+    /// limiting at all on either endpoint before GitHub issue #46; this adds
+    /// a per-wallet sliding-window throttle so a script cannot flood Phantom
+    /// sign prompts or brute-force challenge verification. It is intentionally
+    /// the same shape as the existing login lockout so it is easy to audit
+    /// alongside it.
+    pub fn wallet_challenge_rate_limited(&self, wallet: &str) -> Result<(), StoreError> {
+        let wallet = wallet.trim();
+        let now = now_ms();
+        let blocked_until = self
+            .connection()?
+            .query_row(
+                "SELECT blocked_until FROM wallet_challenge_limits WHERE wallet = ?1",
+                [wallet],
+                |row| as_u64(row.get(0)?),
+            )
+            .optional()?;
+        if blocked_until.is_some_and(|blocked_until| blocked_until > now) {
+            tracing::warn!(wallet = %wallet, "wallet challenge activity rate limited");
+            return Err(StoreError::RateLimited(
+                "too many wallet challenge attempts; wait before retrying".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn note_wallet_challenge_attempt(&self, wallet: &str) -> Result<(), StoreError> {
+        let wallet = wallet.trim();
+        if wallet.is_empty() || wallet.len() > 64 {
+            return Ok(());
+        }
+        let now = now_ms();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM wallet_challenge_limits
+             WHERE blocked_until < ?1 AND window_started_at < ?2",
+            params![
+                as_i64(now)?,
+                as_i64(now.saturating_sub(24 * 60 * 60 * 1_000))?
+            ],
+        )?;
+        let existing = transaction
+            .query_row(
+                "SELECT attempt_count, window_started_at
+                 FROM wallet_challenge_limits WHERE wallet = ?1",
+                [wallet],
+                |row| Ok((as_u64(row.get(0)?)?, as_u64(row.get(1)?)?)),
+            )
+            .optional()?;
+        let (attempt_count, window_started_at) = match existing {
+            Some((count, started_at))
+                if started_at.saturating_add(WALLET_CHALLENGE_WINDOW_MS) > now =>
+            {
+                (count.saturating_add(1), started_at)
+            }
+            _ => (1, now),
+        };
+        let blocked_until = if attempt_count >= WALLET_CHALLENGE_LIMIT {
+            tracing::warn!(
+                wallet = %wallet,
+                attempt_count,
+                "wallet challenge activity exceeded the rate limit; blocking"
+            );
+            now.saturating_add(WALLET_CHALLENGE_BLOCK_MS)
+        } else {
+            0
+        };
+        transaction.execute(
+            "INSERT INTO wallet_challenge_limits
+             (wallet, attempt_count, window_started_at, blocked_until, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(wallet) DO UPDATE SET
+               attempt_count = excluded.attempt_count,
+               window_started_at = excluded.window_started_at,
+               blocked_until = excluded.blocked_until,
+               updated_at = excluded.updated_at",
+            params![
+                wallet,
+                as_i64(attempt_count)?,
+                as_i64(window_started_at)?,
+                as_i64(blocked_until)?,
+                as_i64(now)?,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn clear_wallet_challenge_attempts(&self, wallet: &str) -> Result<(), StoreError> {
+        self.connection()?.execute(
+            "DELETE FROM wallet_challenge_limits WHERE wallet = ?1",
+            [wallet.trim()],
+        )?;
         Ok(())
     }
 
@@ -8216,6 +8406,16 @@ impl Store {
              WHERE artifact_kind = 'shelf_starters' AND scope_id = ?1",
             [user_id],
         )?;
+        // Explicit for audit clarity (GitHub issue #46's revocation acceptance
+        // criterion); ON DELETE CASCADE on prepaid_wallet_sessions.user_id
+        // already removes these rows when the user row below is deleted, and
+        // require_prepaid_session's join on users.deleted_at also fails
+        // closed independently of both.
+        transaction.execute(
+            "UPDATE prepaid_wallet_sessions SET revoked_at = ?1
+             WHERE user_id = ?2 AND revoked_at IS NULL",
+            params![as_i64(deletion_started_at)?, user_id],
+        )?;
         transaction.execute("DELETE FROM sessions WHERE user_id = ?1", [user_id])?;
         transaction.execute("DELETE FROM balances WHERE user_id = ?1", [user_id])?;
         transaction.execute("DELETE FROM users WHERE id = ?1", [user_id])?;
@@ -9940,7 +10140,11 @@ impl Store {
                 "prepaid session token must be 32 bytes of hex".to_owned(),
             ));
         }
-        if !(60_000..=30 * 24 * 60 * 60 * 1_000).contains(&ttl_ms) {
+        // Upper bound matches PREPAID_SESSION_TTL_MS in api.rs (7 days, down
+        // from an earlier 30-day default — GitHub issue #46: a bearer that
+        // can spend deposited prepaid credit for a month is a large blast
+        // radius if leaked).
+        if !(60_000..=7 * 24 * 60 * 60 * 1_000).contains(&ttl_ms) {
             return Err(StoreError::Validation(
                 "prepaid session ttl is outside the supported range".to_owned(),
             ));
@@ -18215,7 +18419,7 @@ mod tests {
             RecordChainSettlementRequest, ReleaseResearchPaymentRequest, ResolveQuestionRequest,
             ReviewDisputeRequest, ReviewDocumentFeedbackRequest, SearchFilters, ShelfStarterDraft,
             SiwxPayload, SubmitAnswerResponse, SubmitDocumentFeedbackRequest,
-            UpdatePreferencesRequest, UpsertProfileRequest,
+            UpdatePreferencesRequest, UpsertProfileRequest, WalletChallengePurpose,
         },
         params,
         search::Resolver,
@@ -18224,7 +18428,8 @@ mod tests {
     use super::{
         AI_GENERATION_BUDGET_WINDOW_MS, AiArtifactMetadata, AiGenerationClaim, BASE64_STANDARD,
         BUNDLE_FUNDING_AGENT_DIRECT, LOGIN_FAILURE_LIMIT, PayShDeliveryRequest, PaymentQuotePolicy,
-        Store, StoreError, as_i64, hex_digest, new_id, now_ms, siwx_message,
+        Store, StoreError, WALLET_CHALLENGE_LIMIT, as_i64, as_u64, hex_digest, new_id, now_ms,
+        siwx_message,
     };
 
     #[test]
@@ -19205,6 +19410,385 @@ mod tests {
             ),
             Err(StoreError::Unauthorized(_))
         ));
+    }
+
+    fn prepaid_test_policy(receiver: String) -> PaymentQuotePolicy {
+        PaymentQuotePolicy {
+            fallback_recipient: Some(receiver.clone()),
+            bundle_recipient: Some(receiver),
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
+            krw_per_usdc: 1_350,
+            ttl_ms: 300_000,
+        }
+    }
+
+    fn sign(signing_key: &SigningKey, message: &str) -> String {
+        bs58::encode(signing_key.sign(message.as_bytes()).to_bytes()).into_string()
+    }
+
+    // GitHub issue #46: wallet_auth_challenges rows were purpose-less, so a
+    // login proof and a prepaid-spend proof were interchangeable. These
+    // tests exercise the acceptance criteria directly against the store
+    // layer (create_wallet_auth_challenge / consume_wallet_auth_challenge).
+
+    #[test]
+    fn login_challenge_cannot_create_a_prepaid_session() {
+        let store = Store::in_memory().unwrap();
+        let signing_key = SigningKey::from_bytes(&[93; 32]);
+        let wallet = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[94; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = prepaid_test_policy(receiver);
+
+        let challenge = store
+            .create_wallet_auth_challenge(
+                &wallet,
+                &"a".repeat(64),
+                "http://localhost:4319",
+                300_000,
+                WalletChallengePurpose::WalletLoginV1,
+                &policy,
+            )
+            .unwrap();
+        assert_eq!(challenge.purpose, WalletChallengePurpose::WalletLoginV1);
+        let signature = sign(&signing_key, &challenge.message);
+
+        assert!(matches!(
+            store.consume_wallet_auth_challenge(
+                &wallet,
+                &challenge.id,
+                &signature,
+                WalletChallengePurpose::PrepaidSpendV1,
+            ),
+            Err(StoreError::Unauthorized(_))
+        ));
+        // The rejected attempt must not have consumed the challenge: it is
+        // still usable for the purpose it actually carries.
+        store
+            .consume_wallet_auth_challenge(
+                &wallet,
+                &challenge.id,
+                &signature,
+                WalletChallengePurpose::WalletLoginV1,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn prepaid_challenge_cannot_create_a_login_session() {
+        let store = Store::in_memory().unwrap();
+        let signing_key = SigningKey::from_bytes(&[95; 32]);
+        let wallet = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[96; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = prepaid_test_policy(receiver);
+
+        let challenge = store
+            .create_wallet_auth_challenge(
+                &wallet,
+                &"b".repeat(64),
+                "http://localhost:4319",
+                300_000,
+                WalletChallengePurpose::PrepaidSpendV1,
+                &policy,
+            )
+            .unwrap();
+        assert_eq!(challenge.purpose, WalletChallengePurpose::PrepaidSpendV1);
+        let signature = sign(&signing_key, &challenge.message);
+
+        assert!(matches!(
+            store.consume_wallet_auth_challenge(
+                &wallet,
+                &challenge.id,
+                &signature,
+                WalletChallengePurpose::WalletLoginV1,
+            ),
+            Err(StoreError::Unauthorized(_))
+        ));
+        store
+            .consume_wallet_auth_challenge(
+                &wallet,
+                &challenge.id,
+                &signature,
+                WalletChallengePurpose::PrepaidSpendV1,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn wallet_auth_messages_state_the_required_terms_and_visibly_differ() {
+        let store = Store::in_memory().unwrap();
+        let wallet = bs58::encode(SigningKey::from_bytes(&[97; 32]).verifying_key().as_bytes())
+            .into_string();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[98; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = prepaid_test_policy(receiver.clone());
+
+        let login = store
+            .create_wallet_auth_challenge(
+                &wallet,
+                &"c".repeat(64),
+                "http://localhost:4319",
+                300_000,
+                WalletChallengePurpose::WalletLoginV1,
+                &policy,
+            )
+            .unwrap();
+        assert!(login.message.starts_with("OBOLUS wallet sign in"));
+        assert!(login.message.contains("Purpose: wallet_login_v1"));
+        assert!(login.message.contains("authorizes no spending"));
+
+        let prepaid = store
+            .create_wallet_auth_challenge(
+                &wallet,
+                &"d".repeat(64),
+                "http://localhost:4319",
+                300_000,
+                WalletChallengePurpose::PrepaidSpendV1,
+                &policy,
+            )
+            .unwrap();
+        // Required statements (GitHub issue #46 "Required changes"): Obolus
+        // prepaid credit only; network and asset; service/recipient
+        // boundary; expiry; a bounded-spend policy; and the pre-existing
+        // security-boundary invariant.
+        assert!(prepaid.message.starts_with("OBOLUS prepaid spending authorization"));
+        assert!(prepaid.message.contains("Purpose: prepaid_spend_v1"));
+        assert!(prepaid.message.contains("ONLY Obolus prepaid credit spending"));
+        assert!(prepaid.message.contains(&policy.network));
+        assert!(prepaid.message.contains(&policy.asset));
+        assert!(prepaid.message.contains(&format!("Recipient: {receiver}")));
+        assert!(prepaid.message.contains("Obolus flash-research document purchases only"));
+        assert!(prepaid.message.contains(&format!("Expires: {}", prepaid.expires_at)));
+        assert!(prepaid.message.contains("bounded to your deposited Obolus prepaid balance"));
+        assert!(prepaid
+            .message
+            .contains("never grants a Solana private key, SPL delegate, token-account authority, or withdrawal capability"));
+        assert_ne!(login.message, prepaid.message);
+        // Phantom shows the raw message text verbatim, so distinguishing the
+        // first line alone already satisfies "the Phantom prompt visibly
+        // distinguishes login from prepaid spending authorization".
+        assert_ne!(
+            login.message.lines().next(),
+            prepaid.message.lines().next()
+        );
+    }
+
+    #[test]
+    fn creating_a_prepaid_challenge_without_a_configured_receiver_fails_closed() {
+        let store = Store::in_memory().unwrap();
+        let wallet = bs58::encode(SigningKey::from_bytes(&[99; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = PaymentQuotePolicy {
+            fallback_recipient: None,
+            bundle_recipient: None,
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
+            krw_per_usdc: 1_350,
+            ttl_ms: 300_000,
+        };
+        assert!(matches!(
+            store.create_wallet_auth_challenge(
+                &wallet,
+                &"e".repeat(64),
+                "http://localhost:4319",
+                300_000,
+                WalletChallengePurpose::PrepaidSpendV1,
+                &policy,
+            ),
+            Err(StoreError::Conflict(_))
+        ));
+    }
+
+    #[test]
+    fn expired_wallet_auth_challenge_is_rejected() {
+        let store = Store::in_memory().unwrap();
+        let signing_key = SigningKey::from_bytes(&[100; 32]);
+        let wallet = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
+        let expired_id = "wallet_auth_challenge_expired-test";
+        let message = format!(
+            "OBOLUS wallet sign in\nPurpose: wallet_login_v1\nOrigin: http://localhost:4319\nWallet: {wallet}\nChallenge: {expired_id}\nNonce: {}\nExpires: {}",
+            "f".repeat(64),
+            now_ms().saturating_sub(1_000)
+        );
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO wallet_auth_challenges
+                 (id, wallet, message, purpose, expires_at, consumed_at, created_at)
+                 VALUES (?1, ?2, ?3, 'wallet_login_v1', ?4, NULL, ?5)",
+                params![
+                    expired_id,
+                    wallet,
+                    message,
+                    as_i64(now_ms().saturating_sub(1_000)).unwrap(),
+                    as_i64(now_ms().saturating_sub(2_000)).unwrap(),
+                ],
+            )
+            .unwrap();
+        let signature = sign(&signing_key, &message);
+        assert!(matches!(
+            store.consume_wallet_auth_challenge(
+                &wallet,
+                expired_id,
+                &signature,
+                WalletChallengePurpose::WalletLoginV1,
+            ),
+            Err(StoreError::Conflict(reason)) if reason.contains("expired")
+        ));
+    }
+
+    #[test]
+    fn wallet_auth_challenge_replay_is_rejected_after_first_use() {
+        let store = Store::in_memory().unwrap();
+        let signing_key = SigningKey::from_bytes(&[101; 32]);
+        let wallet = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[102; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = prepaid_test_policy(receiver);
+        let challenge = store
+            .create_wallet_auth_challenge(
+                &wallet,
+                &"1".repeat(64),
+                "http://localhost:4319",
+                300_000,
+                WalletChallengePurpose::WalletLoginV1,
+                &policy,
+            )
+            .unwrap();
+        let signature = sign(&signing_key, &challenge.message);
+        store
+            .consume_wallet_auth_challenge(
+                &wallet,
+                &challenge.id,
+                &signature,
+                WalletChallengePurpose::WalletLoginV1,
+            )
+            .unwrap();
+        assert!(matches!(
+            store.consume_wallet_auth_challenge(
+                &wallet,
+                &challenge.id,
+                &signature,
+                WalletChallengePurpose::WalletLoginV1,
+            ),
+            Err(StoreError::Conflict(reason)) if reason.contains("already been used")
+        ));
+    }
+
+    #[test]
+    fn parallel_first_consumer_wins_a_wallet_auth_challenge_race() {
+        let store = Store::in_memory().unwrap();
+        let signing_key = SigningKey::from_bytes(&[103; 32]);
+        let wallet = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[104; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = prepaid_test_policy(receiver);
+        let challenge = store
+            .create_wallet_auth_challenge(
+                &wallet,
+                &"2".repeat(64),
+                "http://localhost:4319",
+                300_000,
+                WalletChallengePurpose::WalletLoginV1,
+                &policy,
+            )
+            .unwrap();
+        let signature = sign(&signing_key, &challenge.message);
+        let barrier = Arc::new(Barrier::new(4));
+        let workers = (0..4)
+            .map(|_| {
+                let store = store.clone();
+                let wallet = wallet.clone();
+                let challenge_id = challenge.id.clone();
+                let signature = signature.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    store.consume_wallet_auth_challenge(
+                        &wallet,
+                        &challenge_id,
+                        &signature,
+                        WalletChallengePurpose::WalletLoginV1,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let outcomes = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(outcomes.iter().filter(|outcome| outcome.is_ok()).count(), 1);
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| matches!(outcome, Err(StoreError::Conflict(_))))
+                .count(),
+            3
+        );
+    }
+
+    #[test]
+    fn wallet_challenge_activity_is_rate_limited_and_clears_on_success() {
+        let store = Store::in_memory().unwrap();
+        let wallet = bs58::encode(SigningKey::from_bytes(&[105; 32]).verifying_key().as_bytes())
+            .into_string();
+        for _ in 0..WALLET_CHALLENGE_LIMIT {
+            store.wallet_challenge_rate_limited(&wallet).unwrap();
+            store.note_wallet_challenge_attempt(&wallet).unwrap();
+        }
+        assert!(matches!(
+            store.wallet_challenge_rate_limited(&wallet),
+            Err(StoreError::RateLimited(_))
+        ));
+        store.clear_wallet_challenge_attempts(&wallet).unwrap();
+        store.wallet_challenge_rate_limited(&wallet).unwrap();
+    }
+
+    #[test]
+    fn account_deletion_revokes_the_prepaid_wallet_session() {
+        let store = Store::in_memory().unwrap();
+        let user_id = "prepaid-deletion-buyer";
+        ensure_user(&store, user_id);
+        let wallet = bs58::encode(SigningKey::from_bytes(&[106; 32]).verifying_key().as_bytes())
+            .into_string();
+        store.bind_wallet_identity(user_id, &wallet).unwrap();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[107; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = prepaid_test_policy(receiver);
+        store
+            .issue_prepaid_wallet_session(user_id, &wallet, &"3".repeat(64), 300_000, &policy)
+            .unwrap();
+        let sessions_before: u64 = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM prepaid_wallet_sessions
+                 WHERE user_id = ?1 AND revoked_at IS NULL",
+                [user_id],
+                |row| as_u64(row.get(0)?),
+            )
+            .unwrap();
+        assert_eq!(sessions_before, 1);
+
+        store.delete_account(user_id).unwrap();
+
+        let remaining: u64 = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM prepaid_wallet_sessions
+                 WHERE user_id = ?1 AND revoked_at IS NULL",
+                [user_id],
+                |row| as_u64(row.get(0)?),
+            )
+            .unwrap();
+        assert_eq!(
+            remaining, 0,
+            "deleting the account must leave no active prepaid session behind"
+        );
     }
 
     #[test]
