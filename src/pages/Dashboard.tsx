@@ -704,24 +704,29 @@ export default function Dashboard() {
                   )}
                 >
                   <div
-                    className="relative h-[165px] shrink-0 overflow-hidden"
+                    className="relative h-[110px] shrink-0 overflow-hidden"
                     style={{ background: cardGradient(`${order.shelf}::${order.question}`) }}
                   >
                     {/* The asker's avatar (deterministic from the shelf name, so the
                         same contributor always shows the same face), sitting inside
-                        the banner's lower-left rather than hanging below it. Sized
-                        down from the original size-[72px]/63 pair to match the
-                        shorter banner, kept large enough to stay the focal point
-                        the founder wanted. */}
+                        the banner's lower-left rather than hanging below it. */}
                     <span
-                      className="absolute bottom-3 left-3 flex size-16 items-center justify-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-[0_1px_3px_rgba(20,20,25,0.18)]"
+                      className="absolute bottom-2 left-3 flex size-14 items-center justify-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-[0_1px_3px_rgba(20,20,25,0.18)]"
                       aria-hidden="true"
                     >
                       <Avatar
                         config={deterministicAvatar(order.shelf)}
-                        size={54}
+                        size={46}
                       />
                     </span>
+                    {/* Fit score as an Airbnb-listing-style overlay pill — only
+                        when there is a real score to show (a signed-in, profiled
+                        reader); it stays hidden rather than reading 0%. */}
+                    {Math.round(fitScore(order) * 100) > 0 ? (
+                      <span className="absolute right-3 top-3 rounded-full bg-white/85 px-2 py-0.5 font-mono text-[10px] font-medium tabular-nums text-foreground shadow-[0_1px_3px_rgba(20,20,25,0.14)] backdrop-blur-sm">
+                        {t('Fit')} {Math.round(fitScore(order) * 100)}%
+                      </span>
+                    ) : null}
                   </div>
                   <div className="flex flex-1 flex-col px-4 pb-4 pt-5">
                   <div className="flex items-center justify-between gap-3">

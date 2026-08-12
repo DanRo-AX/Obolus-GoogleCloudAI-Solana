@@ -336,6 +336,7 @@ export const KO: Record<string, string> = {
   'Fewest slots left': '남은 자리가 가장 적은 순',
   'Field': '분야',
   'Filled': '마감',
+  'Fit': '적합',
   'Filtering runs before any money moves. Category, demographic band, price, consent, lock state and conduct rules cut the field first. What survives is scored on word and hash match, how recent the document is, how reliable the author has been, and how much independently verified evidence links to it.\n\nStanding cannot be bought. Paid, sponsored, inferred, self-owned, disputed and lineage links add nothing to a document’s authority.\n\nThe last pass penalises the same author twice over and near-identical passages, so an asker does not pay twenty times for one viewpoint.': '필터가 먼저 돕니다. 돈은 그다음. 분야, 인구 구간, 가격, 동의, 잠금 상태, 행동 규칙이 후보를 자릅니다. 남은 문서에 점수를 매깁니다. 단어와 해시 일치, 최신성, 저자 신뢰도, 독립 검증된 근거 연결량.\n\n지위는 돈으로 못 삽니다. 유료, 협찬, 추정, 자기 소유, 분쟁 중, 계보 링크. 문서의 권위에 하나도 보태지 않습니다.\n\n마지막 거르기가 한 번 더. 같은 저자가 겹치거나 구절이 거의 같으면 점수를 깎습니다. 한 관점에 20번 낼 일은 없습니다.',
   'First grade now': '지금 1학년',
   'Fit you': '맞는 설문',
