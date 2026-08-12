@@ -95,7 +95,7 @@ export default function Login() {
       if (!provider?.signMessage) {
         throw new Error(t('This wallet cannot sign a sign-in message.'))
       }
-      const challenge = await createWalletAuthChallenge(pubkey)
+      const challenge = await createWalletAuthChallenge(pubkey, 'wallet_login_v1')
       const signed = await provider.signMessage(
         new TextEncoder().encode(challenge.message),
         'utf8',
