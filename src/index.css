@@ -279,6 +279,24 @@
     transform: scale(1);
   }
 }
+@keyframes modal-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes modal-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
 
 @layer base {
   * {
@@ -317,6 +335,15 @@
 /* Every routed screen fades up once, so navigation reads as a move. */
 .page-enter {
   animation: page-enter 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+/* The question-preview modal: panel eases up + fades in, the scrim behind
+   it just fades — a beat quicker than the page transition since it's a
+   local overlay, not a navigation. */
+.animate-modal-panel-in {
+  animation: modal-panel-in 0.2s ease-out both;
+}
+.animate-modal-backdrop-in {
+  animation: modal-backdrop-in 0.2s ease-out both;
 }
 
 /* Slot-machine text (the provider ticker on the landing page) ------------- */
@@ -385,6 +412,12 @@
 @media (prefers-reduced-motion: reduce) {
   .char-face {
     transition: none !important;
+  }
+  .animate-modal-panel-in,
+  .animate-modal-backdrop-in {
+    animation: none;
+    opacity: 1;
+    transform: none;
   }
 }
 

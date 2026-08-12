@@ -588,7 +588,7 @@ export default function Dashboard() {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex h-11 cursor-pointer items-center gap-2 rounded-[4px] border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9"
+                className="flex h-11 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9"
               >
                 {t('Sort')}
                 <span className="text-foreground">{t(activeSort.label)}</span>
@@ -744,7 +744,7 @@ export default function Dashboard() {
                       first thing the eye lands on, clamped to two lines so a
                       long ask never pushes the rest of the card down. The
                       full text only ever shows uncut in the preview modal. */}
-                  <p className="line-clamp-2 text-[16px] font-semibold leading-snug tracking-[-0.006em] text-foreground">
+                  <p className="line-clamp-2 text-[16px] font-medium leading-snug tracking-[-0.006em] text-foreground">
                     {order.question}
                   </p>
 
@@ -776,7 +776,7 @@ export default function Dashboard() {
                       the eye treats it as its own block, not a continuation. */}
                   <div className="mt-3 flex items-end justify-between gap-3 border-t border-border/60 pt-3">
                     <div className="flex items-baseline gap-1.5">
-                      <span className="text-xl font-semibold tabular-nums text-foreground">
+                      <span className="text-xl font-medium tabular-nums text-foreground">
                         {order.unitPrice === 0
                           ? '₩0'
                           : `₩${order.unitPrice.toLocaleString()}`}
@@ -997,7 +997,7 @@ function QuestionPreviewModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="animate-modal-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
@@ -1007,7 +1007,7 @@ function QuestionPreviewModal({
         aria-labelledby="survey-preview-question"
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
-        className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-[10px] border border-border bg-card p-5 shadow-lg outline-none"
+        className="animate-modal-panel-in max-h-[85vh] w-full max-w-md overflow-y-auto rounded-[10px] border border-border bg-card p-5 shadow-lg outline-none"
       >
         <div className="flex items-start justify-between gap-3">
           <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
