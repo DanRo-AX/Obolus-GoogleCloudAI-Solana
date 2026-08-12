@@ -10,6 +10,7 @@ import {
   MessageSquareText,
   Mail,
   Loader2,
+  Search,
   Sparkles,
   ShieldAlert,
   UserRound,
@@ -21,7 +22,6 @@ import {
   Badge,
   Banner,
   bannerToneStyle,
-  Chip,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -41,7 +41,6 @@ import {
   listShelfStarters,
   submitShelfStarterAnswer,
   type ChatAnswer,
-  type ContributorNotification,
   type ShelfStarter,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -53,54 +52,23 @@ import { useUi, type Order } from '@/state/ui'
  * This is the open-survey slot, except the unit is one question, not a form.
  */
 
-type SortId = 'top' | 'pay' | 'new' | 'closing'
+type SortId = 'new' | 'popular' | 'pay' | 'fit'
 
 const SORTS: Array<{ id: SortId; label: string; hint: string }> = [
-  { id: 'top', label: 'Top', hint: 'Pay, discounted by how long it has sat' },
-  { id: 'pay', label: 'Highest pay', hint: 'Most per answer, however old' },
   { id: 'new', label: 'Newest', hint: 'Just posted, whatever it pays' },
-  { id: 'closing', label: 'Closing soon', hint: 'Fewest slots left' },
+  { id: 'popular', label: 'Most popular', hint: 'Most answers collected so far' },
+  { id: 'pay', label: 'Highest pay', hint: 'Most per answer, however old' },
+  { id: 'fit', label: 'Best fit', hint: 'Closest match to your fields' },
 ]
-
-/** How many cards sit in a row on tablet width and up. Mobile is always 1. */
-type ColumnCount = 2 | 3 | 4
-const COLUMNS_STORAGE_KEY = 'obolus:dashboard:columns:v1'
-const GRID_COLS_CLASS: Record<ColumnCount, string> = {
-  2: 'grid-cols-1 gap-4 sm:grid-cols-2',
-  3: 'grid-cols-1 gap-3 sm:grid-cols-3',
-  4: 'grid-cols-1 gap-3 sm:grid-cols-4',
-}
-
-function initialColumns(): ColumnCount {
-  if (typeof window === 'undefined') return 2
-  const saved = window.localStorage.getItem(COLUMNS_STORAGE_KEY)
-  return saved === '2' || saved === '3' || saved === '4'
-    ? (Number(saved) as ColumnCount)
-    : 2
-}
 
 /**
- * The default ranking.
- *
- * Sorting purely by price freezes the board — one ₩1,500 call from three days
- * ago outranks everything forever while a fresh ₩600 call is never seen, and it
- * is the asker waiting on that one who gives up on us. Sorting purely by time
- * buries the calls actually worth answering. So: pay, halved for every day it
- * has sat, nudged up when there is still room to get in.
+ * The fit signal `topScore` used to blend into its combined ranking, now
+ * standalone as the "적합도순" sort — a recommendation score when the backend
+ * has one, else a flat bump for a call inside a field the profile lists.
  */
-function topScore(o: Order) {
-  const hours = (Date.now() - o.createdAt) / 3600000
-  const freshness = 1 / (1 + hours / 24)
-  const room = 1 + ((o.target - o.answered) / o.target) * 0.5
-  const fit = o.recommendationScore ?? (o.eligible ? 0.55 : 0)
-  return o.unitPrice * freshness * room * (0.75 + fit * 0.5)
+function fitScore(o: Order) {
+  return o.recommendationScore ?? (o.eligible ? 0.55 : 0)
 }
-
-const MIN_PAY: Array<{ value: number; label: string }> = [
-  { value: 0, label: 'Any pay' },
-  { value: 500, label: '₩500+' },
-  { value: 1000, label: '₩1,000+' },
-]
 
 /**
  * Callout-badge header: a banner patch tinted from a fixed accent, soft
@@ -122,72 +90,14 @@ function categoryBannerStyle(accent?: string): CSSProperties {
 }
 
 /**
- * Notification title/body come from the backend as fixed English literals
- * plus interpolated runtime numbers (see insert_notification's four call
- * sites in backend/src/store.rs) — there is no per-locale field to read.
- * Titles are exact literals, so they translate through the ordinary t()
- * dictionary. Bodies interpolate a price/percentage/question, so in ko mode
- * they are re-templated by parsing the four known English formats back out;
- * an unrecognised kind or format is left in English rather than mangled.
+ * Search matches the translated category label or the raw question text —
+ * a case-insensitive substring check, not fuzzy matching. `query` arrives
+ * already trimmed and lower-cased by the caller.
  */
-const NOTIFICATION_CAPTION: Partial<Record<ContributorNotification['kind'], string>> = {
-  call_available: 'New call',
-  auto_matched: 'Auto-match',
-  answer_received: 'New answer',
-  call_filled: 'Filled',
-}
-
-function notificationCaption(kind: string, t: (en: string) => string) {
-  const en = NOTIFICATION_CAPTION[kind as ContributorNotification['kind']]
-  return en ? t(en) : kind
-}
-
-const NOTIFICATION_ICON: Partial<Record<ContributorNotification['kind'], LucideIcon>> = {
-  call_available: Bell,
-  auto_matched: Bot,
-  answer_received: MessageSquareText,
-  call_filled: Check,
-}
-
-/**
- * A category-tinted CategoryIcon when the notification still points at an
- * open call on the board — the same glyph as that call's card badge, so the
- * alert and the card it links to read as one object. A closed call, or a
- * notification with no open call at all, falls back to a plain kind icon.
- */
-function notificationVisual(
-  notification: ContributorNotification,
-  orders: Order[],
-): { category?: CategoryId; accent?: string; Icon?: LucideIcon } {
-  const order = notification.openCallId
-    ? orders.find((o) => o.id === notification.openCallId)
-    : undefined
-  if (order) {
-    return { category: order.category, accent: CATEGORY_BY_ID[order.category]?.accent }
-  }
-  return {
-    Icon: NOTIFICATION_ICON[notification.kind as ContributorNotification['kind']] ?? Bell,
-  }
-}
-
-function notificationBody(n: ContributorNotification, lang: 'en' | 'ko'): string {
-  if (lang !== 'ko') return n.body
-  if (n.kind === 'auto_matched') {
-    const m = n.body.match(
-      /^A (\d+)% match reused your original answer and earned ₩([\d,]+)\.$/,
-    )
-    if (m) return `일치율 ${m[1]}%로 예전 답변이 재사용돼 ₩${m[2]}을 벌었어요.`
-  } else if (n.kind === 'answer_received') {
-    const m = n.body.match(/^(\d+)\/(\d+) answers collected for (.+)$/)
-    if (m) return `${m[1]}/${m[2]}건 모였어요 · ${m[3]}`
-  } else if (n.kind === 'call_filled') {
-    const m = n.body.match(/^All (\d+) answers are ready to read\.$/)
-    if (m) return `답변 ${m[1]}건, 이제 다 읽을 수 있어요.`
-  } else if (n.kind === 'call_available') {
-    const m = n.body.match(/^₩([\d,]+) per answer · (.+)$/)
-    if (m) return `답변당 ₩${m[1]} · ${m[2]}`
-  }
-  return n.body
+function matchesSearch(order: Order, query: string, t: (en: string) => string): boolean {
+  const label = CATEGORY_BY_ID[order.category]?.label
+  const haystack = `${label ? t(label) : ''} ${order.question}`.toLowerCase()
+  return haystack.includes(query)
 }
 
 export default function Dashboard() {
@@ -204,12 +114,10 @@ export default function Dashboard() {
     refreshLedger,
     agents,
     setAgents,
-    notifications,
-    markNotificationsRead,
     setBrowserAlerts,
     setEmailAlerts,
   } = useUi()
-  const { t, lang } = useLang()
+  const { t } = useLang()
   const navigate = useNavigate()
   const [params] = useSearchParams()
 
@@ -219,11 +127,9 @@ export default function Dashboard() {
     const q = params.get('category')
     return CATEGORIES.some((c) => c.id === q) ? (q as CategoryId) : 'all'
   })
-  const [sort, setSort] = useState<SortId>('top')
-  const [columns, setColumns] = useState<ColumnCount>(initialColumns)
-  const [minPay, setMinPay] = useState(0)
-  const [fitsMe, setFitsMe] = useState(false)
-  const [hideFilled, setHideFilled] = useState(true)
+  const [sort, setSort] = useState<SortId>('new')
+  const [query, setQuery] = useState('')
+  const [hideFilled, setHideFilled] = useState(false)
   const [opening, setOpening] = useState<string | null>(null)
   const [answerPanels, setAnswerPanels] = useState<Record<string, ChatAnswer[]>>({})
   const [answersLoading, setAnswersLoading] = useState<string | null>(null)
@@ -235,14 +141,6 @@ export default function Dashboard() {
   const [starterAnswers, setStarterAnswers] = useState<Record<string, string>>({})
   const [starterPrices, setStarterPrices] = useState<Record<string, number>>({})
   const [submittingStarter, setSubmittingStarter] = useState<string | null>(null)
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(COLUMNS_STORAGE_KEY, String(columns))
-    } catch {
-      /* storage disabled — the choice just will not survive a reload */
-    }
-  }, [columns])
 
   useEffect(() => {
     if (!profile) {
@@ -345,17 +243,19 @@ export default function Dashboard() {
     [orders, tab],
   )
 
+  const q = query.trim().toLowerCase()
+
   /** Everything except the category tab, so the tab counts stay honest. */
   const preCategory = useMemo(
     () =>
       base.filter((o) => {
-        if (o.unitPrice < minPay) return false
-        if (hideFilled && o.answered >= o.target) return false
-        if (fitsMe && profile && !(o.eligible ?? profile.speaksTo.includes(o.category)))
-          return false
+        if (q && !matchesSearch(o, q, t)) return false
+        // "진행 중인 설문만 보기" only has teeth while searching — it hides
+        // filled calls from the results, not from the board at large.
+        if (q && hideFilled && o.answered >= o.target) return false
         return true
       }),
-    [base, minPay, hideFilled, fitsMe, profile],
+    [base, q, hideFilled, t],
   )
 
   const counts = useMemo(() => {
@@ -369,18 +269,16 @@ export default function Dashboard() {
       (o) => category === 'all' || o.category === category,
     )
     const sorted = [...rows]
-    if (sort === 'top') sorted.sort((a, b) => topScore(b) - topScore(a))
+    if (sort === 'new') sorted.sort((a, b) => b.createdAt - a.createdAt)
+    // 인기순: we have no view/click telemetry per call, so "popular" is
+    // defined as the number of answers already collected — the one signal
+    // that actually reflects other contributors choosing this call.
+    if (sort === 'popular') sorted.sort((a, b) => b.answered - a.answered)
     if (sort === 'pay')
       sorted.sort(
         (a, b) => b.unitPrice - a.unitPrice || b.createdAt - a.createdAt,
       )
-    if (sort === 'new') sorted.sort((a, b) => b.createdAt - a.createdAt)
-    if (sort === 'closing')
-      sorted.sort(
-        (a, b) =>
-          a.target - a.answered - (b.target - b.answered) ||
-          b.unitPrice - a.unitPrice,
-      )
+    if (sort === 'fit') sorted.sort((a, b) => fitScore(b) - fitScore(a))
     return sorted
   }, [preCategory, category, sort])
 
@@ -403,10 +301,6 @@ export default function Dashboard() {
         .reduce((sum, m) => sum + m.earned, 0)
 
   const activeSort = SORTS.find((s) => s.id === sort) ?? SORTS[0]
-  // 3-4 columns need the card chrome a size down so nothing overflows a
-  // narrower card — 2 columns keeps the original, roomier sizing.
-  const compactCards = columns >= 3
-  const unread = notifications.filter((notification) => !notification.readAt)
   const emailAlertsAvailable = Boolean(
     account && !/@wallet\.(?:obolus|openshelf)\.local$/i.test(account.email),
   )
@@ -481,60 +375,6 @@ export default function Dashboard() {
               <p className="border-t border-border/60 px-4 py-2.5 text-sm text-destructive">{alertError}</p>
             ) : null}
           </Banner>
-        ) : null}
-
-        {unread.length ? (
-          <div>
-            <div className="flex items-center gap-2 pb-2">
-              <Bell className="size-3.5 text-[#0F766E]" />
-              <span className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
-                {unread.length} {unread.length > 1 ? t('new updates') : t('new update')}
-              </span>
-              <button
-                type="button"
-                className="ml-auto cursor-pointer font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground hover:text-foreground"
-                onClick={() => void markNotificationsRead()}
-              >
-                {t('Mark all read')}
-              </button>
-            </div>
-            <div className="divide-y divide-border border-y border-border">
-              {unread.slice(0, 3).map((notification) => {
-                const visual = notificationVisual(notification, orders)
-                return (
-                  <Link
-                    key={notification.id}
-                    to={notification.kind === 'call_available' && notification.openCallId
-                      ? `/answer/${notification.openCallId}`
-                      : '/dashboard'}
-                    onClick={() => void markNotificationsRead([notification.id])}
-                    className="flex items-center gap-3 px-1 py-3 transition-colors hover:bg-foreground/[0.035]"
-                  >
-                    <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-card">
-                      {visual.category ? (
-                        <CategoryIcon
-                          id={visual.category}
-                          className="size-3.5"
-                          style={{ color: visual.accent }}
-                        />
-                      ) : visual.Icon ? (
-                        <visual.Icon className="size-3.5 text-muted-foreground" />
-                      ) : null}
-                    </span>
-                    <Badge className="shrink-0 uppercase tracking-[1px]">
-                      {notificationCaption(notification.kind, t)}
-                    </Badge>
-                    <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                      {notificationBody(notification, lang)}
-                    </span>
-                    <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
-                      {relative(notification.createdAt, t)}
-                    </span>
-                  </Link>
-                )
-              })}
-            </div>
-          </div>
         ) : null}
 
         {profile && tab === 'open' ? (
@@ -631,7 +471,7 @@ export default function Dashboard() {
           </section>
         ) : null}
 
-        {/* tab + sort ---------------------------------------------------- */}
+        {/* tabs ------------------------------------------------------------ */}
         <div className="flex flex-wrap items-center gap-2">
           <SegTab
             active={tab === 'open'}
@@ -645,42 +485,6 @@ export default function Dashboard() {
             label={t('Posted by me')}
             count={mineCount}
           />
-
-          <div className="ml-auto flex items-center gap-2">
-            <ColumnToggle value={columns} onChange={setColumns} t={t} />
-
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className="flex h-11 cursor-pointer items-center gap-2 rounded-[4px] border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9"
-                >
-                  {t('Sort')}
-                  <span className="text-foreground">{t(activeSort.label)}</span>
-                  <ChevronDown className="size-3.5" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-[248px]">
-                {SORTS.map((s) => (
-                  <DropdownMenuItem
-                    key={s.id}
-                    onClick={() => setSort(s.id)}
-                    className="flex-col items-start gap-0.5"
-                  >
-                    <span className="flex w-full items-center gap-2 text-sm">
-                      {t(s.label)}
-                      {sort === s.id ? (
-                        <Check className="ml-auto size-3.5" />
-                      ) : null}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {t(s.hint)}
-                    </span>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
         </div>
 
         {/* category rail --------------------------------------------------
@@ -714,34 +518,66 @@ export default function Dashboard() {
           </nav>
 
           <div className="min-w-0 space-y-6 px-4 sm:px-6 lg:pl-6">
-        {/* filters ------------------------------------------------------- */}
+        {/* toolbar ----------------------------------------------------------
+            Search replaces the old value/hide-filled/fits-me chip row; sort
+            moves down here from the tab row now that the column switcher —
+            and the ml-auto slot it shared with sort — is gone. */}
         <div className="flex flex-wrap items-center gap-2">
-          {MIN_PAY.map((p) => (
-            <FilterChip
-              key={p.value}
-              active={minPay === p.value}
-              onClick={() => setMinPay(p.value)}
-              label={t(p.label)}
+          <div className="relative flex-1 sm:max-w-xs">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t('Search category or title')}
+              className="h-9 w-full rounded-[2px] border border-border bg-transparent pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-foreground/40"
             />
-          ))}
-          <span className="mx-1 h-4 w-px bg-border" />
-          <FilterChip
-            active={hideFilled}
-            onClick={() => setHideFilled((v) => !v)}
-            label={t('Hide filled')}
-          />
-          <FilterChip
-            active={fitsMe}
-            onClick={() => {
-              if (!profile) navigate('/onboarding')
-              else setFitsMe((v) => !v)
-            }}
-            label={t('Fits me')}
-            muted={!profile}
-          />
+          </div>
+          {q ? (
+            <label className="flex h-11 cursor-pointer select-none items-center gap-1.5 px-1 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground sm:h-9">
+              <input
+                type="checkbox"
+                checked={hideFilled}
+                onChange={(event) => setHideFilled(event.target.checked)}
+                className="size-3.5 accent-foreground"
+              />
+              {t('Show open surveys only')}
+            </label>
+          ) : null}
           <span className="ml-auto font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
             {list.length} {list.length === 1 ? t('call') : t('calls')}
           </span>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="flex h-11 cursor-pointer items-center gap-2 rounded-[4px] border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9"
+              >
+                {t('Sort')}
+                <span className="text-foreground">{t(activeSort.label)}</span>
+                <ChevronDown className="size-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-[248px]">
+              {SORTS.map((s) => (
+                <DropdownMenuItem
+                  key={s.id}
+                  onClick={() => setSort(s.id)}
+                  className="flex-col items-start gap-0.5"
+                >
+                  <span className="flex w-full items-center gap-2 text-sm">
+                    {t(s.label)}
+                    {sort === s.id ? (
+                      <Check className="ml-auto size-3.5" />
+                    ) : null}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {t(s.hint)}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         {suspended ? (
@@ -807,7 +643,7 @@ export default function Dashboard() {
           // dense hairline list. A circular avatar-style slot overlaps the
           // banner's bottom-left edge; the category glyph itself moved down
           // into the meta row so the banner stays photo-like and text-free.
-          <div className={cn('grid', GRID_COLS_CLASS[columns])}>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {list.map((order) => {
               const done = order.answered >= order.target
               const cancelled = order.status === 'cancelled'
@@ -830,34 +666,23 @@ export default function Dashboard() {
                   )}
                 >
                   <div
-                    className={cn(
-                      'relative shrink-0 overflow-hidden',
-                      compactCards ? 'h-24' : 'h-[190px]',
-                    )}
+                    className="relative h-[248px] shrink-0 overflow-hidden"
                     style={{ background: cardGradient(`${order.shelf}::${order.question}`) }}
                   >
                     {/* The asker's avatar (deterministic from the shelf name, so the
                         same contributor always shows the same face), sitting inside
                         the banner's lower-left rather than hanging below it. */}
                     <span
-                      className={cn(
-                        'absolute flex items-center justify-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-[0_1px_3px_rgba(20,20,25,0.18)]',
-                        compactCards ? 'bottom-2 left-3 size-9' : 'bottom-3 left-4 size-12',
-                      )}
+                      className="absolute bottom-4 left-4 flex size-[72px] items-center justify-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-[0_1px_3px_rgba(20,20,25,0.18)]"
                       aria-hidden="true"
                     >
                       <Avatar
                         config={deterministicAvatar(order.shelf)}
-                        size={compactCards ? 30 : 42}
+                        size={63}
                       />
                     </span>
                   </div>
-                  <div
-                    className={cn(
-                      'flex flex-1 flex-col',
-                      compactCards ? 'px-3 pb-3 pt-6' : 'px-4 pb-4 pt-7',
-                    )}
-                  >
+                  <div className="flex flex-1 flex-col px-4 pb-4 pt-7">
                   <div className="flex items-center justify-between gap-3">
                     <span className="flex min-w-0 items-center gap-2 overflow-hidden">
                       {/* Category glyph lives in the body now, not the photo
@@ -871,10 +696,7 @@ export default function Dashboard() {
                         {cat?.label ? t(cat.label) : null}
                       </span>
                       <Badge
-                        className={cn(
-                          'min-w-0 truncate px-1.5 py-0 uppercase tracking-[1px]',
-                          compactCards && 'hidden',
-                        )}
+                        className="min-w-0 truncate px-1.5 py-0 uppercase tracking-[1px]"
                         title={order.shelf}
                       >
                         {order.shelf}
@@ -890,12 +712,7 @@ export default function Dashboard() {
                     </span>
                   </div>
 
-                  <p
-                    className={cn(
-                      'mt-1.5 leading-relaxed text-foreground',
-                      compactCards ? 'text-[13px]' : 'text-[15px]',
-                    )}
-                  >
+                  <p className="mt-1.5 text-[15px] leading-relaxed text-foreground">
                     {order.question}
                   </p>
                   {order.filters && Object.values(order.filters).some(Boolean) ? (
@@ -921,15 +738,6 @@ export default function Dashboard() {
                         .join(' · ')}
                     </p>
                   ) : null}
-                  {profile && fits && (order.recommendationScore ?? 0) > 0 ? (
-                    <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-[#0F766E]">
-                      {t('Recommended')} · {Math.round((order.recommendationScore ?? 0) * 100)}% {t('fit')}
-                      {order.recommendationReason?.[1]
-                        ? ` · ${order.recommendationReason[1]}`
-                        : ''}
-                    </p>
-                  ) : null}
-
                   <div className="mt-3 flex items-center gap-3">
                     {/* A thin, square-ended bar rather than a pill — Linear's
                         progress language stays close to a hairline rule. */}
@@ -966,15 +774,6 @@ export default function Dashboard() {
                       <span className="ml-auto inline-flex items-center gap-1 text-[#0F766E]">
                         <Check className="size-3" /> {t('Filled')}
                       </span>
-                    ) : profile && tab === 'open' ? (
-                      <span
-                        className={cn(
-                          'ml-auto',
-                          fits ? 'text-[#0F766E]' : 'text-muted-foreground/70',
-                        )}
-                      >
-                        {fits ? t('Fits you') : t('Outside your fields')}
-                      </span>
                     ) : null}
 
                     {tab === 'open' && !done ? (
@@ -1004,9 +803,7 @@ export default function Dashboard() {
                           ? t('Picking it up…')
                           : fullyReserved
                             ? t('All remaining slots held')
-                            : profile && !fits
-                              ? t('Outside your fields')
-                              : t('Answer')}
+                            : t('Answer')}
                       </Button>
                     ) : null}
                   </div>
@@ -1174,86 +971,6 @@ function CatTab({
         {count}
       </span>
     </button>
-  )
-}
-
-function FilterChip({
-  active,
-  onClick,
-  label,
-  muted,
-}: {
-  active: boolean
-  onClick: () => void
-  label: string
-  muted?: boolean
-}) {
-  // Thin wrapper over the shared Chip so every filter/sort/tab control in
-  // this toolbar — and the "With opens" toggle on /archive — share one
-  // shape (see src/components/ui/primitives.tsx).
-  return (
-    <Chip active={active} muted={muted} onClick={onClick}>
-      {label}
-    </Chip>
-  )
-}
-
-/**
- * A segmented 2/3/4 control, same hairline-border-and-tiny-radius language
- * as FilterChip, just compact enough to sit next to the Sort trigger instead
- * of taking a filter-row slot of its own.
- */
-function ColumnToggle({
-  value,
-  onChange,
-  t,
-}: {
-  value: ColumnCount
-  onChange: (value: ColumnCount) => void
-  t: (en: string) => string
-}) {
-  const optionClass = (n: ColumnCount, withDivider: boolean) =>
-    cn(
-      'flex min-w-9 cursor-pointer items-center justify-center px-2 font-mono text-xs tabular-nums transition-colors',
-      withDivider && 'border-l border-border',
-      value === n
-        ? 'bg-foreground/[0.06] text-foreground'
-        : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-    )
-  return (
-    <div
-      role="group"
-      aria-label={t('Columns per row')}
-      className="flex h-11 items-stretch overflow-hidden rounded-[4px] border border-border sm:h-9"
-    >
-      <button
-        type="button"
-        aria-label={t('2 columns per row')}
-        aria-pressed={value === 2}
-        onClick={() => onChange(2)}
-        className={optionClass(2, false)}
-      >
-        2
-      </button>
-      <button
-        type="button"
-        aria-label={t('3 columns per row')}
-        aria-pressed={value === 3}
-        onClick={() => onChange(3)}
-        className={optionClass(3, true)}
-      >
-        3
-      </button>
-      <button
-        type="button"
-        aria-label={t('4 columns per row')}
-        aria-pressed={value === 4}
-        onClick={() => onChange(4)}
-        className={optionClass(4, true)}
-      >
-        4
-      </button>
-    </div>
   )
 }
 
