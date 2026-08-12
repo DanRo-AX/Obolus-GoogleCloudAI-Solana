@@ -1,11 +1,12 @@
 import { NavLink, Link } from 'react-router-dom'
-import { Activity, LogIn, LogOut, PanelLeft, ShieldCheck, UserRound } from 'lucide-react'
+import { Activity, LogIn, LogOut, PanelLeft, ShieldCheck } from 'lucide-react'
+import { Avatar } from '@/components/Avatar'
 import { BrandMark } from '@/components/ui/BrandMark'
 import { Button } from '@/components/ui/button'
 import { Chip } from '@/components/ui/primitives'
-import { CATEGORY_BY_ID } from '@/data/categories'
 import { NAV_ITEMS } from '@/data/nav'
 import { STRIKE_LIMIT } from '@/data/onboarding'
+import { deterministicAvatar } from '@/lib/avatar'
 import { cn } from '@/lib/utils'
 import { useLang, useT } from '@/i18n'
 import { useUi } from '@/state/ui'
@@ -22,7 +23,6 @@ function ProfileChip({ onSignOut }: { onSignOut: () => Promise<void> }) {
   const { profile, suspended } = useUi()
   const t = useT()
   if (!profile) return null
-  const cat = CATEGORY_BY_ID[profile.field]
   return (
     <div
       className={cn(
@@ -30,12 +30,14 @@ function ProfileChip({ onSignOut }: { onSignOut: () => Promise<void> }) {
         suspended ? 'border-destructive/40' : 'border-border',
       )}
     >
-      {/* Avatar slot + handle + status caption, one tidy row instead of a
-          bare color dot next to bare text. */}
+      {/* Avatar + handle + status caption, one tidy row instead of a bare
+          color dot next to bare text. */}
       <div className="flex items-center gap-2.5">
-        <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-card">
-          <UserRound className="size-3.5" style={{ color: cat?.accent ?? 'var(--muted-foreground)' }} />
-        </span>
+        <Avatar
+          config={profile.avatar ?? deterministicAvatar(profile.handle)}
+          size={28}
+          className="shrink-0"
+        />
         <div className="min-w-0 flex-1">
           <p className="truncate font-mono text-[11px] tracking-[1px] text-foreground">
             {profile.handle}
