@@ -31,6 +31,7 @@ import {
 import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from '@/data/categories'
 import { AGE_BANDS, HOUSEHOLDS, REGIONS, STRIKE_LIMIT } from '@/data/onboarding'
 import { useLang } from '@/i18n'
+import { cardGradient } from '@/lib/cardGradient'
 import {
   ApiError,
   generateShelfStarters,
@@ -100,10 +101,16 @@ const MIN_PAY: Array<{ value: number; label: string }> = [
 ]
 
 /**
- * Marketplace-card header (variant 07 DNA): a banner strip tinted from the
- * question's category accent, soft enough to sit under a profile-style icon
- * badge rather than compete with it. Blended against --card, not the raw
- * accent, so it stays a tint even if a dark surface is added later.
+ * Callout-badge header: a banner patch tinted from a fixed accent, soft
+ * enough to sit under a profile-style icon badge rather than compete with
+ * it. Blended against --card, not the raw accent, so it stays a tint even
+ * if a dark surface is added later.
+ *
+ * The open-calls card banner below no longer uses this — it paints with
+ * `cardGradient` (src/lib/cardGradient.ts) instead, a keyword-hashed
+ * multicolor gradient per variant 7 ("Airbnb 리스팅"). This helper stays for
+ * the "Build human supply" callout's leading avatar, which still wants a
+ * single-accent tint.
  */
 function categoryBannerStyle(accent?: string): CSSProperties {
   if (!accent) return { background: 'var(--muted)' }
@@ -792,11 +799,12 @@ export default function Dashboard() {
             </Button>
           </div>
         ) : (
-          // Marketplace card grid (variant 07 DNA): two cards per row from
-          // tablet width up, one per row only at phone width — not a dense
-          // hairline list. Each card gets a profile-style header, a banner
-          // strip tinted from the category accent with a circular icon
-          // badge overlapping its left-bottom edge, like an avatar.
+          // Marketplace card grid — variant 7 ("Airbnb 리스팅"): a big top
+          // "photo" region (here, a keyword-hashed multicolor gradient,
+          // since there is no real photo) plus a bottom text block, not a
+          // dense hairline list. A circular avatar-style slot overlaps the
+          // banner's bottom-left edge; the category glyph itself moved down
+          // into the meta row so the banner stays photo-like and text-free.
           <div className={cn('grid', GRID_COLS_CLASS[columns])}>
             {list.map((order) => {
               const done = order.answered >= order.target
@@ -820,20 +828,31 @@ export default function Dashboard() {
                   )}
                 >
                   <div
-                    className={cn('relative shrink-0', compactCards ? 'h-11' : 'h-14')}
-                    style={categoryBannerStyle(cat?.accent)}
+                    className={cn(
+                      'relative shrink-0 overflow-hidden',
+                      compactCards ? 'h-24' : 'h-[190px]',
+                    )}
+                    style={{ background: cardGradient(`${order.shelf}::${order.question}`) }}
                   >
+                    {/* AVATAR SLOT: replaced by <SurveyAvatar> once the avatar feature lands */}
                     <span
                       className={cn(
-                        'absolute flex items-center justify-center rounded-full border border-border bg-card shadow-[0_1px_3px_rgba(20,20,25,0.12)]',
+                        'absolute flex items-center justify-center overflow-hidden rounded-full border-[3px] border-white shadow-[0_1px_3px_rgba(20,20,25,0.18)]',
                         compactCards ? '-bottom-4 left-3 size-8' : '-bottom-5 left-4 size-10',
                       )}
+                      style={{
+                        background: `color-mix(in oklab, ${cat?.accent ?? 'var(--muted-foreground)'} 65%, white)`,
+                      }}
+                      aria-hidden="true"
                     >
-                      <CategoryIcon
-                        id={order.category}
-                        className={compactCards ? 'size-4' : 'size-5'}
-                        style={{ color: cat?.accent ?? 'var(--muted-foreground)' }}
-                      />
+                      <span
+                        className={cn(
+                          'font-sans font-semibold text-white',
+                          compactCards ? 'text-[11px]' : 'text-sm',
+                        )}
+                      >
+                        {(order.shelf.trim().charAt(0) || '?').toUpperCase()}
+                      </span>
                     </span>
                   </div>
                   <div
@@ -844,9 +863,12 @@ export default function Dashboard() {
                   >
                   <div className="flex items-center justify-between gap-3">
                     <span className="flex min-w-0 items-center gap-2 overflow-hidden">
-                      <span
-                        className="size-2 shrink-0 rounded-[1px]"
-                        style={{ backgroundColor: cat?.accent }}
+                      {/* Category glyph lives in the body now, not the photo
+                          banner — variant 7's banner stays image-only. */}
+                      <CategoryIcon
+                        id={order.category}
+                        className="size-3.5 shrink-0"
+                        style={{ color: cat?.accent ?? 'var(--muted-foreground)' }}
                       />
                       <span className="truncate font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
                         {cat?.label ? t(cat.label) : null}
