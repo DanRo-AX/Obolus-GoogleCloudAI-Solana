@@ -32,6 +32,8 @@ import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from '@/data/categories'
 import { AGE_BANDS, HOUSEHOLDS, REGIONS, STRIKE_LIMIT } from '@/data/onboarding'
 import { useLang } from '@/i18n'
 import { cardGradient } from '@/lib/cardGradient'
+import { Avatar } from '@/components/Avatar'
+import { deterministicAvatar } from '@/lib/avatar'
 import {
   ApiError,
   generateShelfStarters,
@@ -834,25 +836,20 @@ export default function Dashboard() {
                     )}
                     style={{ background: cardGradient(`${order.shelf}::${order.question}`) }}
                   >
-                    {/* AVATAR SLOT: replaced by <SurveyAvatar> once the avatar feature lands */}
+                    {/* The asker's avatar (deterministic from the shelf name, so the
+                        same contributor always shows the same face), sitting inside
+                        the banner's lower-left rather than hanging below it. */}
                     <span
                       className={cn(
-                        'absolute flex items-center justify-center overflow-hidden rounded-full border-[3px] border-white shadow-[0_1px_3px_rgba(20,20,25,0.18)]',
-                        compactCards ? '-bottom-4 left-3 size-8' : '-bottom-5 left-4 size-10',
+                        'absolute flex items-center justify-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-[0_1px_3px_rgba(20,20,25,0.18)]',
+                        compactCards ? 'bottom-2 left-3 size-9' : 'bottom-3 left-4 size-12',
                       )}
-                      style={{
-                        background: `color-mix(in oklab, ${cat?.accent ?? 'var(--muted-foreground)'} 65%, white)`,
-                      }}
                       aria-hidden="true"
                     >
-                      <span
-                        className={cn(
-                          'font-sans font-semibold text-white',
-                          compactCards ? 'text-[11px]' : 'text-sm',
-                        )}
-                      >
-                        {(order.shelf.trim().charAt(0) || '?').toUpperCase()}
-                      </span>
+                      <Avatar
+                        config={deterministicAvatar(order.shelf)}
+                        size={compactCards ? 30 : 42}
+                      />
                     </span>
                   </div>
                   <div
