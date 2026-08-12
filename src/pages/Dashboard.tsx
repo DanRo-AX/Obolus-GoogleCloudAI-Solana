@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Check,
@@ -995,9 +996,9 @@ function QuestionPreviewModal({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [onClose])
 
-  return (
+  return createPortal(
     <div
-      className="animate-modal-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+      className="animate-modal-backdrop-in fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
@@ -1080,7 +1081,8 @@ function QuestionPreviewModal({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

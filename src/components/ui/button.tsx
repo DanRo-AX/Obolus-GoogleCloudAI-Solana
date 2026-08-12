@@ -18,7 +18,7 @@ const buttonVariants = cva(
   // destructive, outline, secondary and ghost at the default/icon sizes had
   // none at all before this, so they rendered square. The mono* variants
   // keep their own explicit rounded-lg and win over this via tailwind-merge.
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md font-medium cursor-pointer disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 aria-invalid:border-destructive transition-all",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md font-medium cursor-pointer disabled:pointer-events-none disabled:opacity-35 disabled:saturate-0 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 aria-invalid:border-destructive transition-all",
   {
     variants: {
       variant: {
