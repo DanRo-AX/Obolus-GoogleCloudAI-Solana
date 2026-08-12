@@ -8,9 +8,8 @@ import {
   Search,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/primitives'
+import { Badge, Chip } from '@/components/ui/primitives'
 import { useT } from '@/i18n'
-import { cn } from '@/lib/utils'
 import { useUi, type Chat } from '@/state/ui'
 
 /**
@@ -127,18 +126,9 @@ export default function Archive() {
               className="h-9 w-full rounded-[2px] border border-border bg-transparent pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-foreground/40"
             />
           </div>
-          <button
-            type="button"
-            onClick={() => setPaidOnly((v) => !v)}
-            className={cn(
-              'h-7 cursor-pointer rounded-full border px-3 font-mono text-[11px] uppercase tracking-[1px] transition-colors',
-              paidOnly
-                ? 'border-foreground/70 bg-foreground/[0.06] text-foreground'
-                : 'border-border text-muted-foreground hover:border-foreground/25 hover:text-foreground',
-            )}
-          >
+          <Chip active={paidOnly} onClick={() => setPaidOnly((v) => !v)}>
             {t('With opens')}
-          </button>
+          </Chip>
           <span className="ml-auto font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
             {rows.length}{rows.length === 1 ? t(' question') : t(' questions')}
           </span>

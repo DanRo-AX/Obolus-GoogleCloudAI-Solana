@@ -13,7 +13,9 @@ import {
   Wallet,
   WalletCards,
 } from 'lucide-react'
+import { BrandMark } from '@/components/ui/BrandMark'
 import { Button } from '@/components/ui/button'
+import { Banner } from '@/components/ui/primitives'
 import Vortex from '@/components/originkit/Vortex'
 import { useT } from '@/i18n'
 import { createWalletAuthChallenge } from '@/lib/api'
@@ -117,15 +119,7 @@ export default function Login() {
     <div className="grid min-h-svh lg:grid-cols-2">
       <div className="flex flex-col gap-4 p-6 md:p-10">
         <Link to="/" className="flex w-fit items-center gap-2">
-          <span className="flex size-8 items-center justify-center rounded-[9px] bg-foreground">
-            <img
-              className="invert"
-              src="/OBOLUS-MARK-SM.svg"
-              alt=""
-              width={20}
-              height={20}
-            />
-          </span>
+          <BrandMark decorative />
           <span className="text-[15px] font-semibold tracking-[-0.02em]">
             Obolus
           </span>
@@ -138,13 +132,13 @@ export default function Login() {
             </p>
 
             {staleReset ? (
-              <div className="mt-4 rounded-[4px] border border-border bg-muted-2/60 p-4">
+              <Banner tone="neutral" className="mt-4">
                 <p className="text-[13px] leading-relaxed">
                   {t(
                     'That link resets a password, and there are no passwords here any more. Connect the wallet you used before and you are back in — nothing was lost.',
                   )}
                 </p>
-              </div>
+              </Banner>
             ) : null}
             <h1 className="mt-3 font-display text-[34px] leading-[1.12]">
               {t('Your wallet is the account')}
@@ -157,13 +151,13 @@ export default function Login() {
 
             {/* step 1 — connect ---------------------------------------- */}
             {pubkey ? (
-              <div className="mt-8 flex items-center gap-3 rounded-[4px] border border-[#0F766E]/30 bg-[#0F766E]/[0.06] p-4">
+              <Banner tone="teal" className="mt-8 flex items-center gap-3">
                 <Check className="size-4 shrink-0 text-[#0F766E]" />
                 <span className="font-mono text-sm">{shortKey(pubkey)}</span>
                 <span className="ml-auto font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
                   {t('connected')}
                 </span>
-              </div>
+              </Banner>
             ) : available ? (
               <Button
                 variant="mono"

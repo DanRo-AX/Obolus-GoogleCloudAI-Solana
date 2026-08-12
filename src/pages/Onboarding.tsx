@@ -13,6 +13,7 @@ import {
   Wallet,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Banner } from '@/components/ui/primitives'
 import { CATEGORIES, type CategoryId } from '@/data/categories'
 import {
   AGE_BANDS,
@@ -463,7 +464,7 @@ export default function Onboarding() {
               title={t('Three strikes and the account stops')}
               note={t(CONDUCT_SUMMARY)}
             >
-              <div className="rounded-[6px] border border-destructive/25 bg-destructive/[0.04] p-5">
+              <Banner tone="destructive" className="p-5">
                 <p className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[1px] text-destructive">
                   <ShieldAlert className="size-3.5" />
                   {t('What earns a strike')}
@@ -481,7 +482,7 @@ export default function Onboarding() {
                     </li>
                   ))}
                 </ul>
-              </div>
+              </Banner>
 
               <div className="mt-4 overflow-hidden rounded-[6px] border border-border">
                 {STRIKE_LADDER.map((s) => (

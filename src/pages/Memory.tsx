@@ -16,6 +16,7 @@ import {
 import { Button } from '@/components/ui/button'
 import {
   Badge,
+  Banner,
   Switch,
   Tooltip,
   TooltipContent,
@@ -290,10 +291,10 @@ export default function Memory() {
         ) : null}
 
         {earnings?.claimableKrw ? (
-          <div className="rounded-[6px] border border-[#0F766E]/30 bg-[#0F766E]/5 px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+          <Banner tone="teal" className="px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
             {t('Claimable escrow')} <strong className="text-foreground">₩{earnings.claimableKrw.toLocaleString()}</strong>
             {' · '}{t('claim it and USDC lands in the wallet recorded at each open. Not part of the sandbox balance.')}
-          </div>
+          </Banner>
         ) : null}
 
         {profile ? (
@@ -344,7 +345,7 @@ export default function Memory() {
         ) : null}
 
         {voided.length ? (
-          <div className="rounded-[6px] border border-destructive/30 bg-destructive/[0.04] px-4 py-3">
+          <Banner tone="destructive" className="px-4 py-3">
             <p className="text-sm leading-relaxed text-muted-foreground">
               <span className="font-medium text-destructive">
                 {voided.length}
@@ -352,7 +353,7 @@ export default function Memory() {
               </span>{' '}
               {t('They stay on your shelf so you can see what tripped. SHELF will not quote them, and they earn nothing.')}
             </p>
-          </div>
+          </Banner>
         ) : null}
 
         {/* Auto-match — the line you leave in the water ------------------ */}

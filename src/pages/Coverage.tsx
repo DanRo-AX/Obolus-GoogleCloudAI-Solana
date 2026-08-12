@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowUpRight, Database, GitBranch, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Banner } from '@/components/ui/primitives'
 import { CATEGORIES } from '@/data/categories'
 import { useT } from '@/i18n'
 import { useUi } from '@/state/ui'
@@ -129,14 +130,14 @@ export default function Coverage() {
             ))}
           </div>
 
-          <p className="mt-6 max-w-2xl rounded-[6px] border border-border bg-foreground/[0.03] p-5 text-sm leading-relaxed text-muted-foreground">
+          <Banner tone="neutral" className="mt-6 max-w-2xl p-5 text-sm leading-relaxed text-muted-foreground">
             <span className="font-medium text-foreground">
               {t('This page is the honest version of the hardest problem.')}
             </span>{' '}
             {t(
               'An empty shelf leaves SHELF nothing to open. Every number here comes from the authenticated open-call state — a baseline answer written by a model never appears in it, never fills a slot, and is never paid for.',
             )}
-          </p>
+          </Banner>
         </section>
       </div>
     </div>
