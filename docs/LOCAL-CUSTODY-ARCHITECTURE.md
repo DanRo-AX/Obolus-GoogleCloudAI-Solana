@@ -12,10 +12,10 @@ flowchart LR
   end
 
   subgraph Local[로컬 키 보관 클라이언트]
-    Desktop[Obulus Desktop] --> DomainMCP[Obulus search MCP]
     Agent[Codex 또는 Claude] --> DomainMCP
     Agent --> ExactPay[Exact-intent Pay MCP]
-    Desktop --> ExactPay
+    User[사용자 터미널] --> Approval[일회성 Intent 승인]
+    Approval --> ExactPay
     ExactPay --> PayLocal[번들 Pay.sh + OS 보안 저장소]
   end
 
@@ -40,7 +40,7 @@ OS 보안 저장소에 있는 Pay.sh 계정으로 옮깁니다. 기여자 작업
 ```mermaid
 sequenceDiagram
   participant U as 사용자
-  participant A as Desktop / AI Agent
+  participant A as Local AI Agent
   participant O as Obulus MCP
   participant P as 정확 승인 결제 MCP
   participant Pay as Local Pay.sh
@@ -80,5 +80,5 @@ AI는 결제 금액과 수취 조건을 변경할 수 없습니다. Pay.sh 프�
   의미하지 않습니다.
 - 공식 Pay.sh MCP는 더 엄격한 Obulus 결제 broker와 의도적으로 분리했습니다.
   인간 근거 구매에는 `obulus-pay`를 우선 사용해야 합니다.
-- 공개 배포에는 배포용 코드서명과 notarization, 재현 가능한 빌드 증거,
-  의존성 검사, 안전한 자동 업데이트 채널이 필요합니다.
+- 공개 배포에는 패키지 provenance, 고정된 의존성, 체크섬, 재현 가능한 빌드
+  증거와 안전한 MCP 설치·업데이트 경로가 필요합니다.

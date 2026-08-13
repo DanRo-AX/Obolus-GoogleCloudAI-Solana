@@ -237,13 +237,31 @@ export function login(email: string, password: string): Promise<AuthSession> {
   })
 }
 
+/**
+ * `wallet_login_v1` only ever proves wallet ownership for sign-in;
+ * `prepaid_spend_v1` only ever authorizes issuing a bounded, expiring
+ * prepaid-spend capability. The server rejects a challenge at every
+ * consuming endpoint unless its stored purpose matches that endpoint,
+ * regardless of what the client claims here. See GitHub issue #46.
+ */
+export type WalletChallengePurpose = 'wallet_login_v1' | 'prepaid_spend_v1'
+
+export type WalletAuthChallenge = {
+  id: string
+  wallet: string
+  message: string
+  purpose: WalletChallengePurpose
+  expiresAt: number
+}
+
 export function createWalletAuthChallenge(
   wallet: string,
-): Promise<WalletChallenge> {
+  purpose: WalletChallengePurpose,
+): Promise<WalletAuthChallenge> {
   return apiFetch('/api/v1/auth/wallet/challenge', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ wallet }),
+    body: JSON.stringify({ wallet, purpose }),
   })
 }
 

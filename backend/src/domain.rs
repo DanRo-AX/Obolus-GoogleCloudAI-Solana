@@ -683,10 +683,56 @@ pub struct UpsertProfileRequest {
     pub email_alerts: bool,
 }
 
+/// A wallet auth challenge (`wallet_auth_challenges`) is server-purpose-tagged
+/// so a proof signed for one endpoint's authority cannot be replayed at
+/// another. `WalletLoginV1` only ever proves wallet ownership for session
+/// sign-in; `PrepaidSpendV1` only ever authorizes issuing a bounded, expiring
+/// prepaid-spend capability. Every consuming endpoint pins the purpose it
+/// requires in code (`consume_wallet_auth_challenge`'s `expected_purpose`
+/// argument) rather than trusting a client-supplied value, so a login proof
+/// can never mint a prepaid session and vice versa. See GitHub issue #46.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WalletChallengePurpose {
+    WalletLoginV1,
+    PrepaidSpendV1,
+}
+
+impl WalletChallengePurpose {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::WalletLoginV1 => "wallet_login_v1",
+            Self::PrepaidSpendV1 => "prepaid_spend_v1",
+        }
+    }
+}
+
+impl std::fmt::Display for WalletChallengePurpose {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Request body for the profile wallet-binding/rotation challenge
+/// (`/api/v1/profile/wallet/challenge`, `wallet_challenges` table). Distinct
+/// from `WalletAuthChallengeRequest` below: this flow proves ownership to
+/// bind or rotate the wallet on a profile, not to log in or authorize
+/// prepaid spending, so it carries no purpose tag.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WalletChallengeRequest {
     pub wallet: String,
+}
+
+/// Request body for `/api/v1/auth/wallet/challenge`
+/// (`wallet_auth_challenges` table) — the login/prepaid-spend proof this
+/// issue is about. `purpose` is required so a purpose-less request cannot
+/// even be constructed. See GitHub issue #46.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WalletAuthChallengeRequest {
+    pub wallet: String,
+    pub purpose: WalletChallengePurpose,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -707,12 +753,28 @@ pub struct WalletAuthSiwxRequest {
     pub age_confirmed_14: bool,
 }
 
+/// Response for the profile wallet-binding/rotation challenge. See
+/// WalletChallengeRequest above for why it is a separate type from
+/// WalletAuthChallenge.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WalletChallenge {
     pub id: String,
     pub wallet: String,
     pub message: String,
+    pub expires_at: u64,
+}
+
+/// Response for `/api/v1/auth/wallet/challenge`. `purpose` echoes back what
+/// the server actually stored and signed into `message`, so a caller (or a
+/// test) can assert the two never disagree.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WalletAuthChallenge {
+    pub id: String,
+    pub wallet: String,
+    pub message: String,
+    pub purpose: WalletChallengePurpose,
     pub expires_at: u64,
 }
 
@@ -1495,7 +1557,7 @@ pub struct AuthResponse {
     pub wallet: Option<String>,
 }
 
-/// Session response intended for a local desktop/MCP client. The bearer token
+/// Session response intended for a local CLI/MCP client. The bearer token
 /// is returned only after Pay.sh proves local wallet ownership through SIWX.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

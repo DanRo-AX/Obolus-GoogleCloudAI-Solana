@@ -6,8 +6,8 @@ for an email, password, contributor profile, Phantom connection, seed phrase,
 or private key.
 
 The central service still performs public metadata search, quote commitment,
-paid-delivery verification, and evidence synthesis. The local app keeps the
-query-scoped capability and Pay.sh signer on the user's machine. Only the
+paid-delivery verification, and evidence synthesis. The local MCP runtime keeps
+the query-scoped capability and Pay.sh signer on the user's machine. Only the
 minimum request required for the market operation crosses the boundary.
 
 ## Trust boundary
@@ -117,7 +117,17 @@ npm run local-agent:mcp
 npm run local-agent:approve -- intent_...
 ```
 
-Or copy `mcp_config.json` into an MCP client. Hosted endpoints use:
+Register the constrained Obulus MCP surfaces in Codex, Claude, or both:
+
+```bash
+npm run local-agent:install-mcp -- codex
+npm run local-agent:install-mcp -- claude
+npm run local-agent:install-mcp -- all
+```
+
+The broad official Pay.sh MCP remains explicit opt-in; human-evidence purchases
+should use the more constrained `obulus-pay` surface. For manual configuration,
+copy `mcp_config.json` into an MCP client. Hosted endpoints use:
 
 ```bash
 export OBULUS_API_URL=https://api.example.com

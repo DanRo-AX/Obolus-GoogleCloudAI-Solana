@@ -539,7 +539,7 @@ test('interactive approval rejects an intent changed while the user is reading i
   )
 })
 
-test('desktop approval preview exposes economics but never the executable capability', async (context) => {
+test('approval preview exposes economics but never the executable capability', async (context) => {
   const directory = await mkdtemp(join(tmpdir(), 'obulus-local-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
   const config = fixtureConfig(directory)

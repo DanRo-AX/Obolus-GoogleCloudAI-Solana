@@ -1,5 +1,0 @@
-build/*
-!build/icon.svg
-!build/icon.icns
-dist/
-node_modules/

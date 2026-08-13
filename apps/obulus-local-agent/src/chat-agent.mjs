@@ -44,7 +44,7 @@ export class ObulusChatAgent {
     const userText = protectAgentMessage(String(message || ''))
     if (!this.runtime.config.anthropicApiKey) {
       throw new LocalAgentError(
-        'Claude API가 설정되지 않았습니다. 앱 설정에서 API 키를 저장하세요.',
+        'Claude API가 설정되지 않았습니다. OBULUS_CLAUDE_API_KEY를 로컬 환경에 설정하세요.',
         'claude_not_configured',
         409,
       )

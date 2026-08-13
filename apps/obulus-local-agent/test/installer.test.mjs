@@ -6,19 +6,19 @@ import { installMcpServers } from '../src/installer.mjs'
 const descriptors = [
   {
     name: 'obulus',
-    command: '/Applications/Obulus.app/Contents/MacOS/Obulus',
-    args: ['--mcp=market'],
+    command: '/usr/local/bin/node',
+    args: ['/workspace/apps/obulus-local-agent/src/cli.mjs', 'mcp'],
     env: { OBULUS_API_URL: 'https://api.example.com' },
   },
   {
     name: 'obulus-pay',
-    command: '/Applications/Obulus.app/Contents/MacOS/Obulus',
-    args: ['--mcp=approved-pay'],
+    command: '/usr/local/bin/node',
+    args: ['/workspace/apps/obulus-local-agent/src/pay-mcp.mjs'],
     env: { OBULUS_PAY_ACCOUNT: 'default' },
   },
   {
     name: 'pay',
-    command: '/Applications/Obulus.app/Contents/Resources/pay/pay',
+    command: '/workspace/apps/obulus-local-agent/node_modules/.bin/pay',
     args: ['mcp'],
     env: { PAY_ACTIVE_ACCOUNT: 'default' },
   },
@@ -49,8 +49,9 @@ test('installer registers only the constrained Obulus MCP surfaces by default', 
     '--env',
     'OBULUS_API_URL=https://api.example.com',
     '--',
-    '/Applications/Obulus.app/Contents/MacOS/Obulus',
-    '--mcp=market',
+    '/usr/local/bin/node',
+    '/workspace/apps/obulus-local-agent/src/cli.mjs',
+    'mcp',
   ])
   assert.deepEqual(additions[2].args, [
     'mcp',
@@ -61,8 +62,9 @@ test('installer registers only the constrained Obulus MCP surfaces by default', 
     '-e',
     'OBULUS_API_URL=https://api.example.com',
     '--',
-    '/Applications/Obulus.app/Contents/MacOS/Obulus',
-    '--mcp=market',
+    '/usr/local/bin/node',
+    '/workspace/apps/obulus-local-agent/src/cli.mjs',
+    'mcp',
   ])
 })
 

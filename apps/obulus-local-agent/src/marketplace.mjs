@@ -326,7 +326,7 @@ export class LocalMarketplace {
     if (!state.sessionToken) {
       return {
         connected: false,
-        nextAction: 'Obulus 앱에서 로컬 Pay.sh 지갑으로 로그인하세요.',
+        nextAction: '로컬 터미널에서 Pay.sh 지갑으로 Obulus 계정을 연결하세요.',
       }
     }
     try {
@@ -657,7 +657,7 @@ export class LocalMarketplace {
     const state = providedState || (await readState(this.config))
     if (!state.sessionToken) {
       throw new LocalAgentError(
-        '이 작업은 기여자 계정 연결이 필요합니다. Obulus 앱에서 로컬 Pay.sh 지갑으로 로그인하세요.',
+        '이 작업은 기여자 계정 연결이 필요합니다. 로컬 터미널에서 Pay.sh 지갑으로 Obulus 계정을 연결하세요.',
         'authentication_required',
         401,
       )

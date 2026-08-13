@@ -24,7 +24,7 @@ import { callTool, tools } from './tools.mjs'
 const execFileAsync = promisify(execFile)
 
 /**
- * Shared local-custody runtime used by the CLI, desktop app and MCP servers.
+ * Shared local-custody runtime used by the CLI and MCP servers.
  * It deliberately exposes no generic signing or arbitrary URL payment method.
  */
 export class ObulusLocalRuntime {
