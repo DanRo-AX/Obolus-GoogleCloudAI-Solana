@@ -39,6 +39,21 @@ const DOCUMENT_FIELDS = [
   'consentVersion',
 ]
 
+const OPEN_CALL_FIELDS = [
+  'id',
+  'payTo',
+  'network',
+  'asset',
+  'amountAtomic',
+  'totalPriceKrw',
+  'krwPerUsdc',
+  'expiresAt',
+  'resourcePath',
+  'payloadHash',
+  'status',
+  'openCallId',
+]
+
 export function assertDevnetQuote(quote, now = Date.now()) {
   if (!quote || quote.network !== DEVNET_NETWORK || quote.asset !== DEVNET_USDC) {
     throw new LocalAgentError(
@@ -195,6 +210,48 @@ export function exactBundleQuote({ gatewayQuote, canonicalQuote, queryId, handle
   return canonicalQuote
 }
 
+export function exactOpenCallQuote({
+  gatewayQuote,
+  canonicalQuote,
+  unitPriceKrw,
+  target,
+  now = Date.now(),
+}) {
+  if (!gatewayQuote || !canonicalQuote) {
+    throw new LocalAgentError('The open-call quote is malformed.', 'unsafe_payment_quote')
+  }
+  for (const field of OPEN_CALL_FIELDS) {
+    if (gatewayQuote[field] !== canonicalQuote[field]) {
+      throw new LocalAgentError(
+        'Gateway economics do not match the canonical open-call ledger.',
+        'unsafe_payment_quote',
+      )
+    }
+  }
+  assertDevnetQuote(canonicalQuote, now)
+  const expectedTotal = unitPriceKrw * target
+  if (
+    !Number.isSafeInteger(unitPriceKrw) ||
+    unitPriceKrw < 1 ||
+    !Number.isSafeInteger(target) ||
+    target < 1 ||
+    target > 100 ||
+    canonicalQuote.totalPriceKrw !== expectedTotal ||
+    canonicalQuote.krwPerUsdc !== 1_350 ||
+    canonicalQuote.amountAtomic !== krwToUsdcAtomic(expectedTotal, 1_350) ||
+    canonicalQuote.status !== 'quoted' ||
+    canonicalQuote.openCallId !== null ||
+    !/^[0-9a-f]{64}$/.test(canonicalQuote.payloadHash || '') ||
+    canonicalQuote.resourcePath !== `/api/v1/funded-open-calls/${canonicalQuote.id}`
+  ) {
+    throw new LocalAgentError(
+      'The quote violates the one-shot Open Call funding contract.',
+      'unsafe_payment_quote',
+    )
+  }
+  return canonicalQuote
+}
+
 export function paymentPlan(paymentUrl, quote, purpose, now = Date.now()) {
   assertDevnetQuote(quote, now)
   return {
@@ -213,7 +270,7 @@ export function paymentPlan(paymentUrl, quote, purpose, now = Date.now()) {
     },
     approvalBinding: Object.fromEntries(
       Object.entries(quote).filter(([key]) =>
-        [...DOCUMENT_FIELDS, ...BUNDLE_FIELDS, 'documentHandles'].includes(key),
+        [...DOCUMENT_FIELDS, ...BUNDLE_FIELDS, ...OPEN_CALL_FIELDS, 'documentHandles'].includes(key),
       ),
     ),
   }

@@ -22,13 +22,13 @@ use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_kn
 
 use crate::{
     domain::{
-        AccountControls, AdminOperationsSnapshot, AgentRun, AgentStep, AgentStepStatus, AgentTool,
-        AiLiquidityMetrics, AuthResponse, BalanceSummary, BeginResearchPaymentRequest,
-        BindPayShChallengesRequest, ChainSettlementReceipt, ChatAnswer, ClaimPaymentAttemptRequest,
-        CompletePayoutClaimRequest, ContributorManifest, ContributorMemoryLink,
-        ContributorNotification, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
-        CreateOpenCallRequest, CreatePaymentBundleRequest, CreatePrepaidSessionRequest,
-        CreatePrepaidWithdrawalRequest, DeferResearchPaymentRequest,
+        AccountControls, AdminOperationsSnapshot, AgentAuthResponse, AgentRun, AgentStep,
+        AgentStepStatus, AgentTool, AiLiquidityMetrics, AuthResponse, BalanceSummary,
+        BeginResearchPaymentRequest, BindPayShChallengesRequest, ChainSettlementReceipt,
+        ChatAnswer, ClaimPaymentAttemptRequest, CompletePayoutClaimRequest, ContributorManifest,
+        ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
+        CreateEvidenceEdgeRequest, CreateOpenCallRequest, CreatePaymentBundleRequest,
+        CreatePrepaidSessionRequest, CreatePrepaidWithdrawalRequest, DeferResearchPaymentRequest,
         DirectPayShPaymentReconciliation, DisputeCase, DocumentFeedback, EarningsSummary,
         EvidenceEdge, FailPayoutClaimRequest, FailResearchJobRequest, ForgotPasswordRequest,
         GenerateAiBaselineResponse, GenerateShelfStartersResponse, LeasePayoutClaimsRequest,
@@ -48,8 +48,8 @@ use crate::{
         SubmitShelfStarterAnswerResponse, SynthesizeAnswerRequest, SynthesizeAnswerResponse,
         SynthesizePaidAnswerRequest, UpdateMemoryRequest, UpdatePreferencesRequest,
         UpsertProfileRequest, UserAccount, UserProfile, VerifyWalletRequest, WalletAuthChallenge,
-        WalletAuthChallengeRequest, WalletAuthVerifyRequest, WalletChallenge,
-        WalletChallengePurpose, WalletChallengeRequest, WalletSiwxLink,
+        WalletAuthChallengeRequest, WalletAuthSiwxRequest, WalletAuthVerifyRequest,
+        WalletChallenge, WalletChallengePurpose, WalletChallengeRequest, WalletSiwxLink,
     },
     environment::{
         boolean_value, managed_runtime_environment, monotonic_unix_time_ms, unsigned_integer_value,
@@ -64,6 +64,7 @@ use crate::{
 };
 
 const SESSION_COOKIE: &str = "openshelf_session";
+const WALLET_ONLY_PASSWORD_MARKER: &str = "wallet-only-authentication-disabled";
 const PREPAID_SESSION_HEADER: &str = "x-openshelf-wallet-session";
 /// Same-origin HttpOnly cookie carrying the prepaid wallet session token,
 /// added alongside PREPAID_SESSION_HEADER (GitHub issue #46). Direct
@@ -401,6 +402,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(create_wallet_auth_challenge),
         )
         .route("/api/v1/auth/wallet/verify", post(verify_wallet_auth))
+        .route(
+            "/api/v1/auth/wallet/siwx",
+            post(create_wallet_auth_siwx_link),
+        )
+        .route(
+            "/api/v1/auth/wallet/siwx/{id}",
+            get(verify_wallet_auth_siwx_link),
+        )
         .route("/api/v1/auth/logout", post(logout))
         .route("/api/v1/auth/me", get(me))
         .route("/api/v1/questions/resolve", post(resolve_question))
@@ -837,11 +846,10 @@ async fn verify_wallet_auth(
             ));
         }
         let email = format!("{}@wallet.obolus.local", token_hash(wallet));
-        let password_hash = hash_password(&random_token())?;
         let (user, was_created) =
             state
                 .store
-                .create_wallet_identity_user(wallet, &email, &password_hash)?;
+                .create_wallet_identity_user(wallet, &email, WALLET_ONLY_PASSWORD_MARKER)?;
         created = was_created;
         user
     };
@@ -854,6 +862,169 @@ async fn verify_wallet_auth(
             StatusCode::OK
         },
     )
+}
+
+async fn create_wallet_auth_siwx_link(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<WalletAuthSiwxRequest>,
+) -> Result<(StatusCode, HeaderMap, Json<WalletSiwxLink>), ApiError> {
+    let id = random_token();
+    let nonce = random_token();
+    let resource_url = format!("{}/api/v1/auth/wallet/siwx/{id}", state.agent_api_origin);
+    let parsed = reqwest::Url::parse(&resource_url).map_err(ApiError::internal)?;
+    let domain = parsed
+        .host_str()
+        .ok_or_else(|| ApiError::internal("SIWX resource URL has no host"))?;
+    let issued = OffsetDateTime::now_utc();
+    let expiration = issued + TimeDuration::minutes(5);
+    let issued_at = issued.format(&Rfc3339).map_err(ApiError::internal)?;
+    let expiration_time = expiration.format(&Rfc3339).map_err(ApiError::internal)?;
+    let challenge = state.store.create_wallet_auth_siwx_challenge(
+        &id,
+        domain,
+        &resource_url,
+        "Sign in to Obulus with this local Pay.sh wallet. This signature spends no funds.",
+        &nonce,
+        &issued_at,
+        &expiration_time,
+        &state.payment_policy.network,
+        request.age_confirmed_14,
+        5 * 60 * 1_000,
+    )?;
+    Ok((
+        StatusCode::CREATED,
+        private_no_store_headers(),
+        Json(WalletSiwxLink {
+            id,
+            resource_url,
+            network: challenge.network,
+            expires_at: challenge.expires_at,
+        }),
+    ))
+}
+
+async fn verify_wallet_auth_siwx_link(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    let challenge = state.store.wallet_auth_siwx_challenge(&id)?;
+    if challenge.expires_at <= now_ms() {
+        return Err(StoreError::Conflict(
+            "this wallet sign-in SIWX challenge has expired".to_owned(),
+        )
+        .into());
+    }
+    if challenge.consumed_at.is_some() {
+        return Err(StoreError::Conflict(
+            "this wallet sign-in SIWX challenge has already been used".to_owned(),
+        )
+        .into());
+    }
+    let Some(header_value) = headers
+        .get(HeaderName::from_static("sign-in-with-x"))
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        let envelope = serde_json::json!({
+            "x402Version": 2,
+            "resource": {
+                "url": challenge.uri.clone(),
+                "description": "Sign in to Obulus with a local Pay.sh wallet",
+                "mimeType": "application/json"
+            },
+            "accepts": [],
+            "error": "sign_in_required",
+            "extensions": {
+                "sign-in-with-x": {
+                    "info": {
+                        "domain": challenge.domain,
+                        "uri": challenge.uri.clone(),
+                        "statement": challenge.statement,
+                        "version": "1",
+                        "nonce": challenge.nonce,
+                        "issuedAt": challenge.issued_at,
+                        "expirationTime": challenge.expiration_time,
+                        "requestId": challenge.id,
+                        "resources": [challenge.uri]
+                    },
+                    "supportedChains": [{
+                        "chainId": challenge.network,
+                        "type": "ed25519",
+                        "signatureScheme": "siws"
+                    }]
+                }
+            }
+        });
+        let encoded =
+            BASE64_STANDARD.encode(serde_json::to_vec(&envelope).map_err(ApiError::internal)?);
+        let mut response_headers = private_no_store_headers();
+        response_headers.insert(header::VARY, HeaderValue::from_static("SIGN-IN-WITH-X"));
+        response_headers.insert(
+            HeaderName::from_static("payment-required"),
+            HeaderValue::from_str(&encoded).map_err(ApiError::internal)?,
+        );
+        return Ok((
+            StatusCode::PAYMENT_REQUIRED,
+            response_headers,
+            Json(envelope),
+        )
+            .into_response());
+    };
+    if header_value.len() > 16 * 1_024 {
+        return Err(ApiError::unauthorized("wallet SIWX payload is too large"));
+    }
+    let payload_bytes = BASE64_STANDARD
+        .decode(header_value)
+        .map_err(|_| ApiError::unauthorized("wallet SIWX payload is invalid"))?;
+    let payload: SiwxPayload = serde_json::from_slice(&payload_bytes)
+        .map_err(|_| ApiError::unauthorized("wallet SIWX payload is invalid"))?;
+    let (wallet, age_confirmed_14) = state
+        .store
+        .consume_wallet_auth_siwx_challenge(&id, &payload)?;
+
+    let mut created = false;
+    let user = if let Some(user) = state.store.wallet_identity(&wallet)? {
+        user
+    } else if let Some(user) = state.store.verified_profile_owner(&wallet)? {
+        state.store.bind_wallet_identity(&user.id, &wallet)?;
+        user
+    } else {
+        if !age_confirmed_14 {
+            return Err(ApiError::validation(
+                "confirm that you are at least 14 years old to create this wallet account",
+            ));
+        }
+        let email = format!("{}@wallet.obolus.local", token_hash(&wallet));
+        let (user, was_created) = state.store.create_wallet_identity_user(
+            &wallet,
+            &email,
+            WALLET_ONLY_PASSWORD_MARKER,
+        )?;
+        created = was_created;
+        user
+    };
+    let (session_token, balance, identity_wallet, expires_at) = issue_session(&state, &user)?;
+    let wallet = identity_wallet.unwrap_or(wallet);
+    let mut response_headers = private_no_store_headers();
+    response_headers.insert(header::VARY, HeaderValue::from_static("SIGN-IN-WITH-X"));
+    Ok((
+        if created {
+            StatusCode::CREATED
+        } else {
+            StatusCode::OK
+        },
+        response_headers,
+        Json(AgentAuthResponse {
+            user,
+            balance,
+            wallet,
+            session_token,
+            expires_at,
+        }),
+    )
+        .into_response())
 }
 
 async fn forgot_password(
@@ -1998,7 +2169,7 @@ async fn create_wallet_siwx_link(
         &id,
         domain,
         &resource_url,
-        "Verify this Pay.sh wallet as your OPENSHELF payout wallet.",
+        "Verify this Pay.sh wallet as your Obulus payout wallet.",
         &nonce,
         &issued_at,
         &expiration_time,
@@ -2043,7 +2214,7 @@ async fn verify_wallet_siwx_link(
             "x402Version": 2,
             "resource": {
                 "url": challenge.uri.clone(),
-                "description": "Verify a Pay.sh wallet for OPENSHELF contributor payouts",
+                "description": "Verify a Pay.sh wallet for Obulus contributor payouts",
                 "mimeType": "application/json"
             },
             "accepts": [],
@@ -2993,19 +3164,7 @@ fn session_response(
     user: UserAccount,
     status: StatusCode,
 ) -> Result<(StatusCode, HeaderMap, Json<AuthResponse>), ApiError> {
-    let mut bytes = [0_u8; 32];
-    OsRng.fill_bytes(&mut bytes);
-    let token = bytes
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    state.store.create_session(
-        &user.id,
-        &token_hash(&token),
-        now_ms().saturating_add(SESSION_TTL_MS),
-    )?;
-    let balance = state.store.balance(&user.id)?;
-    let wallet = state.store.identity_wallet(&user.id)?;
+    let (token, balance, wallet, _) = issue_session(state, &user)?;
     let mut cookie = format!(
         "{SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}",
         SESSION_TTL_MS / 1_000
@@ -3028,6 +3187,25 @@ fn session_response(
             wallet,
         }),
     ))
+}
+
+fn issue_session(
+    state: &AppState,
+    user: &UserAccount,
+) -> Result<(String, BalanceSummary, Option<String>, u64), ApiError> {
+    let mut bytes = [0_u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    let token = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let expires_at = now_ms().saturating_add(SESSION_TTL_MS);
+    state
+        .store
+        .create_session(&user.id, &token_hash(&token), expires_at)?;
+    let balance = state.store.balance(&user.id)?;
+    let wallet = state.store.identity_wallet(&user.id)?;
+    Ok((token, balance, wallet, expires_at))
 }
 
 fn expired_session_cookie(state: &AppState) -> Result<HeaderValue, ApiError> {
@@ -3871,8 +4049,7 @@ mod tests {
         .unwrap();
         assert_eq!(challenge["purpose"], "wallet_login_v1");
         let message = challenge["message"].as_str().unwrap();
-        let signature =
-            bs58::encode(signing_key.sign(message.as_bytes()).to_bytes()).into_string();
+        let signature = bs58::encode(signing_key.sign(message.as_bytes()).to_bytes()).into_string();
 
         let prepaid_attempt = app
             .oneshot(
@@ -4650,6 +4827,120 @@ mod tests {
         .unwrap();
         assert_eq!(verified["walletVerified"], true);
         assert_eq!(verified["wallet"], wallet);
+    }
+
+    #[tokio::test]
+    async fn local_pay_siwx_login_returns_a_bearer_session_without_a_browser_cookie() {
+        let app = demo_app();
+        let link_response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/auth/wallet/siwx")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({ "ageConfirmed14": true }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(link_response.status(), StatusCode::CREATED);
+        let link: Value = serde_json::from_slice(
+            &link_response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .unwrap();
+        let resource = reqwest::Url::parse(link["resourceUrl"].as_str().unwrap()).unwrap();
+        let resource_path = resource.path().to_owned();
+        let challenge_response = app
+            .clone()
+            .oneshot(Request::get(&resource_path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(challenge_response.status(), StatusCode::PAYMENT_REQUIRED);
+        let envelope: Value = serde_json::from_slice(
+            &challenge_response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .unwrap();
+        let info = &envelope["extensions"]["sign-in-with-x"]["info"];
+        let chain = &envelope["extensions"]["sign-in-with-x"]["supportedChains"][0];
+        let signing_key = SigningKey::from_bytes(&[29; 32]);
+        let address = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
+        let chain_id = chain["chainId"].as_str().unwrap();
+        let message = format!(
+            "{} wants you to sign in with your Solana account:\n{}\n\n{}\n\nURI: {}\nVersion: {}\nChain ID: {}\nNonce: {}\nIssued At: {}\nExpiration Time: {}\nRequest ID: {}\nResources:\n- {}",
+            info["domain"].as_str().unwrap(),
+            address,
+            info["statement"].as_str().unwrap(),
+            info["uri"].as_str().unwrap(),
+            info["version"].as_str().unwrap(),
+            chain_id.strip_prefix("solana:").unwrap(),
+            info["nonce"].as_str().unwrap(),
+            info["issuedAt"].as_str().unwrap(),
+            info["expirationTime"].as_str().unwrap(),
+            info["requestId"].as_str().unwrap(),
+            info["resources"][0].as_str().unwrap(),
+        );
+        let payload = json!({
+            "domain": info["domain"],
+            "address": address,
+            "uri": info["uri"],
+            "statement": info["statement"],
+            "version": info["version"],
+            "chainId": chain_id,
+            "nonce": info["nonce"],
+            "issuedAt": info["issuedAt"],
+            "expirationTime": info["expirationTime"],
+            "requestId": info["requestId"],
+            "resources": info["resources"],
+            "type": chain["type"],
+            "signatureScheme": chain["signatureScheme"],
+            "signature": bs58::encode(signing_key.sign(message.as_bytes()).to_bytes()).into_string()
+        });
+        let signed_header = BASE64_STANDARD.encode(serde_json::to_vec(&payload).unwrap());
+        let login_response = app
+            .clone()
+            .oneshot(
+                Request::get(&resource_path)
+                    .header("SIGN-IN-WITH-X", signed_header)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(login_response.status(), StatusCode::CREATED);
+        assert!(!login_response.headers().contains_key(header::SET_COOKIE));
+        let login: Value = serde_json::from_slice(
+            &login_response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .unwrap();
+        assert_eq!(login["wallet"], payload["address"]);
+        assert_eq!(login["sessionToken"].as_str().unwrap().len(), 64);
+        let me = app
+            .oneshot(
+                Request::get("/api/v1/auth/me")
+                    .header(
+                        header::AUTHORIZATION,
+                        format!("Bearer {}", login["sessionToken"].as_str().unwrap()),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(me.status(), StatusCode::OK);
     }
 
     #[tokio::test]

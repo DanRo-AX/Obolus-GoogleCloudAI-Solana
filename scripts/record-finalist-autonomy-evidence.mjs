@@ -110,7 +110,9 @@ function verifyCloudRunLog(raw, project) {
     // disable it. Cloud Logging preserves those escape sequences between a
     // field name, `=`, and its value, so normalize display-only control codes
     // before performing the exact run correlation.
-    const text = String(candidate?.textPayload ?? '').replace(/\x1b\[[0-9;]*m/g, '')
+    const ansiEscape = String.fromCharCode(27)
+    const ansiColorCode = new RegExp(`${ansiEscape}\\[[0-9;]*m`, 'g')
+    const text = String(candidate?.textPayload ?? '').replace(ansiColorCode, '')
     return candidate?.resource?.labels?.service_name === 'obolus-api' &&
       candidate?.resource?.labels?.revision_name === revision &&
       text.includes(`agent_run_id=${runId}`) &&

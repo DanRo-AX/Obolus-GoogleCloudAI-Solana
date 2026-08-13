@@ -116,6 +116,31 @@ function verifiedPaymentResponse(intent, stdout) {
     throw new LocalAgentError('Pay.sh returned a non-JSON response.', 'invalid_payment_response')
   }
   const binding = intent.approvalBinding
+  if (intent.kind === 'open_call' || binding.payloadHash) {
+    if (
+      body?.quoteId !== intent.quoteId ||
+      body?.status !== 'settling' ||
+      body?.target !== binding.target ||
+      body?.unitPriceKrw !== binding.unitPriceKrw ||
+      body?.totalPriceKrw !== binding.totalPriceKrw ||
+      body?.network !== intent.network ||
+      body?.mode !== 'open_call_escrow'
+    ) {
+      throw new LocalAgentError(
+        'Pay.sh did not return the exact approved Open Call receipt.',
+        'invalid_payment_response',
+      )
+    }
+    return {
+      kind: 'open_call',
+      quoteId: body.quoteId,
+      status: body.status,
+      target: body.target,
+      unitPriceKrw: body.unitPriceKrw,
+      totalPriceKrw: body.totalPriceKrw,
+      network: body.network,
+    }
+  }
   if (binding.documentHandle) {
     const citation = Array.isArray(body?.citations) ? body.citations[0] : null
     if (

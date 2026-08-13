@@ -24,6 +24,7 @@
     "local-agent:tools": "node apps/obulus-local-agent/src/cli.mjs tools",
     "local-agent:mcp": "node apps/obulus-local-agent/src/cli.mjs mcp",
     "local-agent:approve": "node apps/obulus-local-agent/src/cli.mjs approve",
+    "local-agent:install-mcp": "node apps/obulus-local-agent/src/cli.mjs install-mcp",
     "test:finalist-evidence": "node --test scripts/finalist-evidence.test.mjs",
     "finalist:verify-infra": "node scripts/verify-finalist-infra.mjs",
     "finalist:guard-promotion": "node scripts/guard-cloud-run-promotion.mjs",

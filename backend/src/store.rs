@@ -164,6 +164,21 @@ pub struct WalletSiwxChallengeRecord {
     pub consumed_at: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalletAuthSiwxChallengeRecord {
+    pub id: String,
+    pub domain: String,
+    pub uri: String,
+    pub statement: String,
+    pub nonce: String,
+    pub issued_at: String,
+    pub expiration_time: String,
+    pub network: String,
+    pub age_confirmed_14: bool,
+    pub expires_at: u64,
+    pub consumed_at: Option<u64>,
+}
+
 pub struct AiArtifactMetadata<'a> {
     pub model: &'a str,
     pub mode: &'a str,
@@ -1722,6 +1737,21 @@ impl Store {
                 created_at INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS wallet_auth_siwx_challenges (
+                id TEXT PRIMARY KEY,
+                domain TEXT NOT NULL,
+                uri TEXT NOT NULL UNIQUE,
+                statement TEXT NOT NULL,
+                nonce TEXT NOT NULL,
+                issued_at TEXT NOT NULL,
+                expiration_time TEXT NOT NULL,
+                network TEXT NOT NULL,
+                age_confirmed_14 INTEGER NOT NULL CHECK (age_confirmed_14 IN (0, 1)),
+                expires_at INTEGER NOT NULL,
+                consumed_at INTEGER,
+                created_at INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS wallet_identities (
                 wallet TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -1944,6 +1974,8 @@ impl Store {
                 ON wallet_challenges(user_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_wallet_auth_challenges_wallet
                 ON wallet_auth_challenges(wallet, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_wallet_auth_siwx_challenges_created
+                ON wallet_auth_siwx_challenges(created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_wallet_siwx_challenges_user
                 ON wallet_siwx_challenges(user_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_document_feedback_status
@@ -5864,6 +5896,192 @@ impl Store {
         }
         transaction.commit()?;
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_wallet_auth_siwx_challenge(
+        &self,
+        challenge_id: &str,
+        domain: &str,
+        uri: &str,
+        statement: &str,
+        nonce: &str,
+        issued_at: &str,
+        expiration_time: &str,
+        network: &str,
+        age_confirmed_14: bool,
+        ttl_ms: u64,
+    ) -> Result<WalletAuthSiwxChallengeRecord, StoreError> {
+        let challenge_id = challenge_id.trim();
+        let domain = domain.trim();
+        let uri = uri.trim();
+        let statement = statement.trim();
+        let nonce = nonce.trim();
+        let issued_at = issued_at.trim();
+        let expiration_time = expiration_time.trim();
+        let network = network.trim();
+        if challenge_id.len() != 64
+            || nonce.len() != 64
+            || !challenge_id
+                .chars()
+                .chain(nonce.chars())
+                .all(|character| character.is_ascii_hexdigit())
+        {
+            return Err(StoreError::Validation(
+                "SIWX challenge id and nonce must each be 32 bytes of hex".to_owned(),
+            ));
+        }
+        if domain.is_empty()
+            || domain.len() > 253
+            || domain
+                .chars()
+                .any(|character| character.is_whitespace() || matches!(character, '/' | '\\'))
+            || !(uri.starts_with("https://")
+                || uri.starts_with("http://127.0.0.1:")
+                || uri.starts_with("http://localhost:"))
+            || statement.is_empty()
+            || statement.len() > 512
+            || issued_at.is_empty()
+            || expiration_time.is_empty()
+            || network.is_empty()
+        {
+            return Err(StoreError::Validation(
+                "wallet sign-in SIWX metadata is invalid".to_owned(),
+            ));
+        }
+        if !(60_000..=10 * 60_000).contains(&ttl_ms) {
+            return Err(StoreError::Validation(
+                "SIWX challenge ttl must be between one and ten minutes".to_owned(),
+            ));
+        }
+        let now = now_ms();
+        let expires_at = now.saturating_add(ttl_ms);
+        let connection = self.connection()?;
+        connection.execute(
+            "DELETE FROM wallet_auth_siwx_challenges WHERE expires_at < ?1",
+            [as_i64(now.saturating_sub(24 * 60 * 60 * 1_000))?],
+        )?;
+        connection.execute(
+            "INSERT INTO wallet_auth_siwx_challenges
+             (id, domain, uri, statement, nonce, issued_at, expiration_time,
+              network, age_confirmed_14, expires_at, consumed_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11)",
+            params![
+                challenge_id,
+                domain,
+                uri,
+                statement,
+                nonce,
+                issued_at,
+                expiration_time,
+                network,
+                i64::from(age_confirmed_14),
+                as_i64(expires_at)?,
+                as_i64(now)?,
+            ],
+        )?;
+        drop(connection);
+        self.wallet_auth_siwx_challenge(challenge_id)
+    }
+
+    pub fn wallet_auth_siwx_challenge(
+        &self,
+        challenge_id: &str,
+    ) -> Result<WalletAuthSiwxChallengeRecord, StoreError> {
+        self.connection()?
+            .query_row(
+                "SELECT id, domain, uri, statement, nonce, issued_at,
+                        expiration_time, network, age_confirmed_14, expires_at, consumed_at
+                 FROM wallet_auth_siwx_challenges WHERE id = ?1",
+                [challenge_id.trim()],
+                wallet_auth_siwx_challenge_from_row,
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("wallet sign-in SIWX challenge"))
+    }
+
+    pub fn consume_wallet_auth_siwx_challenge(
+        &self,
+        challenge_id: &str,
+        payload: &SiwxPayload,
+    ) -> Result<(String, bool), StoreError> {
+        let now = now_ms();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let challenge = transaction
+            .query_row(
+                "SELECT id, domain, uri, statement, nonce, issued_at,
+                        expiration_time, network, age_confirmed_14, expires_at, consumed_at
+                 FROM wallet_auth_siwx_challenges WHERE id = ?1",
+                [challenge_id.trim()],
+                wallet_auth_siwx_challenge_from_row,
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("wallet sign-in SIWX challenge"))?;
+        if challenge.consumed_at.is_some() {
+            return Err(StoreError::Conflict(
+                "this wallet sign-in SIWX challenge has already been used".to_owned(),
+            ));
+        }
+        if challenge.expires_at <= now {
+            return Err(StoreError::Conflict(
+                "this wallet sign-in SIWX challenge has expired".to_owned(),
+            ));
+        }
+        let resources_match = payload
+            .resources
+            .as_deref()
+            .is_some_and(|resources| resources.len() == 1 && resources[0] == challenge.uri);
+        if payload.domain != challenge.domain
+            || payload.uri != challenge.uri
+            || payload.statement.as_deref() != Some(challenge.statement.as_str())
+            || payload.version != "1"
+            || payload.chain_id != challenge.network
+            || payload.nonce != challenge.nonce
+            || payload.issued_at != challenge.issued_at
+            || payload.expiration_time.as_deref() != Some(challenge.expiration_time.as_str())
+            || payload.not_before.is_some()
+            || payload.request_id.as_deref() != Some(challenge.id.as_str())
+            || !resources_match
+            || payload.signature_type != "ed25519"
+            || payload.signature_scheme.as_deref().unwrap_or("siws") != "siws"
+        {
+            return Err(StoreError::Unauthorized(
+                "wallet sign-in SIWX payload does not match its challenge".to_owned(),
+            ));
+        }
+        let public_key = bs58::decode(payload.address.trim())
+            .into_vec()
+            .map_err(|_| StoreError::Unauthorized("wallet SIWX address is invalid".to_owned()))?;
+        let public_key: [u8; 32] = public_key
+            .try_into()
+            .map_err(|_| StoreError::Unauthorized("wallet SIWX address is invalid".to_owned()))?;
+        let verifying_key = VerifyingKey::from_bytes(&public_key).map_err(|_| {
+            StoreError::Unauthorized("wallet SIWX address is not an Ed25519 key".to_owned())
+        })?;
+        let signature = bs58::decode(payload.signature.trim())
+            .into_vec()
+            .map_err(|_| StoreError::Unauthorized("wallet SIWX signature is invalid".to_owned()))?;
+        let signature = Signature::from_slice(&signature)
+            .map_err(|_| StoreError::Unauthorized("wallet SIWX signature is invalid".to_owned()))?;
+        verifying_key
+            .verify_strict(siwx_message(payload)?.as_bytes(), &signature)
+            .map_err(|_| StoreError::Unauthorized("wallet SIWX signature is invalid".to_owned()))?;
+        let changed = transaction.execute(
+            "UPDATE wallet_auth_siwx_challenges SET consumed_at = ?1
+             WHERE id = ?2 AND consumed_at IS NULL",
+            params![as_i64(now)?, challenge.id],
+        )?;
+        if changed != 1 {
+            return Err(StoreError::Conflict(
+                "this wallet sign-in SIWX challenge has already been used".to_owned(),
+            ));
+        }
+        transaction.commit()?;
+        Ok((
+            payload.address.trim().to_owned(),
+            challenge.age_confirmed_14,
+        ))
     }
 
     /// Mirrors `check_login_allowed`/`record_login_failure`/`clear_login_failures`
@@ -13551,6 +13769,22 @@ fn wallet_siwx_challenge_from_row(row: &db::Row) -> db::Result<WalletSiwxChallen
     })
 }
 
+fn wallet_auth_siwx_challenge_from_row(row: &db::Row) -> db::Result<WalletAuthSiwxChallengeRecord> {
+    Ok(WalletAuthSiwxChallengeRecord {
+        id: row.get(0)?,
+        domain: row.get(1)?,
+        uri: row.get(2)?,
+        statement: row.get(3)?,
+        nonce: row.get(4)?,
+        issued_at: row.get(5)?,
+        expiration_time: row.get(6)?,
+        network: row.get(7)?,
+        age_confirmed_14: row.get::<_, i64>(8)? != 0,
+        expires_at: as_u64(row.get(9)?)?,
+        consumed_at: row.get::<_, Option<i64>>(10)?.map(as_u64).transpose()?,
+    })
+}
+
 fn siwx_message(payload: &SiwxPayload) -> Result<String, StoreError> {
     let chain_reference = payload
         .chain_id
@@ -19553,15 +19787,35 @@ mod tests {
         // prepaid credit only; network and asset; service/recipient
         // boundary; expiry; a bounded-spend policy; and the pre-existing
         // security-boundary invariant.
-        assert!(prepaid.message.starts_with("OBOLUS prepaid spending authorization"));
+        assert!(
+            prepaid
+                .message
+                .starts_with("OBOLUS prepaid spending authorization")
+        );
         assert!(prepaid.message.contains("Purpose: prepaid_spend_v1"));
-        assert!(prepaid.message.contains("ONLY Obolus prepaid credit spending"));
+        assert!(
+            prepaid
+                .message
+                .contains("ONLY Obolus prepaid credit spending")
+        );
         assert!(prepaid.message.contains(&policy.network));
         assert!(prepaid.message.contains(&policy.asset));
         assert!(prepaid.message.contains(&format!("Recipient: {receiver}")));
-        assert!(prepaid.message.contains("Obolus flash-research document purchases only"));
-        assert!(prepaid.message.contains(&format!("Expires: {}", prepaid.expires_at)));
-        assert!(prepaid.message.contains("bounded to your deposited Obolus prepaid balance"));
+        assert!(
+            prepaid
+                .message
+                .contains("Obolus flash-research document purchases only")
+        );
+        assert!(
+            prepaid
+                .message
+                .contains(&format!("Expires: {}", prepaid.expires_at))
+        );
+        assert!(
+            prepaid
+                .message
+                .contains("bounded to your deposited Obolus prepaid balance")
+        );
         assert!(prepaid
             .message
             .contains("never grants a Solana private key, SPL delegate, token-account authority, or withdrawal capability"));
@@ -19569,10 +19823,7 @@ mod tests {
         // Phantom shows the raw message text verbatim, so distinguishing the
         // first line alone already satisfies "the Phantom prompt visibly
         // distinguishes login from prepaid spending authorization".
-        assert_ne!(
-            login.message.lines().next(),
-            prepaid.message.lines().next()
-        );
+        assert_ne!(login.message.lines().next(), prepaid.message.lines().next());
     }
 
     #[test]
@@ -19645,8 +19896,12 @@ mod tests {
         let store = Store::in_memory().unwrap();
         let signing_key = SigningKey::from_bytes(&[101; 32]);
         let wallet = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
-        let receiver = bs58::encode(SigningKey::from_bytes(&[102; 32]).verifying_key().as_bytes())
-            .into_string();
+        let receiver = bs58::encode(
+            SigningKey::from_bytes(&[102; 32])
+                .verifying_key()
+                .as_bytes(),
+        )
+        .into_string();
         let policy = prepaid_test_policy(receiver);
         let challenge = store
             .create_wallet_auth_challenge(
@@ -19683,8 +19938,12 @@ mod tests {
         let store = Store::in_memory().unwrap();
         let signing_key = SigningKey::from_bytes(&[103; 32]);
         let wallet = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
-        let receiver = bs58::encode(SigningKey::from_bytes(&[104; 32]).verifying_key().as_bytes())
-            .into_string();
+        let receiver = bs58::encode(
+            SigningKey::from_bytes(&[104; 32])
+                .verifying_key()
+                .as_bytes(),
+        )
+        .into_string();
         let policy = prepaid_test_policy(receiver);
         let challenge = store
             .create_wallet_auth_challenge(
@@ -19733,8 +19992,12 @@ mod tests {
     #[test]
     fn wallet_challenge_activity_is_rate_limited_and_clears_on_success() {
         let store = Store::in_memory().unwrap();
-        let wallet = bs58::encode(SigningKey::from_bytes(&[105; 32]).verifying_key().as_bytes())
-            .into_string();
+        let wallet = bs58::encode(
+            SigningKey::from_bytes(&[105; 32])
+                .verifying_key()
+                .as_bytes(),
+        )
+        .into_string();
         for _ in 0..WALLET_CHALLENGE_LIMIT {
             store.wallet_challenge_rate_limited(&wallet).unwrap();
             store.note_wallet_challenge_attempt(&wallet).unwrap();
@@ -19752,11 +20015,19 @@ mod tests {
         let store = Store::in_memory().unwrap();
         let user_id = "prepaid-deletion-buyer";
         ensure_user(&store, user_id);
-        let wallet = bs58::encode(SigningKey::from_bytes(&[106; 32]).verifying_key().as_bytes())
-            .into_string();
+        let wallet = bs58::encode(
+            SigningKey::from_bytes(&[106; 32])
+                .verifying_key()
+                .as_bytes(),
+        )
+        .into_string();
         store.bind_wallet_identity(user_id, &wallet).unwrap();
-        let receiver = bs58::encode(SigningKey::from_bytes(&[107; 32]).verifying_key().as_bytes())
-            .into_string();
+        let receiver = bs58::encode(
+            SigningKey::from_bytes(&[107; 32])
+                .verifying_key()
+                .as_bytes(),
+        )
+        .into_string();
         let policy = prepaid_test_policy(receiver);
         store
             .issue_prepaid_wallet_session(user_id, &wallet, &"3".repeat(64), 300_000, &policy)
@@ -21756,6 +22027,68 @@ mod tests {
         let changed = store.upsert_profile("wallet-owner", &changed).unwrap();
         assert!(!changed.wallet_verified);
         assert!(changed.wallet_verified_at.is_none());
+    }
+
+    #[test]
+    fn pay_siwx_creates_a_single_use_wallet_login_without_exporting_its_key() {
+        let store = Store::in_memory().unwrap();
+        let id = "31".repeat(32);
+        let nonce = "42".repeat(32);
+        let uri = format!("http://127.0.0.1:8787/api/v1/auth/wallet/siwx/{id}");
+        let issued_at = "2026-08-12T03:00:00Z";
+        let expiration_time = "2026-08-12T03:05:00Z";
+        let statement =
+            "Sign in to Obulus with this local Pay.sh wallet. This signature spends no funds.";
+        let network = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+        store
+            .create_wallet_auth_siwx_challenge(
+                &id,
+                "127.0.0.1",
+                &uri,
+                statement,
+                &nonce,
+                issued_at,
+                expiration_time,
+                network,
+                true,
+                300_000,
+            )
+            .unwrap();
+
+        let signing_key = SigningKey::from_bytes(&[12; 32]);
+        let address = bs58::encode(signing_key.verifying_key().as_bytes()).into_string();
+        let mut payload = SiwxPayload {
+            domain: "127.0.0.1".to_owned(),
+            address: address.clone(),
+            uri: uri.clone(),
+            statement: Some(statement.to_owned()),
+            version: "1".to_owned(),
+            chain_id: network.to_owned(),
+            nonce,
+            issued_at: issued_at.to_owned(),
+            expiration_time: Some(expiration_time.to_owned()),
+            not_before: None,
+            request_id: Some(id.clone()),
+            resources: Some(vec![uri]),
+            signature_type: "ed25519".to_owned(),
+            signature_scheme: Some("siws".to_owned()),
+            signature: String::new(),
+        };
+        payload.signature = bs58::encode(
+            signing_key
+                .sign(siwx_message(&payload).unwrap().as_bytes())
+                .to_bytes(),
+        )
+        .into_string();
+
+        let verified = store
+            .consume_wallet_auth_siwx_challenge(&id, &payload)
+            .unwrap();
+        assert_eq!(verified, (address, true));
+        assert!(matches!(
+            store.consume_wallet_auth_siwx_challenge(&id, &payload),
+            Err(StoreError::Conflict(_))
+        ));
     }
 
     #[test]
