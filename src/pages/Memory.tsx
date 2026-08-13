@@ -20,13 +20,21 @@ import { Button } from '@/components/ui/button'
 import {
   Badge,
   Banner,
+  Chip,
   Switch,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/primitives'
-import { CATEGORY_BY_ID, categoryFor } from '@/data/categories'
-import { AUTO_MATCH_STRIKE_LIMIT, STRIKE_LIMIT } from '@/data/onboarding'
+import { CATEGORIES, CATEGORY_BY_ID, categoryFor, type CategoryId } from '@/data/categories'
+import {
+  AGE_BANDS,
+  AUTO_MATCH_STRIKE_LIMIT,
+  HOUSEHOLDS,
+  REGIONS,
+  STRIKE_LIMIT,
+  YEAR_BANDS,
+} from '@/data/onboarding'
 import { useT } from '@/i18n'
 import { exportAccount, setMemoryLocked, withdrawPrepaidBalance } from '@/lib/api'
 import { deterministicAvatar, type AvatarConfig } from '@/lib/avatar'
@@ -186,45 +194,74 @@ export default function Memory() {
     }
   }
 
-  const [avatarPanelOpen, setAvatarPanelOpen] = useState(false)
+  const [profilePanelOpen, setProfilePanelOpen] = useState(false)
   const [avatarDraft, setAvatarDraft] = useState<AvatarConfig | null>(null)
-  const [savingAvatar, setSavingAvatar] = useState(false)
-  const [avatarError, setAvatarError] = useState<string | null>(null)
+  const [handleDraft, setHandleDraft] = useState('')
+  const [ageBandDraft, setAgeBandDraft] = useState('')
+  const [regionDraft, setRegionDraft] = useState('')
+  const [householdDraft, setHouseholdDraft] = useState('')
+  const [fieldDraft, setFieldDraft] = useState<CategoryId | ''>('')
+  const [yearsDraft, setYearsDraft] = useState('')
+  const [speaksToDraft, setSpeaksToDraft] = useState<CategoryId[]>([])
+  const [savingProfile, setSavingProfile] = useState(false)
+  const [profileError, setProfileError] = useState<string | null>(null)
 
-  const openAvatarPanel = () => {
+  /**
+   * The avatar picker used to be its own small panel. It now opens as the
+   * "edit profile" surface, so the handle and answerable-fields changes that
+   * previously only existed at onboarding have somewhere to live post-signup.
+   */
+  const openProfilePanel = () => {
     if (!profile) return
     setAvatarDraft(profile.avatar ?? deterministicAvatar(profile.handle))
-    setAvatarError(null)
-    setAvatarPanelOpen(true)
+    setHandleDraft(profile.handle)
+    setAgeBandDraft(profile.ageBand)
+    setRegionDraft(profile.region)
+    setHouseholdDraft(profile.household)
+    setFieldDraft(profile.field)
+    setYearsDraft(profile.years)
+    setSpeaksToDraft(profile.speaksTo)
+    setProfileError(null)
+    setProfilePanelOpen(true)
   }
 
-  const saveAvatar = async () => {
-    if (!profile || !avatarDraft || savingAvatar) return
-    setSavingAvatar(true)
-    setAvatarError(null)
+  const toggleSpeaksToDraft = (id: CategoryId) =>
+    setSpeaksToDraft((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    )
+
+  const canSaveProfile =
+    handleDraft.trim().length >= 3 &&
+    Boolean(ageBandDraft && regionDraft && householdDraft && fieldDraft && yearsDraft) &&
+    speaksToDraft.length > 0
+
+  const saveProfileEdit = async () => {
+    if (!profile || !avatarDraft || !fieldDraft || !canSaveProfile || savingProfile) return
+    setSavingProfile(true)
+    setProfileError(null)
     try {
       await saveProfile({
-        handle: profile.handle,
-        ageBand: profile.ageBand,
-        region: profile.region,
-        household: profile.household,
-        field: profile.field,
-        years: profile.years,
-        speaksTo: profile.speaksTo,
+        handle: handleDraft.trim().toUpperCase(),
+        ageBand: ageBandDraft,
+        region: regionDraft,
+        household: householdDraft,
+        field: fieldDraft,
+        years: yearsDraft,
+        speaksTo: speaksToDraft,
         wallet: profile.wallet,
         browserAlerts: profile.browserAlerts,
         emailAlerts: profile.emailAlerts,
         avatar: avatarDraft,
       })
-      setAvatarPanelOpen(false)
+      setProfilePanelOpen(false)
     } catch (error) {
-      setAvatarError(
+      setProfileError(
         error instanceof Error
           ? error.message
-          : t('The avatar did not save. Try it again.'),
+          : t('The profile did not save. Try again.'),
       )
     } finally {
-      setSavingAvatar(false)
+      setSavingProfile(false)
     }
   }
 
@@ -275,8 +312,8 @@ export default function Memory() {
             {profile ? (
               <button
                 type="button"
-                onClick={() => (avatarPanelOpen ? setAvatarPanelOpen(false) : openAvatarPanel())}
-                aria-label={t('Change avatar')}
+                onClick={() => (profilePanelOpen ? setProfilePanelOpen(false) : openProfilePanel())}
+                aria-label={t('Edit profile')}
                 className="cursor-pointer rounded-full outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring/50"
               >
                 <Avatar
@@ -288,6 +325,9 @@ export default function Memory() {
             <h1 className="font-sans text-base font-medium">{t('My shelf')}</h1>
           </div>
           <div className="flex items-center gap-2">
+            <Button asChild variant="monoGhost" size="monoSm">
+              <Link to="/transactions">{t('Transactions')}</Link>
+            </Button>
             <Button
               variant="monoGhost"
               size="monoSm"
@@ -313,43 +353,168 @@ export default function Memory() {
           </p>
         ) : null}
 
-        {avatarPanelOpen && avatarDraft ? (
-          <div className="rounded-[6px] border border-border bg-card p-4">
-            <p className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
-              {t('Change avatar')}
-            </p>
-            <div className="mt-3">
-              <AvatarPicker
-                value={avatarDraft}
-                onChange={setAvatarDraft}
-                fallbackSeed={profile?.handle}
-              />
-            </div>
-            {avatarError ? (
-              <p className="mt-3 text-sm text-destructive">{avatarError}</p>
-            ) : null}
-            <div className="mt-4 flex gap-2">
-              <Button
-                variant="mono"
-                size="monoSm"
-                disabled={savingAvatar}
-                onClick={() => void saveAvatar()}
-              >
-                {savingAvatar ? (
-                  <Loader2 className="size-3 animate-spin" />
+        {profilePanelOpen && avatarDraft ? (
+          <Banner tone="neutral" className="overflow-hidden p-0">
+            <div className="divide-y divide-border/60">
+              <div className="p-4">
+                <p className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+                  {t('Edit profile')}
+                </p>
+                <p className="mt-3 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+                  {t('Change avatar')}
+                </p>
+                <div className="mt-2">
+                  <AvatarPicker
+                    value={avatarDraft}
+                    onChange={setAvatarDraft}
+                    fallbackSeed={handleDraft}
+                  />
+                </div>
+              </div>
+
+              <div className="p-4">
+                <p className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+                  {t('Pick a handle')}
+                </p>
+                <input
+                  value={handleDraft}
+                  onChange={(e) => setHandleDraft(e.target.value)}
+                  spellCheck={false}
+                  className="mt-2 h-10 w-full max-w-xs rounded-[2px] border border-border bg-transparent px-3 font-mono text-sm uppercase tracking-[1px] outline-none transition-colors focus:border-foreground/40"
+                />
+              </div>
+
+              <div className="flex flex-col gap-4 p-4">
+                <div>
+                  <p className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+                    {t('Age')}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {AGE_BANDS.map((o) => (
+                      <Chip
+                        key={o.value}
+                        active={ageBandDraft === o.value}
+                        onClick={() => setAgeBandDraft(o.value)}
+                      >
+                        {t(o.label)}
+                      </Chip>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+                    {t('Where you live')}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {REGIONS.map((o) => (
+                      <Chip
+                        key={o.value}
+                        active={regionDraft === o.value}
+                        onClick={() => setRegionDraft(o.value)}
+                      >
+                        {t(o.label)}
+                      </Chip>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+                    {t('Household')}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {HOUSEHOLDS.map((o) => (
+                      <Chip
+                        key={o.value}
+                        active={householdDraft === o.value}
+                        onClick={() => setHouseholdDraft(o.value)}
+                      >
+                        {t(o.label)}
+                      </Chip>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-4 p-4">
+                <div>
+                  <p className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+                    {t('What do you do?')}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {CATEGORIES.map((c) => (
+                      <Chip
+                        key={c.id}
+                        active={fieldDraft === c.id}
+                        onClick={() => setFieldDraft(c.id)}
+                      >
+                        {t(c.label)}
+                      </Chip>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+                    {t('How long')}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {YEAR_BANDS.map((o) => (
+                      <Chip
+                        key={o.value}
+                        active={yearsDraft === o.value}
+                        onClick={() => setYearsDraft(o.value)}
+                      >
+                        {t(o.label)}
+                      </Chip>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-4">
+                <p className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+                  {t('What can you answer?')}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {CATEGORIES.map((c) => (
+                    <Chip
+                      key={c.id}
+                      active={speaksToDraft.includes(c.id)}
+                      onClick={() => toggleSpeaksToDraft(c.id)}
+                    >
+                      {t(c.label)}
+                    </Chip>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-4">
+                {profileError ? (
+                  <p className="mb-3 text-sm text-destructive">{profileError}</p>
                 ) : null}
-                {savingAvatar ? t('Saving…') : t('Save avatar')}
-              </Button>
-              <Button
-                variant="monoGhost"
-                size="monoSm"
-                disabled={savingAvatar}
-                onClick={() => setAvatarPanelOpen(false)}
-              >
-                {t('Cancel')}
-              </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="mono"
+                    size="monoSm"
+                    disabled={!canSaveProfile || savingProfile}
+                    onClick={() => void saveProfileEdit()}
+                  >
+                    {savingProfile ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : null}
+                    {savingProfile ? t('Saving…') : t('Save profile')}
+                  </Button>
+                  <Button
+                    variant="monoGhost"
+                    size="monoSm"
+                    disabled={savingProfile}
+                    onClick={() => setProfilePanelOpen(false)}
+                  >
+                    {t('Cancel')}
+                  </Button>
+                </div>
+              </div>
             </div>
-          </div>
+          </Banner>
         ) : null}
 
         {/* Stat row — one hairline-divided container instead of three

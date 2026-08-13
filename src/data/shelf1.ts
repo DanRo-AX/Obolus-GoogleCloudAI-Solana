@@ -80,11 +80,6 @@ export const OPEN_PROBLEMS: OpenProblem[] = [
   },
   {
     status: 'Next',
-    title: 'Low-effort answers',
-    body: 'In already: specificity checks, the short interviews, reports, three strikes, passage locks, and disputes. Not in: proof that a person is a person, and independent verification that an answer held up. A hard identity check would settle both and would also stop people connecting a wallet at all, so real names stay out of the product and the strikes and the rating loop carry it until then.',
-  },
-  {
-    status: 'Next',
     title: 'A verified tier, at triple the price',
     body: 'Coming later: a verified-member tier, with some open calls accepting only verified answers. The floor price triples — open answers move from ₩300–900 to ₩1,500 and up, typically ₩1,500–3,000, and document opens move from ₩5–20 to ₩30–100. Verified supply is scarce and askers will pay more for it, which is also the incentive to get verified; how verification itself will work is not decided yet.',
   },
@@ -287,7 +282,7 @@ export const SECTIONS: Section[] = [
     blocks: [
       {
         kind: 'p',
-        text: 'Six things are open. The first one is the one that decides whether any of the rest matters.',
+        text: 'Five things are open. The first one is the one that decides whether any of the rest matters.',
       },
     ],
   },
