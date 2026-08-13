@@ -343,6 +343,10 @@ export default function Dashboard() {
     account && !/@wallet\.(?:obolus|openshelf)\.local$/i.test(account.email),
   )
 
+  // Hidden pending design review — code kept intact, just not rendered.
+  const SHOW_ALERT_SETTINGS = false
+  const SHOW_SHELF_STARTERS = false
+
   return (
     <div className="page-enter flex-1 overflow-y-auto">
       <div className="space-y-6 p-4 sm:p-6">
@@ -362,7 +366,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {profile ? (
+        {SHOW_ALERT_SETTINGS && profile ? (
           <Banner tone="neutral" className="overflow-hidden p-0">
             <div className="divide-y divide-border/60 lg:divide-y-0 lg:divide-x lg:divide-border/60 lg:flex">
               <div className="px-4 py-3 lg:flex-1">
@@ -415,7 +419,7 @@ export default function Dashboard() {
           </Banner>
         ) : null}
 
-        {profile && tab === 'open' ? (
+        {SHOW_SHELF_STARTERS && profile && tab === 'open' ? (
           <section
             className="rounded-[6px] border p-4"
             style={bannerToneStyle('violet')}
