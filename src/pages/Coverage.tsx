@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowUpRight, Database, GitBranch, ShieldCheck } from 'lucide-react'
+import { CategoryIcon } from '@/components/CategoryIcon'
 import { Button } from '@/components/ui/button'
 import { Banner } from '@/components/ui/primitives'
 import { CATEGORIES } from '@/data/categories'
@@ -73,9 +74,12 @@ export default function Coverage() {
             )}
           </p>
 
-          <div className="mt-6 grid gap-4 sm:grid-cols-3">
+          {/* One hairline-divided container instead of three separate
+              bordered cards — same "at most one soft container per zone"
+              grammar as the Dashboard's alert-settings row. */}
+          <div className="mt-6 grid grid-cols-1 divide-y divide-border rounded-[6px] border border-border bg-card sm:grid-cols-3 sm:divide-x sm:divide-y-0">
             {RANKING.map(({ Icon, title, body }) => (
-              <article key={title} className="rounded-[6px] border border-border bg-card p-5">
+              <article key={title} className="p-5">
                 <Icon className="size-4 text-muted-foreground" />
                 <h2 className="mt-4 text-sm font-medium">{t(title)}</h2>
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">{t(body)}</p>
@@ -118,7 +122,11 @@ export default function Coverage() {
                 className="grid grid-cols-[1fr_auto] items-center gap-3 border-b border-border/70 px-4 py-3 text-sm transition-colors last:border-0 hover:bg-foreground/[0.025] sm:grid-cols-[1fr_repeat(4,110px)]"
               >
                 <span className="flex items-center gap-2 font-medium">
-                  <span className="size-2 rounded-[1px]" style={{ backgroundColor: row.accent }} />
+                  <CategoryIcon
+                    id={row.id}
+                    className="size-3.5 shrink-0 opacity-80"
+                    style={{ color: row.accent }}
+                  />
                   {t(row.label)}
                   <ArrowUpRight className="size-3 text-muted-foreground" />
                 </span>
