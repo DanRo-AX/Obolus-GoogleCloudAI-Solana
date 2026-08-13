@@ -370,7 +370,7 @@ export const KO: Record<string, string> = {
   'Free discovery shows an anonymous handle and payment-safe metadata. A paid open releases the committed passage and its citation — nothing else.': '탐색은 무료입니다. 보이는 건 익명 활동명과 결제에 안전한 메타데이터뿐. 값을 치르고 열면 확정된 구절과 인용 표기가 풀립니다. 다른 건 없습니다.',
   'Free · not human evidence': '무료 · 사람의 증거 아님',
   'Frequently asked questions': '자주 묻는 질문',
-  'Gemini on Vertex AI receives only your broad field and opted-in categories and creates interview prompts only. There is no buyer waiting and no guaranteed upfront reward. Your firsthand answer—not the AI prompt—becomes a priced human document that can earn when opened later.': 'Vertex AI의 Gemini는 넓은 분야와 직접 고른 항목만 받습니다. 만드는 건 인터뷰 질문뿐입니다. 기다리는 질문자도, 보장된 선지급도 없습니다. AI 질문이 아니라 직접 겪고 쓴 답변이 값 붙은 문서가 됩니다. 나중에 누가 열면 그때 수익이 들어옵니다.',
+  'Gemini on Vertex AI receives only your broad field and opted-in categories, and creates interview prompts. There is no buyer waiting and no guaranteed upfront reward. Your firsthand answer—not the AI prompt—becomes a priced human document that can earn when opened later.': 'Vertex AI의 Gemini는 넓은 분야와 직접 고른 항목만 받습니다. 만드는 건 인터뷰 질문뿐입니다. 기다리는 질문자도, 보장된 선지급도 없습니다. AI 질문이 아니라 직접 겪고 쓴 답변이 값 붙은 문서가 됩니다. 나중에 누가 열면 그때 수익이 들어옵니다.',
   'General model': '범용 모델',
   'Glasses': '안경',
   'Go back to open calls and take a different one.': '설문 목록으로 돌아가 다른 건을 가져가세요.',
