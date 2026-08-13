@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { Avatar } from '@/components/Avatar'
 import { AvatarPicker } from '@/components/AvatarPicker'
+import { CategoryIcon } from '@/components/CategoryIcon'
 import { Button } from '@/components/ui/button'
 import {
   Badge,
@@ -24,6 +25,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/primitives'
+import { CATEGORY_BY_ID, categoryFor } from '@/data/categories'
 import { AUTO_MATCH_STRIKE_LIMIT, STRIKE_LIMIT } from '@/data/onboarding'
 import { useT } from '@/i18n'
 import { exportAccount, setMemoryLocked, withdrawPrepaidBalance } from '@/lib/api'
@@ -350,7 +352,10 @@ export default function Memory() {
           </div>
         ) : null}
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        {/* Stat row — one hairline-divided container instead of three
+            stacked bordered cards, matching the Dashboard's quiet-mono-meta
+            + prominent-figure language. */}
+        <div className="grid grid-cols-1 divide-y divide-border rounded-[6px] border border-border bg-card sm:grid-cols-3 sm:divide-x sm:divide-y-0">
           <Stat
             icon={<Coins className="size-3.5" />}
             label={t('Earned to date')}
@@ -371,23 +376,76 @@ export default function Memory() {
           />
         </div>
 
-        {balance ? (
-          <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-[6px] border border-border bg-card px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            <span>{t('Off-chain call credit')} <strong className="text-foreground">₩{balance.availableKrw.toLocaleString()}</strong></span>
-            <span>{t('Reserved')} <strong className="text-foreground">₩{balance.reservedKrw.toLocaleString()}</strong></span>
-            <span>{t('Held 14 days')} <strong className="text-foreground">₩{balance.heldKrw.toLocaleString()}</strong></span>
-            {balance.availableKrw > 0 && profile?.walletVerified ? (
-              <Button
-                variant="monoMuted"
-                size="monoSm"
-                className="ml-auto"
-                disabled={withdrawing}
-                onClick={() => void withdrawBalance()}
-              >
-                {withdrawing ? t('Sending…') : t('Send to my wallet')}
-              </Button>
-            ) : null}
-          </div>
+        {/* Account status — balance and payout/wallet state used to be two
+            near-identical bordered cards stacked on top of each other; one
+            Banner with a hairline divide-y row per topic reads as a single
+            zone instead of a stack of duplicate boxes. */}
+        {balance || profile ? (
+          <Banner tone="neutral" className="overflow-hidden p-0">
+            <div className="divide-y divide-border/60">
+              {balance ? (
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                  <span>{t('Off-chain call credit')} <strong className="text-foreground">₩{balance.availableKrw.toLocaleString()}</strong></span>
+                  <span>{t('Reserved')} <strong className="text-foreground">₩{balance.reservedKrw.toLocaleString()}</strong></span>
+                  <span>{t('Held 14 days')} <strong className="text-foreground">₩{balance.heldKrw.toLocaleString()}</strong></span>
+                  {balance.availableKrw > 0 && profile?.walletVerified ? (
+                    <Button
+                      variant="monoMuted"
+                      size="monoSm"
+                      className="ml-auto"
+                      disabled={withdrawing}
+                      onClick={() => void withdrawBalance()}
+                    >
+                      {withdrawing ? t('Sending…') : t('Send to my wallet')}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {profile ? (
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <Wallet className="size-3.5" />
+                    {t('Payouts to')}{' '}
+                    {profile.wallet ? (
+                      <span className="flex flex-wrap items-center gap-2 text-foreground">
+                        {shortKey(profile.wallet)} · {profile.walletVerified ? t('verified') : t('unverified')} · Devnet
+                        {!profile.walletVerified ? (
+                          <Button
+                            variant="monoMuted"
+                            size="monoSm"
+                            disabled={verifying || wallet.pubkey !== profile.wallet}
+                            onClick={() => void verifyOwnership()}
+                          >
+                            {verifying ? t('Signing…') : t('Prove it is yours')}
+                          </Button>
+                        ) : null}
+                      </span>
+                    ) : (
+                      <Link
+                        to="/onboarding"
+                        className="text-foreground underline decoration-dotted underline-offset-4"
+                      >
+                        {t('payout wallet not set')}
+                      </Link>
+                    )}
+                  </span>
+                  <span
+                    className={cn(
+                      'flex items-center gap-1.5',
+                      profile.strikes > 0 && 'text-destructive',
+                    )}
+                  >
+                    <ShieldAlert className="size-3.5" />
+                    {profile.strikes}{t(' of ')}{STRIKE_LIMIT}{t(' strikes')}
+                  </span>
+                  <span className="ml-auto">
+                    {profile.disputeUsed ? t('Dispute used') : t('1 dispute left')}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          </Banner>
         ) : null}
 
         {earnings?.claimableKrw ? (
@@ -395,49 +453,6 @@ export default function Memory() {
             {t('Claimable escrow')} <strong className="text-foreground">₩{earnings.claimableKrw.toLocaleString()}</strong>
             {' · '}{t('claim it and USDC lands in the wallet recorded at each open. Not part of the sandbox balance.')}
           </Banner>
-        ) : null}
-
-        {profile ? (
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-[6px] border border-border bg-card px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            <span className="flex items-center gap-1.5">
-              <Wallet className="size-3.5" />
-              {t('Payouts to')}{' '}
-              {profile.wallet ? (
-                <span className="flex flex-wrap items-center gap-2 text-foreground">
-                  {shortKey(profile.wallet)} · {profile.walletVerified ? t('verified') : t('unverified')} · Devnet
-                  {!profile.walletVerified ? (
-                    <Button
-                      variant="monoMuted"
-                      size="monoSm"
-                      disabled={verifying || wallet.pubkey !== profile.wallet}
-                      onClick={() => void verifyOwnership()}
-                    >
-                      {verifying ? t('Signing…') : t('Prove it is yours')}
-                    </Button>
-                  ) : null}
-                </span>
-              ) : (
-                <Link
-                  to="/onboarding"
-                  className="text-foreground underline decoration-dotted underline-offset-4"
-                >
-                  {t('payout wallet not set')}
-                </Link>
-              )}
-            </span>
-            <span
-              className={cn(
-                'flex items-center gap-1.5',
-                profile.strikes > 0 && 'text-destructive',
-              )}
-            >
-              <ShieldAlert className="size-3.5" />
-              {profile.strikes}{t(' of ')}{STRIKE_LIMIT}{t(' strikes')}
-            </span>
-            <span className="ml-auto">
-              {profile.disputeUsed ? t('Dispute used') : t('1 dispute left')}
-            </span>
-          </div>
         ) : null}
 
         {walletError ? (
@@ -457,7 +472,7 @@ export default function Memory() {
         ) : null}
 
         {/* Auto-match — the line you leave in the water ------------------ */}
-        <div className="flex flex-wrap items-center gap-4 rounded-[6px] border border-border bg-card p-4">
+        <Banner tone="neutral" className="flex flex-wrap items-center gap-4">
           <Switch
             checked={autoMatch}
             onCheckedChange={setAutoMatch}
@@ -472,7 +487,7 @@ export default function Memory() {
                 : t('Leave it on and SHELF quotes your documents the moment one fits a question — no open call, no waiting. USDC lands in your wallet each time someone opens one, with nothing new written.')}
             </span>
           </div>
-        </div>
+        </Banner>
 
         {/* Shelf spread ------------------------------------------------ */}
         {shelves.length ? (
@@ -576,11 +591,12 @@ export default function Memory() {
               </Button>
             </div>
           ) : (
-            <ol className="mt-3 flex flex-col">
+            <ol className="mt-3 flex flex-col divide-y divide-border rounded-[6px] border border-border bg-card">
               {memory.map((m, i) => {
                 const w = weightOf(m.createdAt)
+                const cat = CATEGORY_BY_ID[categoryFor(m.shelf, m.question)]
                 return (
-                  <li key={m.id} className="flex gap-4">
+                  <li key={m.id} className="flex gap-4 px-4 py-4">
                     <div className="flex flex-col items-center">
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -597,8 +613,13 @@ export default function Memory() {
                         <span className="w-px flex-1 bg-border" />
                       ) : null}
                     </div>
-                    <div className="flex-1 pb-6">
+                    <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <CategoryIcon
+                          id={categoryFor(m.shelf, m.question)}
+                          className="size-3 shrink-0 opacity-70"
+                          style={{ color: cat?.accent ?? 'var(--muted-foreground)' }}
+                        />
                         <span className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
                           {m.shelf}
                         </span>
@@ -620,10 +641,10 @@ export default function Memory() {
                         ) : null}
                         <span
                           className={cn(
-                            'ml-auto font-mono text-xs tabular-nums',
+                            'ml-auto font-mono text-sm font-semibold tabular-nums',
                             m.status === 'voided'
                               ? 'text-muted-foreground/60 line-through'
-                              : 'text-muted-foreground',
+                              : 'text-[#0F766E]',
                           )}
                         >
                           +₩{m.earned.toLocaleString()}
@@ -808,7 +829,7 @@ function Stat({
   sub: string
 }) {
   return (
-    <div className="rounded-[6px] border border-border bg-card p-4">
+    <div className="px-4 py-3.5">
       <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
         {icon}
         {label}
