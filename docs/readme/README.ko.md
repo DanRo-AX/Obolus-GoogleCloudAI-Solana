@@ -339,7 +339,7 @@ flowchart LR
 
 공개된 [인프라](https://obolus-9qi.pages.dev/artifacts/finalist-evidence/infrastructure.json), [제한된 Gemini 루프](https://obolus-9qi.pages.dev/artifacts/finalist-evidence/autonomy.json), [Devnet 정산](https://obolus-9qi.pages.dev/artifacts/finalist-evidence/devnet.json)은 서로 다른 capability 기록입니다. 이 소스 revision 시점의 공개 autonomy 파일은 아직 두 단계 evidence contract 이전 형식이므로, API를 승격하고 세 artifact를 다시 생성한 뒤 `npm run pitch:verify-live`가 revision·시각을 연결하기 전에는 현재 live 근거로 쓰면 안 됩니다. 자율성 gate는 결정적 검색 전후의 provider-backed 함수 호출 두 번과 일치하는 Cloud Run application log·서빙 revision을 요구합니다. trace의 세 이름은 독립 Agent 3개나 A2A가 아닌 감사 역할입니다. Devnet artifact는 typed Open Call funding → payout → refund lifecycle을 증명하며, 별도 HIT 구매·인용 합성 경로를 대신 증명하지 않습니다. 이 secret-free 기록은 동의된 live inventory, 독립 Vertex audit log, Mainnet 보안·법률·고객 검증을 대신하지 않습니다.
 
-[`architecture.html`](../../architecture.html)은 애플리케이션 내부 구조·데이터 모델·ERD의 상세 보기입니다. [`deploy/cloud-run/README.md`](../../deploy/cloud-run/README.md)는 GCP 경계와 승격을 위한 운영 runbook이고, [`deploy/cloudflare-pages/README.md`](../../deploy/cloudflare-pages/README.md)는 Pages 빌드와 프록시 계약입니다.
+[`architecture.html`](../../architecture.html)은 애플리케이션 내부 구조·데이터 모델·ERD의 상세 보기입니다. [`docs/DEPLOYMENT.ko.md`](../DEPLOYMENT.ko.md)는 canonical 운영 배포 순서이고, [`deploy/cloud-run/README.md`](../../deploy/cloud-run/README.md)는 GCP 경계·migration·복구의 심화 계약이며, [`deploy/cloudflare-pages/README.md`](../../deploy/cloudflare-pages/README.md)는 Pages 빌드와 프록시 계약입니다.
 
 ---
 
@@ -468,7 +468,14 @@ npm run pitch:verify-live        # 공개 발표자료와 운영 evidence gate 3
 `check:all`은 `backend/`에 `cargo test`와 `cargo clippy -D warnings`를 실행하기 때문에
 Rust 툴체인이 필요합니다(`rust-toolchain.toml`이 1.89.0으로 고정). CI는 프런트엔드,
 Pay front 경계, agent-orchestrator, payment-gateway, 백엔드를 별도 job으로 실행합니다.
-[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)을 참고하세요.
+`main`에서 모두 성공하면 tested SHA를 기록하고 마지막 Cloud Run 성공 marker와 호환될
+때만 Pages를 배포합니다. Cloud Run 변경은 schema·backlog·rollback을 검토한 운영자가
+current main SHA로 키리스 exact-revision workflow를 수동 실행합니다. 실패한 테스트와
+PR에는 배포 자격증명을 주지 않습니다.
+[`ci.yml`](../../.github/workflows/ci.yml),
+[`deploy.yml`](../../.github/workflows/deploy.yml),
+[`deploy-cloud-run.yml`](../../.github/workflows/deploy-cloud-run.yml),
+[운영 배포 런북](../DEPLOYMENT.ko.md)을 참고하세요.
 
 2026-08-11 engineering 기준선은 **일반 테스트 362/362**입니다. frontend 18, Pages proxy 3,
 Antigravity MCP 14, local agent 15, evidence tooling 13, gateway 97, orchestrator 50,

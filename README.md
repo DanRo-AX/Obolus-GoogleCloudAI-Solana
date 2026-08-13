@@ -343,7 +343,7 @@ Cloudflare currently has no custom domain attached, so `obolus-9qi.pages.dev` is
 
 The published [infrastructure](https://obolus-9qi.pages.dev/artifacts/finalist-evidence/infrastructure.json), [bounded Gemini loop](https://obolus-9qi.pages.dev/artifacts/finalist-evidence/autonomy.json), and [Devnet settlement](https://obolus-9qi.pages.dev/artifacts/finalist-evidence/devnet.json) files are separate capability records. At this source revision the published autonomy file still predates the two-stage evidence contract, so it must not support a current live claim until the API is promoted and all three artifacts are regenerated and correlated by `npm run pitch:verify-live`. The autonomy gate requires two provider-backed function calls around deterministic retrieval plus a matching Cloud Run application log and serving revision; its three trace labels are auditable roles, not three independent agents or A2A. The Devnet artifact proves a typed Open Call funding → payout → refund lifecycle, not the separate HIT purchase and cited-synthesis path. These secret-free records do not substitute for a consented live inventory, independent Vertex audit logs, Mainnet security, legal review, or customer validation.
 
-[`architecture.html`](architecture.html) remains the detailed application/data-model and ERD view. [`deploy/cloud-run/README.md`](deploy/cloud-run/README.md) is the operator runbook for GCP boundaries and promotion; [`deploy/cloudflare-pages/README.md`](deploy/cloudflare-pages/README.md) is the Pages build and proxy contract.
+[`architecture.html`](architecture.html) remains the detailed application/data-model and ERD view. [`docs/DEPLOYMENT.ko.md`](docs/DEPLOYMENT.ko.md) is the canonical release sequence; [`deploy/cloud-run/README.md`](deploy/cloud-run/README.md) holds the deeper GCP boundary, migration, and recovery contracts; [`deploy/cloudflare-pages/README.md`](deploy/cloudflare-pages/README.md) holds the Pages build and proxy contract.
 
 ---
 
@@ -474,7 +474,15 @@ npm run pitch:verify-live        # require the published deck and all three live
 `check:all` needs a Rust toolchain (`rust-toolchain.toml` pins 1.89.0) because it
 runs `cargo test` and `cargo clippy -D warnings` against `backend/`. CI runs the
 frontend, Pay front boundary, agent-orchestrator, payment-gateway, and backend
-jobs separately. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+jobs separately. A successful `main` run records the tested SHA and deploys
+Pages only when it is compatible with the latest Cloud Run success marker.
+Stateful Cloud Run changes require explicit schema/backlog/rollback review and
+a manually dispatched keyless exact-revision workflow; failed tests and pull
+requests never receive deployment credentials. See
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml),
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml),
+[`.github/workflows/deploy-cloud-run.yml`](.github/workflows/deploy-cloud-run.yml), and the
+[deployment runbook](docs/DEPLOYMENT.ko.md).
 
 The 2026-08-11 engineering baseline is **362/362 normal tests**: frontend 18, Pages
 proxy 3, Antigravity MCP 14, local agent 15, evidence tooling 13, gateway 97,

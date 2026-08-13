@@ -1,4 +1,4 @@
-FROM rust:1.89-bookworm AS builder
+FROM rust:1.89-bookworm@sha256:948f9b08a66e7fe01b03a98ef1c7568292e07ec2e4fe90d88c07bb14563c84ff AS builder
 ENV RUSTUP_TOOLCHAIN=1.97.1
 
 # @solana/pay@1.0.26 installs pay v0.26.0. The published convenience binary
@@ -15,7 +15,7 @@ WORKDIR /src/pay/rust
 RUN PAY_PDB_ALLOW_PLACEHOLDER=1 \
     cargo build --locked --release --package pay --features gcp_kms
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates gettext-base libssl3 nginx \
     && rm -rf /var/lib/apt/lists/*

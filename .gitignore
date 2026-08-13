@@ -40,6 +40,10 @@ openshelf.db-wal
 .gstack/
 .secrets/
 .wrangler/
+gha-creds-*.json
+release-state/
+promotion/
+changed-files.txt
 
 # Recorded demo output
 scripts/.e2e-video/
@@ -50,3 +54,4 @@ artifacts/finalist-evidence/
 
 # Local agent session and project-memory state.
 .omc/
+.omg/
