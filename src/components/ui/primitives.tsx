@@ -1,4 +1,5 @@
 import * as React from 'react'
+import type { CSSProperties } from 'react'
 import * as AccordionPrimitive from '@radix-ui/react-accordion'
 import * as SwitchPrimitive from '@radix-ui/react-switch'
 import * as TooltipPrimitive from '@radix-ui/react-tooltip'
@@ -140,7 +141,10 @@ function DropdownMenuContent({
       <DropdownMenuPrimitive.Content
         sideOffset={sideOffset}
         className={cn(
-          'z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md',
+          // Linear leans on the hairline border + a light surface lift for
+          // floating menus rather than a heavy shadow — shadow-sm here is
+          // just enough to separate the menu from whatever sits behind it.
+          'z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-sm',
           'animate-zoom-in-95',
           className,
         )}
@@ -224,6 +228,79 @@ function Badge({
   )
 }
 
+/* ------------------------------------------------------------------- Chip */
+
+/**
+ * Square, mono-labelled toggle — the shape shared by every filter/sort/tab
+ * control in the dashboard toolbar. Pill radius stays reserved for
+ * status/count tokens (see Badge); a chip you click to change a view gets
+ * the small rectangular radius instead.
+ */
+function Chip({
+  active,
+  muted,
+  className,
+  ...props
+}: React.ComponentProps<'button'> & { active?: boolean; muted?: boolean }) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'h-11 cursor-pointer rounded-[4px] border px-3 font-mono text-[11px] uppercase tracking-[1px] transition-colors sm:h-8',
+        active
+          ? 'border-foreground/70 bg-foreground/[0.06] text-foreground'
+          : 'border-border text-muted-foreground hover:border-foreground/25 hover:text-foreground',
+        muted && 'opacity-60',
+        className,
+      )}
+      {...props}
+    />
+  )
+}
+
+/* ----------------------------------------------------------------- Banner */
+
+export type BannerTone = 'violet' | 'teal' | 'destructive' | 'neutral'
+
+const BANNER_TONE_HEX: Record<BannerTone, string> = {
+  violet: '#6D5BD0',
+  teal: '#0F766E',
+  destructive: 'var(--destructive)',
+  neutral: 'var(--foreground)',
+}
+
+/**
+ * Same soft-tint recipe as the marketplace card's category banner
+ * (color-mix against var(--card), see Dashboard's categoryBannerStyle) —
+ * so an alert box and a card banner read as one material rather than two
+ * different tinting techniques. Exported for the rare case where the
+ * callout cannot be a <div> (e.g. a <section>); most callers should just
+ * render <Banner tone="…">.
+ */
+export function bannerToneStyle(tone: BannerTone): CSSProperties {
+  const hex = BANNER_TONE_HEX[tone]
+  const isNeutral = tone === 'neutral'
+  return {
+    borderColor: `color-mix(in oklab, ${hex} ${isNeutral ? 14 : 26}%, var(--border))`,
+    background: `color-mix(in oklab, ${hex} ${isNeutral ? 4 : 5}%, var(--card))`,
+  }
+}
+
+function Banner({
+  tone = 'neutral',
+  className,
+  style,
+  ...props
+}: React.ComponentProps<'div'> & { tone?: BannerTone }) {
+  return (
+    <div
+      className={cn('rounded-[6px] border p-4', className)}
+      style={{ ...bannerToneStyle(tone), ...style }}
+      {...props}
+    />
+  )
+}
+
 export {
   Accordion,
   AccordionItem,
@@ -241,4 +318,6 @@ export {
   DropdownMenuCheckboxItem,
   DropdownMenuLabel,
   Badge,
+  Chip,
+  Banner,
 }

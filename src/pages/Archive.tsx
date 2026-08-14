@@ -8,9 +8,8 @@ import {
   Search,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/primitives'
+import { Badge, Chip } from '@/components/ui/primitives'
 import { useT } from '@/i18n'
-import { cn } from '@/lib/utils'
 import { useUi, type Chat } from '@/state/ui'
 
 /**
@@ -50,7 +49,12 @@ function summarise(chat: Chat): Row {
   return { chat, docs, spent, txSig, network }
 }
 
-export default function Archive() {
+/**
+ * The tab/route-shared body. Rendered full-page at /archive, and again as
+ * the "내 질문" tab inside Memory — same component, same state, same t()
+ * strings, just a different wrapper around it.
+ */
+export function ArchivePanel() {
   const { chats } = useUi()
   const t = useT()
   const [q, setQ] = useState('')
@@ -83,92 +87,92 @@ export default function Archive() {
   }, [chats])
 
   return (
-    <div className="page-enter flex-1 overflow-y-auto">
-      <div className="space-y-6 p-4 sm:p-6">
-        <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
-          <h1 className="font-sans text-base font-medium">{t('Receipts')}</h1>
-          <div className="flex items-center gap-5 font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
-            <span className="flex items-center gap-1.5">
-              <MessageSquare className="size-3.5" />
-              <span className="tabular-nums text-foreground">
-                {chats.length}
-              </span>
-              {t(' asked')}
+    <div className="space-y-6">
+      <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
+        <h1 className="font-sans text-base font-medium">{t('Receipts')}</h1>
+        <div className="flex items-center gap-5 font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <MessageSquare className="size-3.5" />
+            <span className="tabular-nums text-foreground">
+              {chats.length}
             </span>
-            <span className="flex items-center gap-1.5">
-              <Receipt className="size-3.5" />
-              <span className="tabular-nums text-foreground">
-                {totals.docs}
-              </span>
-              {t(' opened')}
+            {t(' asked')}
+          </span>
+          <span className="flex items-center gap-1.5">
+            <Receipt className="size-3.5" />
+            <span className="tabular-nums text-foreground">
+              {totals.docs}
             </span>
-            <span className="flex items-center gap-1.5">
-              <Coins className="size-3.5" />
-              <span className="tabular-nums text-foreground">
-                ₩{totals.spent.toLocaleString()}
-              </span>
-              {t(' spent')}
+            {t(' opened')}
+          </span>
+          <span className="flex items-center gap-1.5">
+            <Coins className="size-3.5" />
+            <span className="tabular-nums text-foreground">
+              ₩{totals.spent.toLocaleString()}
             </span>
-          </div>
-        </div>
-
-        <p className="max-w-2xl text-[15px] leading-7 text-muted-foreground">
-          {t('Every question you have asked, and the passages it paid for. You pay for an open once — the document stays readable here after that.')}
-        </p>
-
-        {/* controls ----------------------------------------------------- */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 sm:max-w-xs">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder={t('Search questions and shelves')}
-              className="h-9 w-full rounded-[2px] border border-border bg-transparent pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-foreground/40"
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => setPaidOnly((v) => !v)}
-            className={cn(
-              'h-7 cursor-pointer rounded-full border px-3 font-mono text-[11px] uppercase tracking-[1px] transition-colors',
-              paidOnly
-                ? 'border-foreground/70 bg-foreground/[0.06] text-foreground'
-                : 'border-border text-muted-foreground hover:border-foreground/25 hover:text-foreground',
-            )}
-          >
-            {t('With opens')}
-          </button>
-          <span className="ml-auto font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            {rows.length}{rows.length === 1 ? t(' question') : t(' questions')}
+            {t(' spent')}
           </span>
         </div>
+      </div>
 
-        {rows.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-[18vh] text-center">
-            <h2 className="font-sans text-lg font-medium">
-              {chats.length === 0
-                ? t('Nothing asked yet')
-                : t('No question matches')}
-            </h2>
-            <p className="max-w-[340px] text-sm leading-relaxed text-muted-foreground">
-              {chats.length === 0
-                ? t('Ask something and it lands here with whatever it opened, so you can come back to the passages you paid for.')
-                : t('Try a different word, or turn off the opens filter.')}
-            </p>
-            {chats.length === 0 ? (
-              <Button asChild variant="mono" size="mono" className="mt-2">
-                <Link to="/">{t('Ask something')}</Link>
-              </Button>
-            ) : null}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {rows.map((r) => (
-              <ThreadCard key={r.chat.id} row={r} />
-            ))}
-          </div>
-        )}
+      <p className="max-w-2xl text-[15px] leading-7 text-muted-foreground">
+        {t('Every question you have asked, and the passages it paid for. You pay for an open once — the document stays readable here after that.')}
+      </p>
+
+      {/* controls ----------------------------------------------------- */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 sm:max-w-xs">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={t('Search questions and shelves')}
+            className="h-9 w-full rounded-[2px] border border-border bg-transparent pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-foreground/40"
+          />
+        </div>
+        <Chip active={paidOnly} onClick={() => setPaidOnly((v) => !v)}>
+          {t('With opens')}
+        </Chip>
+        <span className="ml-auto font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+          {rows.length}{rows.length === 1 ? t(' question') : t(' questions')}
+        </span>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-3 py-[18vh] text-center">
+          <h2 className="font-sans text-lg font-medium">
+            {chats.length === 0
+              ? t('Nothing asked yet')
+              : t('No question matches')}
+          </h2>
+          <p className="max-w-[340px] text-sm leading-relaxed text-muted-foreground">
+            {chats.length === 0
+              ? t('Ask something and it lands here with whatever it opened, so you can come back to the passages you paid for.')
+              : t('Try a different word, or turn off the opens filter.')}
+          </p>
+          {chats.length === 0 ? (
+            <Button asChild variant="mono" size="mono" className="mt-2">
+              <Link to="/">{t('Ask something')}</Link>
+            </Button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {rows.map((r) => (
+            <ThreadCard key={r.chat.id} row={r} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** /archive still resolves on its own — same panel, full-page wrapper. */
+export default function Archive() {
+  return (
+    <div className="page-enter flex-1 overflow-y-auto">
+      <div className="p-4 sm:p-6">
+        <ArchivePanel />
       </div>
     </div>
   )

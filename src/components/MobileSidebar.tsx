@@ -1,5 +1,6 @@
 import { Link, NavLink } from 'react-router-dom'
 import { Activity, LogIn, LogOut, ShieldCheck } from 'lucide-react'
+import { BrandMark } from '@/components/ui/BrandMark'
 import { Button } from '@/components/ui/button'
 import { NAV_ITEMS } from '@/data/nav'
 import { cn } from '@/lib/utils'
@@ -37,17 +38,9 @@ export function MobileSidebar() {
           <div className="flex min-w-0 flex-1 flex-col gap-1 rounded-lg p-1">
             <Link
               to="/"
-              className="flex h-11 w-full items-center gap-2 rounded-sm bg-white p-2.5 text-sm font-medium shadow-lg shadow-black/5"
+              className="flex h-11 w-full items-center gap-2 rounded-[4px] p-2.5 text-sm font-medium transition-colors hover:bg-sidebar-accent"
             >
-              <span className="flex size-6 items-center justify-center rounded-[7px] bg-foreground">
-                <img
-                  className="invert"
-                  src="/OBOLUS-MARK-SM.svg"
-                  alt="Obolus"
-                  width={14}
-                  height={14}
-                />
-              </span>
+              <BrandMark size="sm" />
               <span className="truncate text-xs font-semibold">Obolus</span>
             </Link>
           </div>

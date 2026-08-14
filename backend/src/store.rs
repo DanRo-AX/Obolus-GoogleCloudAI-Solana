@@ -43,6 +43,10 @@ use crate::{
 
 const STRIKE_LIMIT: usize = 3;
 const AUTO_MATCH_STRIKE_LIMIT: usize = 2;
+/// A 256KB image, base64-encoded, plus JSON wrapper overhead. This is a
+/// devnet demo with no object storage — the avatar (parts config or data URL)
+/// lives directly on the profile row, so it needs a hard ceiling.
+const MAX_AVATAR_JSON_BYTES: usize = 400_000;
 const PAYOUT_HOLD_MS: u64 = 14 * 24 * 60 * 60 * 1_000;
 const ANSWER_RESERVATION_TTL_MS: u64 = 10 * 60 * 1_000;
 const AGENT_MATCH_THRESHOLD: f32 = 0.82;
@@ -1792,6 +1796,7 @@ impl Store {
                 agents INTEGER NOT NULL DEFAULT 0,
                 browser_alerts INTEGER NOT NULL DEFAULT 0,
                 email_alerts INTEGER NOT NULL DEFAULT 0,
+                avatar_json TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
@@ -2189,6 +2194,7 @@ impl Store {
             "consent_version",
             "TEXT NOT NULL DEFAULT 'legacy'",
         )?;
+        add_column_if_missing(connection, "profiles", "avatar_json", "TEXT")?;
         connection.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_verified_wallet_owner
              ON profiles(wallet)
@@ -5586,6 +5592,10 @@ impl Store {
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty());
+        let avatar_json = request
+            .avatar
+            .as_ref()
+            .map(|value| serde_json::to_string(value).expect("avatar config is serialisable"));
         let now = now_ms();
         {
             let mut connection = self.connection()?;
@@ -5624,9 +5634,9 @@ impl Store {
                 "INSERT INTO profiles
                  (user_id, handle, age_band, region, household, field, years,
                   speaks_to_json, wallet, wallet_verified_at, agreed_at, consent_version,
-                  auto_match, agents, browser_alerts, email_alerts,
+                  auto_match, agents, browser_alerts, email_alerts, avatar_json,
                   created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?11, ?11)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?11, ?11)
                  ON CONFLICT(user_id) DO UPDATE SET
                    handle = excluded.handle,
                    age_band = excluded.age_band,
@@ -5646,6 +5656,7 @@ impl Store {
                    agents = excluded.agents,
                    browser_alerts = excluded.browser_alerts,
                    email_alerts = excluded.email_alerts,
+                   avatar_json = excluded.avatar_json,
                    updated_at = excluded.updated_at",
                 params![
                     user_id,
@@ -5665,6 +5676,7 @@ impl Store {
                     i64::from(request.agents),
                     i64::from(request.browser_alerts),
                     i64::from(request.email_alerts),
+                    avatar_json,
                 ],
             )?;
             materialize_call_notifications(&transaction, user_id)?;
@@ -13167,6 +13179,15 @@ fn validate_profile(request: &UpsertProfileRequest) -> Result<(), StoreError> {
             ));
         }
     }
+    if let Some(avatar) = request.avatar.as_ref() {
+        let serialized = serde_json::to_string(avatar)
+            .map_err(|_| StoreError::Validation("avatar must be valid JSON".to_owned()))?;
+        if serialized.len() > MAX_AVATAR_JSON_BYTES {
+            return Err(StoreError::Validation(
+                "avatar is too large — try a smaller image".to_owned(),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -13848,7 +13869,8 @@ fn load_profile(connection: &Connection, user_id: &str) -> Result<Option<UserPro
                     p.browser_alerts, p.email_alerts,
                     (SELECT COUNT(*) FROM memory_entries m
                      WHERE m.user_id = p.user_id AND m.status = 'voided'),
-                    EXISTS(SELECT 1 FROM dispute_events d WHERE d.user_id = p.user_id)
+                    EXISTS(SELECT 1 FROM dispute_events d WHERE d.user_id = p.user_id),
+                    p.avatar_json
              FROM profiles p WHERE p.user_id = ?1",
             [user_id],
             profile_from_row,
@@ -13943,6 +13965,10 @@ fn profile_from_row(row: &db::Row) -> db::Result<UserProfile> {
     let wallet_verified_at = row.get::<_, Option<i64>>(8)?.map(as_u64).transpose()?;
     let strikes = as_usize(row.get(15)?)?;
     let configured_auto_match = row.get::<_, i64>(10)? != 0;
+    let avatar_json: Option<String> = row.get(17)?;
+    let avatar = avatar_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok());
     Ok(UserProfile {
         handle: row.get(0)?,
         age_band: row.get(1)?,
@@ -13963,6 +13989,7 @@ fn profile_from_row(row: &db::Row) -> db::Result<UserProfile> {
         strikes,
         dispute_used: row.get::<_, i64>(16)? != 0,
         suspended: strikes >= STRIKE_LIMIT,
+        avatar,
     })
 }
 
@@ -18661,9 +18688,9 @@ mod tests {
 
     use super::{
         AI_GENERATION_BUDGET_WINDOW_MS, AiArtifactMetadata, AiGenerationClaim, BASE64_STANDARD,
-        BUNDLE_FUNDING_AGENT_DIRECT, LOGIN_FAILURE_LIMIT, PayShDeliveryRequest, PaymentQuotePolicy,
-        Store, StoreError, WALLET_CHALLENGE_LIMIT, as_i64, as_u64, hex_digest, new_id, now_ms,
-        siwx_message,
+        BUNDLE_FUNDING_AGENT_DIRECT, LOGIN_FAILURE_LIMIT, MAX_AVATAR_JSON_BYTES,
+        PayShDeliveryRequest, PaymentQuotePolicy, Store, StoreError, WALLET_CHALLENGE_LIMIT,
+        as_i64, as_u64, hex_digest, new_id, now_ms, siwx_message,
     };
 
     #[test]
@@ -18859,6 +18886,7 @@ mod tests {
             agents: false,
             browser_alerts: true,
             email_alerts: false,
+            avatar: None,
         }
     }
 
@@ -21841,6 +21869,58 @@ mod tests {
             .upsert_profile("researcher-2", &profile_request("SEOUL_OPS"))
             .unwrap_err();
         assert!(conflict.to_string().contains("already in use"));
+    }
+
+    #[test]
+    fn profile_round_trips_avatar_config() {
+        let store = Store::in_memory().unwrap();
+
+        // A profile saved with no avatar has none — no crash reading NULL back.
+        let bare = store
+            .upsert_profile("avatar-user", &profile_request("avatar_bare"))
+            .unwrap();
+        assert_eq!(bare.avatar, None);
+        assert_eq!(store.get_profile("avatar-user").unwrap().unwrap().avatar, None);
+
+        // The notion-style parts config round-trips exactly.
+        let parts = serde_json::json!({
+            "face": 3, "nose": 1, "mouth": 5, "eyes": 2, "eyebrows": 4,
+            "glasses": 0, "hair": 12, "accessories": 0, "details": 0, "beard": 0,
+            "bg": "#DCEEFB",
+        });
+        let parts_request = UpsertProfileRequest {
+            avatar: Some(parts.clone()),
+            ..profile_request("avatar_bare")
+        };
+        let saved = store.upsert_profile("avatar-user", &parts_request).unwrap();
+        assert_eq!(saved.avatar, Some(parts.clone()));
+        assert_eq!(
+            store.get_profile("avatar-user").unwrap().unwrap().avatar,
+            Some(parts)
+        );
+
+        // Switching to an uploaded image round-trips too — same field, different shape.
+        let image = serde_json::json!({ "type": "image", "url": "data:image/jpeg;base64,AAAA" });
+        let image_request = UpsertProfileRequest {
+            avatar: Some(image.clone()),
+            ..profile_request("avatar_bare")
+        };
+        let updated = store.upsert_profile("avatar-user", &image_request).unwrap();
+        assert_eq!(updated.avatar, Some(image));
+
+        // An oversized payload is rejected rather than silently stored or truncated.
+        let oversized = serde_json::json!({
+            "type": "image",
+            "url": format!("data:image/jpeg;base64,{}", "A".repeat(MAX_AVATAR_JSON_BYTES + 1)),
+        });
+        let oversized_request = UpsertProfileRequest {
+            avatar: Some(oversized),
+            ..profile_request("avatar_bare")
+        };
+        let error = store
+            .upsert_profile("avatar-user", &oversized_request)
+            .unwrap_err();
+        assert!(matches!(error, StoreError::Validation(_)));
     }
 
     #[test]

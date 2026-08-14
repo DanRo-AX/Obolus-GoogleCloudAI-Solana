@@ -8,11 +8,17 @@ import { cn } from '@/lib/utils'
  * names, but they no longer set a monospace face. Uppercase mono reads as a
  * terminal prompt, which is wrong on a button someone is meant to press — it
  * belongs on the small labels and figures, not on "Start writing". They now
- * take the page sans at sentence case, keeping only the 2px radius that gives
- * the app its squared-off feel.
+ * take the page sans at sentence case, and round to rounded-lg (8px, the
+ * app's --radius token) rather than the near-square 2px they started at —
+ * softer corners without going pill-shaped on a rectangular button.
  */
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium cursor-pointer disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 aria-invalid:border-destructive transition-all",
+  // rounded-md here is the Linear-scale fallback (now 6px via --radius) for
+  // any variant/size pair below that doesn't set its own radius — default,
+  // destructive, outline, secondary and ghost at the default/icon sizes had
+  // none at all before this, so they rendered square. The mono* variants
+  // keep their own explicit rounded-lg and win over this via tailwind-merge.
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md font-medium cursor-pointer disabled:pointer-events-none disabled:opacity-35 disabled:saturate-0 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 aria-invalid:border-destructive transition-all",
   {
     variants: {
       variant: {
@@ -25,13 +31,13 @@ const buttonVariants = cva(
           'bg-secondary text-secondary-foreground hover:bg-secondary/80',
         ghost: 'hover:bg-accent hover:text-accent-foreground',
         link: 'text-primary underline-offset-4 hover:underline',
-        mono: 'rounded-[2px] bg-foreground text-background hover:bg-foreground/85',
+        mono: 'rounded-lg bg-foreground text-background hover:bg-foreground/85',
         monoMuted:
-          'rounded-[2px] bg-muted-2 text-foreground hover:bg-muted-foreground/15 border border-transparent',
+          'rounded-lg bg-muted-2 text-foreground hover:bg-muted-foreground/15 border border-transparent',
         monoGhost:
-          'rounded-[2px] bg-transparent text-muted-foreground hover:bg-muted-foreground/10 border border-transparent hover:text-foreground',
+          'rounded-lg bg-transparent text-muted-foreground hover:bg-muted-foreground/10 border border-transparent hover:text-foreground',
         monoOutline:
-          'rounded-[2px] bg-transparent text-foreground border border-foreground/[0.12] hover:bg-foreground/[0.06]',
+          'rounded-lg bg-transparent text-foreground border border-foreground/[0.12] hover:bg-foreground/[0.06]',
       },
       size: {
         default: 'h-11 px-4 py-2 text-sm has-[>svg]:px-3 sm:h-9',
