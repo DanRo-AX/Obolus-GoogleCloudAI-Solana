@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Check,
@@ -10,14 +11,19 @@ import {
   MessageSquareText,
   Mail,
   Loader2,
+  Search,
   Sparkles,
   ShieldAlert,
   UserRound,
+  X,
   type LucideIcon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { CategoryIcon } from '@/components/CategoryIcon'
 import {
   Badge,
+  Banner,
+  bannerToneStyle,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -26,7 +32,10 @@ import {
 } from '@/components/ui/primitives'
 import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from '@/data/categories'
 import { AGE_BANDS, HOUSEHOLDS, REGIONS, STRIKE_LIMIT } from '@/data/onboarding'
-import { useT } from '@/i18n'
+import { useLang } from '@/i18n'
+import { cardGradient } from '@/lib/cardGradient'
+import { Avatar } from '@/components/Avatar'
+import { deterministicAvatar } from '@/lib/avatar'
 import {
   ApiError,
   generateShelfStarters,
@@ -45,37 +54,81 @@ import { useUi, type Order } from '@/state/ui'
  * This is the open-survey slot, except the unit is one question, not a form.
  */
 
-type SortId = 'top' | 'pay' | 'new' | 'closing'
+type SortId = 'new' | 'popular' | 'pay' | 'fit'
 
 const SORTS: Array<{ id: SortId; label: string; hint: string }> = [
-  { id: 'top', label: 'Top', hint: 'Pay, discounted by how long it has sat' },
-  { id: 'pay', label: 'Highest pay', hint: 'Most per answer, however old' },
   { id: 'new', label: 'Newest', hint: 'Just posted, whatever it pays' },
-  { id: 'closing', label: 'Closing soon', hint: 'Fewest slots left' },
+  { id: 'popular', label: 'Most popular', hint: 'Most answers collected so far' },
+  { id: 'pay', label: 'Highest pay', hint: 'Most per answer, however old' },
+  { id: 'fit', label: 'Best fit', hint: 'Closest match to your fields' },
 ]
 
 /**
- * The default ranking.
- *
- * Sorting purely by price freezes the board — one ₩1,500 call from three days
- * ago outranks everything forever while a fresh ₩600 call is never seen, and it
- * is the asker waiting on that one who gives up on us. Sorting purely by time
- * buries the calls actually worth answering. So: pay, halved for every day it
- * has sat, nudged up when there is still room to get in.
+ * The fit signal `topScore` used to blend into its combined ranking, now
+ * standalone as the "적합도순" sort — a recommendation score when the backend
+ * has one, else a flat bump for a call inside a field the profile lists.
  */
-function topScore(o: Order) {
-  const hours = (Date.now() - o.createdAt) / 3600000
-  const freshness = 1 / (1 + hours / 24)
-  const room = 1 + ((o.target - o.answered) / o.target) * 0.5
-  const fit = o.recommendationScore ?? (o.eligible ? 0.55 : 0)
-  return o.unitPrice * freshness * room * (0.75 + fit * 0.5)
+function fitScore(o: Order) {
+  return o.recommendationScore ?? (o.eligible ? 0.55 : 0)
 }
 
-const MIN_PAY: Array<{ value: number; label: string }> = [
-  { value: 0, label: 'Any pay' },
-  { value: 500, label: '₩500+' },
-  { value: 1000, label: '₩1,000+' },
-]
+/**
+ * Callout-badge header: a banner patch tinted from a fixed accent, soft
+ * enough to sit under a profile-style icon badge rather than compete with
+ * it. Blended against --card, not the raw accent, so it stays a tint even
+ * if a dark surface is added later.
+ *
+ * The open-calls card banner below no longer uses this — it paints with
+ * `cardGradient` (src/lib/cardGradient.ts) instead, a keyword-hashed
+ * multicolor gradient per variant 7 ("Airbnb 리스팅"). This helper stays for
+ * the "Build human supply" callout's leading avatar, which still wants a
+ * single-accent tint.
+ */
+function categoryBannerStyle(accent?: string): CSSProperties {
+  if (!accent) return { background: 'var(--muted)' }
+  return {
+    background: `linear-gradient(135deg, color-mix(in oklab, ${accent} 26%, var(--card)), color-mix(in oklab, ${accent} 9%, var(--card)))`,
+  }
+}
+
+/**
+ * Search matches the translated category label or the raw question text —
+ * a case-insensitive substring check, not fuzzy matching. `query` arrives
+ * already trimmed and lower-cased by the caller.
+ */
+function matchesSearch(order: Order, query: string, t: (en: string) => string): boolean {
+  const label = CATEGORY_BY_ID[order.category]?.label
+  const haystack = `${label ? t(label) : ''} ${order.question}`.toLowerCase()
+  return haystack.includes(query)
+}
+
+/**
+ * The "Who answers" targeting line — shared by the card body and the
+ * question-preview modal so both read an order's filters the same way.
+ * `null` when the call has no active filters, so callers can skip the row.
+ */
+function whoAnswersLine(order: Order, t: (en: string) => string): string | null {
+  if (!order.filters || !Object.values(order.filters).some(Boolean)) return null
+  return Object.entries(order.filters)
+    .filter(([, value]) => Boolean(value))
+    .map(([key, value]) => {
+      if (key === 'category' || key === 'field') {
+        const filterCat = CATEGORY_BY_ID[value as CategoryId]
+        const prefix = key === 'field' ? t('Field') : t('Category')
+        return `${prefix} ${filterCat?.label ? t(filterCat.label) : value}`
+      }
+      if (key === 'ageBand' || key === 'region' || key === 'household') {
+        const options =
+          key === 'ageBand' ? AGE_BANDS : key === 'region' ? REGIONS : HOUSEHOLDS
+        const prefix =
+          key === 'ageBand' ? t('Age') : key === 'region' ? t('Region') : t('Household')
+        const filterOption = options.find((o) => o.value === value)
+        return `${prefix} ${filterOption ? t(filterOption.label) : value}`
+      }
+      return `${key.replace(/([A-Z])/g, ' $1')} ${value}`
+    })
+    .join(' · ')
+}
 
 export default function Dashboard() {
   const {
@@ -91,12 +144,10 @@ export default function Dashboard() {
     refreshLedger,
     agents,
     setAgents,
-    notifications,
-    markNotificationsRead,
     setBrowserAlerts,
     setEmailAlerts,
   } = useUi()
-  const t = useT()
+  const { t } = useLang()
   const navigate = useNavigate()
   const [params] = useSearchParams()
 
@@ -106,11 +157,11 @@ export default function Dashboard() {
     const q = params.get('category')
     return CATEGORIES.some((c) => c.id === q) ? (q as CategoryId) : 'all'
   })
-  const [sort, setSort] = useState<SortId>('top')
-  const [minPay, setMinPay] = useState(0)
-  const [fitsMe, setFitsMe] = useState(false)
-  const [hideFilled, setHideFilled] = useState(true)
+  const [sort, setSort] = useState<SortId>('new')
+  const [query, setQuery] = useState('')
+  const [hideFilled, setHideFilled] = useState(false)
   const [opening, setOpening] = useState<string | null>(null)
+  const [previewOrder, setPreviewOrder] = useState<Order | null>(null)
   const [answerPanels, setAnswerPanels] = useState<Record<string, ChatAnswer[]>>({})
   const [answersLoading, setAnswersLoading] = useState<string | null>(null)
   const [answersError, setAnswersError] = useState<Record<string, string>>({})
@@ -182,6 +233,13 @@ export default function Dashboard() {
     }
   }
 
+  /** Runs after "참여 시작" is confirmed in the question-preview modal. */
+  function startAnswering(order: Order) {
+    setPreviewOrder(null)
+    setOpening(order.id)
+    window.setTimeout(() => navigate(`/answer/${order.id}`), 620)
+  }
+
   async function toggleAnswers(order: Order) {
     if (!order.chatId) return
     if (answerPanels[order.id]) {
@@ -223,17 +281,19 @@ export default function Dashboard() {
     [orders, tab],
   )
 
+  const q = query.trim().toLowerCase()
+
   /** Everything except the category tab, so the tab counts stay honest. */
   const preCategory = useMemo(
     () =>
       base.filter((o) => {
-        if (o.unitPrice < minPay) return false
-        if (hideFilled && o.answered >= o.target) return false
-        if (fitsMe && profile && !(o.eligible ?? profile.speaksTo.includes(o.category)))
-          return false
+        if (q && !matchesSearch(o, q, t)) return false
+        // "진행 중인 설문만 보기" only has teeth while searching — it hides
+        // filled calls from the results, not from the board at large.
+        if (q && hideFilled && o.answered >= o.target) return false
         return true
       }),
-    [base, minPay, hideFilled, fitsMe, profile],
+    [base, q, hideFilled, t],
   )
 
   const counts = useMemo(() => {
@@ -247,18 +307,16 @@ export default function Dashboard() {
       (o) => category === 'all' || o.category === category,
     )
     const sorted = [...rows]
-    if (sort === 'top') sorted.sort((a, b) => topScore(b) - topScore(a))
+    if (sort === 'new') sorted.sort((a, b) => b.createdAt - a.createdAt)
+    // 인기순: we have no view/click telemetry per call, so "popular" is
+    // defined as the number of answers already collected — the one signal
+    // that actually reflects other contributors choosing this call.
+    if (sort === 'popular') sorted.sort((a, b) => b.answered - a.answered)
     if (sort === 'pay')
       sorted.sort(
         (a, b) => b.unitPrice - a.unitPrice || b.createdAt - a.createdAt,
       )
-    if (sort === 'new') sorted.sort((a, b) => b.createdAt - a.createdAt)
-    if (sort === 'closing')
-      sorted.sort(
-        (a, b) =>
-          a.target - a.answered - (b.target - b.answered) ||
-          b.unitPrice - a.unitPrice,
-      )
+    if (sort === 'fit') sorted.sort((a, b) => fitScore(b) - fitScore(a))
     return sorted
   }, [preCategory, category, sort])
 
@@ -281,14 +339,17 @@ export default function Dashboard() {
         .reduce((sum, m) => sum + m.earned, 0)
 
   const activeSort = SORTS.find((s) => s.id === sort) ?? SORTS[0]
-  const unread = notifications.filter((notification) => !notification.readAt)
   const emailAlertsAvailable = Boolean(
     account && !/@wallet\.(?:obolus|openshelf)\.local$/i.test(account.email),
   )
 
+  // Hidden pending design review — code kept intact, just not rendered.
+  const SHOW_ALERT_SETTINGS = false
+  const SHOW_SHELF_STARTERS = false
+
   return (
     <div className="page-enter flex-1 overflow-y-auto">
-      <div className="space-y-5 p-4 sm:p-6">
+      <div className="space-y-6 p-4 sm:p-6">
         <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
           <h1 className="font-sans text-base font-medium">{t('Open calls')}</h1>
           <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
@@ -305,97 +366,81 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {profile ? (
-          <div
-            className={cn(
-              'grid gap-3 rounded-[6px] border border-border bg-card p-4',
-              emailAlertsAvailable ? 'lg:grid-cols-3' : 'lg:grid-cols-2',
-            )}
-          >
-            <AlertPreference
-              icon={Bell}
-              label={t('Browser alerts')}
-              detail={t('Alerts this browser when an open call in your fields is posted.')}
-              checked={
-                profile.browserAlerts === true &&
-                typeof Notification !== 'undefined' &&
-                Notification.permission === 'granted'
-              }
-              onChange={(value) => {
-                setAlertError(null)
-                void setBrowserAlerts(value).catch((error) =>
-                  setAlertError(error instanceof Error ? error.message : t('The switch did not move. Try it again.')),
-                )
-              }}
-            />
-            {emailAlertsAvailable ? (
-              <AlertPreference
-                icon={Mail}
-                label={t('Email alerts')}
-                detail={t('Emails you the open calls that match your fields.')}
-                checked={profile.emailAlerts === true}
-                onChange={(value) => {
-                  setAlertError(null)
-                  void setEmailAlerts(value).catch((error) =>
-                    setAlertError(error instanceof Error ? error.message : t('The switch did not move. Try it again.')),
-                  )
-                }}
-              />
-            ) : null}
-            <AlertPreference
-              icon={Bot}
-              label={t('Reuse from my shelf')}
-              detail={t('Reuses an answer you already wrote, only when a call matches it 82% or more.')}
-              checked={agents}
-              onChange={setAgents}
-            />
+        {SHOW_ALERT_SETTINGS && profile ? (
+          <Banner tone="neutral" className="overflow-hidden p-0">
+            <div className="divide-y divide-border/60 lg:divide-y-0 lg:divide-x lg:divide-border/60 lg:flex">
+              <div className="px-4 py-3 lg:flex-1">
+                <AlertPreference
+                  icon={Bell}
+                  label={t('Browser alerts')}
+                  detail={t('Alerts this browser when an open call in your fields is posted.')}
+                  checked={
+                    profile.browserAlerts === true &&
+                    typeof Notification !== 'undefined' &&
+                    Notification.permission === 'granted'
+                  }
+                  onChange={(value) => {
+                    setAlertError(null)
+                    void setBrowserAlerts(value).catch((error) =>
+                      setAlertError(error instanceof Error ? error.message : t('The switch did not move. Try it again.')),
+                    )
+                  }}
+                />
+              </div>
+              {emailAlertsAvailable ? (
+                <div className="px-4 py-3 lg:flex-1">
+                  <AlertPreference
+                    icon={Mail}
+                    label={t('Email alerts')}
+                    detail={t('Emails you the open calls that match your fields.')}
+                    checked={profile.emailAlerts === true}
+                    onChange={(value) => {
+                      setAlertError(null)
+                      void setEmailAlerts(value).catch((error) =>
+                        setAlertError(error instanceof Error ? error.message : t('The switch did not move. Try it again.')),
+                      )
+                    }}
+                  />
+                </div>
+              ) : null}
+              <div className="px-4 py-3 lg:flex-1">
+                <AlertPreference
+                  icon={Bot}
+                  label={t('Reuse from my shelf')}
+                  detail={t('Reuses an answer you already wrote, only when a call matches it 82% or more.')}
+                  checked={agents}
+                  onChange={setAgents}
+                />
+              </div>
+            </div>
             {alertError ? (
-              <p className="text-sm text-destructive lg:col-span-3">{alertError}</p>
+              <p className="border-t border-border/60 px-4 py-2.5 text-sm text-destructive">{alertError}</p>
             ) : null}
-          </div>
+          </Banner>
         ) : null}
 
-        {unread.length ? (
-          <div className="rounded-[6px] border border-[#0F766E]/25 bg-[#0F766E]/[0.04] p-4">
-            <div className="flex items-center gap-2">
-              <Bell className="size-4 text-[#0F766E]" />
-              <span className="text-sm font-medium">
-                {unread.length} {unread.length > 1 ? t('new updates') : t('new update')}
-              </span>
-              <button
-                type="button"
-                className="ml-auto cursor-pointer font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground hover:text-foreground"
-                onClick={() => void markNotificationsRead()}
-              >
-                {t('Mark all read')}
-              </button>
-            </div>
-            <div className="mt-3 grid gap-2 lg:grid-cols-3">
-              {unread.slice(0, 3).map((notification) => (
-                <Link
-                  key={notification.id}
-                  to={notification.kind === 'call_available' && notification.openCallId
-                    ? `/answer/${notification.openCallId}`
-                    : '/dashboard'}
-                  onClick={() => void markNotificationsRead([notification.id])}
-                  className="rounded-[4px] border border-border bg-card p-3 transition-colors hover:border-foreground/25"
-                >
-                  <p className="text-sm font-medium">{notification.title}</p>
-                  <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{notification.body}</p>
-                </Link>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {profile && tab === 'open' ? (
-          <section className="rounded-[6px] border border-[#6D5BD0]/25 bg-[#6D5BD0]/[0.035] p-4">
+        {SHOW_SHELF_STARTERS && profile && tab === 'open' ? (
+          <section
+            className="rounded-[6px] border p-4"
+            style={bannerToneStyle('violet')}
+          >
             <div className="flex flex-wrap items-start gap-3">
-              <Sparkles className="mt-0.5 size-4 text-[#5540BE]" />
+              {/* Same gradient-patch-plus-overlapping-badge grammar as the
+                  card header (categoryBannerStyle), miniaturised into a
+                  leading avatar — this callout is not a category, but it
+                  should still visually rhyme with the cards below it. */}
+              <span
+                className="relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-[8px]"
+                style={categoryBannerStyle('#6D5BD0')}
+              >
+                <span className="absolute -bottom-1 -left-1 flex size-6 items-center justify-center rounded-full border border-border bg-card shadow-[0_1px_3px_rgba(20,20,25,0.12)]">
+                  <Sparkles className="size-3.5 text-[#5540BE]" />
+                </span>
+              </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">{t('Build human supply before a buyer arrives')}</p>
                 <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
-                  {t('Gemini on Vertex AI receives only your broad field and opted-in categories and creates interview prompts only. There is no buyer waiting and no guaranteed upfront reward. Your firsthand answer—not the AI prompt—becomes a priced human document that can earn when opened later.')}
+                  {t('Gemini on Vertex AI receives only your broad field and opted-in categories, and creates interview prompts. There is no buyer waiting and no guaranteed upfront reward. Your firsthand answer—not the AI prompt—becomes a priced human document that can earn when opened later.')}
                 </p>
               </div>
               <Button
@@ -468,7 +513,7 @@ export default function Dashboard() {
           </section>
         ) : null}
 
-        {/* tab + sort ---------------------------------------------------- */}
+        {/* tabs ------------------------------------------------------------ */}
         <div className="flex flex-wrap items-center gap-2">
           <SegTab
             active={tab === 'open'}
@@ -482,12 +527,73 @@ export default function Dashboard() {
             label={t('Posted by me')}
             count={mineCount}
           />
+        </div>
+
+        {/* category rail --------------------------------------------------
+            A vertical rail instead of a horizontal strip: eleven fields never
+            fit across the top without truncating or scrolling sideways, and a
+            field you cannot see is a field nobody filters by. On a phone the
+            rail lies down and scrolls sideways, so the swipe cue still has a
+            job — it only shows where the scrolling actually happens. */}
+        <p className="-mb-3 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground sm:hidden">
+          {t('Swipe to browse fields')} →
+        </p>
+        <div className="-mx-4 grid gap-6 sm:-mx-6 lg:grid-cols-[184px_1fr] lg:gap-0">
+          <nav className="flex gap-1 overflow-x-auto px-4 pb-1 sm:px-6 lg:min-h-[70vh] lg:flex-col lg:overflow-visible lg:border-r lg:border-border lg:px-2 lg:pb-0">
+            <CatTab
+              active={category === 'all'}
+              onClick={() => setCategory('all')}
+              label={t('All')}
+              count={preCategory.length}
+            />
+            {CATEGORIES.map((c) => (
+              <CatTab
+                key={c.id}
+                active={category === c.id}
+                onClick={() => setCategory(c.id)}
+                label={t(c.label)}
+                count={counts.get(c.id) ?? 0}
+                category={c.id}
+                accent={c.accent}
+              />
+            ))}
+          </nav>
+
+          <div className="min-w-0 space-y-6 px-4 sm:px-6 lg:pl-6">
+        {/* toolbar ----------------------------------------------------------
+            Search replaces the old value/hide-filled/fits-me chip row; sort
+            moves down here from the tab row now that the column switcher —
+            and the ml-auto slot it shared with sort — is gone. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 sm:max-w-xs">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t('Search category or title')}
+              className="h-9 w-full rounded-[2px] border border-border bg-transparent pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-foreground/40"
+            />
+          </div>
+          {q ? (
+            <label className="flex h-11 cursor-pointer select-none items-center gap-1.5 px-1 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground sm:h-9">
+              <input
+                type="checkbox"
+                checked={hideFilled}
+                onChange={(event) => setHideFilled(event.target.checked)}
+                className="size-3.5 accent-foreground"
+              />
+              {t('Show open surveys only')}
+            </label>
+          ) : null}
+          <span className="ml-auto font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+            {list.length} {list.length === 1 ? t('call') : t('calls')}
+          </span>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="ml-auto flex h-11 cursor-pointer items-center gap-2 rounded-[2px] border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9"
+                className="flex h-11 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9"
               >
                 {t('Sort')}
                 <span className="text-foreground">{t(activeSort.label)}</span>
@@ -516,68 +622,8 @@ export default function Dashboard() {
           </DropdownMenu>
         </div>
 
-        {/* category rail --------------------------------------------------
-            A vertical rail instead of a horizontal strip: eleven fields never
-            fit across the top without truncating or scrolling sideways, and a
-            field you cannot see is a field nobody filters by. On a phone the
-            rail lies down and scrolls sideways, so the swipe cue still has a
-            job — it only shows where the scrolling actually happens. */}
-        <p className="-mb-3 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground sm:hidden">
-          {t('Swipe to browse fields')} →
-        </p>
-        <div className="-mx-4 grid gap-5 sm:-mx-6 lg:grid-cols-[184px_1fr] lg:gap-0">
-          <nav className="flex gap-1 overflow-x-auto px-4 pb-1 sm:px-6 lg:min-h-[70vh] lg:flex-col lg:overflow-visible lg:border-r lg:border-border lg:px-2 lg:pb-0">
-            <CatTab
-              active={category === 'all'}
-              onClick={() => setCategory('all')}
-              label={t('All')}
-              count={preCategory.length}
-            />
-            {CATEGORIES.map((c) => (
-              <CatTab
-                key={c.id}
-                active={category === c.id}
-                onClick={() => setCategory(c.id)}
-                label={t(c.label)}
-                count={counts.get(c.id) ?? 0}
-                accent={c.accent}
-              />
-            ))}
-          </nav>
-
-          <div className="min-w-0 space-y-5 px-4 sm:px-6 lg:pl-6">
-        {/* filters ------------------------------------------------------- */}
-        <div className="flex flex-wrap items-center gap-2">
-          {MIN_PAY.map((p) => (
-            <FilterChip
-              key={p.value}
-              active={minPay === p.value}
-              onClick={() => setMinPay(p.value)}
-              label={t(p.label)}
-            />
-          ))}
-          <span className="mx-1 h-4 w-px bg-border" />
-          <FilterChip
-            active={hideFilled}
-            onClick={() => setHideFilled((v) => !v)}
-            label={t('Hide filled')}
-          />
-          <FilterChip
-            active={fitsMe}
-            onClick={() => {
-              if (!profile) navigate('/onboarding')
-              else setFitsMe((v) => !v)
-            }}
-            label={t('Fits me')}
-            muted={!profile}
-          />
-          <span className="ml-auto font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
-            {list.length} {list.length === 1 ? t('call') : t('calls')}
-          </span>
-        </div>
-
         {suspended ? (
-          <div className="flex flex-wrap items-center gap-3 rounded-[6px] border border-destructive/30 bg-destructive/[0.05] px-4 py-3">
+          <Banner tone="destructive" className="flex flex-wrap items-center gap-3 px-4 py-3">
             <ShieldAlert className="size-4 shrink-0 text-destructive" />
             <p className="text-sm leading-relaxed text-muted-foreground">
               <span className="font-medium text-destructive">
@@ -588,11 +634,11 @@ export default function Dashboard() {
             <Button asChild variant="monoMuted" size="monoSm" className="ml-auto">
               <Link to="/memory">{t('Review the strikes')}</Link>
             </Button>
-          </div>
+          </Banner>
         ) : null}
 
         {!profile && tab === 'open' ? (
-          <div className="flex flex-wrap items-center gap-3 rounded-[6px] border border-border bg-foreground/[0.03] px-4 py-3">
+          <Banner tone="neutral" className="flex flex-wrap items-center gap-3 px-4 py-3">
             <UserRound className="size-4 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
               {/* Signed in already? Then never ask for another account — the
@@ -611,7 +657,7 @@ export default function Dashboard() {
                 {account ? t('Set up profile') : t('Connect wallet')}
               </Link>
             </Button>
-          </div>
+          </Banner>
         ) : null}
 
         {list.length === 0 ? (
@@ -633,7 +679,13 @@ export default function Dashboard() {
             </Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          // Marketplace card grid — variant 7 ("Airbnb 리스팅"): a big top
+          // "photo" region (here, a keyword-hashed multicolor gradient,
+          // since there is no real photo) plus a bottom text block, not a
+          // dense hairline list. A circular avatar-style slot overlaps the
+          // banner's bottom-left edge; the category glyph itself moved down
+          // into the meta row so the banner stays photo-like and text-free.
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {list.map((order) => {
               const done = order.answered >= order.target
               const cancelled = order.status === 'cancelled'
@@ -645,92 +697,134 @@ export default function Dashboard() {
                 (order.reservedSlots ?? 0) - (order.reservationExpiresAt ? 1 : 0),
               )
               const fullyReserved = reservedByOthers >= remaining && !order.reservationExpiresAt
+              const who = whoAnswersLine(order, t)
+              // The who-answers line only earns its place when it adds real
+              // targeting beyond the category badge already shown above —
+              // a call filtered on nothing but its own category would just
+              // repeat the meta row as noise.
+              const hasNarrowFilters = Boolean(
+                order.filters &&
+                  (order.filters.ageBand ||
+                    order.filters.region ||
+                    order.filters.household ||
+                    order.filters.field),
+              )
               return (
                 <div
                   key={order.id}
                   className={cn(
-                    'flex flex-col rounded-[6px] border border-border bg-card p-5 transition-all duration-500',
-                    opening && opening !== order.id && 'scale-[0.99] opacity-30',
-                    opening === order.id && 'border-foreground/40 shadow-lg',
+                    'flex flex-col overflow-hidden rounded-[10px] border border-border bg-card transition-colors duration-300',
+                    opening && opening !== order.id && 'opacity-30',
+                    opening === order.id && 'bg-foreground/[0.03]',
                     (done || cancelled) && 'opacity-70',
                   )}
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span
-                        className="size-2 shrink-0 rounded-[1px]"
-                        style={{ backgroundColor: cat?.accent }}
+                  <div
+                    className="relative h-[110px] shrink-0 overflow-hidden"
+                    style={{ background: cardGradient(`${order.shelf}::${order.question}`) }}
+                  >
+                    {/* The asker's avatar (deterministic from the shelf name, so the
+                        same contributor always shows the same face), sitting inside
+                        the banner's lower-left rather than hanging below it. */}
+                    <span
+                      className="absolute bottom-2 left-3 flex size-14 items-center justify-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-[0_1px_3px_rgba(20,20,25,0.18)]"
+                      aria-hidden="true"
+                    >
+                      <Avatar
+                        config={deterministicAvatar(order.shelf)}
+                        size={46}
                       />
-                      <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                        {cat?.label ? t(cat.label) : null}
-                      </span>
-                      <Badge className="truncate px-1.5 py-0 uppercase tracking-[1px]" title={order.shelf}>
-                        {order.shelf}
-                      </Badge>
                     </span>
-                    <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                      {t('Per answer')}{' '}
-                      <span className="text-foreground">
+                    {/* Fit score as an Airbnb-listing-style overlay pill — only
+                        when there is a real score to show (a signed-in, profiled
+                        reader); it stays hidden rather than reading 0%. */}
+                    {Math.round(fitScore(order) * 100) > 0 ? (
+                      <span className="absolute right-3 top-3 rounded-full bg-white/85 px-2 py-0.5 font-mono text-[10px] font-medium tabular-nums text-foreground shadow-[0_1px_3px_rgba(20,20,25,0.14)] backdrop-blur-sm">
+                        {t('Fit')} {Math.round(fitScore(order) * 100)}%
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-1 flex-col px-4 pb-4 pt-4">
+                  {/* The question is the point of the card — primary weight,
+                      first thing the eye lands on, clamped to two lines so a
+                      long ask never pushes the rest of the card down. The
+                      full text only ever shows uncut in the preview modal. */}
+                  <p className="line-clamp-2 text-[16px] font-medium leading-snug tracking-[-0.006em] text-foreground">
+                    {order.question}
+                  </p>
+
+                  {/* Meta row — demoted now that the question leads.
+                      Category and shelf collapse into one small muted
+                      string instead of a glyph plus a separately-padded
+                      pill, so a long shelf name ("가게를 3년째 운영합니다")
+                      truncates cleanly with the rest of the line instead of
+                      clipping mid-word inside its own badge. */}
+                  <span
+                    className="mt-1.5 flex min-w-0 items-center gap-1.5 overflow-hidden"
+                    title={cat?.label ? `${t(cat.label)} · ${order.shelf}` : order.shelf}
+                  >
+                    <CategoryIcon
+                      id={order.category}
+                      className="size-3 shrink-0 opacity-70"
+                      style={{ color: cat?.accent ?? 'var(--muted-foreground)' }}
+                    />
+                    <span className="truncate font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground/80">
+                      {cat?.label ? t(cat.label) : null}
+                      {order.shelf ? ` · ${order.shelf}` : null}
+                    </span>
+                  </span>
+
+                  {/* Price is the reason to read this card at all — it gets
+                      real foreground weight and a real number size, paired
+                      with the fraction so both stats land in one glance.
+                      A hairline separates this from the meta line above so
+                      the eye treats it as its own block, not a continuation. */}
+                  <div className="mt-3 flex items-end justify-between gap-3 border-t border-border/60 pt-3">
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-xl font-medium tabular-nums text-foreground">
                         {order.unitPrice === 0
                           ? '₩0'
                           : `₩${order.unitPrice.toLocaleString()}`}
                       </span>
-                    </span>
-                  </div>
-
-                  <p className="mt-3 text-[15px] leading-relaxed text-foreground">
-                    {order.question}
-                  </p>
-                  {order.filters && Object.values(order.filters).some(Boolean) ? (
-                    <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                      {t('Who answers')} · {Object.entries(order.filters)
-                        .filter(([, value]) => Boolean(value))
-                        .map(([key, value]) => {
-                          if (key === 'category' || key === 'field') {
-                            const filterCat = CATEGORY_BY_ID[value as CategoryId]
-                            const prefix = key === 'field' ? t('Field') : t('Category')
-                            return `${prefix} ${filterCat?.label ? t(filterCat.label) : value}`
-                          }
-                          if (key === 'ageBand' || key === 'region' || key === 'household') {
-                            const options =
-                              key === 'ageBand' ? AGE_BANDS : key === 'region' ? REGIONS : HOUSEHOLDS
-                            const prefix =
-                              key === 'ageBand' ? t('Age') : key === 'region' ? t('Region') : t('Household')
-                            const filterOption = options.find((o) => o.value === value)
-                            return `${prefix} ${filterOption ? t(filterOption.label) : value}`
-                          }
-                          return `${key.replace(/([A-Z])/g, ' $1')} ${value}`
-                        })
-                        .join(' · ')}
-                    </p>
-                  ) : null}
-                  {profile && fits && (order.recommendationScore ?? 0) > 0 ? (
-                    <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-[#0F766E]">
-                      {t('Recommended')} · {Math.round((order.recommendationScore ?? 0) * 100)}% {t('fit')}
-                      {order.recommendationReason?.[1]
-                        ? ` · ${order.recommendationReason[1]}`
-                        : ''}
-                    </p>
-                  ) : null}
-
-                  <div className="mt-4 flex items-center gap-3">
-                    <div className="h-1 flex-1 overflow-hidden rounded-full bg-foreground/10">
-                      <div
-                        className="h-full rounded-full bg-[#0F766E] transition-[width] duration-500"
-                        style={{
-                          width: `${Math.round((order.answered / order.target) * 100)}%`,
-                        }}
-                      />
+                      <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                        {t('Per answer')}
+                      </span>
                     </div>
-                    <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                      {order.answered}/{order.target}
+                    <div className="flex flex-col items-end gap-0.5">
+                      <span className="font-mono text-sm font-semibold tabular-nums text-foreground">
+                        {order.answered}/{order.target} {t('answered')}
+                      </span>
                       {reservedByOthers > 0 ? (
-                        <> · {reservedByOthers} {t('slots held')}</>
+                        <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                          {reservedByOthers} {t('slots held')}
+                        </span>
                       ) : null}
-                    </span>
+                    </div>
                   </div>
 
-                  <div className="mt-3 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+                  {/* A thin, square-ended bar rather than a pill — Linear's
+                      progress language stays close to a hairline rule, now
+                      sitting under a legible number instead of carrying the
+                      whole state on its own. */}
+                  <div className="mt-1.5 h-1 overflow-hidden rounded-[2px] bg-foreground/10">
+                    <div
+                      className="h-full rounded-[2px] bg-[#0F766E] transition-[width] duration-500"
+                      style={{
+                        width: `${Math.round((order.answered / order.target) * 100)}%`,
+                      }}
+                    />
+                  </div>
+
+                  {who && hasNarrowFilters ? (
+                    <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground/85">
+                      {t('Who answers')} · {who}
+                    </p>
+                  ) : null}
+
+                  {/* Meta + the per-row CTA share one line — the timestamp
+                      stays a quiet caption while the button reads as the
+                      card's one real action. */}
+                  <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
                     <Clock className="size-3" />
                     {relative(order.createdAt, t)}
                     {order.escrowMode === 'x402_solana_escrow' && !cancelled ? (
@@ -744,53 +838,38 @@ export default function Dashboard() {
                       <span className="ml-auto inline-flex items-center gap-1 text-[#0F766E]">
                         <Check className="size-3" /> {t('Filled')}
                       </span>
-                    ) : profile && tab === 'open' ? (
-                      <span
-                        className={cn(
-                          'ml-auto',
-                          fits ? 'text-[#0F766E]' : 'text-muted-foreground/70',
-                        )}
+                    ) : null}
+
+                    {tab === 'open' && !done ? (
+                      <Button
+                        variant="mono"
+                        size="monoSm"
+                        className="ml-auto shrink-0 font-sans normal-case tracking-normal"
+                        onClick={() => {
+                          if (!profile) {
+                            navigate('/onboarding')
+                            return
+                          }
+                          setPreviewOrder(order)
+                        }}
+                        disabled={
+                          opening === order.id ||
+                          suspended ||
+                          Boolean(profile && !fits) ||
+                          fullyReserved
+                        }
                       >
-                        {fits ? t('Fits you') : t('Outside your fields')}
-                      </span>
+                        {opening === order.id
+                          ? t('Picking it up…')
+                          : fullyReserved
+                            ? t('All remaining slots held')
+                            : t('Answer')}
+                      </Button>
                     ) : null}
                   </div>
 
-                  {tab === 'open' && !done ? (
-                    <Button
-                      variant="monoMuted"
-                      size="mono"
-                      className="mt-4 self-start"
-                      onClick={() => {
-                        if (!profile) {
-                          navigate('/onboarding')
-                          return
-                        }
-                        setOpening(order.id)
-                        window.setTimeout(
-                          () => navigate(`/answer/${order.id}`),
-                          620,
-                        )
-                      }}
-                      disabled={
-                        opening === order.id ||
-                        suspended ||
-                        Boolean(profile && !fits) ||
-                        fullyReserved
-                      }
-                    >
-                      {opening === order.id
-                        ? t('Picking it up…')
-                        : fullyReserved
-                          ? t('All remaining slots held')
-                          : profile && !fits
-                            ? t('Outside your fields')
-                            : t('Answer')}
-                    </Button>
-                  ) : null}
-
                   {tab === 'mine' ? (
-                    <div className="mt-4 space-y-3">
+                    <div className="mt-3 space-y-2.5">
                       <div className="flex flex-wrap items-center gap-2">
                         {order.chatId ? (
                           <Button
@@ -863,6 +942,7 @@ export default function Dashboard() {
                       ) : null}
                     </div>
                   ) : null}
+                  </div>
                 </div>
               )
             })}
@@ -871,7 +951,142 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {previewOrder ? (
+        <QuestionPreviewModal
+          order={previewOrder}
+          t={t}
+          onClose={() => setPreviewOrder(null)}
+          onStart={() => startAnswering(previewOrder)}
+        />
+      ) : null}
     </div>
+  )
+}
+
+/**
+ * The question-preview step "참여하기" opens before it commits to
+ * `/answer/:id` — a hand-rolled overlay (no Dialog primitive in the app)
+ * that shows the full, unclamped question plus everything the card itself
+ * only summarises. Esc and a backdrop click both cancel; only "참여 시작"
+ * hands off to `onStart`, which runs the existing pick-up-and-navigate flow.
+ */
+function QuestionPreviewModal({
+  order,
+  onClose,
+  onStart,
+  t,
+}: {
+  order: Order
+  onClose: () => void
+  onStart: () => void
+  t: (en: string) => string
+}) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  const cat = CATEGORY_BY_ID[order.category]
+  const who = whoAnswersLine(order, t)
+  const remaining = Math.max(0, order.target - order.answered)
+  const reservedByOthers = Math.max(
+    0,
+    (order.reservedSlots ?? 0) - (order.reservationExpiresAt ? 1 : 0),
+  )
+
+  useEffect(() => {
+    panelRef.current?.focus()
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
+  return createPortal(
+    <div
+      className="animate-modal-backdrop-in fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="survey-preview-question"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+        className="animate-modal-panel-in max-h-[85vh] w-full max-w-md overflow-y-auto rounded-[10px] border border-border bg-card p-5 shadow-lg outline-none"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+            {t('Survey preview')}
+          </p>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t('Close')}
+            className="-m-1.5 flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="mt-3 flex min-w-0 items-center gap-2 overflow-hidden">
+          <CategoryIcon
+            id={order.category}
+            className="size-3.5 shrink-0"
+            style={{ color: cat?.accent ?? 'var(--muted-foreground)' }}
+          />
+          <span className="truncate font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+            {cat?.label ? t(cat.label) : null}
+          </span>
+          <Badge className="min-w-0 truncate px-1.5 py-0 uppercase tracking-[1px]" title={order.shelf}>
+            {order.shelf}
+          </Badge>
+        </div>
+
+        {/* The full question, never clamped — the card's line-clamp-2 is
+            purely a list-density concession. */}
+        <h2 id="survey-preview-question" className="mt-3 text-base font-medium leading-snug text-foreground">
+          {order.question}
+        </h2>
+
+        <p className="mt-3 border-t border-border/60 pt-3 font-mono text-xs text-muted-foreground">
+          {t('Per answer')}{' '}
+          <span className="text-foreground">
+            {order.unitPrice === 0 ? '₩0' : `₩${order.unitPrice.toLocaleString()}`}
+          </span>
+        </p>
+
+        {who ? (
+          <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+            {t('Who answers')} · {who}
+          </p>
+        ) : null}
+
+        <div className="mt-3 flex items-center gap-3">
+          <div className="h-1 flex-1 overflow-hidden rounded-[2px] bg-foreground/10">
+            <div
+              className="h-full rounded-[2px] bg-[#0F766E] transition-[width] duration-500"
+              style={{ width: `${Math.round((order.answered / order.target) * 100)}%` }}
+            />
+          </div>
+          <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+            {order.answered}/{order.target}
+            {reservedByOthers > 0 ? (
+              <> · {reservedByOthers} {t('slots held')}</>
+            ) : null}
+          </span>
+        </div>
+
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <Button variant="monoGhost" size="mono" onClick={onClose}>
+            {t('Cancel')}
+          </Button>
+          <Button variant="mono" size="mono" onClick={onStart} disabled={remaining <= 0}>
+            {t('Start answering')}
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -891,7 +1106,7 @@ function SegTab({
       type="button"
       onClick={onClick}
       className={cn(
-        'flex h-11 cursor-pointer items-center gap-2 rounded-[2px] px-3 font-mono text-xs font-medium uppercase tracking-[1px] transition-colors sm:h-9',
+        'flex h-11 cursor-pointer items-center gap-2 rounded-[4px] px-3 font-mono text-xs font-medium uppercase tracking-[1px] transition-colors sm:h-9',
         active
           ? 'border border-foreground/80 bg-foreground/85 text-background'
           : 'border border-transparent text-muted-foreground hover:bg-muted hover:text-foreground',
@@ -908,12 +1123,14 @@ function CatTab({
   onClick,
   label,
   count,
+  category,
   accent,
 }: {
   active: boolean
   onClick: () => void
   label: string
   count: number
+  category?: CategoryId
   accent?: string
 }) {
   return (
@@ -930,48 +1147,24 @@ function CatTab({
         count === 0 && !active && 'opacity-45',
       )}
     >
-      {accent ? (
-        <span
-          className="size-1.5 shrink-0 rounded-[1px]"
-          style={{ backgroundColor: accent }}
+      {category ? (
+        // The same Material icon as the card badge, shrunk to an inline
+        // glyph — the rail reads as the card grid's index instead of a
+        // separate color-coded list.
+        <CategoryIcon
+          id={category}
+          className="size-3.5 shrink-0"
+          style={{ color: accent }}
         />
       ) : (
-        /* The 'All' tab has no accent, but the rail still needs its labels
-           to start on the same vertical line. */
-        <span className="size-1.5 shrink-0" />
+        /* The 'All' tab has no category, but the rail still needs its
+           labels to start on the same vertical line. */
+        <span className="size-3.5 shrink-0" />
       )}
       <span className="truncate">{label}</span>
       <span className="ml-auto pl-1 font-mono text-[11px] tabular-nums text-muted-foreground">
         {count}
       </span>
-    </button>
-  )
-}
-
-function FilterChip({
-  active,
-  onClick,
-  label,
-  muted,
-}: {
-  active: boolean
-  onClick: () => void
-  label: string
-  muted?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'h-10 cursor-pointer rounded-full border px-3 font-mono text-[11px] uppercase tracking-[1px] transition-colors sm:h-7',
-        active
-          ? 'border-foreground/70 bg-foreground/[0.06] text-foreground'
-          : 'border-border text-muted-foreground hover:border-foreground/25 hover:text-foreground',
-        muted && 'opacity-60',
-      )}
-    >
-      {label}
     </button>
   )
 }

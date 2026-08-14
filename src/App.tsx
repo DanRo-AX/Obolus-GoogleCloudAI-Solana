@@ -25,11 +25,13 @@ const Memory = lazy(() => import('@/pages/Memory'))
 const Onboarding = lazy(() => import('@/pages/Onboarding'))
 const Shelf1 = lazy(() => import('@/pages/Shelf1'))
 const Survey = lazy(() => import('@/pages/Survey'))
+const Transactions = lazy(() => import('@/pages/Transactions'))
 
 const TITLES: Record<string, string> = {
   '/': 'Obolus — The internet, as a database',
   '/dashboard': 'Dashboard · Obolus',
   '/archive': 'Archive · Obolus',
+  '/transactions': 'Transactions · Obolus',
   '/memory': 'My memory · Obolus',
   '/onboarding': 'Set up your account · Obolus',
   '/coverage': 'Coverage · Obolus',
@@ -63,6 +65,7 @@ export default function App() {
                 <Route path="/chat/:id" element={<Chat />} />
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/archive" element={<Archive />} />
+                <Route path="/transactions" element={<Transactions />} />
                 <Route path="/memory" element={<Memory />} />
                 <Route path="/onboarding" element={<Onboarding />} />
                 <Route path="/answer/:orderId" element={<Survey />} />

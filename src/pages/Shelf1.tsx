@@ -1,18 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowUpRight } from 'lucide-react'
 import { FlowDiagram } from '@/components/article/FlowDiagram'
 import { Composer } from '@/components/Composer'
 import { Button } from '@/components/ui/button'
-import {
-  DEFINITION,
-  HERO,
-  LIFECYCLE,
-  OPEN_PROBLEMS,
-  SECTIONS,
-  type Block,
-  type OpenProblem,
-} from '@/data/shelf1'
+import { DEFINITION, HERO, LIFECYCLE, SECTIONS, type Block } from '@/data/shelf1'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 
@@ -169,8 +160,6 @@ export default function Shelf1() {
                     <Lifecycle />
                   </>
                 ) : null}
-
-                {section.n === '06' ? <OpenProblems /> : null}
               </section>
             ))}
 
@@ -348,42 +337,3 @@ function Lifecycle() {
   )
 }
 
-const STATUS_TONE: Record<OpenProblem['status'], string> = {
-  Critical: 'bg-destructive/10 text-destructive',
-  Open: 'bg-[#866FF2]/12 text-[#5B44C7]',
-  Next: 'bg-foreground/10 text-foreground',
-}
-
-function OpenProblems() {
-  const t = useT()
-
-  return (
-    <div className="mt-8 flex flex-col gap-3">
-      {OPEN_PROBLEMS.map((p) => (
-        <div
-          key={p.title}
-          className="rounded-[6px] border border-border bg-card p-5"
-        >
-          <div className="flex flex-wrap items-center gap-3">
-            <span
-              className={cn(
-                'rounded-[2px] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[1px]',
-                STATUS_TONE[p.status],
-              )}
-            >
-              {t(p.status)}
-            </span>
-            <span className="text-[15px] font-medium">{t(p.title)}</span>
-          </div>
-          <p className="mt-2.5 text-[15px] leading-7 text-foreground/85">
-            {t(p.body)}
-          </p>
-        </div>
-      ))}
-      <p className="mt-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-        {t('Written down, not smoothed over')}
-        <ArrowUpRight className="size-3" />
-      </p>
-    </div>
-  )
-}

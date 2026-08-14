@@ -1558,6 +1558,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
                     agents: false,
                     browser_alerts: false,
                     email_alerts: false,
+                    avatar: None,
                 },
             )
             .expect("answer-race contributor should onboard");
@@ -1806,6 +1807,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
                 agents: false,
                 browser_alerts: false,
                 email_alerts: false,
+                avatar: None,
             },
         )
         .expect("dispute-race author should onboard");

@@ -95,19 +95,36 @@
 }
 
 @font-face {
+  font-family: "Wanted Sans";
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url("/fonts/WantedSansVariable.woff2") format("woff2-variations");
+  unicode-range: U+1100-11FF, U+3130-318F, U+A960-A97F, U+AC00-D7A3,
+    U+D7B0-D7FF, U+3000-303F, U+FF00-FFEF;
+}
+
+@font-face {
   font-family: "Instrument Sans";
   font-style: normal;
   font-weight: 400 700;
   font-display: swap;
   src: url("/fonts/InstrumentSans_Variable.woff2") format("woff2");
 }
+/* Instrument Sans stays loaded but unreferenced — nothing below points to it
+   after the Linear restyle. See --font-instrument. */
 
 /* ---------------------------------------------------------------------------
    Design tokens — copied verbatim from frames.ag's light (:root) block.
    Dark mode is intentionally not shipped: this build is white-mode only.
 --------------------------------------------------------------------------- */
 :root {
-  --radius: 0.625rem;
+  /* Linear DESIGN.md `rounded` scale is tight (xs 4 / sm 6 / md 8 / lg 12).
+     This app derives its whole radius ladder from one base, so dropping the
+     base 10px -> 8px pulls every derived step down with it: sm 6->4,
+     md 8->6, lg 10->8, xl 14->12 — landing on Linear's md/lg pair without
+     hand-tuning four separate variables. */
+  --radius: 0.5rem;
   --background: #ffffff;
   --foreground: #000000;
   --card: #f2f5f6;
@@ -155,8 +172,14 @@
   --font-host-grotesk: "Host Grotesk", "Host Grotesk Fallback";
   --font-inter-family: "Inter", "Inter Fallback";
   --font-noto-serif: "Noto Serif", serif;
-  --font-instrument: "Instrument Sans", "Pretendard", "GeistSans",
-    "GeistSans Fallback", system-ui, sans-serif;
+  /* Linear's face is Inter (see DESIGN.md "Note on Font Substitutes"). It
+     carries both --font-sans (UI copy) and --font-display (headings) below —
+     Linear treats display and text as "one continuous voice", so one stack
+     for both is the correct read, not a shortcut. Pretendard stays second:
+     Inter's unicode-range doesn't cover Hangul, so any Korean glyph falls
+     straight through to Pretendard without a second font swap. */
+  --font-instrument: "Inter", "Wanted Sans", "Pretendard", "Inter Fallback",
+    system-ui, sans-serif;
 }
 
 @theme inline {
@@ -249,11 +272,29 @@
 @keyframes zoom-in-95 {
   from {
     opacity: 0;
-    transform: scale(0.95);
+    transform: scale(0.97);
   }
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+@keyframes modal-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes modal-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
@@ -269,6 +310,10 @@
     background-color: var(--background);
     color: var(--foreground);
     font-family: var(--font-instrument);
+    /* Linear's body tracking runs slightly negative (-0.05px at 16px, roughly
+       -0.003em) rather than the browser default of 0. The Korean override
+       below (:root[data-lang="ko"] body) is more specific and wins for KO. */
+    letter-spacing: -0.006em;
     -webkit-font-smoothing: antialiased;
   }
   ::selection {
@@ -276,16 +321,29 @@
   }
 }
 
-/* Utility helpers mirroring the original's bespoke classes ---------------- */
+/* Utility helpers mirroring the original's bespoke classes ----------------
+   Durations pulled in from the original's slower, more decorative timings.
+   Linear's restraint is partly about motion staying out of the way — UI
+   chrome (dropdowns, popovers) settles in well under 200ms; the once-per-
+   navigation page fade gets to keep a little more air. */
 .animate-fade-in-up {
-  animation: fade-in-up 0.5s ease-out both;
+  animation: fade-in-up 0.32s ease-out both;
 }
 .animate-zoom-in-95 {
-  animation: zoom-in-95 0.3s ease-out both;
+  animation: zoom-in-95 0.15s ease-out both;
 }
 /* Every routed screen fades up once, so navigation reads as a move. */
 .page-enter {
-  animation: page-enter 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: page-enter 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+/* The question-preview modal: panel eases up + fades in, the scrim behind
+   it just fades — a beat quicker than the page transition since it's a
+   local overlay, not a navigation. */
+.animate-modal-panel-in {
+  animation: modal-panel-in 0.2s ease-out both;
+}
+.animate-modal-backdrop-in {
+  animation: modal-backdrop-in 0.2s ease-out both;
 }
 
 /* Slot-machine text (the provider ticker on the landing page) ------------- */
@@ -354,6 +412,12 @@
 @media (prefers-reduced-motion: reduce) {
   .char-face {
     transition: none !important;
+  }
+  .animate-modal-panel-in,
+  .animate-modal-backdrop-in {
+    animation: none;
+    opacity: 1;
+    transform: none;
   }
 }
 

@@ -1,9 +1,12 @@
 import { NavLink, Link } from 'react-router-dom'
 import { Activity, LogIn, LogOut, PanelLeft, ShieldCheck } from 'lucide-react'
+import { Avatar } from '@/components/Avatar'
+import { BrandMark } from '@/components/ui/BrandMark'
 import { Button } from '@/components/ui/button'
-import { CATEGORY_BY_ID } from '@/data/categories'
+import { Chip } from '@/components/ui/primitives'
 import { NAV_ITEMS } from '@/data/nav'
 import { STRIKE_LIMIT } from '@/data/onboarding'
+import { deterministicAvatar } from '@/lib/avatar'
 import { cn } from '@/lib/utils'
 import { useLang, useT } from '@/i18n'
 import { useUi } from '@/state/ui'
@@ -11,19 +14,6 @@ import { shortKey, useWallet } from '@/state/wallet'
 
 const MENU_BUTTON =
   'peer/menu-button flex w-full items-center gap-2 overflow-hidden text-left font-medium outline-hidden transition-[width,height,padding] focus-visible:ring-2 focus-visible:ring-sidebar-ring active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:shrink-0'
-
-function WorkspaceMark({ size = 'size-8' }: { size?: string }) {
-  return (
-    <span
-      className={cn(
-        size,
-        'flex shrink-0 items-center justify-center rounded-[9px] bg-foreground',
-      )}
-    >
-      <img className="invert" src="/OBOLUS-MARK-SM.svg" alt="Obolus" width={20} height={20} />
-    </span>
-  )
-}
 
 /**
  * Signed-in state. The strike counter sits here on purpose — a three-strike
@@ -33,47 +23,43 @@ function ProfileChip({ onSignOut }: { onSignOut: () => Promise<void> }) {
   const { profile, suspended } = useUi()
   const t = useT()
   if (!profile) return null
-  const cat = CATEGORY_BY_ID[profile.field]
   return (
     <div
       className={cn(
-        'rounded-[2px] border p-2.5',
-        suspended
-          ? 'border-destructive/40 bg-destructive/[0.05]'
-          : 'border-border bg-card',
+        'border-t pt-2.5',
+        suspended ? 'border-destructive/40' : 'border-border',
       )}
     >
-      <div className="flex items-center gap-2">
-        <span
-          className="size-2 shrink-0 rounded-[1px]"
-          style={{ backgroundColor: cat?.accent }}
+      {/* Avatar + handle + status caption, one tidy row instead of a bare
+          color dot next to bare text. */}
+      <div className="flex items-center gap-2.5">
+        <Avatar
+          config={profile.avatar ?? deterministicAvatar(profile.handle)}
+          size={28}
+          className="shrink-0"
         />
-        <span className="truncate font-mono text-[11px] tracking-[1px] text-foreground">
-          {profile.handle}
-        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-mono text-[11px] tracking-[1px] text-foreground">
+            {profile.handle}
+          </p>
+          <p className="truncate font-mono text-[9px] uppercase tracking-[0.8px] text-muted-foreground">
+            {suspended
+              ? t('Suspended')
+              : `${profile.speaksTo.length} ${t('shelves')}`}
+            {' · '}
+            <span className={cn(profile.strikes > 0 && 'text-destructive')}>
+              {t('strike')} {profile.strikes} {t('of')} {STRIKE_LIMIT}
+            </span>
+          </p>
+        </div>
         <button
           type="button"
           onClick={() => void onSignOut()}
           aria-label={t('Disconnect Phantom')}
-          className="ml-auto cursor-pointer text-muted-foreground/60 transition-colors hover:text-foreground"
+          className="shrink-0 cursor-pointer text-muted-foreground/60 transition-colors hover:text-foreground"
         >
           <LogOut className="size-3.5" />
         </button>
-      </div>
-      <div className="mt-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-        <span className="truncate">
-          {suspended
-            ? t('Suspended')
-            : `${profile.speaksTo.length} ${t('shelves')}`}
-        </span>
-        <span
-          className={cn(
-            'tabular-nums',
-            profile.strikes > 0 && 'text-destructive',
-          )}
-        >
-          {t('strike')} {profile.strikes} {t('of')} {STRIKE_LIMIT}
-        </span>
       </div>
       <div className="mt-2 border-t border-border/70 pt-2 font-mono text-[9px] leading-relaxed text-muted-foreground">
         <p className="mt-0.5 truncate uppercase tracking-[0.7px]">
@@ -101,17 +87,21 @@ function LiveStrip() {
   const held = earnings?.heldKrw ?? 0
 
   return (
-    <div className="flex flex-col divide-y divide-border/70 rounded-[2px] border border-border bg-card">
+    <div className="flex flex-col divide-y divide-border/70 border-y border-border/70">
+      {/* Earnings is the number that brings somebody back — it gets the
+          stat treatment (small caption, big tabular figure) instead of
+          sharing a text row with the call count below it. */}
       <Link
         to="/memory"
-        className="flex items-baseline justify-between gap-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground"
+        className="flex flex-col gap-0.5 px-2.5 py-2.5 transition-colors hover:bg-foreground/[0.03]"
       >
-        <span>{profile ? t('Earned') : t('Paid out')}</span>
-        <span className="tabular-nums text-foreground">
+        <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+          {profile ? t('Earned') : t('Paid out')}
+        </span>
+        <span className="font-host text-lg font-medium leading-none tabular-nums text-foreground">
           ₩{earned.toLocaleString()}
           {held ? (
-            <span className="text-muted-foreground">
-              {' '}
+            <span className="ml-1 font-mono text-[10px] font-normal normal-case tracking-normal text-muted-foreground">
               · ₩{held.toLocaleString()} {t('held')}
             </span>
           ) : null}
@@ -119,7 +109,7 @@ function LiveStrip() {
       </Link>
       <Link
         to="/dashboard"
-        className="flex items-baseline justify-between gap-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:text-foreground"
+        className="flex items-baseline justify-between gap-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-foreground/[0.03] hover:text-foreground"
       >
         <span>{profile ? t('Fit you') : t('Open now')}</span>
         <span
@@ -135,26 +125,24 @@ function LiveStrip() {
   )
 }
 
-/** Two languages, one control. A select would be heavier than the choice. */
+/**
+ * Two languages, one control — now the same Chip grammar as the dashboard's
+ * filter row instead of a bespoke pill-in-a-tray.
+ */
 function LangSwitch() {
   const { lang, setLang } = useLang()
   return (
-    <div className="flex items-center gap-0.5 rounded-[3px] border border-border bg-card p-0.5">
+    <div className="flex items-center gap-1.5">
       {(['en', 'ko'] as const).map((code) => (
-        <button
+        <Chip
           key={code}
-          type="button"
+          active={lang === code}
           onClick={() => setLang(code)}
           aria-pressed={lang === code}
-          className={cn(
-            'flex-1 cursor-pointer rounded-[2px] py-1 font-mono text-[10px] uppercase tracking-[1px] transition-colors',
-            lang === code
-              ? 'bg-foreground text-background'
-              : 'text-muted-foreground hover:text-foreground',
-          )}
+          className="h-8 flex-1 justify-center"
         >
           {code === 'en' ? 'EN' : '한국어'}
-        </button>
+        </Chip>
       ))}
     </div>
   )
@@ -221,7 +209,7 @@ export function AppSidebar() {
                     )}
                   >
                     <div className="flex aspect-square size-8 items-center justify-center">
-                      <WorkspaceMark />
+                      <BrandMark />
                     </div>
                     <span className="truncate text-[15px] font-semibold tracking-[-0.02em]">
                       Obolus
@@ -335,7 +323,7 @@ export function AppSidebar() {
                 {profile ? (
                   <ProfileChip onSignOut={disconnect} />
                 ) : account ? (
-                  <div className="space-y-2 rounded-[2px] border border-border bg-card p-2.5">
+                  <div className="space-y-2 border-t border-border pt-2.5">
                     <p className="truncate font-mono text-[10px] text-muted-foreground">
                       {authWallet
                         ? `${t('Wallet')} · ${shortKey(authWallet)}`

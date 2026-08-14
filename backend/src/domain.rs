@@ -660,6 +660,10 @@ pub struct UserProfile {
     pub agents: bool,
     pub browser_alerts: bool,
     pub email_alerts: bool,
+    /// Notion-style parts config (`{face, hair, ...}`) or `{type: "image", url}`.
+    /// Arbitrary JSON so the frontend owns the shape; the server only stores
+    /// and size-limits it.
+    pub avatar: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -681,6 +685,8 @@ pub struct UpsertProfileRequest {
     pub browser_alerts: bool,
     #[serde(default)]
     pub email_alerts: bool,
+    #[serde(default)]
+    pub avatar: Option<serde_json::Value>,
 }
 
 /// A wallet auth challenge (`wallet_auth_challenges`) is server-purpose-tagged

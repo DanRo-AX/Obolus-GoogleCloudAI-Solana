@@ -51,35 +51,6 @@ export const LIFECYCLE = [
   { n: 7, step: 'Accrue', what: 'The answer becomes a document on the author’s shelf and joins their memory. Next time it auto-matches.', pivot: false },
 ]
 
-export type OpenProblem = {
-  status: 'Critical' | 'Open' | 'Next'
-  title: string
-  body: string
-}
-
-export const OPEN_PROBLEMS: OpenProblem[] = [
-  {
-    status: 'Critical',
-    title: 'How the shelves get filled at launch',
-    body: 'An empty shelf has a liquidity bridge: questioners receive a free general AI baseline while the human gap stays open, and contributors can request interview prompts without those prompts becoming buyer demand or paid inventory. The remaining problem is distribution: how the first hundred people arrive and which narrow market reaches density first.',
-  },
-  {
-    status: 'Open',
-    title: 'Voice or typing for the first draft',
-    body: 'Two hours of talking out loud gives the rough detail we want, and almost nobody will sit through it. Typing takes ten minutes and people tidy themselves as they go. What ships today is one written answer plus a few short interview turns. Voice and longer interviews are a later channel, and the consent and retention lines for them are not drawn yet.',
-  },
-  {
-    status: 'Open',
-    title: 'Who gets picked when too many match',
-    body: 'If twelve documents fit a call that needs seven, something has to choose. The ranker already weighs relevance, trust, freshness, personalized PageRank, author diversity, and budget. What it does not do yet is hold up against someone gaming it: the weights are not calibrated against outcomes, the evidence is not identity-resistant, and Sybil and spam have to be measured continuously rather than once.',
-  },
-  {
-    status: 'Next',
-    title: 'Low-effort answers',
-    body: 'In already: specificity checks, the short interviews, reports, three strikes, passage locks, and disputes. Not in: proof that a person is a person, and independent verification that an answer held up. A hard identity check would settle both and would also stop people connecting a wallet at all, so real names stay out of the product and the strikes and the rating loop carry it until then.',
-  },
-]
-
 export const SECTIONS: Section[] = [
   {
     n: '00',
@@ -267,17 +238,6 @@ export const SECTIONS: Section[] = [
       {
         kind: 'p',
         text: 'That last point is the recruitment argument. Somebody who wrote it down once receives 90% of the ₩5 to ₩25 open price each time SHELF qualifies and opens it again.',
-      },
-    ],
-  },
-  {
-    n: '06',
-    eyebrow: 'Honest',
-    title: 'What is not solved',
-    blocks: [
-      {
-        kind: 'p',
-        text: 'Four things are open. The first one is the one that decides whether any of the rest matters.',
       },
     ],
   },
