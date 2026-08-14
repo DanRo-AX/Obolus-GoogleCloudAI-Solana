@@ -21880,7 +21880,10 @@ mod tests {
             .upsert_profile("avatar-user", &profile_request("avatar_bare"))
             .unwrap();
         assert_eq!(bare.avatar, None);
-        assert_eq!(store.get_profile("avatar-user").unwrap().unwrap().avatar, None);
+        assert_eq!(
+            store.get_profile("avatar-user").unwrap().unwrap().avatar,
+            None
+        );
 
         // The notion-style parts config round-trips exactly.
         let parts = serde_json::json!({
