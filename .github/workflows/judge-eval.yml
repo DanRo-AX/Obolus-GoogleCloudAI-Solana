@@ -1,0 +1,88 @@
+name: Judge evaluation
+
+# Continuous readiness watch against the five Demo Day judging criteria.
+# Stays red whenever the live system could not pass a judge's inspection:
+# production Vertex planner dark, empty production shelf, stale evidence,
+# missing on-chain transactions, or banned pitch claims.
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - scripts/judge-eval.mjs
+      - .github/workflows/judge-eval.yml
+      - artifacts/finalist-evidence/**
+      - docs/obulus-pitch-deck.html
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: judge-eval-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live:
+    name: Live judge checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Run the full judge evaluation against the hosted system
+        id: judge
+        # Explicit bash so pipefail applies — otherwise `tee` would mask the exit code.
+        shell: bash
+        run: node scripts/judge-eval.mjs | tee judge-report.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: judge-report
+          path: judge-report.json
+          if-no-files-found: ignore
+      # A red run nobody sees is worthless: surface failures as one pinned issue
+      # (updated in place, closed automatically when everything passes again) so
+      # every repo watcher gets notified with the exact failing checks.
+      - name: Open or update the readiness issue
+        if: always()
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs')
+            const title = 'Judge readiness: live checks failing'
+            let report = null
+            try { report = JSON.parse(fs.readFileSync('judge-report.json', 'utf8')) } catch {}
+            const failing = (report?.checks ?? []).filter((c) => !c.passed && c.severity === 'fail')
+            const { data: issues } = await github.rest.issues.listForRepo({
+              ...context.repo, state: 'open', creator: 'github-actions[bot]', per_page: 100,
+            })
+            const existing = issues.find((issue) => issue.title === title)
+            if (failing.length === 0 && !report) return
+            if (failing.length === 0) {
+              if (existing) {
+                await github.rest.issues.createComment({
+                  ...context.repo, issue_number: existing.number,
+                  body: `All judge checks pass as of ${new Date().toISOString()} (run ${context.runId}). Closing.`,
+                })
+                await github.rest.issues.update({ ...context.repo, issue_number: existing.number, state: 'closed' })
+              }
+              return
+            }
+            const lines = failing.map((c) => `- [ ] \`[${c.criterion}] ${c.id}\` — ${c.detail}`)
+            const body = [
+              `Demo Day readiness checks are failing (run ${context.runId}, ${new Date().toISOString()}).`,
+              '', ...lines, '',
+              'Reproduce locally: `npm run judge:eval`. This issue is managed by the judge-eval workflow;',
+              'it updates on every scheduled run and closes itself when all checks pass.',
+            ].join('\n')
+            if (existing) {
+              await github.rest.issues.update({ ...context.repo, issue_number: existing.number, body })
+            } else {
+              await github.rest.issues.create({ ...context.repo, title, body })
+            }

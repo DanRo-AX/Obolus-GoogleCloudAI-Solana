@@ -31,6 +31,8 @@
     "finalist:record-autonomy": "node scripts/record-finalist-autonomy-evidence.mjs",
     "finalist:record-devnet": "node scripts/record-finalist-devnet-evidence.mjs",
     "finalist:hosted-devnet": "node scripts/hosted-devnet-finalist-e2e.mjs",
+    "judge:eval": "node scripts/judge-eval.mjs",
+    "judge:eval:static": "node scripts/judge-eval.mjs --static",
     "pitch:verify": "node scripts/verify-pitch-readiness.mjs",
     "pitch:verify-live": "node scripts/verify-pitch-readiness.mjs --require-live",
     "test:unit": "node --test src/lib/*.test.ts",

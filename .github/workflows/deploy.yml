@@ -1,0 +1,178 @@
+name: Deploy
+
+# CD for the four Cloud Run services. On every merge to main:
+#   build (Cloud Build) -> deploy a --no-traffic candidate revision
+#   -> wait Ready -> promotion guard (digest, identity, RPC unanimity, queue, KMS)
+#   -> promote traffic to the pinned revision only if the guard approves.
+#
+# Ordering follows the runbook: the API always promotes before the gateway so a
+# settlement can never be routed from the durable gateway into a stale ledger.
+# Auth is keyless (Workload Identity Federation, main branch only) — see
+# deploy/cloud-run/setup-cd.sh. Frontend (Cloudflare Pages) is deployed
+# separately and is not part of this workflow.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - backend/**
+      - payment-gateway/**
+      - agent-orchestrator/**
+      - pay/**
+      - deploy/cloud-run/cloudbuild-pay-image.yaml
+      - .github/workflows/deploy.yml
+  workflow_dispatch:
+    inputs:
+      services:
+        description: "Comma-separated roles to force-deploy (api,gateway,orchestrator,pay) or 'all'"
+        required: false
+        default: "all"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+env:
+  PROJECT: sweetspot-ax
+  REGION: asia-northeast3
+  REPOSITORY: obolus
+
+jobs:
+  release:
+    name: Build, stage, guard, promote
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Release changed services in runbook order
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          FORCED: ${{ github.event.inputs.services }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_SHA::7}"
+
+          changed() { # role, path prefix
+            local role="$1" prefix="$2"
+            if [[ -n "${FORCED:-}" ]]; then
+              [[ "${FORCED}" == "all" || ",${FORCED}," == *",${role},"* ]]
+              return
+            fi
+            local base="${BEFORE_SHA}"
+            if [[ -z "${base}" || "${base}" == 0000000000000000000000000000000000000000 ]] \
+              || ! git cat-file -e "${base}" 2>/dev/null; then
+              base="$(git rev-parse HEAD^)"
+            fi
+            git diff --name-only "${base}" "${GITHUB_SHA}" | grep -q "^${prefix}"
+          }
+
+          wait_build() { # build id
+            local id="$1" status
+            for _ in $(seq 1 120); do
+              status="$(gcloud builds describe "${id}" --project "${PROJECT}" --format 'value(status)')"
+              case "${status}" in
+                SUCCESS) return 0 ;;
+                FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                  echo "build ${id} ended with ${status}" >&2; return 1 ;;
+              esac
+              sleep 15
+            done
+            echo "build ${id} did not finish in time" >&2
+            return 1
+          }
+
+          release() { # role, service, image component, build context ("-" = root config build)
+            local role="$1" service="$2" component="$3" context="$4"
+            local image="${REGION}-docker.pkg.dev/${PROJECT}/${REPOSITORY}/${component}"
+            echo "::group::release ${service} (${TAG})"
+
+            local build_id
+            if [[ "${context}" == "-" ]]; then
+              build_id="$(gcloud builds submit . --project "${PROJECT}" --async \
+                --config deploy/cloud-run/cloudbuild-pay-image.yaml \
+                --substitutions "_REGION=${REGION},_REPOSITORY=${REPOSITORY},_TAG=${TAG}" \
+                --format 'value(id)')"
+            else
+              build_id="$(gcloud builds submit "${context}" --project "${PROJECT}" --async \
+                --tag "${image}:${TAG}" --format 'value(id)')"
+            fi
+            wait_build "${build_id}"
+
+            local digest
+            digest="$(gcloud artifacts docker images describe "${image}:${TAG}" \
+              --project "${PROJECT}" --format 'value(image_summary.digest)')"
+            [[ "${digest}" == sha256:* ]]
+
+            # --image only: the candidate inherits env, secrets, identity, and
+            # scaling from the serving template. Never --to-latest.
+            gcloud run deploy "${service}" \
+              --project "${PROJECT}" --region "${REGION}" \
+              --image "${image}@${digest}" \
+              --no-traffic --tag "cd-${TAG}"
+
+            local revision
+            revision="$(gcloud run services describe "${service}" \
+              --project "${PROJECT}" --region "${REGION}" \
+              --format 'value(status.latestCreatedRevisionName)')"
+
+            local ready=""
+            for _ in $(seq 1 60); do
+              ready="$(gcloud run revisions describe "${revision}" \
+                --project "${PROJECT}" --region "${REGION}" \
+                --format 'value(status.conditions.filter(type:Ready).extract(status).flatten())' || true)"
+              [[ "${ready}" == "True" ]] && break
+              [[ "${ready}" == "False" ]] && { echo "revision ${revision} failed readiness" >&2; exit 1; }
+              sleep 5
+            done
+            [[ "${ready}" == "True" ]]
+
+            node scripts/guard-cloud-run-promotion.mjs \
+              --role "${role}" --revision "${revision}" \
+              --expected-digest "${digest#sha256:}" \
+              --output "promotion/${service}.json"
+
+            gcloud run services update-traffic "${service}" \
+              --project "${PROJECT}" --region "${REGION}" \
+              --to-revisions "${revision}=100"
+            echo "promoted ${service} -> ${revision} (${digest})"
+            echo "::endgroup::"
+          }
+
+          # Runbook order: API strictly before gateway; then orchestrator, then pay.
+          # A failed release aborts the whole job (set -e) so nothing later
+          # promotes on top of a broken dependency.
+          if changed api backend/; then
+            release api obolus-api api backend
+          fi
+          if changed gateway payment-gateway/; then
+            release gateway obolus-gateway gateway payment-gateway
+          fi
+          if changed orchestrator agent-orchestrator/; then
+            release orchestrator obolus-orchestrator orchestrator agent-orchestrator
+          fi
+          if changed pay pay/ || changed pay deploy/cloud-run/cloudbuild-pay-image.yaml; then
+            release pay obolus-pay pay -
+          fi
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: promotion-decisions
+          path: promotion/
+          if-no-files-found: ignore
