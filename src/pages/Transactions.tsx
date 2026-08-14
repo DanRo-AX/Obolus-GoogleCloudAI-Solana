@@ -180,7 +180,12 @@ function relative(ts: number, t: (en: string) => string) {
   return `${Math.round(hr / 24)}${t('d ago')}`
 }
 
-export default function Transactions() {
+/**
+ * The tab/route-shared body. Rendered full-page at /transactions, and again
+ * as the "내역" tab inside Memory — same component, same state, same t()
+ * strings, just a different wrapper around it.
+ */
+export function TransactionsPanel() {
   const { chats, earnings, memory, account, profile, authReady, refreshLedger } = useUi()
   const t = useT()
   const [q, setQ] = useState('')
@@ -264,130 +269,139 @@ export default function Transactions() {
   if (!account) return <Navigate to="/login" replace />
 
   return (
-    <div className="page-enter flex-1 overflow-y-auto">
-      <div className="space-y-6 p-4 sm:p-6">
-        <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
-          <h1 className="font-sans text-base font-medium">{t('Transactions')}</h1>
-          <div className="flex items-center gap-5 font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
-            <span className="flex items-center gap-1.5">
-              <ArrowDownLeft className="size-3.5 text-[#0F766E]" />
-              <span className="tabular-nums text-foreground">
-                ₩{totals.received.toLocaleString()}
-              </span>
-              {t(' received')}
+    <div className="space-y-6">
+      <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
+        <h1 className="font-sans text-base font-medium">{t('Transactions')}</h1>
+        <div className="flex items-center gap-5 font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <ArrowDownLeft className="size-3.5 text-[#0F766E]" />
+            <span className="tabular-nums text-foreground">
+              ₩{totals.received.toLocaleString()}
             </span>
-            <span className="flex items-center gap-1.5">
-              <ArrowUpRight className="size-3.5" />
-              <span className="tabular-nums text-foreground">₩{totals.sent.toLocaleString()}</span>
-              {t(' sent')}
-            </span>
-            <Button
-              variant="monoGhost"
-              size="monoSm"
-              disabled={loading}
-              onClick={() => void load()}
-            >
-              <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
-              {t('Refresh')}
-            </Button>
-          </div>
-        </div>
-
-        <p className="max-w-2xl text-[15px] leading-7 text-muted-foreground">
-          {t(
-            'What you were paid when your documents got opened, and what you paid to open another document, in one ledger.',
-          )}
-        </p>
-
-        {!profile ? (
-          <Banner tone="neutral" className="flex flex-wrap items-center gap-3 px-4 py-3">
-            <UserRound className="size-4 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">
-              {t(
-                'Set up a profile and a payout wallet, and money you earn for an opened document starts landing here.',
-              )}
-            </p>
-            <Button asChild variant="monoMuted" size="monoSm" className="ml-auto">
-              <Link to="/onboarding">{t('Set up profile')}</Link>
-            </Button>
-          </Banner>
-        ) : null}
-
-        {error ? (
-          <div className="flex flex-wrap items-center gap-3 rounded-[4px] border border-destructive/30 bg-destructive/5 px-3 py-2">
-            <p className="text-sm text-destructive">{error}</p>
-            <Button
-              variant="monoMuted"
-              size="monoSm"
-              className="ml-auto"
-              disabled={loading}
-              onClick={() => void load()}
-            >
-              {t('Refresh')}
-            </Button>
-          </div>
-        ) : null}
-
-        {/* controls ----------------------------------------------------- */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 sm:max-w-xs">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder={t('Search wallets and documents')}
-              className="h-9 w-full rounded-[2px] border border-border bg-transparent pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-foreground/40"
-            />
-          </div>
-          <Chip active={direction === 'all'} onClick={() => setDirection('all')}>
-            {t('All')}
-          </Chip>
-          <Chip active={direction === 'received'} onClick={() => setDirection('received')}>
-            {t('Received')}
-          </Chip>
-          <Chip active={direction === 'sent'} onClick={() => setDirection('sent')}>
-            {t('Sent')}
-          </Chip>
-          <span className="ml-auto font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            {rows.length}
-            {rows.length === 1 ? t(' transaction') : t(' transactions')}
+            {t(' received')}
           </span>
+          <span className="flex items-center gap-1.5">
+            <ArrowUpRight className="size-3.5" />
+            <span className="tabular-nums text-foreground">₩{totals.sent.toLocaleString()}</span>
+            {t(' sent')}
+          </span>
+          <Button
+            variant="monoGhost"
+            size="monoSm"
+            disabled={loading}
+            onClick={() => void load()}
+          >
+            <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
+            {t('Refresh')}
+          </Button>
         </div>
+      </div>
 
-        {loading && allRows.length === 0 ? (
-          <div className="flex flex-col gap-3">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div
-                key={i}
-                className="h-[72px] animate-pulse rounded-[6px] border border-border bg-card"
-              />
-            ))}
-          </div>
-        ) : rows.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-[18vh] text-center">
-            <h2 className="font-sans text-lg font-medium">
-              {allRows.length === 0 ? t('Nothing in your ledger yet') : t('No transaction matches')}
-            </h2>
-            <p className="max-w-[360px] text-sm leading-relaxed text-muted-foreground">
-              {allRows.length === 0
-                ? t(
-                    'Answer a question and get paid, or open a document and pay for it. Either one lands here the moment it settles.',
-                  )
-                : t('Try a different word, or clear the direction filter.')}
-            </p>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {rows.map((row) => (
-              <TransactionRow
-                key={row.id}
-                row={row}
-                open={openId === row.id}
-                onToggle={() => setOpenId((id) => (id === row.id ? null : row.id))}
-              />
-            ))}
-          </div>
+      <p className="max-w-2xl text-[15px] leading-7 text-muted-foreground">
+        {t(
+          'What you were paid when your documents got opened, and what you paid to open another document, in one ledger.',
         )}
+      </p>
+
+      {!profile ? (
+        <Banner tone="neutral" className="flex flex-wrap items-center gap-3 px-4 py-3">
+          <UserRound className="size-4 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
+            {t(
+              'Set up a profile and a payout wallet, and money you earn for an opened document starts landing here.',
+            )}
+          </p>
+          <Button asChild variant="monoMuted" size="monoSm" className="ml-auto">
+            <Link to="/onboarding">{t('Set up profile')}</Link>
+          </Button>
+        </Banner>
+      ) : null}
+
+      {error ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-[4px] border border-destructive/30 bg-destructive/5 px-3 py-2">
+          <p className="text-sm text-destructive">{error}</p>
+          <Button
+            variant="monoMuted"
+            size="monoSm"
+            className="ml-auto"
+            disabled={loading}
+            onClick={() => void load()}
+          >
+            {t('Refresh')}
+          </Button>
+        </div>
+      ) : null}
+
+      {/* controls ----------------------------------------------------- */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 sm:max-w-xs">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={t('Search wallets and documents')}
+            className="h-9 w-full rounded-[2px] border border-border bg-transparent pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-foreground/40"
+          />
+        </div>
+        <Chip active={direction === 'all'} onClick={() => setDirection('all')}>
+          {t('All')}
+        </Chip>
+        <Chip active={direction === 'received'} onClick={() => setDirection('received')}>
+          {t('Received')}
+        </Chip>
+        <Chip active={direction === 'sent'} onClick={() => setDirection('sent')}>
+          {t('Sent')}
+        </Chip>
+        <span className="ml-auto font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+          {rows.length}
+          {rows.length === 1 ? t(' transaction') : t(' transactions')}
+        </span>
+      </div>
+
+      {loading && allRows.length === 0 ? (
+        <div className="flex flex-col gap-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-[72px] animate-pulse rounded-[6px] border border-border bg-card"
+            />
+          ))}
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-3 py-[18vh] text-center">
+          <h2 className="font-sans text-lg font-medium">
+            {allRows.length === 0 ? t('Nothing in your ledger yet') : t('No transaction matches')}
+          </h2>
+          <p className="max-w-[360px] text-sm leading-relaxed text-muted-foreground">
+            {allRows.length === 0
+              ? t(
+                  'Answer a question and get paid, or open a document and pay for it. Either one lands here the moment it settles.',
+                )
+              : t('Try a different word, or clear the direction filter.')}
+          </p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {rows.map((row) => (
+            <TransactionRow
+              key={row.id}
+              row={row}
+              open={openId === row.id}
+              onToggle={() => setOpenId((id) => (id === row.id ? null : row.id))}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** /transactions still resolves on its own — same panel, full-page wrapper. */
+export default function Transactions() {
+  return (
+    <div className="page-enter flex-1 overflow-y-auto">
+      <div className="p-4 sm:p-6">
+        <TransactionsPanel />
       </div>
     </div>
   )
