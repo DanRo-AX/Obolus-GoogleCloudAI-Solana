@@ -2,15 +2,23 @@ substitutions:
   _REGION: asia-northeast3
   _REPOSITORY: obolus
   _TAG: manual
+  _RELEASE_SHA: manual
 
 timeout: 2400s
 
+# A caller must still pass --service-account explicitly. Keeping logs in
+# Cloud Logging is required when Cloud Build runs as a user-specified account.
+options:
+  logging: CLOUD_LOGGING_ONLY
+
 steps:
   - id: api
-    name: gcr.io/cloud-builders/docker
+    name: gcr.io/cloud-builders/docker@sha256:617f98016081e2978c0b44184d7b09446027b909f1078b8fdc23efc4c74c5f20
     waitFor: ['-']
     args:
       - build
+      - --label
+      - org.opencontainers.image.revision=${_RELEASE_SHA}
       - --file
       - backend/Dockerfile
       - --tag
@@ -18,10 +26,12 @@ steps:
       - backend
 
   - id: browser-gateway
-    name: gcr.io/cloud-builders/docker
+    name: gcr.io/cloud-builders/docker@sha256:617f98016081e2978c0b44184d7b09446027b909f1078b8fdc23efc4c74c5f20
     waitFor: ['-']
     args:
       - build
+      - --label
+      - org.opencontainers.image.revision=${_RELEASE_SHA}
       - --file
       - payment-gateway/Dockerfile
       - --tag
@@ -29,10 +39,12 @@ steps:
       - payment-gateway
 
   - id: orchestrator
-    name: gcr.io/cloud-builders/docker
+    name: gcr.io/cloud-builders/docker@sha256:617f98016081e2978c0b44184d7b09446027b909f1078b8fdc23efc4c74c5f20
     waitFor: ['-']
     args:
       - build
+      - --label
+      - org.opencontainers.image.revision=${_RELEASE_SHA}
       - --file
       - agent-orchestrator/Dockerfile
       - --tag
@@ -40,10 +52,12 @@ steps:
       - agent-orchestrator
 
   - id: pay-sh
-    name: gcr.io/cloud-builders/docker
+    name: gcr.io/cloud-builders/docker@sha256:617f98016081e2978c0b44184d7b09446027b909f1078b8fdc23efc4c74c5f20
     waitFor: ['-']
     args:
       - build
+      - --label
+      - org.opencontainers.image.revision=${_RELEASE_SHA}
       - --file
       - pay/Dockerfile
       - --tag

@@ -1,5 +1,10 @@
 # OBOLUS ax-apps deployment
 
+> Routine release order is maintained in
+> [`docs/DEPLOYMENT.ko.md`](../../docs/DEPLOYMENT.ko.md). This document is the
+> deeper contract for provisioning, IAM, migration, payment cutovers, and
+> incident recovery.
+
 The staging deployment is intentionally Devnet-only, but its application state
 is durable. All stateful Google Cloud resources are in Seoul
 (`asia-northeast3`) in project `sweetspot-ax`.
@@ -172,27 +177,32 @@ setting must not be used.
 
 ## Build
 
-Build from each service directory so local `target`, `node_modules`, and secret
-files are excluded by the service-level `.gcloudignore` files. The frontend is
-not a Cloud Run image; `npm run build:pages` emits the Pages assets and Functions
-routing files into `dist`.
+The routine build, digest resolution, no-traffic candidate, promotion, and Pages
+sequence has one source of truth:
+[`docs/DEPLOYMENT.ko.md`](../../docs/DEPLOYMENT.ko.md). The four-image Cloud
+Build definition used by that sequence is
+[`cloudbuild-images.yaml`](cloudbuild-images.yaml). Do not substitute the older
+service-local Cloud Build files: their defaults do not describe the current
+four-service topology.
 
-```bash
-OBOLUS_IMAGE_TAG=$(git rev-parse --short HEAD)
+Every successful `main` CI run records its SHA and calls the Pages planner in
+[`deploy.yml`](../../.github/workflows/deploy.yml). Pages deploys automatically
+only when no backend change exists after the latest successful Cloud Run marker.
+Stateful releases require a deliberate dispatch of
+[`deploy-cloud-run.yml`](../../.github/workflows/deploy-cloud-run.yml) after the
+operator reviews schema compatibility, payment/reconciliation backlog, and the
+rollback set. GitHub authenticates that GCP-only job as the keyless
+`obolus-deploy` identity through WIF; Cloud Build runs as the separate
+keyless `obolus-build` identity and cannot deploy Cloud Run, read application
+secrets, use KMS, or access the database. The deployer cannot push images.
+[`setup-cd.sh`](setup-cd.sh) applies the registered boundary idempotently. Never
+omit the explicit build service account and fall back to the project's broadly
+permissioned default Compute service account.
 
-(cd backend && gcloud builds submit . \
-  --project=sweetspot-ax \
-  --tag=asia-northeast3-docker.pkg.dev/sweetspot-ax/obolus/api:${OBOLUS_IMAGE_TAG})
-
-(cd payment-gateway && gcloud builds submit . \
-  --project=sweetspot-ax \
-  --tag=asia-northeast3-docker.pkg.dev/sweetspot-ax/obolus/gateway:${OBOLUS_IMAGE_TAG})
-
-npm run typecheck:pages
-npm run build:pages
-# After the Pages project/account is verified:
-npm run pages:deploy -- --branch=main --commit-hash="$(git rev-parse HEAD)"
-```
+The frontend is not a Cloud Run image. A credential-free job builds and verifies
+`dist`; a separate Cloudflare-only job downloads that exact artifact. It never
+has GitHub OIDC permission. Backend changes keep Pages held until the matching
+Cloud Run success artifact exists.
 
 The Pages Functions proxy keeps the browser session first-party: `/api/*`
 preserves the API path and `/x402/*` strips only the routing prefix before

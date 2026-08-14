@@ -9,7 +9,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Never terminate a main release between two exact-revision promotions.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   frontend:
@@ -235,3 +236,20 @@ jobs:
       - run: cargo test --locked
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo build --locked --release
+
+  deploy-production:
+    name: Deploy production-shaped Devnet
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs:
+      - frontend
+      - agent-orchestrator
+      - payment-gateway
+      - pay-front-boundary
+      - backend-production-image
+      - backend
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/deploy.yml
+    with:
+      release_sha: ${{ github.sha }}

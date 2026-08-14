@@ -3,6 +3,9 @@
 #!include:.gitignore
 
 .agents
+gha-creds-*.json
+.omg
+**/.omg
 .omc
 **/.omc
 .tmp

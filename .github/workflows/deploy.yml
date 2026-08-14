@@ -1,0 +1,268 @@
+name: Deploy Pages after tested main
+
+on:
+  workflow_call:
+    inputs:
+      release_sha:
+        description: Fully tested main commit to deploy
+        required: true
+        type: string
+      cloud_run_base:
+        description: Successful Cloud Run SHA from the trusted stateful caller
+        required: false
+        default: ''
+        type: string
+      record_tested_main:
+        description: Record this run as the successful six-job CI boundary
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: deploy-pages-production
+  cancel-in-progress: false
+
+env:
+  RELEASE_SHA: ${{ inputs.release_sha }}
+
+jobs:
+  record-and-plan:
+    name: Record tested main and plan Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      pages_allowed: ${{ steps.plan.outputs.pages_allowed }}
+      cloud_run_base: ${{ steps.plan.outputs.cloud_run_base }}
+    steps:
+      - name: Check out the tested main commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+
+      - name: Prove the caller supplied the tested main commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "${RELEASE_SHA}" ]]
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]]
+          [[ "${GITHUB_REPOSITORY}" == "DanRo-AX/Obolus-GoogleCloudAI-Solana" ]]
+          [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          jq -nc --arg sha "${RELEASE_SHA}" --arg run "${GITHUB_RUN_ID}" \
+            '{releaseSha:$sha,ciRunId:$run}' > tested-main.json
+
+      - name: Record the successful six-job CI boundary
+        if: ${{ inputs.record_tested_main }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: tested-main-${{ inputs.release_sha }}
+          path: tested-main.json
+          retention-days: 90
+          overwrite: true
+
+      - name: Find the last completed Cloud Run release
+        id: marker
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          EXPLICIT_CLOUD_RUN_BASE: ${{ inputs.cloud_run_base }}
+        with:
+          script: |
+            if (/^[0-9a-f]{40}$/.test(process.env.EXPLICIT_CLOUD_RUN_BASE)) {
+              core.setOutput('sha', process.env.EXPLICIT_CLOUD_RUN_BASE)
+              return
+            }
+            const artifacts = await github.paginate(
+              github.rest.actions.listArtifactsForRepo,
+              { owner: context.repo.owner, repo: context.repo.repo, per_page: 100 },
+            )
+            const candidates = artifacts
+              .filter((artifact) => !artifact.expired)
+              .filter((artifact) => /^cloud-run-success-[0-9a-f]{40}$/.test(artifact.name))
+              .sort((left, right) => right.created_at.localeCompare(left.created_at))
+            let marker
+            for (const candidate of candidates) {
+              const run = await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: candidate.workflow_run.id,
+              })
+              if (run.data.event === 'workflow_dispatch' &&
+                  run.data.head_branch === 'main' &&
+                  run.data.head_sha === candidate.name.slice('cloud-run-success-'.length) &&
+                  String(run.data.path).endsWith('.github/workflows/deploy-cloud-run.yml')) {
+                marker = candidate
+                break
+              }
+            }
+            core.setOutput('sha', marker ? marker.name.slice('cloud-run-success-'.length) : '')
+
+      - name: Allow Pages only when Cloud Run covers every backend change
+        id: plan
+        env:
+          CLOUD_RUN_BASE: ${{ steps.marker.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pages_allowed=false
+          base="${CLOUD_RUN_BASE}"
+          if [[ "${base}" =~ ^[0-9a-f]{40}$ ]] \
+              && git merge-base --is-ancestor "${base}" "${RELEASE_SHA}"; then
+            git diff --name-only "${base}" "${RELEASE_SHA}" > cloud-run-changes.txt
+            if ! grep -Eq '^(backend/|payment-gateway/|agent-orchestrator/|pay/|deploy/cloud-run/|\.dockerignore$|\.gcloudignore$)' cloud-run-changes.txt; then
+              pages_allowed=true
+            fi
+          else
+            : > cloud-run-changes.txt
+          fi
+          {
+            printf 'pages_allowed=%s\n' "${pages_allowed}"
+            printf 'cloud_run_base=%s\n' "${base}"
+          } >> "${GITHUB_OUTPUT}"
+          {
+            printf 'release=%s\n' "${RELEASE_SHA}"
+            printf 'cloud_run_base=%s\n' "${base:-none}"
+            printf 'pages_allowed=%s\n' "${pages_allowed}"
+            if [[ "${pages_allowed}" != true ]]; then
+              printf 'Pages is held until the stateful Cloud Run workflow releases this main commit.\n'
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload the compatibility decision
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pages-plan-${{ inputs.release_sha }}
+          path: cloud-run-changes.txt
+          retention-days: 90
+          overwrite: true
+
+  build-pages:
+    name: Build the approved Pages release
+    needs: record-and-plan
+    if: ${{ needs.record-and-plan.outputs.pages_allowed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.release_sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck:pages
+      - run: npm run build:pages
+      - run: npm run verify:pages-bundle
+      - name: Upload the exact tested Pages bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pages-dist-${{ inputs.release_sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+
+  deploy-pages:
+    name: Approve and deploy Pages
+    needs: build-pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: https://obolus-9qi.pages.dev
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.release_sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Download the exact bundle built without provider credentials
+        uses: actions/download-artifact@37930b1c760c3a8032a2c8b32c3de3c4f0257e5a # v8
+        with:
+          name: pages-dist-${{ inputs.release_sha }}
+          path: dist
+
+      - name: Preflight and capture the known-good Pages deployment
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${CLOUDFLARE_ACCOUNT_ID}" =~ ^[0-9a-f]{32}$ ]]
+          [[ -n "${CLOUDFLARE_API_TOKEN}" ]]
+          mkdir -p release-state
+          npx wrangler pages project list --json |
+            jq -e '.[] | select(."Project Name" == "obolus" and (."Project Domains" | contains("obolus-9qi.pages.dev")))' \
+              >/dev/null
+          npx wrangler pages deployment list \
+            --project-name obolus --environment production --json |
+            jq -e '.[0] | select(.Id and .Environment == "Production" and
+              .Branch == "main" and .Source and .Deployment) |
+              {pages:{id:.Id,source:.Source,branch:.Branch,
+                environment:.Environment,url:.Deployment}}' \
+              > release-state/pages-known-good.json
+
+      - name: Deploy Pages from the credential-free build artifact
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler pages deploy dist \
+            --project-name obolus \
+            --branch main \
+            --commit-hash "${RELEASE_SHA}"
+
+      - name: Verify the production Pages boundary
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          matched=false
+          for _ in $(seq 1 10); do
+            if deployment=$(npx wrangler pages deployment list \
+                --project-name obolus --environment production --json |
+                jq -er --arg sha "${RELEASE_SHA}" \
+                  '.[0] | . as $deployment |
+                   select(.Id and .Environment == "Production" and .Branch == "main" and
+                     ($deployment.Source == $sha or ($sha | startswith($deployment.Source))))'); then
+              matched=true
+              break
+            fi
+            sleep 2
+          done
+          [[ "${matched}" == true ]]
+          jq -n --argjson deployment "${deployment}" \
+            '{pages:{id:$deployment.Id,source:$deployment.Source,url:$deployment.Deployment}}' \
+            > release-state/pages.json
+          curl --retry 10 --retry-all-errors --retry-delay 2 \
+            --fail --silent --show-error https://obolus-9qi.pages.dev/ >/dev/null
+          auth_file="${RUNNER_TEMP}/obolus-auth-me.json"
+          status=$(curl --retry 10 --retry-all-errors --retry-delay 2 \
+            --silent --output "${auth_file}" --write-out '%{http_code}' \
+            https://obolus-9qi.pages.dev/api/v1/auth/me)
+          [[ "${status}" == 401 ]]
+          jq -e '.error.code == "unauthorized"' "${auth_file}" >/dev/null
+
+      - name: Upload secret-free Pages release state
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pages-release-${{ inputs.release_sha }}
+          path: release-state/
+          if-no-files-found: warn
+          retention-days: 90
+          overwrite: true

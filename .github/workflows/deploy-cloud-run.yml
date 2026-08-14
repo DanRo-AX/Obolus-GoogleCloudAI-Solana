@@ -1,0 +1,402 @@
+name: Release stateful Cloud Run services
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Full 40-character SHA currently at main
+        required: true
+        type: string
+      stateful_release_ack:
+        description: Type REVIEWED_SCHEMA_BACKLOG_AND_ROLLBACK
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: deploy-cloud-run-production
+  cancel-in-progress: false
+
+env:
+  PROJECT: sweetspot-ax
+  REGION: asia-northeast3
+  REPOSITORY: obolus
+  RELEASE_SHA: ${{ inputs.release_sha }}
+  BUILD_SERVICE_ACCOUNT: ${{ vars.GCP_BUILD_SA }}
+  SOURCE_BUCKET: sweetspot-ax-obolus-cloudbuild-source
+
+jobs:
+  plan:
+    name: Verify tested main and explicit stateful approval
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Prove the requested release is the current tested main
+        shell: bash
+        env:
+          STATEFUL_RELEASE_ACK: ${{ inputs.stateful_release_ack }}
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == "DanRo-AX/Obolus-GoogleCloudAI-Solana" ]]
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]]
+          [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "${RELEASE_SHA}" ]]
+          [[ "${STATEFUL_RELEASE_ACK}" == REVIEWED_SCHEMA_BACKLOG_AND_ROLLBACK ]]
+      - name: Require the successful six-job CI artifact for this SHA
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const name = `tested-main-${process.env.RELEASE_SHA}`
+            const response = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name,
+              per_page: 100,
+            })
+            let valid = false
+            for (const artifact of response.data.artifacts) {
+              if (artifact.expired || artifact.name !== name ||
+                  artifact.workflow_run?.head_sha !== process.env.RELEASE_SHA) continue
+              const run = await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: artifact.workflow_run.id,
+              })
+              if (run.data.event === 'push' && run.data.head_branch === 'main' &&
+                  run.data.head_sha === process.env.RELEASE_SHA &&
+                  run.data.conclusion === 'success' &&
+                  String(run.data.path).endsWith('.github/workflows/ci.yml')) {
+                valid = true
+                break
+              }
+            }
+            if (!valid) core.setFailed(`missing successful main CI artifact ${name}`)
+
+  release-cloud-run:
+    name: Approve, stage, guard, and release Cloud Run
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    environment:
+      name: production
+      url: https://obolus-api-amjeodet3q-du.a.run.app
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+      - name: Recheck current main after production approval
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          [[ "$(git rev-parse HEAD)" == "${RELEASE_SHA}" ]]
+          [[ "$(git rev-parse origin/main)" == "${RELEASE_SHA}" ]]
+      - name: Authenticate only this GCP release job without a key
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+
+      - name: Verify fixed identities, immutable tags, and source isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${BUILD_SERVICE_ACCOUNT}" == "obolus-build@${PROJECT}.iam.gserviceaccount.com" ]]
+          [[ "$(gcloud auth list --filter=status:ACTIVE --format='value(account)')" == \
+            "${{ vars.GCP_DEPLOY_SA }}" ]]
+          [[ "$(gcloud artifacts repositories describe "${REPOSITORY}" \
+            --project "${PROJECT}" --location "${REGION}" \
+            --format='value(dockerConfig.immutableTags)')" == True ]]
+          [[ "$(gcloud storage buckets describe "gs://${SOURCE_BUCKET}" \
+            --format='value(iamConfiguration.uniformBucketLevelAccess.enabled)')" == True ]]
+
+      - name: Capture exact known-good revisions and images
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-state promotion
+          : > release-state/cloud-run-known-good.ndjson
+          for service in obolus-api obolus-pay obolus-orchestrator obolus-gateway; do
+            service_json=$(gcloud run services describe "${service}" \
+              --project "${PROJECT}" --region "${REGION}" --format=json)
+            revision=$(jq -er '[.status.traffic[] | select(.percent == 100)] |
+              if length == 1 and .[0].revisionName then .[0].revisionName
+              else error("expected exactly one 100% revision") end' <<<"${service_json}")
+            image=$(gcloud run revisions describe "${revision}" \
+              --project "${PROJECT}" --region "${REGION}" \
+              --format='value(spec.containers[0].image)')
+            [[ "${image}" =~ @sha256:[0-9a-f]{64}$ ]]
+            jq -nc --arg service "${service}" --arg revision "${revision}" \
+              --arg image "${image}" \
+              '{service:$service,revision:$revision,image:$image}' \
+              >> release-state/cloud-run-known-good.ndjson
+          done
+          [[ "$(wc -l < release-state/cloud-run-known-good.ndjson | tr -d ' ')" == 4 ]]
+
+      - name: Build one immutable full-SHA image set and capture its ID
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="release-${RELEASE_SHA}"
+          image_root="${REGION}-docker.pkg.dev/${PROJECT}/${REPOSITORY}"
+          existing=0
+          for role in api pay orchestrator gateway; do
+            if gcloud artifacts docker images describe "${image_root}/${role}:${tag}" \
+                --project "${PROJECT}" --format='value(image_summary.digest)' \
+                2>/dev/null | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              existing=$((existing + 1))
+            fi
+          done
+          if [[ "${existing}" == 0 ]]; then
+            build_id=$(gcloud builds submit . \
+              --project "${PROJECT}" \
+              --region global \
+              --service-account "projects/${PROJECT}/serviceAccounts/${BUILD_SERVICE_ACCOUNT}" \
+              --gcs-source-staging-dir "gs://${SOURCE_BUCKET}/source/${RELEASE_SHA}/${GITHUB_RUN_ID}" \
+              --config deploy/cloud-run/cloudbuild-images.yaml \
+              --substitutions "_REGION=${REGION},_REPOSITORY=${REPOSITORY},_TAG=${tag},_RELEASE_SHA=${RELEASE_SHA}" \
+              --format='value(id)')
+            [[ "${build_id}" =~ ^[0-9a-f-]{36}$ ]]
+          elif [[ "${existing}" != 4 ]]; then
+            echo "partial immutable image set for ${RELEASE_SHA}" >&2
+            exit 1
+          else
+            echo "reusing the complete immutable full-SHA image set"
+            build_id=$(gcloud builds list --project "${PROJECT}" --region global \
+              --filter="substitutions._RELEASE_SHA=${RELEASE_SHA} AND status=SUCCESS" \
+              --sort-by='~createTime' --limit=1 --format='value(id)')
+            [[ "${build_id}" =~ ^[0-9a-f-]{36}$ ]]
+          fi
+          build_json=$(gcloud builds describe "${build_id}" --project "${PROJECT}" \
+            --region global --format=json)
+          jq -e --arg sha "${RELEASE_SHA}" \
+            --arg service_account "projects/${PROJECT}/serviceAccounts/${BUILD_SERVICE_ACCOUNT}" \
+            --arg image_root "${REGION}-docker.pkg.dev/${PROJECT}/${REPOSITORY}/" '
+              .status == "SUCCESS" and
+              .serviceAccount == $service_account and
+              .substitutions._RELEASE_SHA == $sha and
+              (.results.images | length) == 4 and
+              all(.results.images[]; (.name | startswith($image_root)) and
+                (.name | endswith(":" + ("release-" + $sha))) and
+                (.digest | test("^sha256:[0-9a-f]{64}$")))
+            ' <<<"${build_json}" >/dev/null
+          jq '{id,status,serviceAccount,
+            releaseSha:.substitutions._RELEASE_SHA,
+            images:[.results.images[] | {name,digest}]}' \
+            <<<"${build_json}" > release-state/cloud-build.json
+
+      - name: Resolve every digest and revision conflict before staging
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="release-${RELEASE_SHA}"
+          suffix="${RELEASE_SHA:0:24}"
+          image_root="${REGION}-docker.pkg.dev/${PROJECT}/${REPOSITORY}"
+          : > release-state/candidates.ndjson
+          for role in api pay orchestrator gateway; do
+            digest=$(gcloud artifacts docker images describe "${image_root}/${role}:${tag}" \
+              --project "${PROJECT}" --format='value(image_summary.digest)')
+            [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+            revision="obolus-${role}-rel-${suffix}"
+            existing=false
+            if existing_json=$(gcloud run revisions describe "${revision}" \
+                --project "${PROJECT}" --region "${REGION}" --format=json 2>/dev/null); then
+              existing_image=$(jq -er '.spec.containers[0].image' <<<"${existing_json}")
+              existing_sha=$(jq -er '.metadata.labels["release-sha"]' <<<"${existing_json}")
+              [[ "${existing_image}" == "${image_root}/${role}@${digest}" ]]
+              [[ "${existing_sha}" == "${RELEASE_SHA}" ]]
+              existing=true
+            fi
+            jq -nc --arg role "${role}" --arg service "obolus-${role}" \
+              --arg revision "${revision}" --arg digest "${digest}" \
+              --argjson existing "${existing}" \
+              '{role:$role,service:$service,revision:$revision,digest:$digest,
+                existing:$existing}' >> release-state/candidates.ndjson
+          done
+          [[ "$(wc -l < release-state/candidates.ndjson | tr -d ' ')" == 4 ]]
+
+      - name: Start every explicitly approved no-traffic candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_tag="cand-${RELEASE_SHA:0:20}"
+          image_root="${REGION}-docker.pkg.dev/${PROJECT}/${REPOSITORY}"
+          while IFS= read -r candidate; do
+            role=$(jq -er '.role' <<<"${candidate}")
+            revision=$(jq -er '.revision' <<<"${candidate}")
+            digest=$(jq -er '.digest' <<<"${candidate}")
+            existing=$(jq -er '.existing' <<<"${candidate}")
+            if [[ "${existing}" == true ]]; then
+              gcloud run services update-traffic "obolus-${role}" \
+                --project "${PROJECT}" --region "${REGION}" \
+                --update-tags "${candidate_tag}=${revision}"
+            else
+              gcloud run services update "obolus-${role}" \
+                --project "${PROJECT}" --region "${REGION}" \
+                --image "${image_root}/${role}@${digest}" \
+                --revision-suffix "rel-${RELEASE_SHA:0:24}" \
+                --update-labels "release-sha=${RELEASE_SHA}" \
+                --tag "${candidate_tag}" \
+                --no-traffic
+            fi
+          done < release-state/candidates.ndjson
+
+      - name: Verify and guard all four candidates before any traffic moves
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_tag="cand-${RELEASE_SHA:0:20}"
+          : > release-state/candidate-urls.ndjson
+          while IFS= read -r candidate; do
+            service=$(jq -er '.service' <<<"${candidate}")
+            role=$(jq -er '.role' <<<"${candidate}")
+            revision=$(jq -er '.revision' <<<"${candidate}")
+            digest=$(jq -er '.digest' <<<"${candidate}")
+            url=$(gcloud run services describe "${service}" \
+              --project "${PROJECT}" --region "${REGION}" --format=json |
+              jq -er --arg tag "${candidate_tag}" \
+                '[.status.traffic[] | select(.tag == $tag)] |
+                 if length == 1 and .[0].url then .[0].url
+                 else error("expected one candidate URL") end')
+            jq -nc --arg role "${role}" --arg url "${url}" \
+              '{role:$role,url:$url}' >> release-state/candidate-urls.ndjson
+            if [[ "${role}" == pay ]]; then
+              status=$(curl --retry 10 --retry-all-errors --retry-delay 2 \
+                --silent --output /dev/null --write-out '%{http_code}' \
+                "${url}/__402/health")
+              [[ "${status}" == 404 ]]
+            else
+              curl --retry 10 --retry-all-errors --retry-delay 2 \
+                --fail --silent "${url}/readyz" | jq -e '.status == "ready"' >/dev/null
+            fi
+            node scripts/guard-cloud-run-promotion.mjs \
+              --project "${PROJECT}" --region "${REGION}" \
+              --role "${role}" --revision "${revision}" \
+              --expected-digest "${digest}" \
+              --output "promotion/${role}.json"
+          done < release-state/candidates.ndjson
+          [[ "$(find promotion -name '*.json' -type f | wc -l | tr -d ' ')" == 4 ]]
+
+      - name: Promote exact revisions with automatic traffic rollback on error
+        shell: bash
+        run: |
+          set -euo pipefail
+          rollback() {
+            trap - ERR
+            set +e
+            echo "promotion failed; restoring all four known-good revisions" >&2
+            rollback_failed=0
+            for service in obolus-gateway obolus-orchestrator obolus-pay obolus-api; do
+              revision=$(jq -er --arg service "${service}" \
+                'select(.service == $service) | .revision' \
+                release-state/cloud-run-known-good.ndjson)
+              gcloud run services update-traffic "${service}" \
+                --project "${PROJECT}" --region "${REGION}" \
+                --to-revisions "${revision}=100" || rollback_failed=1
+            done
+            if [[ "${rollback_failed}" != 0 ]]; then
+              echo "one or more traffic rollbacks failed; incident response required" >&2
+            fi
+            exit 1
+          }
+          trap rollback ERR
+          for role in api pay orchestrator gateway; do
+            revision=$(jq -er --arg role "${role}" \
+              'select(.role == $role) | .revision' release-state/candidates.ndjson)
+            jq -e '.approved == true' "promotion/${role}.json" >/dev/null
+            gcloud run services update-traffic "obolus-${role}" \
+              --project "${PROJECT}" --region "${REGION}" \
+              --to-revisions "${revision}=100"
+            serving=$(gcloud run services describe "obolus-${role}" \
+              --project "${PROJECT}" --region "${REGION}" --format=json |
+              jq -er '[.status.traffic[] | select(.percent == 100)] |
+                if length == 1 then .[0].revisionName else error("ambiguous traffic") end')
+            [[ "${serving}" == "${revision}" ]]
+            if [[ "${role}" == pay ]]; then
+              status=$(curl --retry 10 --retry-all-errors --retry-delay 2 \
+                --silent --output /dev/null --write-out '%{http_code}' \
+                https://obolus-pay-amjeodet3q-du.a.run.app/__402/health)
+              [[ "${status}" == 404 ]]
+            else
+              curl --retry 10 --retry-all-errors --retry-delay 2 \
+                --fail --silent "https://obolus-${role}-amjeodet3q-du.a.run.app/readyz" |
+              jq -e '.status == "ready"' >/dev/null
+            fi
+          done
+          candidate_tag="cand-${RELEASE_SHA:0:20}"
+          for role in api pay orchestrator gateway; do
+            gcloud run services update-traffic "obolus-${role}" \
+              --project "${PROJECT}" --region "${REGION}" \
+              --remove-tags "${candidate_tag}"
+          done
+          trap - ERR
+          jq -nc --arg sha "${RELEASE_SHA}" --arg run "${GITHUB_RUN_ID}" \
+            '{releaseSha:$sha,workflowRunId:$run}' > release-state/cloud-run-success.json
+
+      - name: Remove every candidate URL even when staging or promotion fails
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          candidate_tag="cand-${RELEASE_SHA:0:20}"
+          cleanup_failed=0
+          for role in api pay orchestrator gateway; do
+            service_json=$(gcloud run services describe "obolus-${role}" \
+                --project "${PROJECT}" --region "${REGION}" --format=json 2>/dev/null) || {
+              cleanup_failed=1
+              continue
+            }
+            if jq -e --arg tag "${candidate_tag}" \
+                'any(.status.traffic[]?; .tag == $tag)' <<<"${service_json}" >/dev/null; then
+              gcloud run services update-traffic "obolus-${role}" \
+                --project "${PROJECT}" --region "${REGION}" \
+                --remove-tags "${candidate_tag}" || cleanup_failed=1
+            fi
+          done
+          exit "${cleanup_failed}"
+
+      - name: Upload secret-free release decisions
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: cloud-run-attempt-${{ inputs.release_sha }}
+          path: |
+            release-state/
+            promotion/
+          if-no-files-found: warn
+          retention-days: 90
+          overwrite: true
+
+      - name: Record the completed Cloud Run compatibility boundary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: cloud-run-success-${{ inputs.release_sha }}
+          path: release-state/cloud-run-success.json
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
+
+  deploy-pages-last:
+    name: Deploy compatible Pages last
+    needs: release-cloud-run
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/deploy.yml
+    with:
+      release_sha: ${{ inputs.release_sha }}
+      cloud_run_base: ${{ inputs.release_sha }}
+      record_tested_main: false

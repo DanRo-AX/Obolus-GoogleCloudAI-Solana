@@ -1,5 +1,9 @@
 # Obolus Cloudflare Pages
 
+> The end-to-end production release order is maintained in
+> [`docs/DEPLOYMENT.ko.md`](../../docs/DEPLOYMENT.ko.md). This document defines
+> the Pages-specific build and proxy contract.
+
 The production frontend is a Cloudflare Pages project named `obolus`.
 
 ## Build contract
@@ -28,6 +32,18 @@ Before the first deploy, confirm the Cloudflare account and whether an existing
 `obolus` Pages project is already attached to another repository. Do not create
 a second project with the same public purpose. Pages Functions cannot be
 uploaded with dashboard drag-and-drop; use Git integration or Wrangler.
+
+Normal production delivery is the Cloudflare-only final job of the CI-gated
+reusable workflow [`deploy.yml`](../../.github/workflows/deploy.yml). A job with
+no provider credential builds and verifies the bundle; the production job
+downloads that exact artifact. It first proves that a `production` environment
+secret can access the exact `obolus` project and account. The environment must require a reviewer and
+permit only `main`. The secret must be a custom Cloudflare API token restricted
+to the target account with only `Cloudflare Pages: Edit`; do not reuse a local
+Wrangler OAuth credential or downgrade it to a repository secret. This job has
+no `id-token: write`, and the stateful GCP workflow cannot read the Cloudflare
+secret. Backend changes hold Pages until a matching Cloud Run success marker is
+present.
 
 ```bash
 npm run typecheck:pages

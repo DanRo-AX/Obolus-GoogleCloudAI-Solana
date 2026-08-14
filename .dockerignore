@@ -1,6 +1,7 @@
 .git
 .env
 .secrets
+gha-creds-*.json
 node_modules
 payment-gateway/node_modules
 agent-orchestrator/node_modules
@@ -10,6 +11,8 @@ dist
 *.log
 .tmp
 .presentation-work
+.omg
+**/.omg
 .omc
 **/.omc
 presentation-variants
