@@ -388,15 +388,3 @@ jobs:
           if-no-files-found: error
           retention-days: 90
           overwrite: true
-
-  deploy-pages-last:
-    name: Deploy compatible Pages last
-    needs: release-cloud-run
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/deploy.yml
-    with:
-      release_sha: ${{ inputs.release_sha }}
-      cloud_run_base: ${{ inputs.release_sha }}
-      record_tested_main: false

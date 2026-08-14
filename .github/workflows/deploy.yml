@@ -1,22 +1,25 @@
 name: Deploy Pages after tested main
 
 on:
-  workflow_call:
+  workflow_dispatch:
     inputs:
       release_sha:
-        description: Fully tested main commit to deploy
+        description: Full 40-character tested main SHA to deploy
         required: true
         type: string
       cloud_run_base:
-        description: Successful Cloud Run SHA from the trusted stateful caller
+        description: Optional successful Cloud Run SHA compatibility base
         required: false
-        default: ''
+        default: ""
         type: string
-      record_tested_main:
-        description: Record this run as the successful six-job CI boundary
-        required: false
-        default: true
-        type: boolean
+  workflow_run:
+    workflows:
+      - CI
+      - Release stateful Cloud Run services
+    branches:
+      - main
+    types:
+      - completed
 
 permissions:
   contents: read
@@ -27,11 +30,20 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RELEASE_SHA: ${{ inputs.release_sha }}
+  RELEASE_SHA: ${{ inputs.release_sha || github.event.workflow_run.head_sha }}
 
 jobs:
   record-and-plan:
-    name: Record tested main and plan Pages
+    name: Verify tested main and plan Pages
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       ((github.event.workflow_run.name == 'CI' &&
+         github.event.workflow_run.event == 'push') ||
+        (github.event.workflow_run.name == 'Release stateful Cloud Run services' &&
+         github.event.workflow_run.event == 'workflow_dispatch')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -41,10 +53,10 @@ jobs:
       - name: Check out the tested main commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ inputs.release_sha }}
+          ref: ${{ env.RELEASE_SHA }}
           fetch-depth: 0
 
-      - name: Prove the caller supplied the tested main commit
+      - name: Prove the trigger supplied a main commit
         shell: bash
         run: |
           set -euo pipefail
@@ -52,17 +64,38 @@ jobs:
           [[ "${GITHUB_REF}" == "refs/heads/main" ]]
           [[ "${GITHUB_REPOSITORY}" == "DanRo-AX/Obolus-GoogleCloudAI-Solana" ]]
           [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
-          jq -nc --arg sha "${RELEASE_SHA}" --arg run "${GITHUB_RUN_ID}" \
-            '{releaseSha:$sha,ciRunId:$run}' > tested-main.json
 
-      - name: Record the successful six-job CI boundary
-        if: ${{ inputs.record_tested_main }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - name: Require the successful six-job CI marker
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          TESTED_MAIN_ARTIFACT: tested-main-${{ env.RELEASE_SHA }}
         with:
-          name: tested-main-${{ inputs.release_sha }}
-          path: tested-main.json
-          retention-days: 90
-          overwrite: true
+          script: |
+            const name = process.env.TESTED_MAIN_ARTIFACT
+            const response = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name,
+              per_page: 100,
+            })
+            let valid = false
+            for (const artifact of response.data.artifacts) {
+              if (artifact.expired || artifact.name !== name ||
+                  artifact.workflow_run?.head_sha !== process.env.RELEASE_SHA) continue
+              const run = await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: artifact.workflow_run.id,
+              })
+              if (run.data.event === 'push' && run.data.head_branch === 'main' &&
+                  run.data.head_sha === process.env.RELEASE_SHA &&
+                  run.data.conclusion === 'success' &&
+                  String(run.data.path).endsWith('.github/workflows/ci.yml')) {
+                valid = true
+                break
+              }
+            }
+            if (!valid) core.setFailed(`missing successful main CI artifact ${name}`)
 
       - name: Find the last completed Cloud Run release
         id: marker
@@ -134,7 +167,7 @@ jobs:
       - name: Upload the compatibility decision
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: pages-plan-${{ inputs.release_sha }}
+          name: pages-plan-${{ env.RELEASE_SHA }}
           path: cloud-run-changes.txt
           retention-days: 90
           overwrite: true
@@ -148,7 +181,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ inputs.release_sha }}
+          ref: ${{ env.RELEASE_SHA }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
@@ -160,7 +193,7 @@ jobs:
       - name: Upload the exact tested Pages bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: pages-dist-${{ inputs.release_sha }}
+          name: pages-dist-${{ env.RELEASE_SHA }}
           path: dist/
           if-no-files-found: error
           retention-days: 30
@@ -179,7 +212,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ inputs.release_sha }}
+          ref: ${{ env.RELEASE_SHA }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
@@ -188,7 +221,7 @@ jobs:
       - name: Download the exact bundle built without provider credentials
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: pages-dist-${{ inputs.release_sha }}
+          name: pages-dist-${{ env.RELEASE_SHA }}
           path: dist
 
       - name: Preflight and capture the known-good Pages deployment
@@ -261,7 +294,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: pages-release-${{ inputs.release_sha }}
+          name: pages-release-${{ env.RELEASE_SHA }}
           path: release-state/
           if-no-files-found: warn
           retention-days: 90

@@ -1,14 +1,15 @@
 # Obolus 운영 배포 런북
 
 이 문서는 이미 구성된 Obolus 운영형 Devnet의 배포 진입점이다. PR과 모든 `main`
-push는 [CI](../.github/workflows/ci.yml)를 실행한다. 여섯 CI job이 모두 성공하면
-[Pages workflow](../.github/workflows/deploy.yml)가 해당 SHA를 tested-main artifact로
-기록한다. 마지막 성공 Cloud Run SHA 이후 backend 관련 변경이 없을 때만 Pages를
-자동 승인 대기 상태로 보낸다. 공유 Cloud SQL migration과 reconciliation worker를
+push는 [CI](../.github/workflows/ci.yml)를 실행한다. 여섯 CI job이 모두 성공하면 CI가
+해당 SHA를 tested-main artifact로 기록하고, 직접 실행되는
+[Pages workflow](../.github/workflows/deploy.yml)가 이를 검증한다. 마지막 성공 Cloud Run
+SHA 이후 backend 관련 변경이 없을 때만 Pages를 자동 승인 대기 상태로 보낸다. 공유
+Cloud SQL migration과 reconciliation worker를
 시작하는 Cloud Run은 자동 배포하지 않는다. 운영자가 schema·backlog·rollback을
 검토한 뒤 [stateful workflow](../.github/workflows/deploy-cloud-run.yml)를 current main
 SHA와 명시적 확인값으로 수동 실행한다. 성공한 Cloud Run SHA는 artifact로 기록되며
-그 다음 main CI가 Pages 호환성을 다시 판정한다.
+Cloud Run 성공 이벤트가 Pages workflow를 다시 실행해 호환성을 판정한다.
 
 최초 리소스 생성, IAM, Secret, Cloud SQL 이전, 결제 프로토콜 전환, KMS 키 교체는
 이 문서의 범위가 아니다. 해당 변경은
@@ -21,13 +22,13 @@ IAM, 서비스 계정 또는 공유 리소스를 바꾸기 전에는 아래 조�
 
 ## 1. 대상과 배포 원칙
 
-| 역할 | 배포 대상 | 이미지 또는 산출물 |
-| --- | --- | --- |
-| 브라우저 앱과 same-origin proxy | Cloudflare Pages `obolus` | `dist/`, `functions/api`, `functions/x402` |
-| Rust API | Cloud Run `obolus-api` | `obolus/api` |
-| x402 gateway | Cloud Run `obolus-gateway` | `obolus/gateway` |
-| 결제·복구 worker | Cloud Run `obolus-orchestrator` | `obolus/orchestrator` |
-| 보호된 Pay.sh front | Cloud Run `obolus-pay` | `obolus/pay` |
+| 역할                            | 배포 대상                       | 이미지 또는 산출물                         |
+| ------------------------------- | ------------------------------- | ------------------------------------------ |
+| 브라우저 앱과 same-origin proxy | Cloudflare Pages `obolus`       | `dist/`, `functions/api`, `functions/x402` |
+| Rust API                        | Cloud Run `obolus-api`          | `obolus/api`                               |
+| x402 gateway                    | Cloud Run `obolus-gateway`      | `obolus/gateway`                           |
+| 결제·복구 worker                | Cloud Run `obolus-orchestrator` | `obolus/orchestrator`                      |
+| 보호된 Pay.sh front             | Cloud Run `obolus-pay`          | `obolus/pay`                               |
 
 공통 위치는 GCP project `sweetspot-ax`, region `asia-northeast3`, Artifact
 Registry repository `obolus`다. 프런트의 운영 주소는
@@ -83,15 +84,23 @@ deployment branch `main`만 허용한다. 그다음 Cloudflare dashboard에서 �
 파일, shell history에 값을 적지 말고 아래 대화형 입력으로 environment secret에 바로
 보낸다. repository secret으로 낮추지 않는다.
 
-```bash
-gh secret set CLOUDFLARE_API_TOKEN \
-  --repo DanRo-AX/Obolus-GoogleCloudAI-Solana \
-  --env production
+```zsh
+read -rs "CF_TOKEN?Cloudflare API token: "; echo
+if [[ -z "${CF_TOKEN//[[:space:]]/}" ]]; then
+  echo "token is empty" >&2
+else
+  print -rn -- "${CF_TOKEN}" | gh secret set CLOUDFLARE_API_TOKEN \
+    --repo DanRo-AX/Obolus-GoogleCloudAI-Solana \
+    --env production
+fi
+unset CF_TOKEN
 ```
 
-main 자동 흐름은 `CI 6종 → tested-main 기록 → 마지막 Cloud Run 성공 SHA와 diff →
-Pages credential 없는 bundle build → production 승인 → Cloudflare preflight → Pages`
-다. backend 변경이 남아 있으면 Pages는 hold된다. 운영자는 GitHub Actions에서
+main 자동 흐름은 `CI 6종 → tested-main 기록 → 직접 Pages workflow → 마지막 Cloud Run
+성공 SHA와 diff → credential 없는 bundle build → production 승인 → Cloudflare
+preflight → Pages`다. Pages job을 직접 실행하므로 production environment secret은
+reusable workflow 경계를 통과하지 않는다. backend 변경이 남아 있으면 Pages는
+hold된다. 운영자는 GitHub Actions에서
 `Release stateful Cloud Run services`를 current main full SHA와 확인값
 `REVIEWED_SCHEMA_BACKLOG_AND_ROLLBACK`으로 실행한다. 해당 job은 immutable full-SHA
 이미지 4개와 build provenance를 확인하고, 네 digest·revision 충돌을 전부 사전검사한
@@ -391,7 +400,8 @@ done
 
 ## 5. Pages 배포와 출시 확인
 
-Cloud Run 승격 및 same-origin API smoke가 끝난 뒤 Pages를 배포한다.
+Cloud Run 승격 및 same-origin API smoke가 끝나면 성공 이벤트가 Pages workflow를 다시
+실행한다. 아래 로컬 명령은 Actions를 사용할 수 없는 비상 절차다.
 [`wrangler.jsonc`](../wrangler.jsonc)의 `API_ORIGIN`, `GATEWAY_ORIGIN`은 비밀이 아닌
 안정된 Cloud Run service URL이어야 한다. 사용자 키, 내부 토큰, 결제 credential은
 `wrangler.jsonc`나 `VITE_*` 변수에 넣지 않는다.
