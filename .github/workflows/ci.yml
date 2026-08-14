@@ -237,8 +237,8 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo build --locked --release
 
-  deploy-production:
-    name: Deploy production-shaped Devnet
+  record-tested-main:
+    name: Record tested main boundary
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     needs:
       - frontend
@@ -250,6 +250,29 @@ jobs:
     permissions:
       contents: read
       actions: read
-    uses: ./.github/workflows/deploy.yml
-    with:
-      release_sha: ${{ github.sha }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the tested main commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Prove and record the six-job CI boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "${GITHUB_SHA}" ]]
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]]
+          [[ "${GITHUB_REPOSITORY}" == "DanRo-AX/Obolus-GoogleCloudAI-Solana" ]]
+          [[ "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          jq -nc --arg sha "${GITHUB_SHA}" --arg run "${GITHUB_RUN_ID}" \
+            '{releaseSha:$sha,ciRunId:$run}' > tested-main.json
+
+      - name: Upload the tested main marker
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: tested-main-${{ github.sha }}
+          path: tested-main.json
+          retention-days: 90
+          overwrite: true
