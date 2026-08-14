@@ -120,7 +120,7 @@ jobs:
             --project "${PROJECT}" --location "${REGION}" \
             --format='value(dockerConfig.immutableTags)')" == True ]]
           [[ "$(gcloud storage buckets describe "gs://${SOURCE_BUCKET}" \
-            --format='value(iamConfiguration.uniformBucketLevelAccess.enabled)')" == True ]]
+            --format='value(uniform_bucket_level_access)')" == True ]]
 
       - name: Capture exact known-good revisions and images
         shell: bash
