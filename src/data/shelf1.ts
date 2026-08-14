@@ -51,40 +51,6 @@ export const LIFECYCLE = [
   { n: 7, step: 'Accrue', what: 'The answer becomes a document on the author’s shelf and joins their memory. Next time it auto-matches.', pivot: false },
 ]
 
-export type OpenProblem = {
-  status: 'Critical' | 'Open' | 'Next'
-  title: string
-  body: string
-}
-
-export const OPEN_PROBLEMS: OpenProblem[] = [
-  {
-    status: 'Critical',
-    title: 'How the shelves get filled at launch',
-    body: 'An empty shelf has a liquidity bridge: questioners receive a free general AI baseline while the human gap stays open, and contributors can request interview prompts without those prompts becoming buyer demand or paid inventory. The remaining problem is distribution: how the first hundred people arrive and which narrow market reaches density first.',
-  },
-  {
-    status: 'Open',
-    title: 'Voice or typing for the first draft',
-    body: 'Two hours of talking out loud gives the rough detail we want, and almost nobody will sit through it. Typing takes ten minutes and people tidy themselves as they go. What ships today is one written answer plus a few short interview turns. Voice and longer interviews are a later channel, and the consent and retention lines for them are not drawn yet.',
-  },
-  {
-    status: 'Open',
-    title: 'Who gets picked when too many match',
-    body: 'If twelve documents fit a call that needs seven, something has to choose. The ranker already weighs relevance, trust, freshness, personalized PageRank, author diversity, and budget. What it does not do yet is hold up against someone gaming it: the weights are not calibrated against outcomes, the evidence is not identity-resistant, and Sybil and spam have to be measured continuously rather than once.',
-  },
-  {
-    status: 'Open',
-    title: 'Three strikes instead of an ID check',
-    body: 'Sign-up needs a wallet, not proof of identity, so nothing confirms who is actually behind an answer. Quality is held by a conduct ladder instead: a false claim or a low-quality answer earns a strike, and three strikes suspend the account from answering. The rating and dispute loop feeds the same ladder, so a bad answer still costs something even without a name behind it.',
-  },
-  {
-    status: 'Next',
-    title: 'A verified tier, at triple the price',
-    body: 'Coming later: a verified-member tier, with some open calls accepting only verified answers. The floor price triples — open answers move from ₩300–900 to ₩1,500 and up, typically ₩1,500–3,000, and document opens move from ₩5–20 to ₩30–100. Verified supply is scarce and askers will pay more for it, which is also the incentive to get verified; how verification itself will work is not decided yet.',
-  },
-]
-
 export const SECTIONS: Section[] = [
   {
     n: '00',
@@ -272,17 +238,6 @@ export const SECTIONS: Section[] = [
       {
         kind: 'p',
         text: 'That last point is the whole recruitment argument. Somebody who wrote it down once earns ₩5 to ₩20 each time SHELF opens it.',
-      },
-    ],
-  },
-  {
-    n: '06',
-    eyebrow: 'Honest',
-    title: 'What is not solved',
-    blocks: [
-      {
-        kind: 'p',
-        text: 'Five things are open. The first one is the one that decides whether any of the rest matters.',
       },
     ],
   },
