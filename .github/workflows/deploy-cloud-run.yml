@@ -238,7 +238,7 @@ jobs:
             role=$(jq -er '.role' <<<"${candidate}")
             revision=$(jq -er '.revision' <<<"${candidate}")
             digest=$(jq -er '.digest' <<<"${candidate}")
-            existing=$(jq -er '.existing' <<<"${candidate}")
+            existing=$(jq -er '.existing | if type == "boolean" then tostring else error("existing must be boolean") end' <<<"${candidate}")
             if [[ "${existing}" == true ]]; then
               gcloud run services update-traffic "obolus-${role}" \
                 --project "${PROJECT}" --region "${REGION}" \
