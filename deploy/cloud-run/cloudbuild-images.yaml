@@ -4,7 +4,9 @@ substitutions:
   _TAG: manual
   _RELEASE_SHA: manual
 
-timeout: 2400s
+# A cold Pay.sh/Solana dependency build exceeded 40 minutes in the first
+# production CD run. Keep this below the enclosing 85-minute release job.
+timeout: 3600s
 
 # A caller must still pass --service-account explicitly. Keeping logs in
 # Cloud Logging is required when Cloud Build runs as a user-specified account.
