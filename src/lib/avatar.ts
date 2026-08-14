@@ -118,8 +118,16 @@ export function randomAvatar(): AvatarPartsConfig {
 
 /* ------------------------------------------------------ image upload mode */
 
-/** Reject anything that would not fit the devnet demo's data-URL storage. */
-export const AVATAR_IMAGE_MAX_BYTES = 256 * 1024
+/**
+ * The whole avatar rides inside the profile POST body as a data URL (this is a
+ * devnet demo with no object storage — the image lives on the profile row).
+ * The Rust API caps the ENTIRE request body at 64 KiB
+ * (`DefaultBodyLimit::max(64 * 1024)` in backend/src/lib.rs), so an avatar data
+ * URL near or above that ceiling fails the profile save with HTTP 413 before
+ * the handler runs at all. Keep the encoded data URL comfortably under it,
+ * leaving headroom for the rest of the profile JSON, so uploads never 413.
+ */
+export const AVATAR_IMAGE_MAX_DATA_URL_BYTES = 56 * 1024
 const AVATAR_IMAGE_TARGET_PX = 256
 
 function readAsImage(file: File): Promise<HTMLImageElement> {
@@ -159,13 +167,15 @@ export async function fileToSquareDataUrl(
   const sy = (img.height - side) / 2
   ctx.drawImage(img, sx, sy, side, side, 0, 0, targetPx, targetPx)
 
+  // `dataUrl.length` is the encoded size that actually rides in the request
+  // body, so compare against the budget directly — drop quality until it fits.
   let quality = 0.9
   let dataUrl = canvas.toDataURL('image/jpeg', quality)
-  while (dataUrl.length > AVATAR_IMAGE_MAX_BYTES * 1.37 && quality > 0.3) {
+  while (dataUrl.length > AVATAR_IMAGE_MAX_DATA_URL_BYTES && quality > 0.3) {
     quality -= 0.15
     dataUrl = canvas.toDataURL('image/jpeg', quality)
   }
-  if (dataUrl.length > AVATAR_IMAGE_MAX_BYTES * 1.37) {
+  if (dataUrl.length > AVATAR_IMAGE_MAX_DATA_URL_BYTES) {
     throw new Error('That image is still too large after compression. Try a simpler photo.')
   }
   return dataUrl
