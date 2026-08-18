@@ -84,7 +84,7 @@ export function AvatarPicker({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="max-w-md space-y-4">
       <div className="flex items-center gap-4">
         <Avatar config={value} size={88} className="text-3xl" />
         <div className="flex flex-col gap-2">
@@ -137,7 +137,8 @@ export function AvatarPicker({
       ) : null}
 
       {!isImageAvatar(value) ? (
-        <div className="space-y-1.5 rounded-[6px] border border-border p-3">
+        <div className="space-y-3 rounded-[6px] border border-border p-3">
+          <div className="grid grid-cols-1 gap-x-5 gap-y-0.5 sm:grid-cols-2">
           {AVATAR_LAYER_ORDER.map((layer) => (
             <div
               key={layer}
@@ -169,6 +170,7 @@ export function AvatarPicker({
               </div>
             </div>
           ))}
+          </div>
           <div className="flex flex-wrap items-center gap-1.5 border-t border-border/70 pt-2.5">
             <span className="mr-1 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
               {t('Background')}
