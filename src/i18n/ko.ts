@@ -1057,4 +1057,23 @@ export const KO: Record<string, string> = {
   'Revenue follows delivered evidence': '근거 전달이 곧 매출',
   'The displayed price already includes the 10% protocol fee. The buyer gets the passage and receipt together; no subscription or checkout surcharge.': '표시 가격에는 10% 프로토콜 수수료가 이미 포함됩니다. 질문자는 구절과 영수증을 함께 받습니다. 구독료도 결제 단계 추가금도 없습니다.',
   'Inspect receipts': '영수증 확인',
+
+  // Coverage (미답변 주제) — 2026-08 rewrite for first-time clarity.
+  'Questions still waiting for an answer': '아직 답이 없는 질문들',
+  'Someone asked these, and no answer fits yet. The asker already set what one answer is worth, and people who would know are being found. You cannot read the answers here — opening one is what does that.':
+    '누가 물었는데 아직 맞는 답이 없는 질문들이에요. 답변 1건에 얼마를 줄지는 질문자가 이미 걸어 뒀고, 알 만한 사람을 찾는 중이에요. 답 자체는 여기서 못 읽어요 — 그건 열어야 보여요.',
+  'Seeing which questions have no answer costs nothing. You get an anonymous handle and the price — the answer itself only shows once you open one and pay.':
+    '어떤 질문에 답이 없는지 보는 건 공짜예요. 익명 활동명이랑 값만 보이고, 답 자체는 열어서 값을 치를 때만 나와요.',
+  'Once answers pile up, each question ranks whose answer fits it best — judged for that one question, not the whole field.':
+    '답이 쌓이면 질문마다 누구 답이 제일 잘 맞는지 따로 매겨요. 분야 전체가 아니라 그 질문 하나 기준으로요.',
+  'The price is fixed before you open. The answer unlocks only after payment clears — nothing moves before that.':
+    '값은 열기 전에 미리 정해져요. 결제가 확인돼야만 답이 풀리고, 그 전엔 아무것도 안 나가요.',
+  'Each row is one field with questions still open. Reading across: how many questions are open, how many answers they will still take, the most anyone pays for one answer, and the money still on the table.':
+    '한 줄이 한 분야예요. 아직 답을 못 받은 질문이 열려 있는 분야죠. 칸은 이렇게 읽어요 — 열린 질문 수, 아직 받는 답변 수, 답변 1건에 걸린 최고가, 그리고 아직 안 나간 돈.',
+  'Open questions': '열린 질문',
+  'Answers wanted': '받는 답변',
+  'On the table': '걸린 돈',
+  'These numbers are exactly what is here.': '숫자는 있는 그대로예요.',
+  'Every figure comes from questions that are really open. A stand-in answer a model wrote does not count — it fills no slot and earns nothing. An empty row means nobody has answered yet, for real.':
+    '여기 수치는 전부 진짜로 열려 있는 질문에서 나와요. 모델이 대신 써 둔 답은 안 껴요 — 자리도 안 채우고, 돈도 안 받아요. 빈 줄은 아직 아무도 답 안 한 자리, 진짜로요.',
 }
