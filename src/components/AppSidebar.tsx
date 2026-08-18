@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import { NavLink, Link } from 'react-router-dom'
 import { Activity, LogIn, LogOut, PanelLeft, ShieldCheck } from 'lucide-react'
 import { Avatar } from '@/components/Avatar'
@@ -241,9 +242,15 @@ export function AppSidebar() {
                 data-slot="sidebar-menu"
                 className="flex w-full min-w-0 flex-col gap-1"
               >
-              {NAV_ITEMS.map(({ to, label, Icon, end }) => (
+              {NAV_ITEMS.map(({ to, label, Icon, end, dividerBefore }) => (
+                <Fragment key={to}>
+                  {dividerBefore ? (
+                    <li
+                      aria-hidden="true"
+                      className="mx-2 my-1.5 h-px bg-sidebar-border"
+                    />
+                  ) : null}
                   <li
-                    key={to}
                     data-slot="sidebar-menu-item"
                     className="group/menu-item relative"
                   >
@@ -265,6 +272,7 @@ export function AppSidebar() {
                       <span>{t(label)}</span>
                     </NavLink>
                   </li>
+                </Fragment>
               ))}
               {account?.role === 'admin' ? (
                 <>

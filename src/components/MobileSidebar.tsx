@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import { Activity, LogIn, LogOut, ShieldCheck } from 'lucide-react'
 import { BrandMark } from '@/components/ui/BrandMark'
@@ -48,23 +49,31 @@ export function MobileSidebar() {
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto">
           <div className="relative flex w-full min-w-0 flex-col p-2">
             <ul className="flex w-full min-w-0 flex-col gap-1">
-              {NAV_ITEMS.map(({ to, label, Icon, end }) => (
-                <li key={to} className="relative">
-                  <NavLink
-                    to={to}
-                    end={end}
-                    onClick={() => setMobileSidebar(false)}
-                    className={({ isActive }) =>
-                      cn(
-                        'flex h-11 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm font-medium transition-colors hover:bg-sidebar-accent [&>svg]:size-4',
-                        isActive && to !== '/' && 'bg-foreground/4',
-                      )
-                    }
-                  >
-                    <Icon className="text-muted-foreground/60" />
-                    <span>{t(label)}</span>
-                  </NavLink>
-                </li>
+              {NAV_ITEMS.map(({ to, label, Icon, end, dividerBefore }) => (
+                <Fragment key={to}>
+                  {dividerBefore ? (
+                    <li
+                      aria-hidden="true"
+                      className="mx-2 my-1.5 h-px bg-sidebar-border"
+                    />
+                  ) : null}
+                  <li className="relative">
+                    <NavLink
+                      to={to}
+                      end={end}
+                      onClick={() => setMobileSidebar(false)}
+                      className={({ isActive }) =>
+                        cn(
+                          'flex h-11 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm font-medium transition-colors hover:bg-sidebar-accent [&>svg]:size-4',
+                          isActive && to !== '/' && 'bg-foreground/4',
+                        )
+                      }
+                    >
+                      <Icon className="text-muted-foreground/60" />
+                      <span>{t(label)}</span>
+                    </NavLink>
+                  </li>
+                </Fragment>
               ))}
               {account?.role === 'admin' ? (
                 <>
