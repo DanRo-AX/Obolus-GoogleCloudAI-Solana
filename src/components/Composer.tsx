@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { ArrowUp } from 'lucide-react'
+import { ArrowUp, ChevronDown } from 'lucide-react'
 import { CATEGORIES, type CategoryId } from '@/data/categories'
 import { AGE_BANDS, HOUSEHOLDS, REGIONS } from '@/data/onboarding'
 import { useT } from '@/i18n'
@@ -43,12 +44,68 @@ export function Composer({
   const t = useT()
   const dark = tone === 'dark'
 
+  // "Who answers" targeting: a controlled dropdown that opens downward. It is
+  // portaled to the body and positioned under its trigger so a parent with
+  // overflow-hidden (the hero canvas) never clips it.
+  const [targetOpen, setTargetOpen] = useState(false)
+  const [targetRect, setTargetRect] = useState<{
+    left: number
+    top: number
+    width: number
+  } | null>(null)
+  const targetBtnRef = useRef<HTMLButtonElement>(null)
+  const targetPanelRef = useRef<HTMLDivElement>(null)
+  const activeBands = [ageBand, region, household, field].filter(Boolean).length
+
+  const positionTarget = () => {
+    const el = targetBtnRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    setTargetRect({ left: r.left, top: r.bottom + 8, width: 280 })
+  }
+
+  const openTarget = () => {
+    positionTarget()
+    setTargetOpen(true)
+  }
+
   useEffect(() => {
     const el = ref.current
     if (!el) return
     el.style.height = '0px'
     el.style.height = `${Math.min(320, el.scrollHeight)}px`
   }, [value])
+
+  useEffect(() => {
+    if (!targetOpen) return
+    const close = () => setTargetOpen(false)
+    const onPointerDown = (e: PointerEvent) => {
+      const node = e.target as Node
+      if (
+        targetBtnRef.current?.contains(node) ||
+        targetPanelRef.current?.contains(node)
+      ) {
+        return
+      }
+      setTargetOpen(false)
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setTargetOpen(false)
+    }
+    // Close on scroll/resize rather than chase the trigger — a fixed panel that
+    // trails a scrolled-away button reads worse than a clean dismiss. Capture
+    // phase catches the app's nested scroll containers, not just the window.
+    document.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [targetOpen])
 
   const submit = () => {
     const text = value.trim()
@@ -142,32 +199,60 @@ export function Composer({
       >
         <div className="flex items-center justify-between gap-3 px-2.5 py-2">
           <div className="flex items-center gap-1">
-            <details className="group/target relative">
-              <summary
+            <button
+              ref={targetBtnRef}
+              type="button"
+              onClick={() => (targetOpen ? setTargetOpen(false) : openTarget())}
+              aria-haspopup="true"
+              aria-expanded={targetOpen}
+              className={cn(
+                'flex h-9 cursor-pointer items-center gap-1.5 rounded-[3px] border px-2.5 font-mono text-[11px] uppercase tracking-[1px] transition-colors sm:h-8',
+                dark
+                  ? 'border-white/15 text-white/60 hover:border-white/35 hover:text-white'
+                  : 'border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground',
+                targetOpen &&
+                  (dark
+                    ? 'border-white/35 text-white'
+                    : 'border-foreground/30 text-foreground'),
+              )}
+            >
+              {t('Who answers')}
+              {activeBands ? ` · ${activeBands}` : ''}
+              <ChevronDown
                 className={cn(
-                  'flex h-9 cursor-pointer list-none items-center rounded-[3px] border px-2.5 font-mono text-[11px] uppercase tracking-[1px] transition-colors sm:h-8',
-                  dark
-                    ? 'border-white/15 text-white/60 hover:border-white/35 hover:text-white'
-                    : 'border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground',
+                  'size-3 transition-transform duration-200 motion-reduce:transition-none',
+                  targetOpen && 'rotate-180',
                 )}
-              >
-                {t('Who answers')}{[ageBand, region, household, field].filter(Boolean).length ? ` · ${[ageBand, region, household, field].filter(Boolean).length}` : ''}
-              </summary>
-              <div className="absolute bottom-11 left-0 z-30 grid w-[280px] gap-3 rounded-[6px] border border-border bg-card p-3 text-foreground shadow-xl">
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  {t('Optional. A document must match every band you pick.')}
-                </p>
-                <TargetSelect label="Age" value={ageBand} onChange={setAgeBand} options={AGE_BANDS} />
-                <TargetSelect label="Region" value={region} onChange={setRegion} options={REGIONS} />
-                <TargetSelect label="Household" value={household} onChange={setHousehold} options={HOUSEHOLDS} />
-                <TargetSelect
-                  label="Field"
-                  value={field}
-                  onChange={(value) => setField(value as CategoryId | '')}
-                  options={CATEGORIES.map(({ id, label }) => ({ value: id, label }))}
-                />
-              </div>
-            </details>
+              />
+            </button>
+            {targetOpen && targetRect
+              ? createPortal(
+                  <div
+                    ref={targetPanelRef}
+                    role="dialog"
+                    className="animate-modal-panel-in fixed z-50 grid gap-3 rounded-[8px] border border-white/10 bg-primary p-3 text-primary-foreground shadow-xl shadow-black/40"
+                    style={{
+                      left: targetRect.left,
+                      top: targetRect.top,
+                      width: targetRect.width,
+                    }}
+                  >
+                    <p className="text-xs leading-relaxed text-primary-foreground/55">
+                      {t('Optional. A document must match every band you pick.')}
+                    </p>
+                    <TargetSelect label="Age" value={ageBand} onChange={setAgeBand} options={AGE_BANDS} />
+                    <TargetSelect label="Region" value={region} onChange={setRegion} options={REGIONS} />
+                    <TargetSelect label="Household" value={household} onChange={setHousehold} options={HOUSEHOLDS} />
+                    <TargetSelect
+                      label="Field"
+                      value={field}
+                      onChange={(value) => setField(value as CategoryId | '')}
+                      options={CATEGORIES.map(({ id, label }) => ({ value: id, label }))}
+                    />
+                  </div>,
+                  document.body,
+                )
+              : null}
           </div>
           <button
             data-slot="button"
@@ -215,16 +300,22 @@ function TargetSelect({
 }) {
   const t = useT()
   return (
-    <label className="grid gap-1 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+    <label className="grid gap-1 font-mono text-[11px] uppercase tracking-[1px] text-primary-foreground/55">
       {t(label)}
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-11 rounded-[3px] border border-border bg-background px-2 text-sm normal-case tracking-normal text-foreground sm:h-9 sm:text-xs"
+        className="h-11 rounded-[3px] border border-white/15 bg-white/[0.04] px-2 text-sm normal-case tracking-normal text-primary-foreground sm:h-9 sm:text-xs"
       >
-        <option value="">{t('Any')}</option>
+        <option value="" className="bg-primary text-primary-foreground">
+          {t('Any')}
+        </option>
         {options.map((option) => (
-          <option key={option.value} value={option.value}>
+          <option
+            key={option.value}
+            value={option.value}
+            className="bg-primary text-primary-foreground"
+          >
             {t(option.label)}
           </option>
         ))}
