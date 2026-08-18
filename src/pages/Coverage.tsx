@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom'
 import { ArrowUpRight, Database, GitBranch, ShieldCheck } from 'lucide-react'
 import { CategoryIcon } from '@/components/CategoryIcon'
 import { Button } from '@/components/ui/button'
-import { Banner } from '@/components/ui/primitives'
 import { CATEGORIES } from '@/data/categories'
 import { useT } from '@/i18n'
 import { useUi } from '@/state/ui'
@@ -12,17 +11,17 @@ const RANKING = [
   {
     Icon: Database,
     title: 'Free discovery',
-    body: 'The index exposes handles, prices, category, optional demographic bands, hashes, and score components—not private passage text.',
+    body: 'Seeing which questions have no answer costs nothing. You get an anonymous handle and the price — the answer itself only shows once you open one and pay.',
   },
   {
     Icon: GitBranch,
     title: 'Query-specific authority',
-    body: 'Rust combines lexical and hash relevance, freshness, trust, and personalized PageRank over independently verified evidence edges.',
+    body: 'Once answers pile up, each question ranks whose answer fits it best — judged for that one question, not the whole field.',
   },
   {
     Icon: ShieldCheck,
     title: 'Paid boundary',
-    body: 'The selected content hash, owner, amount, mint, and network are committed before payment. Only a matching paid callback releases the snapshot.',
+    body: 'The price is fixed before you open. The answer unlocks only after payment clears — nothing moves before that.',
   },
 ] as const
 
@@ -62,26 +61,24 @@ export default function Coverage() {
       <div className="mx-auto max-w-4xl space-y-8 p-4 sm:p-6">
         <section>
           <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
-            <h1 className="font-sans text-base font-medium">{t('Thin shelves')}</h1>
+            <h1 className="font-sans text-base font-medium">{t('Questions still waiting for an answer')}</h1>
             <Button asChild variant="mono" size="mono">
               <Link to="/">{t('Ask')}</Link>
             </Button>
           </div>
 
           <p className="mt-4 max-w-2xl text-[15px] leading-7 text-muted-foreground">
-            {t(
-              'Under 300 documents a shelf cannot answer reliably. You cannot browse the documents themselves — that is what opening one is for. What you can see is where a question comes back empty, and what someone has already offered to fill it.',
-            )}
+            {t('Someone asked these, and no answer fits yet. The asker already set what one answer is worth, and people who would know are being found. You cannot read the answers here — opening one is what does that.')}
           </p>
 
-          {/* Three floating soft-black cards, lifted off the page with a gap
-              between them so each reads as its own card rather than a joined
-              table cell. */}
+          {/* Three floating cards. Lifted off the page with a gap between them so
+              each reads as its own card; a softened dark (not near-black) keeps
+              them elevated without going heavy. */}
           <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
             {RANKING.map(({ Icon, title, body }) => (
               <article
                 key={title}
-                className="rounded-xl bg-primary p-5 text-primary-foreground shadow-[0_8px_24px_-8px_rgba(20,20,25,0.35)]"
+                className="rounded-xl bg-[#34343a] p-5 text-primary-foreground shadow-[0_8px_24px_-8px_rgba(20,20,25,0.3)]"
               >
                 <Icon className="size-4 text-primary-foreground/60" />
                 <h2 className="mt-4 text-sm font-medium">{t(title)}</h2>
@@ -98,35 +95,33 @@ export default function Coverage() {
                 {t('Asked, and nothing answered')}
               </h2>
               <p className="mt-2 max-w-2xl text-[15px] leading-7 text-muted-foreground">
-                {t(
-                  'Nothing on the shelves has answered these yet. Every open call here is live from the server: it goes to people who would know, and the asker has already named what one answer is worth.',
-                )}
+                {t('Each row is one field with questions still open. Reading across: how many questions are open, how many answers they will still take, the most anyone pays for one answer, and the money still on the table.')}
               </p>
             </div>
             <div className="flex flex-wrap gap-x-5 gap-y-1 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-              <span><strong className="text-foreground">{totals.calls}</strong> {t('open calls')}</span>
-              <span><strong className="text-foreground">{totals.remaining}</strong> {t('slots left')}</span>
-              <span><strong className="text-foreground">₩{totals.budget.toLocaleString()}</strong> {t('waiting')}</span>
+              <span><strong className="text-foreground">{totals.calls}</strong> {t('Open questions')}</span>
+              <span><strong className="text-foreground">{totals.remaining}</strong> {t('Answers wanted')}</span>
+              <span><strong className="text-foreground">₩{totals.budget.toLocaleString()}</strong> {t('On the table')}</span>
             </div>
           </div>
 
-          {/* Column headers ride above as a light label row; each category is
-              then its own floating soft-black card, lifted with a shadow and
-              separated by a gap instead of joined by hairlines. */}
+          {/* Column headers ride above as a light label row; each field is then
+              its own white card — a hairline border and a soft, slightly-dark
+              shadow give it depth, with tighter corners than the cards above. */}
           <div className="mt-6">
             <div className="grid grid-cols-[1fr_auto] gap-3 px-4 pb-2.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground sm:grid-cols-[1fr_repeat(4,110px)]">
               <span>{t('Area')}</span>
-              <span className="hidden text-right sm:block">{t('Open calls')}</span>
-              <span className="hidden text-right sm:block">{t('Slots left')}</span>
+              <span className="hidden text-right sm:block">{t('Open questions')}</span>
+              <span className="hidden text-right sm:block">{t('Answers wanted')}</span>
               <span className="hidden text-right sm:block">{t('Top per answer')}</span>
-              <span className="text-right">{t('Budget left')}</span>
+              <span className="text-right">{t('On the table')}</span>
             </div>
             <div className="flex flex-col gap-2">
               {rows.map((row) => (
                 <Link
                   key={row.id}
                   to={`/dashboard?category=${row.id}`}
-                  className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-xl bg-primary px-4 py-3.5 text-sm text-primary-foreground shadow-[0_6px_20px_-8px_rgba(20,20,25,0.3)] transition-all hover:-translate-y-0.5 hover:shadow-[0_10px_28px_-8px_rgba(20,20,25,0.42)] sm:grid-cols-[1fr_repeat(4,110px)]"
+                  className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-md border border-border/70 bg-background px-4 py-3.5 text-sm text-foreground shadow-[0_1px_2px_rgba(20,20,25,0.06),0_2px_6px_-2px_rgba(20,20,25,0.12)] transition-all hover:-translate-y-0.5 hover:border-border hover:shadow-[0_4px_14px_-2px_rgba(20,20,25,0.16)] sm:grid-cols-[1fr_repeat(4,110px)]"
                 >
                   <span className="flex items-center gap-2 font-medium">
                     <CategoryIcon
@@ -135,25 +130,26 @@ export default function Coverage() {
                       style={{ color: row.accent }}
                     />
                     {t(row.label)}
-                    <ArrowUpRight className="size-3 text-primary-foreground/60" />
+                    <ArrowUpRight className="size-3 text-muted-foreground" />
                   </span>
-                  <span className="hidden text-right font-mono text-xs tabular-nums text-primary-foreground/65 sm:block">{row.calls}</span>
-                  <span className="hidden text-right font-mono text-xs tabular-nums text-primary-foreground/65 sm:block">{row.remaining}</span>
-                  <span className="hidden text-right font-mono text-xs tabular-nums text-primary-foreground/65 sm:block">{row.topRate ? `₩${row.topRate.toLocaleString()}` : '—'}</span>
-                  <span className="text-right font-mono text-xs tabular-nums text-primary-foreground">{row.budget ? `₩${row.budget.toLocaleString()}` : '—'}</span>
+                  <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.calls}</span>
+                  <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.remaining}</span>
+                  <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.topRate ? `₩${row.topRate.toLocaleString()}` : '—'}</span>
+                  <span className="text-right font-mono text-xs tabular-nums text-foreground">{row.budget ? `₩${row.budget.toLocaleString()}` : '—'}</span>
                 </Link>
               ))}
             </div>
           </div>
 
-          <Banner tone="neutral" className="mt-6 max-w-2xl p-5 text-sm leading-relaxed text-muted-foreground">
-            <span className="font-medium text-foreground">
-              {t('This page is the honest version of the hardest problem.')}
-            </span>{' '}
-            {t(
-              'An empty shelf leaves SHELF nothing to open. Every number here comes from the authenticated open-call state — a baseline answer written by a model never appears in it, never fills a slot, and is never paid for.',
-            )}
-          </Banner>
+          {/* Bottom note — a clean white card with a lead icon rather than a flat
+              gray box, consistent with the field rows above. */}
+          <div className="mt-6 flex max-w-2xl items-start gap-3 rounded-md border border-border/70 bg-background p-5 shadow-[0_1px_2px_rgba(20,20,25,0.06),0_2px_6px_-2px_rgba(20,20,25,0.1)]">
+            <ShieldCheck className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              <span className="font-medium text-foreground">{t('These numbers are exactly what is here.')}</span>{' '}
+              {t('Every figure comes from questions that are really open. A stand-in answer a model wrote does not count — it fills no slot and earns nothing. An empty row means nobody has answered yet, for real.')}
+            </p>
+          </div>
         </section>
       </div>
     </div>
