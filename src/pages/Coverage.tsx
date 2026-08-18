@@ -74,15 +74,18 @@ export default function Coverage() {
             )}
           </p>
 
-          {/* One hairline-divided container instead of three separate
-              bordered cards — same "at most one soft container per zone"
-              grammar as the Dashboard's alert-settings row. */}
-          <div className="mt-6 grid grid-cols-1 divide-y divide-border rounded-[6px] border border-border bg-card sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+          {/* Three floating soft-black cards, lifted off the page with a gap
+              between them so each reads as its own card rather than a joined
+              table cell. */}
+          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
             {RANKING.map(({ Icon, title, body }) => (
-              <article key={title} className="p-5">
-                <Icon className="size-4 text-muted-foreground" />
+              <article
+                key={title}
+                className="rounded-xl bg-primary p-5 text-primary-foreground shadow-[0_8px_24px_-8px_rgba(20,20,25,0.35)]"
+              >
+                <Icon className="size-4 text-primary-foreground/60" />
                 <h2 className="mt-4 text-sm font-medium">{t(title)}</h2>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">{t(body)}</p>
+                <p className="mt-2 text-sm leading-6 text-primary-foreground/65">{t(body)}</p>
               </article>
             ))}
           </div>
@@ -107,35 +110,40 @@ export default function Coverage() {
             </div>
           </div>
 
-          <div className="mt-6 overflow-hidden rounded-[6px] border border-border bg-card">
-            <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-border bg-muted-2 px-4 py-2.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground sm:grid-cols-[1fr_repeat(4,110px)]">
+          {/* Column headers ride above as a light label row; each category is
+              then its own floating soft-black card, lifted with a shadow and
+              separated by a gap instead of joined by hairlines. */}
+          <div className="mt-6">
+            <div className="grid grid-cols-[1fr_auto] gap-3 px-4 pb-2.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground sm:grid-cols-[1fr_repeat(4,110px)]">
               <span>{t('Area')}</span>
               <span className="hidden text-right sm:block">{t('Open calls')}</span>
               <span className="hidden text-right sm:block">{t('Slots left')}</span>
               <span className="hidden text-right sm:block">{t('Top per answer')}</span>
               <span className="text-right">{t('Budget left')}</span>
             </div>
-            {rows.map((row) => (
-              <Link
-                key={row.id}
-                to={`/dashboard?category=${row.id}`}
-                className="grid grid-cols-[1fr_auto] items-center gap-3 border-b border-border/70 px-4 py-3 text-sm transition-colors last:border-0 hover:bg-foreground/[0.025] sm:grid-cols-[1fr_repeat(4,110px)]"
-              >
-                <span className="flex items-center gap-2 font-medium">
-                  <CategoryIcon
-                    id={row.id}
-                    className="size-3.5 shrink-0 opacity-80"
-                    style={{ color: row.accent }}
-                  />
-                  {t(row.label)}
-                  <ArrowUpRight className="size-3 text-muted-foreground" />
-                </span>
-                <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.calls}</span>
-                <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.remaining}</span>
-                <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.topRate ? `₩${row.topRate.toLocaleString()}` : '—'}</span>
-                <span className="text-right font-mono text-xs tabular-nums">{row.budget ? `₩${row.budget.toLocaleString()}` : '—'}</span>
-              </Link>
-            ))}
+            <div className="flex flex-col gap-2">
+              {rows.map((row) => (
+                <Link
+                  key={row.id}
+                  to={`/dashboard?category=${row.id}`}
+                  className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-xl bg-primary px-4 py-3.5 text-sm text-primary-foreground shadow-[0_6px_20px_-8px_rgba(20,20,25,0.3)] transition-all hover:-translate-y-0.5 hover:shadow-[0_10px_28px_-8px_rgba(20,20,25,0.42)] sm:grid-cols-[1fr_repeat(4,110px)]"
+                >
+                  <span className="flex items-center gap-2 font-medium">
+                    <CategoryIcon
+                      id={row.id}
+                      className="size-3.5 shrink-0"
+                      style={{ color: row.accent }}
+                    />
+                    {t(row.label)}
+                    <ArrowUpRight className="size-3 text-primary-foreground/60" />
+                  </span>
+                  <span className="hidden text-right font-mono text-xs tabular-nums text-primary-foreground/65 sm:block">{row.calls}</span>
+                  <span className="hidden text-right font-mono text-xs tabular-nums text-primary-foreground/65 sm:block">{row.remaining}</span>
+                  <span className="hidden text-right font-mono text-xs tabular-nums text-primary-foreground/65 sm:block">{row.topRate ? `₩${row.topRate.toLocaleString()}` : '—'}</span>
+                  <span className="text-right font-mono text-xs tabular-nums text-primary-foreground">{row.budget ? `₩${row.budget.toLocaleString()}` : '—'}</span>
+                </Link>
+              ))}
+            </div>
           </div>
 
           <Banner tone="neutral" className="mt-6 max-w-2xl p-5 text-sm leading-relaxed text-muted-foreground">

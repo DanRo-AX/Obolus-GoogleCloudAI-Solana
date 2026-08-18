@@ -1,4 +1,8 @@
 import { useT } from '@/i18n'
+import { cardGradient } from '@/lib/cardGradient'
+
+/** Soft header wash so a wash is strongest at the top of a card and fades out. */
+const WASH_MASK = 'linear-gradient(to bottom, black 0%, transparent 60%)'
 
 /**
  * The opening argument, made by showing rather than claiming.
@@ -32,49 +36,75 @@ export function ThesisSection() {
 
         {/* the gap, shown ------------------------------------------------ */}
         <div className="mt-14 grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border lg:grid-cols-2">
-          <div className="flex flex-col gap-5 bg-background p-7 sm:p-9">
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-                {t('A general model')}
-              </span>
-              <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-                {t('Free')}
-              </span>
+          <div className="relative overflow-hidden bg-background">
+            {/* A faint wash: the generic answer gets the palest tint — present,
+                but the pale one on purpose. */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 opacity-[0.08]"
+              style={{
+                background: cardGradient('general model baseline'),
+                WebkitMaskImage: WASH_MASK,
+                maskImage: WASH_MASK,
+              }}
+            />
+            <div className="relative z-10 flex h-full flex-col gap-5 p-7 sm:p-9">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
+                  {t('A general model')}
+                </span>
+                <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
+                  {t('Free')}
+                </span>
+              </div>
+              <p className="text-pretty text-[17px] leading-relaxed text-muted-foreground">
+                {t(
+                  '“Locals tend to eat later than tourists. Neighbourhood bistros are usually a good bet, and reservations are generally recommended.”',
+                )}
+              </p>
+              <p className="mt-auto pt-4 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+                {t('True, useless, and you could have guessed it')}
+              </p>
             </div>
-            <p className="text-pretty text-[17px] leading-relaxed text-muted-foreground">
-              {t(
-                '“Locals tend to eat later than tourists. Neighbourhood bistros are usually a good bet, and reservations are generally recommended.”',
-              )}
-            </p>
-            <p className="mt-auto pt-4 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
-              {t('True, useless, and you could have guessed it')}
-            </p>
           </div>
 
-          <div className="flex flex-col gap-5 bg-background p-7 sm:p-9">
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-foreground">
-                {t('Four people who live there')} · {t('example')}
-              </span>
-              <span className="font-mono text-[10px] uppercase tracking-[1px] tabular-nums text-foreground">
-                ₩38
-              </span>
+          <div className="relative overflow-hidden bg-background">
+            {/* The human answer is the one that should feel alive — a slightly
+                stronger, differently-hued wash from the survey-card palette. */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 opacity-[0.16]"
+              style={{
+                background: cardGradient('firsthand paris locals'),
+                WebkitMaskImage: WASH_MASK,
+                maskImage: WASH_MASK,
+              }}
+            />
+            <div className="relative z-10 flex h-full flex-col gap-5 p-7 sm:p-9">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-foreground">
+                  {t('Four people who live there')} · {t('example')}
+                </span>
+                <span className="font-mono text-[10px] uppercase tracking-[1px] tabular-nums text-foreground">
+                  ₩38
+                </span>
+              </div>
+              <ul className="flex flex-col gap-3.5">
+                {QUOTES.map((q) => (
+                  <li key={q.handle} className="flex flex-col gap-1">
+                    <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                      {q.handle} · {t(q.tenure)}
+                    </span>
+                    <span className="text-[15px] leading-relaxed">
+                      {t(q.line)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-auto pt-4 font-mono text-[11px] uppercase tracking-[1px] text-[#0F766E]">
+                {t('Four authors paid · USDC on Solana')}
+              </p>
             </div>
-            <ul className="flex flex-col gap-3.5">
-              {QUOTES.map((q) => (
-                <li key={q.handle} className="flex flex-col gap-1">
-                  <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                    {q.handle} · {t(q.tenure)}
-                  </span>
-                  <span className="text-[15px] leading-relaxed">
-                    {t(q.line)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            <p className="mt-auto pt-4 font-mono text-[11px] uppercase tracking-[1px] text-[#0F766E]">
-              {t('Four authors paid · USDC on Solana')}
-            </p>
           </div>
         </div>
       </div>
