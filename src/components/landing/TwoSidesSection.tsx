@@ -1,12 +1,22 @@
 import { Link } from 'react-router-dom'
 import { ArrowRight } from 'lucide-react'
+import { CardSlider } from '@/components/landing/CardSlider'
 import { Button } from '@/components/ui/button'
 import { useT } from '@/i18n'
+import { cardGradient } from '@/lib/cardGradient'
+
+/** The wash is strongest at the top of a card and fades before the text. */
+const WASH_MASK = 'linear-gradient(to bottom, black 0%, transparent 72%)'
 
 /**
- * The market has two sides and they never meet, so the section is literally two
- * columns that never touch — each side reads its own loop top to bottom and the
- * only thing crossing the middle is money.
+ * The market has two sides and they never meet, so the section is two loops
+ * that never touch — one for the person asking, one for the person answering.
+ *
+ * Each loop is a swipeable rail of cards rather than a stacked list, so the
+ * four beats read as steps you move through instead of a paragraph you skim.
+ * Every card carries a faint gradient wash from the survey-card palette and a
+ * hairline in the side's own accent, which is the only point of colour the
+ * section ever spends.
  */
 export function TwoSidesSection() {
   const t = useT()
@@ -24,7 +34,7 @@ export function TwoSidesSection() {
           </div>
         </div>
 
-        <div className="mt-14 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_auto_1fr] lg:gap-0">
+        <div className="mt-14 grid grid-cols-1 gap-12 lg:grid-cols-[1fr_auto_1fr] lg:gap-0">
           <Side
             side="asking"
             eyebrow="If you came to ask"
@@ -67,7 +77,7 @@ function Side({
   const t = useT()
   const accent = side === 'asking' ? '#866FF2' : '#0F766E'
   return (
-    <div className="flex flex-col">
+    <div className="flex min-w-0 flex-col">
       <div className="flex items-center gap-2">
         <span
           className="size-2 rounded-[1px]"
@@ -82,24 +92,41 @@ function Side({
         {t(title)}
       </h3>
 
-      <ol className="mt-9 flex flex-col">
+      <CardSlider ariaLabel={t(title)} className="mt-9">
         {steps.map((s, i) => (
-          <li
+          <article
             key={s.head}
-            className="flex gap-5 border-t border-border/70 py-5 first:border-t-0 first:pt-0"
+            className="relative flex snap-start basis-[86%] shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-background p-6 sm:basis-[62%] lg:basis-[calc(50%-0.375rem)]"
           >
-            <span className="mt-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
-              {String(i + 1).padStart(2, '0')}
-            </span>
-            <div className="flex flex-col gap-1.5">
+            <span
+              aria-hidden
+              className="absolute inset-x-0 top-0 h-px"
+              style={{ backgroundColor: accent }}
+            />
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 opacity-[0.12]"
+              style={{
+                background: cardGradient(`${side}-step-${i}`, 'deep'),
+                WebkitMaskImage: WASH_MASK,
+                maskImage: WASH_MASK,
+              }}
+            />
+            <div className="relative z-10 flex h-full flex-col gap-2.5">
+              <span
+                className="font-mono text-[11px] tabular-nums"
+                style={{ color: accent }}
+              >
+                {String(i + 1).padStart(2, '0')}
+              </span>
               <span className="text-[15px] font-medium">{t(s.head)}</span>
               <span className="text-pretty text-sm leading-relaxed text-muted-foreground">
                 {t(s.body)}
               </span>
             </div>
-          </li>
+          </article>
         ))}
-      </ol>
+      </CardSlider>
 
       <Button asChild variant="monoOutline" size="mono" className="mt-8 self-start">
         <Link to={cta.to}>

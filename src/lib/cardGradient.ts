@@ -72,13 +72,33 @@ function pick(seed: string, salt: string, mod: number): number {
 }
 
 /**
+ * How saturated a card wash reads.
+ *
+ * `soft` is the original photo-area treatment: hues mixed well toward white,
+ * a generous white highlight, plenty of transparent falloff. `deep` pulls
+ * every stop stronger — less white in each hue, a darker anchoring corner,
+ * a tighter highlight, wider color radii — so the same seed lands noticeably
+ * more saturated. It is what the landing wants behind a low-opacity mask,
+ * where `soft` washed out to almost nothing; the dashboard cards keep `soft`.
+ */
+export type GradientIntensity = 'soft' | 'deep'
+
+/**
  * Build a deterministic, layered CSS `background` for a card banner.
  * `seed` should be the order's question+shelf text (or any other string
  * that is stable for the life of the card) — the same seed always returns
  * the same gradient, and different seeds are very likely to differ.
+ *
+ * `intensity` defaults to `soft`, the original behaviour, so every existing
+ * call site renders byte-for-byte the same; pass `deep` for a stronger,
+ * more saturated wash.
  */
-export function cardGradient(seed: string): string {
+export function cardGradient(
+  seed: string,
+  intensity: GradientIntensity = 'soft',
+): string {
   const key = seed || 'obolus'
+  const deep = intensity === 'deep'
 
   const i1 = pick(key, 'hue1', PALETTE.length)
   let i2 = pick(key, 'hue2', PALETTE.length)
@@ -98,12 +118,18 @@ export function cardGradient(seed: string): string {
   const [x3, y3] = POSITIONS[pick(key, 'pos3', POSITIONS.length)]
   const angle = ANGLES[pick(key, 'angle', ANGLES.length)]
 
+  // Stops, per intensity. `deep` keeps more of each hue and less white/black
+  // padding, and reaches further before fading to transparent.
+  const s = deep
+    ? { white: 38, h1: 97, h2: 95, corner: 46, r1: 74, r2: 70, r3: 78, lin1: 92, lin2: 90 }
+    : { white: 55, h1: 88, h2: 86, corner: 30, r1: 66, r2: 62, r3: 70, lin1: 82, lin2: 80 }
+
   return [
     // central highlight — the bright meeting point, small and soft
-    `radial-gradient(120% 90% at 50% 42%, color-mix(in oklab, white 55%, transparent) 0%, transparent 45%)`,
-    `radial-gradient(circle at ${x1}% ${y1}%, color-mix(in oklab, ${c1} 88%, white) 0%, transparent 66%)`,
-    `radial-gradient(circle at ${x2}% ${y2}%, color-mix(in oklab, ${c2} 86%, white) 0%, transparent 62%)`,
-    `radial-gradient(circle at ${x3}% ${y3}%, color-mix(in oklab, ${c3} 30%, black) 0%, transparent 70%)`,
-    `linear-gradient(${angle}deg, color-mix(in oklab, ${c1} 82%, black), color-mix(in oklab, ${c2} 80%, white))`,
+    `radial-gradient(120% 90% at 50% 42%, color-mix(in oklab, white ${s.white}%, transparent) 0%, transparent 45%)`,
+    `radial-gradient(circle at ${x1}% ${y1}%, color-mix(in oklab, ${c1} ${s.h1}%, white) 0%, transparent ${s.r1}%)`,
+    `radial-gradient(circle at ${x2}% ${y2}%, color-mix(in oklab, ${c2} ${s.h2}%, white) 0%, transparent ${s.r2}%)`,
+    `radial-gradient(circle at ${x3}% ${y3}%, color-mix(in oklab, ${c3} ${s.corner}%, black) 0%, transparent ${s.r3}%)`,
+    `linear-gradient(${angle}deg, color-mix(in oklab, ${c1} ${s.lin1}%, black), color-mix(in oklab, ${c2} ${s.lin2}%, white))`,
   ].join(', ')
 }
