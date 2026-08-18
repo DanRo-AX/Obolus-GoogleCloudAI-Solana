@@ -1,0 +1,1971 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Obolus — 인간 경험을 위한 유료 검색 인프라</title>
+    <style>
+      @font-face {
+        font-family: "GeistSans";
+        src: url("../public/fonts/Geist_Variable-s.p.92592eb2.woff2") format("woff2");
+        font-display: swap;
+        font-weight: 100 900;
+      }
+
+      @font-face {
+        font-family: "GeistMono";
+        src: url("../public/fonts/GeistMono_Variable.p.2f937313.woff2") format("woff2");
+        font-display: swap;
+        font-weight: 100 900;
+      }
+
+      :root {
+        --black: #050505;
+        --ink: #111111;
+        --paper: #f8f8f5;
+        --white: #ffffff;
+        --panel: #eeeeea;
+        --dark-panel: #111111;
+        --line: #d3d3cf;
+        --dark-line: #2c2c2c;
+        --muted: #62625f;
+        --dark-muted: #a6a6a1;
+        --scale: 1;
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        background: #151515;
+        color: var(--ink);
+        font-family: "GeistSans", Pretendard, "Apple SD Gothic Neo", Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      body { overflow: hidden; }
+      button, a { color: inherit; font: inherit; }
+      a { text-decoration: none; }
+      strong { font-weight: 690; }
+
+      .deck {
+        width: 100vw;
+        height: 100vh;
+        overflow-y: auto;
+        scroll-snap-type: y mandatory;
+        scrollbar-width: none;
+      }
+
+      .deck::-webkit-scrollbar { display: none; }
+
+      .slide-shell {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        scroll-snap-align: start;
+        scroll-snap-stop: always;
+        background: #151515;
+      }
+
+      .slide {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 1600px;
+        height: 900px;
+        overflow: hidden;
+        transform: translate(-50%, -50%) scale(var(--scale));
+        transform-origin: center;
+        background: var(--paper);
+        color: var(--ink);
+      }
+
+      .slide.dark {
+        background: var(--black);
+        color: var(--white);
+      }
+
+      .slide::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.38;
+        background-image:
+          linear-gradient(to right, rgba(0,0,0,.065) 1px, transparent 1px),
+          linear-gradient(to bottom, rgba(0,0,0,.065) 1px, transparent 1px);
+        background-size: 112px 112px;
+      }
+
+      .slide.dark::before {
+        background-image:
+          linear-gradient(to right, rgba(255,255,255,.055) 1px, transparent 1px),
+          linear-gradient(to bottom, rgba(255,255,255,.055) 1px, transparent 1px);
+      }
+
+      .content {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        display: flex;
+        flex-direction: column;
+        padding: 66px 78px 54px;
+      }
+
+      .topline {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 24px;
+        color: var(--muted);
+        font-family: "GeistMono", monospace;
+        font-size: 13px;
+        letter-spacing: .14em;
+        text-transform: uppercase;
+      }
+
+      .dark .topline { color: var(--dark-muted); }
+
+      .topline .section {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+      }
+
+      .topline .section::before {
+        content: "";
+        width: 34px;
+        height: 1px;
+        background: currentColor;
+      }
+
+      h1, h2, h3, p { margin: 0; word-break: keep-all; }
+
+      .hero-title {
+        max-width: 1350px;
+        font-size: 92px;
+        font-weight: 580;
+        line-height: .98;
+        letter-spacing: -.065em;
+      }
+
+      .slide-title {
+        max-width: 1320px;
+        margin-top: 38px;
+        font-size: 58px;
+        font-weight: 610;
+        line-height: 1.08;
+        letter-spacing: -.05em;
+      }
+
+      .slide-title.compact { font-size: 52px; }
+
+      .subtitle {
+        max-width: 1060px;
+        margin-top: 22px;
+        color: var(--muted);
+        font-size: 22px;
+        line-height: 1.55;
+        letter-spacing: -.02em;
+      }
+
+      .dark .subtitle { color: var(--dark-muted); }
+      .mono { font-family: "GeistMono", monospace; }
+      .muted { color: var(--muted); }
+      .dark .muted { color: var(--dark-muted); }
+
+      .source {
+        position: absolute;
+        left: 78px;
+        right: 78px;
+        bottom: 23px;
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        color: var(--muted);
+        font-family: "GeistMono", monospace;
+        font-size: 10px;
+        line-height: 1.45;
+        letter-spacing: .03em;
+      }
+
+      .dark .source { color: #80807c; }
+      .source a { text-decoration: underline; text-underline-offset: 3px; }
+
+      .rule { height: 1px; background: var(--line); }
+      .dark .rule { background: var(--dark-line); }
+
+      .badge {
+        display: inline-flex;
+        width: fit-content;
+        align-items: center;
+        min-height: 30px;
+        padding: 0 11px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        font-family: "GeistMono", monospace;
+        font-size: 11px;
+        letter-spacing: .1em;
+        text-transform: uppercase;
+      }
+
+      .dark .badge { border-color: var(--dark-line); }
+
+      .badge.invert {
+        border-color: var(--black);
+        background: var(--black);
+        color: var(--white);
+      }
+
+      .dark .badge.invert {
+        border-color: var(--white);
+        background: var(--white);
+        color: var(--black);
+      }
+
+      .metric {
+        font-size: 78px;
+        font-weight: 640;
+        line-height: .96;
+        letter-spacing: -.06em;
+      }
+
+      .metric-label {
+        margin-top: 15px;
+        font-size: 18px;
+        line-height: 1.5;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        background: rgba(255,255,255,.54);
+      }
+
+      .dark .card {
+        border-color: var(--dark-line);
+        background: rgba(255,255,255,.035);
+      }
+
+      .card-kicker {
+        color: var(--muted);
+        font-family: "GeistMono", monospace;
+        font-size: 12px;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+      }
+
+      .dark .card-kicker { color: var(--dark-muted); }
+
+      .card h3 {
+        margin-top: 16px;
+        font-size: 27px;
+        font-weight: 650;
+        line-height: 1.2;
+        letter-spacing: -.035em;
+      }
+
+      .card p {
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.52;
+      }
+
+      .dark .card p { color: var(--dark-muted); }
+
+      .brand-mark {
+        display: inline-grid;
+        place-items: center;
+        width: 54px;
+        height: 54px;
+        border-radius: 8px;
+        background: var(--white);
+        color: var(--black);
+        font-family: "GeistMono", monospace;
+        font-size: 24px;
+        font-weight: 780;
+      }
+
+      .cover-grid {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1.16fr .84fr;
+        align-items: end;
+        gap: 90px;
+        padding-bottom: 68px;
+      }
+
+      .cover-copy .hero-title { margin-top: 36px; }
+
+      .cover-copy .subtitle {
+        max-width: 780px;
+        margin-top: 30px;
+        font-size: 25px;
+      }
+
+      .cover-proposition {
+        display: grid;
+        gap: 0;
+        border-top: 1px solid var(--dark-line);
+      }
+
+      .cover-row {
+        display: grid;
+        grid-template-columns: 56px 1fr;
+        gap: 18px;
+        align-items: center;
+        padding: 24px 0;
+        border-bottom: 1px solid var(--dark-line);
+      }
+
+      .cover-row .num {
+        color: #777772;
+        font-family: "GeistMono", monospace;
+        font-size: 13px;
+      }
+
+      .cover-row strong {
+        display: block;
+        font-size: 21px;
+        line-height: 1.25;
+      }
+
+      .cover-row span:last-child {
+        display: block;
+        margin-top: 7px;
+        color: var(--dark-muted);
+        font-size: 15px;
+        line-height: 1.45;
+      }
+
+      .market-body {
+        flex: 1;
+        display: grid;
+        grid-template-columns: .66fr 1.34fr;
+        gap: 34px;
+        align-items: stretch;
+        margin-top: 24px;
+        margin-bottom: 30px;
+      }
+
+      .market-number {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 30px;
+        border: 1px solid var(--line);
+        background: var(--black);
+        color: var(--white);
+      }
+
+      .market-number .metric { font-size: 96px; }
+
+      .market-number .note {
+        color: var(--dark-muted);
+        font-size: 17px;
+        line-height: 1.48;
+      }
+
+      .target-stack {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 16px;
+      }
+
+      .target-card { padding: 25px; }
+
+      .target-card .example {
+        margin-top: 18px;
+        padding-top: 16px;
+        border-top: 1px solid var(--line);
+        color: var(--ink);
+        font-size: 17px;
+        font-weight: 570;
+        line-height: 1.45;
+      }
+
+      .market-body .target-card { padding: 19px 21px; }
+      .market-body .target-card h3 { margin-top: 11px; font-size: 23px; }
+      .market-body .target-card p { margin-top: 8px; font-size: 14px; line-height: 1.42; }
+      .market-body .target-card .example { margin-top: 11px; padding-top: 10px; font-size: 14px; line-height: 1.38; }
+
+      .broken-flow {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1.32fr .68fr;
+        gap: 34px;
+        align-items: stretch;
+        margin-top: 28px;
+        margin-bottom: 30px;
+      }
+
+      .legacy-pipeline {
+        display: grid;
+        grid-template-columns: 1fr 34px 1fr 34px 1fr 34px 1fr 34px 1fr;
+        align-items: center;
+        min-height: 250px;
+        padding: 30px;
+        border: 1px solid var(--dark-line);
+      }
+
+      .legacy-node {
+        min-height: 135px;
+        padding: 22px 18px;
+        border: 1px solid var(--dark-line);
+        background: #0d0d0d;
+      }
+
+      .legacy-node b {
+        display: block;
+        margin-top: 18px;
+        font-size: 19px;
+        line-height: 1.3;
+      }
+
+      .legacy-node span {
+        display: block;
+        margin-top: 9px;
+        color: var(--dark-muted);
+        font-size: 14px;
+        line-height: 1.45;
+      }
+
+      .legacy-arrow {
+        color: #797975;
+        font-size: 28px;
+        text-align: center;
+      }
+
+      .pain-stack {
+        display: grid;
+        grid-template-rows: 1fr 1fr;
+        gap: 16px;
+      }
+
+      .pain-card { padding: 26px; }
+      .pain-card h3 { font-size: 29px; }
+      .pain-card ul {
+        margin: 18px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .pain-card li {
+        position: relative;
+        padding: 8px 0 8px 22px;
+        color: var(--dark-muted);
+        font-size: 16px;
+        line-height: 1.38;
+      }
+
+      .pain-card li::before {
+        content: "—";
+        position: absolute;
+        left: 0;
+      }
+
+      .loop-wrap {
+        flex: 1;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 22px;
+        margin-top: 32px;
+        margin-bottom: 28px;
+      }
+
+      .loop-lanes {
+        display: grid;
+        grid-template-columns: 170px 1fr;
+        gap: 18px;
+      }
+
+      .lane-label {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 20px;
+        border: 1px solid var(--line);
+        background: var(--black);
+        color: var(--white);
+      }
+
+      .lane-label strong { font-size: 22px; }
+      .lane-label span { margin-top: 8px; color: var(--dark-muted); font-size: 14px; line-height: 1.4; }
+
+      .lane-flow {
+        display: grid;
+        grid-template-columns: 1fr 44px 1fr 44px 1fr 44px 1fr;
+        align-items: stretch;
+      }
+
+      .flow-node {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        min-height: 130px;
+        padding: 21px;
+        border: 1px solid var(--line);
+        background: rgba(255,255,255,.56);
+      }
+
+      .flow-node.black { background: var(--black); color: var(--white); border-color: var(--black); }
+      .flow-node .step { color: var(--muted); font-family: "GeistMono"; font-size: 12px; }
+      .flow-node.black .step { color: var(--dark-muted); }
+      .flow-node strong { font-size: 20px; line-height: 1.28; }
+      .flow-node small { margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+      .flow-node.black small { color: var(--dark-muted); }
+      .flow-arrow { display: grid; place-items: center; font-size: 26px; }
+
+      .loop-return {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 52px;
+        border: 1px dashed #949490;
+        font-size: 17px;
+        font-weight: 610;
+        letter-spacing: -.02em;
+      }
+
+      .stakeholders {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+      }
+
+      .stakeholder { padding: 19px 22px; }
+      .stakeholder strong { font-size: 18px; }
+      .stakeholder span { display: block; margin-top: 7px; color: var(--muted); font-size: 14px; line-height: 1.45; }
+
+      .demo-layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: .83fr 1.17fr;
+        gap: 34px;
+        margin-top: 32px;
+        margin-bottom: 28px;
+        min-height: 0;
+      }
+
+      .demo-story { display: flex; flex-direction: column; gap: 15px; }
+
+      .question-box {
+        padding: 26px;
+        border: 1px solid var(--dark-line);
+        background: #0c0c0c;
+      }
+
+      .question-box .q {
+        margin-top: 16px;
+        font-size: 28px;
+        font-weight: 570;
+        line-height: 1.3;
+        letter-spacing: -.035em;
+      }
+
+      .demo-steps {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        border: 1px solid var(--dark-line);
+      }
+
+      .demo-step {
+        padding: 20px 15px;
+        border-right: 1px solid var(--dark-line);
+      }
+
+      .demo-step:last-child { border-right: 0; }
+      .demo-step .value { margin-top: 14px; font-size: 28px; font-weight: 650; letter-spacing: -.045em; }
+      .demo-step .label { margin-top: 6px; color: var(--dark-muted); font-size: 13px; line-height: 1.4; }
+
+      .demo-output {
+        flex: 1;
+        padding: 22px;
+        border: 1px solid var(--dark-line);
+      }
+
+      .demo-output p {
+        color: var(--dark-muted);
+        font-size: 16px;
+        line-height: 1.55;
+      }
+
+      .demo-output strong { color: var(--white); }
+
+      .product-frame {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid #3a3a3a;
+        background: var(--white);
+      }
+
+      .product-frame::before {
+        content: "LIVE PRODUCT FLOW · CURRENT WORKING BUILD";
+        position: absolute;
+        z-index: 3;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 38px;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        background: #0a0a0a;
+        color: #b8b8b3;
+        font-family: "GeistMono", monospace;
+        font-size: 10px;
+        letter-spacing: .1em;
+      }
+
+      .product-frame img {
+        position: absolute;
+        top: 38px;
+        right: 0;
+        width: 118%;
+        height: calc(100% - 38px);
+        object-fit: cover;
+        object-position: right center;
+        filter: grayscale(1) contrast(1.02);
+      }
+
+      .memory-layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1.25fr .75fr;
+        gap: 30px;
+        margin-top: 36px;
+        margin-bottom: 30px;
+      }
+
+      .memory-stream {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        align-items: stretch;
+        border: 1px solid var(--line);
+      }
+
+      .memory-stage {
+        position: relative;
+        padding: 24px;
+        border-right: 1px solid var(--line);
+      }
+
+      .memory-stage:last-child { border-right: 0; background: var(--black); color: var(--white); }
+      .memory-stage h3 { margin-top: 62px; font-size: 24px; line-height: 1.22; }
+      .memory-stage p { margin-top: 14px; color: var(--muted); font-size: 15px; line-height: 1.48; }
+      .memory-stage:last-child p { color: var(--dark-muted); }
+      .memory-stage::after {
+        content: "→";
+        position: absolute;
+        right: -15px;
+        top: 48%;
+        z-index: 2;
+        display: grid;
+        place-items: center;
+        width: 29px;
+        height: 29px;
+        border-radius: 50%;
+        background: var(--paper);
+        color: var(--black);
+        font-size: 17px;
+      }
+
+      .memory-stage:last-child::after { display: none; }
+
+      .memory-proof {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        gap: 16px;
+      }
+
+      .formula {
+        padding: 24px;
+        border: 1px solid var(--line);
+        background: var(--white);
+      }
+
+      .formula-code {
+        margin-top: 22px;
+        font-family: "GeistMono", monospace;
+        font-size: 16px;
+        line-height: 1.7;
+      }
+
+      .controls-list {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        border: 1px solid var(--line);
+      }
+
+      .control-item { padding: 19px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+      .control-item:nth-child(even) { border-right: 0; }
+      .control-item:nth-last-child(-n+2) { border-bottom: 0; }
+      .control-item b { font-size: 16px; }
+      .control-item span { display: block; margin-top: 8px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+
+      .defense-layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1.18fr .82fr;
+        gap: 28px;
+        margin-top: 32px;
+        margin-bottom: 28px;
+      }
+
+      .defense-stack { display: grid; grid-template-rows: repeat(5, 1fr); border: 1px solid var(--dark-line); }
+
+      .defense-row {
+        display: grid;
+        grid-template-columns: 54px 250px 1fr;
+        align-items: center;
+        gap: 16px;
+        padding: 16px 22px;
+        border-bottom: 1px solid var(--dark-line);
+      }
+
+      .defense-row:last-child { border-bottom: 0; }
+      .defense-row .num { color: #747470; font-family: "GeistMono"; font-size: 12px; }
+      .defense-row strong { font-size: 18px; }
+      .defense-row span { color: var(--dark-muted); font-size: 14px; line-height: 1.45; }
+
+      .rank-card {
+        display: flex;
+        flex-direction: column;
+        padding: 28px;
+        border: 1px solid var(--dark-line);
+        background: #0d0d0d;
+      }
+
+      .rank-card .rank-title { margin-top: 26px; font-size: 31px; font-weight: 630; line-height: 1.18; }
+      .rank-formula { margin-top: 26px; padding: 19px; border: 1px solid var(--dark-line); font-size: 14px; line-height: 1.7; }
+      .rank-edges { display: grid; gap: 10px; margin-top: 20px; }
+      .rank-edge { display: flex; justify-content: space-between; gap: 20px; padding-bottom: 10px; border-bottom: 1px solid var(--dark-line); color: var(--dark-muted); font-size: 13px; }
+      .rank-edge b { color: var(--white); }
+
+      .http-layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: .72fr 1.28fr;
+        gap: 34px;
+        margin-top: 38px;
+        margin-bottom: 28px;
+      }
+
+      .web-analogy {
+        display: grid;
+        grid-template-columns: 1fr 50px 1fr;
+        align-items: stretch;
+      }
+
+      .analogy-column { border: 1px solid var(--line); padding: 26px; }
+      .analogy-column h3 { margin-top: 18px; font-size: 28px; }
+      .analogy-list { display: grid; gap: 0; margin-top: 22px; }
+      .analogy-item { padding: 14px 0; border-top: 1px solid var(--line); }
+      .analogy-item b { display: block; font-size: 16px; }
+      .analogy-item span { display: block; margin-top: 5px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+      .analogy-arrow { display: grid; place-items: center; font-size: 32px; }
+
+      .http-sequence {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        padding: 27px;
+        border: 1px solid var(--line);
+        background: var(--white);
+      }
+
+      .endpoint {
+        margin-top: 15px;
+        padding: 15px 18px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        font-family: "GeistMono", monospace;
+        font-size: 15px;
+      }
+
+      .sequence-list { display: grid; align-content: center; gap: 13px; margin-top: 20px; }
+      .sequence-line { display: grid; grid-template-columns: 42px 100px 1fr; align-items: center; gap: 14px; }
+      .sequence-line .n { color: var(--muted); font-family: "GeistMono"; font-size: 12px; }
+      .sequence-line .status { padding: 7px 9px; border: 1px solid var(--line); font-family: "GeistMono"; font-size: 12px; text-align: center; }
+      .sequence-line p { font-size: 16px; line-height: 1.45; }
+      .sequence-line.focus .status { background: var(--black); color: var(--white); border-color: var(--black); }
+
+      .commerce-layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: .9fr 1.1fr;
+        gap: 34px;
+        margin-top: 38px;
+        margin-bottom: 28px;
+      }
+
+      .commerce-gap { display: flex; flex-direction: column; justify-content: space-between; padding: 30px; border: 1px solid var(--line); background: var(--black); color: var(--white); }
+      .commerce-gap h3 { margin-top: 22px; font-size: 38px; line-height: 1.18; letter-spacing: -.045em; }
+      .commerce-gap p { margin-top: 20px; color: var(--dark-muted); font-size: 18px; line-height: 1.52; }
+
+      .agent-route { display: grid; grid-template-columns: 1fr 46px 1fr 46px 1fr; align-items: center; margin-top: 28px; }
+      .agent-node { min-height: 96px; display: grid; place-items: center; padding: 12px; border: 1px solid var(--dark-line); text-align: center; font-size: 16px; line-height: 1.35; }
+      .agent-node.blocked { border-style: dashed; color: #999994; }
+      .agent-arrow { text-align: center; color: #7e7e79; font-size: 24px; }
+
+      .industry-proof { display: grid; grid-template-rows: auto 1fr auto; gap: 20px; }
+      .logo-wall { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); }
+      .logo-cell { display: grid; place-items: center; min-height: 105px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); font-size: 21px; font-weight: 680; letter-spacing: -.03em; }
+      .logo-cell:nth-child(3n) { border-right: 0; }
+      .logo-cell:nth-last-child(-n+3) { border-bottom: 0; }
+      .industry-note { padding: 22px; border: 1px solid var(--line); font-size: 17px; line-height: 1.5; }
+
+      .tech-layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+        margin-top: 34px;
+        margin-bottom: 26px;
+      }
+
+      .tech-column { display: flex; flex-direction: column; padding: 28px; border: 1px solid var(--dark-line); }
+      .tech-column .tech-name { margin-top: 20px; font-size: 35px; font-weight: 660; letter-spacing: -.045em; }
+      .tech-column .tech-role { margin-top: 13px; color: var(--dark-muted); font-size: 16px; line-height: 1.48; }
+      .tech-column .why { margin-top: auto; padding-top: 20px; border-top: 1px solid var(--dark-line); font-size: 16px; line-height: 1.48; }
+
+      .price-ledger {
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr 1.3fr;
+        border: 1px solid var(--dark-line);
+      }
+
+      .price-item { padding: 17px 20px; border-right: 1px solid var(--dark-line); }
+      .price-item:last-child { border-right: 0; background: var(--white); color: var(--black); }
+      .price-item b { display: block; font-size: 20px; }
+      .price-item span { display: block; margin-top: 6px; color: var(--dark-muted); font-size: 13px; line-height: 1.4; }
+      .price-item:last-child span { color: var(--muted); }
+
+      .trust-layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: .9fr 1.1fr;
+        gap: 32px;
+        margin-top: 30px;
+        margin-bottom: 28px;
+      }
+
+      .receipt {
+        padding: 28px;
+        border: 1px solid var(--line);
+        background: var(--white);
+      }
+
+      .receipt-head { display: flex; align-items: end; justify-content: space-between; padding-bottom: 20px; border-bottom: 2px solid var(--black); }
+      .receipt-head h3 { margin-top: 8px; font-size: 31px; }
+      .receipt-total { font-size: 44px; font-weight: 680; letter-spacing: -.05em; }
+      .receipt-rows { margin-top: 12px; }
+      .receipt-row { display: grid; grid-template-columns: 160px 1fr; gap: 20px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; line-height: 1.35; }
+      .receipt-row dt { color: var(--muted); font-family: "GeistMono"; }
+      .receipt-row dd { margin: 0; font-family: "GeistMono"; overflow-wrap: anywhere; }
+      .receipt-foot { margin-top: 16px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+
+      .trust-paths { display: grid; grid-template-rows: 1fr 1fr auto; gap: 15px; }
+      .trust-path { padding: 24px; border: 1px solid var(--line); }
+      .trust-path h3 { font-size: 23px; }
+      .trust-path p { margin-top: 12px; color: var(--muted); font-size: 15px; line-height: 1.5; }
+      .trust-path .key-line { display: flex; align-items: center; gap: 10px; margin-top: 18px; font-family: "GeistMono"; font-size: 12px; }
+      .key-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--black); }
+      .trust-principle { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); }
+      .trust-principle div { padding: 17px; border-right: 1px solid var(--line); font-size: 14px; line-height: 1.4; }
+      .trust-principle div:last-child { border-right: 0; }
+
+      .program-diagram-wrap { height: 414px; margin-top: 18px; }
+
+      .fraud-layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: .94fr 1.06fr;
+        gap: 28px;
+        margin-top: 24px;
+        margin-bottom: 24px;
+        min-height: 0;
+      }
+
+      .contract-invoice {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        padding: 24px 27px;
+        border: 1px solid var(--line);
+        background: var(--white);
+      }
+
+      .contract-invoice .receipt-head { padding-bottom: 16px; }
+      .contract-invoice .receipt-head h3 { font-size: 27px; }
+      .contract-invoice .receipt-total { font-size: 38px; }
+      .contract-invoice .receipt-row { grid-template-columns: 142px 1fr; padding: 7px 0; font-size: 12px; }
+      .contract-invoice .receipt-foot { margin-top: auto; padding-top: 13px; }
+
+      .fraud-controls {
+        display: grid;
+        grid-template-rows: 1fr auto;
+        min-height: 0;
+        border: 1px solid var(--line);
+      }
+
+      .risk-list { display: grid; grid-template-rows: repeat(6, 1fr); min-height: 0; }
+      .risk-row { display: grid; grid-template-columns: 170px 1fr; gap: 20px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+      .risk-row .risk { color: var(--muted); font-family: "GeistMono"; font-size: 11px; letter-spacing: .04em; }
+      .risk-row .control { font-size: 14px; line-height: 1.38; }
+      .risk-row .control strong { display: block; margin-bottom: 3px; font-size: 15px; }
+
+      .invoice-states { display: grid; grid-template-columns: repeat(6, 1fr); background: var(--black); color: var(--white); }
+      .invoice-state { position: relative; padding: 14px 8px; text-align: center; border-right: 1px solid var(--dark-line); font-family: "GeistMono"; font-size: 10px; line-height: 1.35; }
+      .invoice-state:last-child { border-right: 0; }
+      .invoice-state:not(:last-child)::after { content: "\2192"; position: absolute; right: -7px; top: 12px; z-index: 2; color: #8c8c88; }
+      .invoice-state.branch { color: #b7b7b2; }
+
+      .architecture {
+        flex: 0 0 568px;
+        display: grid;
+        grid-template-rows: 96px 390px 54px;
+        gap: 14px;
+        margin-top: 18px;
+        margin-bottom: 0;
+        min-height: 0;
+      }
+
+      .arch-channels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+      .arch-box { position: relative; min-height: 0; padding: 13px 16px; border: 1px solid var(--dark-line); background: #0c0c0c; }
+      .arch-box .arch-name { margin-top: 8px; font-size: 17px; font-weight: 640; line-height: 1.3; }
+      .arch-box .arch-desc { margin-top: 6px; color: var(--dark-muted); font-size: 12px; line-height: 1.4; }
+
+      .arch-main { display: grid; grid-template-columns: .74fr 1.16fr .86fr .92fr; gap: 14px; min-height: 0; }
+      .arch-column { display: grid; min-height: 0; gap: 10px; align-content: stretch; }
+      .arch-column.edge { grid-template-rows: minmax(0, .55fr) minmax(0, 1fr); }
+      .arch-column.core { grid-template-rows: minmax(0, 1fr) minmax(0, .7fr) minmax(0, .7fr); }
+      .arch-column.intelligence { grid-template-rows: minmax(0, .95fr) minmax(0, .6fr) minmax(0, .65fr); }
+      .arch-column.payment { grid-template-rows: minmax(0, .7fr) minmax(0, .7fr) minmax(0, 1fr); }
+      .arch-box.major { border-color: #5b5b57; background: #101010; }
+      .arch-box.major .arch-name { font-size: 19px; }
+      .arch-box .tag { color: #757570; font-family: "GeistMono"; font-size: 10px; letter-spacing: .1em; }
+      .arch-box .flow-label { position: absolute; right: -13px; top: 50%; z-index: 4; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; background: var(--white); color: var(--black); font-size: 15px; }
+
+      .arch-settlement { display: grid; grid-template-columns: 1fr 60px 1fr 60px 1fr; align-items: center; min-height: 0; border-top: 1px dashed #777772; border-bottom: 1px dashed #777772; padding: 7px 0; }
+      .settle-node { text-align: center; font-size: 14px; font-weight: 620; }
+      .settle-arrow { text-align: center; color: #81817d; font-size: 22px; }
+
+      .diagram-slide .slide-title { margin-top: 26px; font-size: 46px; }
+      .diagram-slide .subtitle { max-width: 1220px; margin-top: 12px; font-size: 17px; line-height: 1.45; }
+
+      .original-diagram-wrap {
+        position: relative;
+        width: 100%;
+        border: 1px solid var(--line);
+        background: rgba(255,255,255,.72);
+        overflow: hidden;
+      }
+
+      .memory-diagram-wrap { height: 420px; margin-top: 18px; }
+      .protocol-diagram-wrap { height: 480px; margin-top: 18px; }
+      .system-diagram-wrap { height: 485px; margin-top: 18px; }
+      .original-diagram-wrap svg { display: block; width: 100%; height: 100%; }
+
+      .diagram-zone { fill: #eceeed; stroke: #c7cac8; stroke-width: 1.5; }
+      .diagram-zone.dark-zone { fill: #0c0c0c; stroke: #0c0c0c; }
+      .diagram-node { fill: #fff; stroke: #7f8582; stroke-width: 1.5; rx: 7; }
+      .diagram-node.dark-node { fill: #050505; stroke: #050505; }
+      .diagram-note { fill: #fff; stroke: #b3b8b5; stroke-width: 1; rx: 5; }
+      .diagram-title { font-family: "GeistSans", sans-serif; font-size: 20px; font-weight: 650; fill: #050505; letter-spacing: -.02em; }
+      .diagram-label { font-family: "GeistSans", sans-serif; font-size: 15px; font-weight: 580; fill: #111; }
+      .diagram-small { font-family: "GeistMono", monospace; font-size: 11px; fill: #5c625f; letter-spacing: .02em; }
+      .diagram-title.inverse, .diagram-label.inverse, .diagram-small.inverse { fill: #fff; }
+      .diagram-lane { stroke: #b4b9b6; stroke-width: 1.2; stroke-dasharray: 5 6; }
+      .diagram-data-line { fill: none; stroke: #171717; stroke-width: 1.8; marker-end: url(#arrowData); }
+      .diagram-payment-line { fill: none; stroke: #5a6060; stroke-width: 2.2; stroke-dasharray: 7 5; marker-end: url(#arrowPayment); }
+      .diagram-trust-line { fill: none; stroke: #969c99; stroke-width: 1.5; stroke-dasharray: 2 5; marker-end: url(#arrowTrust); }
+
+      .diagram-legend {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        margin-top: 10px;
+        color: var(--muted);
+        font-family: "GeistMono", monospace;
+        font-size: 11px;
+      }
+
+      .legend-lines { display: flex; gap: 20px; }
+      .legend-line::before { content: ""; display: inline-block; width: 34px; margin-right: 7px; transform: translateY(-3px); border-top: 2px solid #171717; }
+      .legend-line.payment::before { border-top-color: #5a6060; border-top-style: dashed; }
+      .legend-line.trust::before { border-top-color: #969c99; border-top-style: dotted; }
+
+      .memory-formula-strip {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        margin-top: 12px;
+        border: 1px solid var(--line);
+      }
+
+      .memory-formula-strip > div { padding: 11px 13px; border-right: 1px solid var(--line); color: var(--muted); font-family: "GeistMono", monospace; font-size: 10.5px; line-height: 1.4; }
+      .memory-formula-strip > div:last-child { border-right: 0; }
+      .memory-formula-strip strong { display: block; margin-bottom: 4px; color: var(--ink); font-family: "GeistSans"; font-size: 13px; }
+
+      .autonomy-layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1.25fr .75fr;
+        gap: 30px;
+        margin-top: 30px;
+        margin-bottom: 28px;
+      }
+
+      .agent-loop { display: grid; grid-template-rows: repeat(5, 1fr); border: 1px solid var(--line); }
+      .agent-step { display: grid; grid-template-columns: 50px 250px 1fr; gap: 18px; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+      .agent-step:last-child { border-bottom: 0; }
+      .agent-step .n { color: var(--muted); font-family: "GeistMono"; font-size: 12px; }
+      .agent-step strong { font-size: 18px; }
+      .agent-step span { color: var(--muted); font-size: 14px; line-height: 1.42; }
+      .agent-step.ai { background: var(--black); color: var(--white); }
+      .agent-step.ai span, .agent-step.ai .n { color: var(--dark-muted); }
+
+      .gcp-stack { display: grid; grid-template-rows: auto 1fr; gap: 16px; }
+      .gcp-summary { padding: 24px; border: 1px solid var(--line); background: var(--white); }
+      .gcp-summary h3 { font-size: 27px; line-height: 1.25; }
+      .gcp-services { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); }
+      .gcp-service { padding: 17px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+      .gcp-service:nth-child(even) { border-right: 0; }
+      .gcp-service:nth-last-child(-n+2) { border-bottom: 0; }
+      .gcp-service b { font-size: 15px; }
+      .gcp-service span { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.35; }
+
+      .market-size-layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1.05fr .95fr;
+        gap: 32px;
+        margin-top: 34px;
+        margin-bottom: 30px;
+      }
+
+      .market-rings { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); }
+      .market-ring { display: flex; flex-direction: column; justify-content: space-between; padding: 27px; border-right: 1px solid var(--line); }
+      .market-ring:last-child { border-right: 0; background: var(--black); color: var(--white); }
+      .market-ring .ring-label { font-family: "GeistMono"; font-size: 12px; letter-spacing: .12em; }
+      .market-ring .ring-value { margin-top: 40px; font-size: 46px; font-weight: 670; letter-spacing: -.055em; line-height: 1; }
+      .market-ring .ring-desc { margin-top: 17px; color: var(--muted); font-size: 14px; line-height: 1.45; }
+      .market-ring:last-child .ring-desc { color: var(--dark-muted); }
+
+      .volume-model { display: grid; grid-template-rows: auto 1fr auto; gap: 15px; }
+      .volume-head { padding: 23px; border: 1px solid var(--line); background: var(--white); }
+      .volume-head h3 { font-size: 28px; }
+      .volume-cases { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); }
+      .volume-case { padding: 23px; border-right: 1px solid var(--line); }
+      .volume-case:last-child { border-right: 0; }
+      .volume-case .case-value { margin-top: 21px; font-size: 42px; font-weight: 660; letter-spacing: -.05em; }
+      .volume-case .case-formula { margin-top: 12px; color: var(--muted); font-family: "GeistMono"; font-size: 12px; line-height: 1.5; }
+      .wedge { padding: 20px; border: 1px solid var(--line); font-size: 16px; line-height: 1.48; }
+
+      .future-layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: .9fr 1.1fr;
+        gap: 48px;
+        align-items: stretch;
+        margin-top: 36px;
+        margin-bottom: 30px;
+      }
+
+      .future-thesis { display: flex; flex-direction: column; justify-content: space-between; }
+      .future-thesis .statement { font-size: 48px; font-weight: 590; line-height: 1.16; letter-spacing: -.05em; }
+      .future-thesis .closing { color: var(--dark-muted); font-size: 19px; line-height: 1.55; }
+
+      .roadmap { display: grid; grid-template-rows: repeat(4, 1fr); border: 1px solid var(--dark-line); }
+      .roadmap-row { display: grid; grid-template-columns: 140px 1fr 210px; gap: 20px; align-items: center; padding: 20px 24px; border-bottom: 1px solid var(--dark-line); }
+      .roadmap-row:last-child { border-bottom: 0; }
+      .roadmap-row .phase { color: #8b8b86; font-family: "GeistMono"; font-size: 12px; letter-spacing: .08em; }
+      .roadmap-row h3 { font-size: 21px; }
+      .roadmap-row p { margin-top: 6px; color: var(--dark-muted); font-size: 13px; line-height: 1.4; }
+      .roadmap-row .state { justify-self: end; }
+
+      .nav {
+        position: fixed;
+        z-index: 50;
+        left: 50%;
+        bottom: 18px;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 270px;
+        padding: 8px 10px;
+        border: 1px solid rgba(255,255,255,.18);
+        border-radius: 999px;
+        background: rgba(12,12,12,.88);
+        color: var(--white);
+        box-shadow: 0 12px 32px rgba(0,0,0,.25);
+        backdrop-filter: blur(16px);
+      }
+
+      .nav button {
+        width: 42px;
+        height: 34px;
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        color: #c3c3be;
+        cursor: pointer;
+      }
+
+      .nav button:hover { background: rgba(255,255,255,.1); color: var(--white); }
+      .nav .counter { flex: 1; text-align: center; font-family: "GeistMono"; font-size: 12px; letter-spacing: .14em; }
+      .nav .pdf { width: auto; padding: 0 12px; font-family: "GeistMono"; font-size: 11px; }
+
+      @media print {
+        @page { size: 16in 9in; margin: 0; }
+        html, body { width: 1600px; height: auto; overflow: visible; background: #fff; }
+        .deck { width: 1600px; height: auto; overflow: visible; }
+        .slide-shell { width: 1600px; height: 900px; break-after: page; }
+        .slide { left: 0; top: 0; transform: none; }
+        .nav { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="deck" id="deck">
+      <!-- 01 COVER -->
+      <section class="slide-shell">
+        <article class="slide dark">
+          <div class="content">
+            <div class="topline">
+              <span class="section">Human evidence infrastructure</span>
+              <span>01 / 18</span>
+            </div>
+            <div class="cover-grid">
+              <div class="cover-copy">
+                <span class="brand-mark">O</span>
+                <h1 class="hero-title">사람의 경험을<br />검색하고, 사용한 만큼 지불합니다.</h1>
+                <p class="subtitle">Obolus는 동의된 인간 경험을 검색 가능한 개인 DB로 만들고, AI Agent가 연 근거마다 데이터 소유자에게 Solana USDC를 정산하는 유료 검색 인프라입니다.</p>
+              </div>
+              <div class="cover-proposition">
+                <div class="cover-row"><span class="num">01</span><div><strong>무료 검색</strong><span>원문 없이 대상·가격·품질·커버리지를 먼저 비교</span></div></div>
+                <div class="cover-row"><span class="num">02</span><div><strong>필요한 근거만 결제</strong><span>질문에 필요한 최소 독립 문서만 x402로 열람</span></div></div>
+                <div class="cover-row"><span class="num">03</span><div><strong>소유자에게 반복 정산</strong><span>한 번의 좋은 답변이 다음 질문에서도 수익을 만듦</span></div></div>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 02 TARGET AND WHY NOW -->
+      <section class="slide-shell">
+        <article class="slide">
+          <div class="content">
+            <div class="topline"><span class="section">Target / already-paid demand</span><span>02 / 18</span></div>
+            <h2 class="slide-title">기업은 사람의 실제 선택을 이해하기 위해 이미 막대한 비용을 쓰고 있습니다.</h2>
+            <p class="subtitle">모델·제품·가격·메시지를 결정하려면 공개 웹과 범용 LLM에 없는 실제 인간 데이터가 필요합니다. 문제는 수요가 아니라, 신뢰할 수 있는 데이터를 처음부터 어떻게 확보하고 계속 재사용하느냐입니다.</p>
+            <div class="market-body">
+              <div class="market-number">
+                <div>
+                  <div class="card-kicker">Global insights industry · 2023</div>
+                  <div class="metric">$142B</div>
+                  <div class="metric-label">시장조사·리서치 소프트웨어·리포팅을 포함한 전 세계 인사이트 산업 규모</div>
+                </div>
+                <p class="note">Obolus는 이 시장 전체를 대체하지 않습니다. 기업이 이미 지불하는 조사 예산으로 검증된 첫 개인 DB를 만들고, 이후 필요한 근거만 반복 거래하는 새로운 데이터 계층을 만듭니다.</p>
+              </div>
+              <div class="target-stack">
+                <div class="card target-card">
+                  <div class="card-kicker">Social world models</div>
+                  <h3>실제 사람을 더 정교하게 모델링하려는 기업</h3>
+                  <p>Simile과 같은 기업은 공개 텍스트만으로는 인간 행동의 미묘함을 포착하기 어렵다고 말합니다.</p>
+                  <div class="example">필요 데이터: 깊은 인터뷰, 시간에 따른 선택 변화, 실제 행동의 반례</div>
+                </div>
+                <div class="card target-card">
+                  <div class="card-kicker">Banks & digital finance</div>
+                  <h3>선호·신뢰·이탈을 계속 검증하는 금융사</h3>
+                  <p>가입, 수수료 문구, 알림, 상담, 신상품을 끊임없이 A/B 테스트하고 특정 고객군의 이유를 확인합니다.</p>
+                  <div class="example">질문: “첫 투자 고객이 어느 위험 문구에서 가입을 멈췄는가?”</div>
+                </div>
+                <div class="card target-card">
+                  <div class="card-kicker">Consumer & local decisions</div>
+                  <h3>지역과 상황이 중요한 브랜드·F&amp;B·리테일</h3>
+                  <p>평균 리뷰보다 특정 지역·연령·생활조건에서 사람이 실제로 무엇을 선택했고 왜 그랬는지가 필요합니다.</p>
+                  <div class="example">질문: “파리 거주자는 관광객용 저녁 메뉴의 무엇을 피하는가?”</div>
+                </div>
+                <div class="card target-card">
+                  <div class="card-kicker">Research organizations</div>
+                  <h3>같은 패널을 반복 모집하는 조사·인사이트 팀</h3>
+                  <p>인터뷰는 쌓이지만 다음 프로젝트에서는 다시 찾기 어렵고, 사용된 응답자에게 반복 보상하기 어렵습니다.</p>
+                  <div class="example">기회: 기존 인터뷰 아카이브를 검색·권한·정산 가능한 private network로 전환</div>
+                </div>
+              </div>
+            </div>
+            <div class="source">
+              <span>출처: <a href="https://community.esomar.org/knowledge-center/library?publication=3019">ESOMAR Global Market Research 2024</a> · <a href="https://www.simile.ai/blog/simulation-next-frontier">Simile, Simulation: The Next Frontier for AI</a></span>
+              <span>Simile은 시장 신호이며 Obolus 고객으로 주장하지 않음</span>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 03 CURRENT PROBLEM -->
+      <section class="slide-shell">
+        <article class="slide dark">
+          <div class="content">
+            <div class="topline"><span class="section">Problem / one-time research economics</span><span>03 / 18</span></div>
+            <h2 class="slide-title compact">가장 큰 병목은 시작할 때 검색할 개인 DB가 없다는 콜드스타트입니다.</h2>
+            <p class="subtitle">구매자는 충분한 데이터가 없으면 오지 않고, 기여자는 실제 보상이 보이지 않으면 먼저 답하지 않습니다. 출처가 불명확한 데이터를 무작정 채우면 숫자는 늘어도 신뢰 가능한 시장은 만들어지지 않습니다.</p>
+            <div class="broken-flow">
+              <div class="legacy-pipeline">
+                <div class="legacy-node"><span class="mono">01</span><b>개인 DB 부족</b><span>검색해도 조건에 맞는 근거가 없음</span></div>
+                <div class="legacy-arrow">→</div>
+                <div class="legacy-node"><span class="mono">02</span><b>구매자 이탈</b><span>기다려야 하므로 기존 조사로 돌아감</span></div>
+                <div class="legacy-arrow">→</div>
+                <div class="legacy-node"><span class="mono">03</span><b>거래 없음</b><span>데이터 열람과 정산이 발생하지 않음</span></div>
+                <div class="legacy-arrow">→</div>
+                <div class="legacy-node"><span class="mono">04</span><b>기여 보상 없음</b><span>사람이 먼저 정보를 제공할 이유가 없음</span></div>
+                <div class="legacy-arrow">↺</div>
+                <div class="legacy-node"><span class="mono">05</span><b>공급 정체</b><span>검증된 개인 DB가 계속 부족함</span></div>
+              </div>
+              <div class="pain-stack">
+                <div class="card pain-card">
+                  <div class="card-kicker">기업·질문 제공자</div>
+                  <h3>쓸 수 있는 근거가 생길지 모르는 상태에서 먼저 기다리고 지불하기 어렵습니다.</h3>
+                  <ul><li>초기 커버리지 불확실</li><li>품질과 출처를 구매 전에 판단하기 어려움</li><li>전체 패널 대신 필요한 근거만 사고 싶음</li></ul>
+                </div>
+                <div class="card pain-card">
+                  <div class="card-kicker">개인·데이터 소유자</div>
+                  <h3>누가 자신의 데이터를 살지 모르는 상태에서 먼저 긴 설문을 작성할 이유가 없습니다.</h3>
+                  <ul><li>확정된 보상 없는 선행 노동</li><li>제공 정보가 어떻게 쓰일지 불명확</li><li>거짓·복사 데이터와 경쟁할 위험</li></ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 04 LOOP -->
+      <section class="slide-shell">
+        <article class="slide">
+          <div class="content">
+            <div class="topline"><span class="section">Solution / incentive-aligned loop</span><span>04 / 18</span></div>
+            <h2 class="slide-title compact">첫 구매자의 예산으로 검증된 개인 DB를 만들고, 다음 질문부터 다시 사용합니다.</h2>
+            <p class="subtitle">Obolus는 아무 데이터나 먼저 쌓지 않습니다. 실제 질문이 들어오면 대상·인원·보상이 명확한 Open Call을 만들고, 조건에 맞는 사람이 구체적인 경험을 직접 답합니다. 품질 검증을 통과한 문서에만 첫 보상이 지급됩니다.</p>
+            <div class="loop-wrap">
+              <div class="loop-lanes">
+                <div class="lane-label"><strong>기업 / Agent</strong><span>더 빠르고 작은 단위로 도메인 근거 확보</span></div>
+                <div class="lane-flow">
+                  <div class="flow-node"><span class="step">01 · ASK</span><div><strong>실제 기업 질문</strong><small>대상·지역·경험·예산을 구조화</small></div></div><div class="flow-arrow">→</div>
+                  <div class="flow-node"><span class="step">02 · FUND</span><div><strong>보상 공고 확정</strong><small>목표 인원과 채택 조건을 먼저 공개</small></div></div><div class="flow-arrow">→</div>
+                  <div class="flow-node black"><span class="step">03 · ACCEPT</span><div><strong>검증된 문서만 채택</strong><small>품질·출처·중복을 통과한 근거만 구매</small></div></div><div class="flow-arrow">→</div>
+                  <div class="flow-node"><span class="step">04 · DECIDE</span><div><strong>출처 있는 답변</strong><small>합의·차이·한계·영수증 제공</small></div></div>
+                </div>
+              </div>
+              <div class="loop-lanes">
+                <div class="lane-label"><strong>개인 / 소유자</strong><span>확정된 수요에 기여하고 첫 보상과 반복 수익 확보</span></div>
+                <div class="lane-flow">
+                  <div class="flow-node"><span class="step">05 · INVITE</span><div><strong>조건에 맞는 사람 모집</strong><small>지역·직군·경험과 보상이 명확함</small></div></div><div class="flow-arrow">→</div>
+                  <div class="flow-node"><span class="step">06 · CONTRIBUTE</span><div><strong>실제 경험 직접 응답</strong><small>시점·장소·선택·이유를 구체적으로 기록</small></div></div><div class="flow-arrow">→</div>
+                  <div class="flow-node black"><span class="step">07 · VERIFY</span><div><strong>품질·일관성 검증</strong><small>구체성·중복·복사·후속 질문을 검사</small></div></div><div class="flow-arrow">→</div>
+                  <div class="flow-node"><span class="step">08 · EARN</span><div><strong>첫 기여금 + 반복 수익</strong><small>채택 시 보상, 이후 열릴 때마다 정산</small></div></div>
+                </div>
+              </div>
+              <div class="loop-return">실제 수요 → 보상 있는 검증 수집 → 첫 개인 DB 생성 → 다음 질문에서 즉시 재사용 → 반복 수익 → 더 많은 검증 기여자</div>
+              <div class="stakeholders">
+                <div class="card stakeholder"><strong>구매자는 빈 DB에 선투자하지 않음</strong><span>자신의 질문에 맞는 채택 조건과 최대 예산을 먼저 고정합니다.</span></div>
+                <div class="card stakeholder"><strong>기여자는 무급으로 먼저 일하지 않음</strong><span>확정된 공고에 참여하고, 채택 즉시 첫 보상을 받습니다.</span></div>
+                <div class="card stakeholder"><strong>채택된 답변은 다음 질문의 공급이 됨</strong><span>현재 공고를 해결한 문서가 개인 DB에 쌓여, 이후 관련 질문에서 다시 검색·정산됩니다.</span></div>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 05 PRODUCT EXAMPLE -->
+      <section class="slide-shell">
+        <article class="slide dark">
+          <div class="content">
+            <div class="topline"><span class="section">Product / one question end-to-end</span><span>05 / 18</span></div>
+            <h2 class="slide-title compact">범용 LLM이 알기 어려운 지역 선택을, 실제 사람의 유료 근거로 답합니다.</h2>
+            <div class="demo-layout">
+              <div class="demo-story">
+                <div class="question-box">
+                  <div class="card-kicker">기업 질문 예시</div>
+                  <div class="q">“파리에 거주하는 20–30대는 평일 저녁에 실제로 무엇을 선택하고, 관광객용 메뉴에서 무엇을 피하는가?”</div>
+                </div>
+                <div class="demo-steps">
+                  <div class="demo-step"><span class="card-kicker">Index</span><div class="value">40</div><div class="label">전체 데모 문서</div></div>
+                  <div class="demo-step"><span class="card-kicker">Relevant</span><div class="value">5</div><div class="label">파리 경험 후보</div></div>
+                  <div class="demo-step"><span class="card-kicker">Selected</span><div class="value">4</div><div class="label">독립 근거 선택</div></div>
+                  <div class="demo-step"><span class="card-kicker">Quote</span><div class="value">₩60</div><div class="label">4 × ₩15 데모 단가</div></div>
+                </div>
+                <div class="demo-output">
+                  <div class="card-kicker">결과물</div>
+                  <p><strong>공통 패턴:</strong> 직접 응답과 출처가 확인된 기록에서는 가격과 시간을 통제할 수 있는 선택이 반복됩니다.</p>
+                  <p><strong>차이와 반례:</strong> 배달 빈도·외식 기준은 생활조건에 따라 갈립니다. 평균 하나로 지우지 않고 문서별 citation을 붙입니다.</p>
+                  <p><strong>한계:</strong> 4명의 경험은 파리 전체를 대표하지 않습니다. 대상 커버리지가 부족하면 필요한 사람만 Open Call로 추가합니다.</p>
+                </div>
+              </div>
+              <div class="product-frame">
+                <img src="../service-presentation/assets/12-buyer-answer.png" alt="Obolus 질문과 유료 인간 근거 답변 화면" />
+              </div>
+            </div>
+            <div class="source"><span>가격·문서 수: 현재 저장소 seed 및 발표 시나리오 기준 · 상용 가격 아님</span><span>검색 무료 · 결제된 passage만 합성</span></div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 06 MEMORY -->
+      <section class="slide-shell">
+        <article class="slide diagram-slide">
+          <div class="content">
+            <div class="topline"><span class="section">Memory / from response to asset</span><span>06 / 18</span></div>
+            <h2 class="slide-title compact">콜드스타트에서 중요한 것은 많이 모으는 것이 아니라, 출처가 남는 첫 개인 DB를 만드는 것입니다.</h2>
+            <p class="subtitle">사람이 직접 답했다는 사실만으로 내용의 진실이 보장되지는 않습니다. Obolus는 구체성·중복·일관성·과거 채택 이력·구매 후 평가를 서로 다른 신뢰 신호로 관리하고, 검증을 통과한 문서에만 보상합니다.</p>
+            <div class="original-diagram-wrap memory-diagram-wrap" aria-label="Obolus 인간 메모리 적재와 재사용 아키텍처">
+              <svg viewBox="0 0 1500 430" role="img" aria-labelledby="memory-architecture-title">
+                <title id="memory-architecture-title">사람이 직접 제공한 경험이 품질과 일관성 검증을 거쳐 버전형 유료 문서가 되고, 관련 질문에서 반복 정산되는 흐름</title>
+                <defs>
+                  <marker id="arrowData" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#171717" /></marker>
+                  <marker id="arrowPayment" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#5a6060" /></marker>
+                  <marker id="arrowTrust" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#969c99" /></marker>
+                </defs>
+
+                <rect x="20" y="55" width="205" height="310" class="diagram-zone" />
+                <text x="42" y="82" class="diagram-small">CONSENTED HUMAN INPUT</text>
+                <rect x="45" y="105" width="155" height="62" class="diagram-node dark-node" /><text x="122" y="132" text-anchor="middle" class="diagram-title inverse">설문·인터뷰</text><text x="122" y="153" text-anchor="middle" class="diagram-small inverse">DIRECT ANSWER</text>
+                <rect x="45" y="194" width="155" height="62" class="diagram-node" /><text x="122" y="220" text-anchor="middle" class="diagram-title">인터뷰 문맥</text><text x="122" y="241" text-anchor="middle" class="diagram-small">TIME · PLACE · DECISION</text>
+                <rect x="45" y="283" width="155" height="62" class="diagram-node" /><text x="122" y="309" text-anchor="middle" class="diagram-title">소유자 통제</text><text x="122" y="330" text-anchor="middle" class="diagram-small">LOCK · EXPORT · DELETE</text>
+
+                <rect x="250" y="28" width="965" height="365" class="diagram-zone" />
+                <text x="275" y="57" class="diagram-small">MEMORY INGESTION + VERSIONED HUMAN DATABASE</text>
+                <rect x="280" y="84" width="170" height="77" class="diagram-node" /><text x="365" y="108" text-anchor="middle" class="diagram-small">QUALITY + PRIVACY GATE</text><text x="365" y="132" text-anchor="middle" class="diagram-title">구체성 · 중복 · PII</text><text x="365" y="151" text-anchor="middle" class="diagram-small">ECHO · COPY · SPAM</text>
+                <rect x="485" y="84" width="170" height="77" class="diagram-node dark-node" /><text x="570" y="108" text-anchor="middle" class="diagram-small inverse">SOURCE-BACKED CLAIM</text><text x="570" y="132" text-anchor="middle" class="diagram-title inverse">직접 응답 원문</text><text x="570" y="151" text-anchor="middle" class="diagram-small inverse">SOURCE ID · TIME · HASH · CONSENT</text>
+                <rect x="690" y="84" width="170" height="77" class="diagram-node" /><text x="775" y="108" text-anchor="middle" class="diagram-small">CONSISTENCY CHECK</text><text x="775" y="132" text-anchor="middle" class="diagram-title">후속 질문·이력 확인</text><text x="775" y="151" text-anchor="middle" class="diagram-small">SOURCE IDS · CONTRADICTIONS</text>
+                <rect x="895" y="84" width="170" height="77" class="diagram-node" /><text x="980" y="108" text-anchor="middle" class="diagram-small">REFLECTION</text><text x="980" y="132" text-anchor="middle" class="diagram-title">패턴·모순 요약</text><text x="980" y="151" text-anchor="middle" class="diagram-small">3 OBSERVATIONS · SOURCED</text>
+                <line x1="450" y1="122" x2="477" y2="122" class="diagram-data-line" /><line x1="655" y1="122" x2="682" y2="122" class="diagram-data-line" /><line x1="860" y1="122" x2="887" y2="122" class="diagram-data-line" />
+
+                <rect x="485" y="202" width="375" height="74" class="diagram-node dark-node" /><text x="672" y="226" text-anchor="middle" class="diagram-small inverse">SELLABLE HUMAN DOCUMENT</text><text x="672" y="250" text-anchor="middle" class="diagram-title inverse">원문 passage · SHA-256 · immutable version</text><text x="672" y="269" text-anchor="middle" class="diagram-small inverse">CONSENT VERSION · OWNER · RECIPIENT · PRICE</text>
+                <path d="M 570 161 V 194" class="diagram-data-line" />
+                <rect x="895" y="202" width="280" height="74" class="diagram-node" /><text x="1035" y="226" text-anchor="middle" class="diagram-small">DERIVED STATE / INTERNAL CONTEXT</text><text x="1035" y="250" text-anchor="middle" class="diagram-title">패턴 · 모순 · 신뢰 상태</text><text x="1035" y="269" text-anchor="middle" class="diagram-small">INFERENCE ≠ VERIFIED FACT</text>
+                <path d="M 980 161 V 194" class="diagram-trust-line" />
+
+                <rect x="280" y="309" width="895" height="53" class="diagram-note" /><text x="727" y="331" text-anchor="middle" class="diagram-small">CORRECTION CREATES A NEW VERSION — A PREVIOUS PAID SNAPSHOT IS NEVER SILENTLY OVERWRITTEN</text><text x="727" y="351" text-anchor="middle" class="diagram-label">정정 · 잠금 · 동의 철회 · 접근 이력 · 수익 이력</text>
+                <path d="M 365 161 V 300 H 475 V 276" class="diagram-trust-line" /><path d="M 122 314 H 272" class="diagram-trust-line" />
+
+                <rect x="1240" y="55" width="240" height="310" class="diagram-zone" />
+                <text x="1263" y="82" class="diagram-small">SEARCH + QUALIFIED REUSE</text>
+                <rect x="1265" y="105" width="190" height="50" class="diagram-node" /><text x="1360" y="128" text-anchor="middle" class="diagram-title">무료 Metadata</text><text x="1360" y="146" text-anchor="middle" class="diagram-small">NO PRIVATE TEXT</text>
+                <rect x="1265" y="174" width="190" height="50" class="diagram-node" /><text x="1360" y="197" text-anchor="middle" class="diagram-title">신뢰 등급·Rank</text><text x="1360" y="215" text-anchor="middle" class="diagram-small">CONSISTENCY · FEEDBACK · OUTCOME</text>
+                <rect x="1265" y="243" width="190" height="50" class="diagram-node dark-node" /><text x="1360" y="266" text-anchor="middle" class="diagram-title inverse">Paid Snapshot</text><text x="1360" y="284" text-anchor="middle" class="diagram-small inverse">EXACT VERSION ONLY</text>
+                <rect x="1265" y="312" width="190" height="34" class="diagram-node" /><text x="1360" y="334" text-anchor="middle" class="diagram-label">소유자 반복 정산</text>
+                <path d="M 200 136 H 272" class="diagram-data-line" /><path d="M 860 239 H 1232 V 130 H 1257" class="diagram-data-line" /><path d="M 1360 155 V 166" class="diagram-data-line" /><path d="M 1360 224 V 235" class="diagram-data-line" /><path d="M 1360 293 V 304" class="diagram-payment-line" />
+              </svg>
+            </div>
+            <div class="memory-formula-strip">
+              <div><strong>원문과 문맥이 남기는 것</strong>누가 어떤 질문에 언제 무엇을 답했는지 · 내용의 진실성은 별도 신뢰 신호로 평가</div>
+              <div><strong>현재 구현</strong>품질 gate · hash/version · observation/reflection · 신뢰도 · 유료 구매자 feedback</div>
+              <div><strong>검증 고도화 · ROADMAP</strong>독립 근거 대조 · 시점 challenge · 모순 탐지 · 실제 결과 기반 outcome verification</div>
+              <div><strong>보상 원칙</strong>연결만으로 지급하지 않음 · 채택된 검증 문서에 첫 기여금 · 이후 paid open마다 90%</div>
+            </div>
+            <div class="source"><span>메모리 구조 참고: <a href="https://arxiv.org/abs/2304.03442">Generative Agents (Park et al., 2023)</a>의 observation–reflection 구조 · Obolus는 실제 원문·출처·동의·버전을 별도로 보존</span><span>독립 근거·실제 결과 기반 검증은 ROADMAP · 현재 구현과 구분</span></div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 07 SEARCH AND SPAM -->
+      <section class="slide-shell">
+        <article class="slide dark">
+          <div class="content">
+            <div class="topline"><span class="section">Search / spam-resistant human DB ranking</span><span>07 / 18</span></div>
+            <h2 class="slide-title compact">검색 품질과 보상을 연결하려면, 돈으로 순위를 살 수 없어야 합니다.</h2>
+            <p class="subtitle">Google이 관련성·링크 권위·웹스팸 방어를 함께 설계한 원리를 인간 DB에 재해석했습니다. Google의 비공개 현재 알고리즘을 복제했다는 뜻은 아닙니다.</p>
+            <div class="defense-layout">
+              <div class="defense-stack">
+                <div class="defense-row"><span class="num">01</span><strong>입력 품질 하드락</strong><span>최소 길이·의미 단어, 시간·장소·가격·수치, 직접 식별자 노출을 결정론적으로 검사합니다.</span></div>
+                <div class="defense-row"><span class="num">02</span><strong>복사·반복 방어</strong><span>질문 되풀이, 문장 반복, 기존 답변과 near-duplicate를 차단하고 voided 응답은 수익·검색 문서를 만들지 못합니다.</span></div>
+                <div class="defense-row"><span class="num">03</span><strong>질문별 관련성</strong><span>구조화 필터, 768차원 deterministic feature hash, 핵심 anchor와 term coverage로 엉뚱한 DB를 먼저 제거합니다.</span></div>
+                <div class="defense-row"><span class="num">04</span><strong>질문별 권위</strong><span>Personalized PageRank의 시작 분포를 현재 질문 관련성으로 다시 계산합니다. 전역 인기보다 이 질문에서의 근거 관계가 우선입니다.</span></div>
+                <div class="defense-row"><span class="num">05</span><strong>최소 독립 묶음</strong><span>동일 저자 중복과 유사 passage를 감점하고, 예산 안에서 서로 다른 작성자의 최소 근거 집합을 고릅니다.</span></div>
+              </div>
+              <div class="rank-card">
+                <div class="card-kicker">Authority rule</div>
+                <div class="rank-title">결제는 사용 기록을 만들지만 권위를 만들지 않습니다.</div>
+                <div class="rank-formula mono">score = relevance 60%<br />+ term coverage 12%<br />+ query authority 13%<br />+ trust 10% + freshness 5%</div>
+                <div class="rank-edges">
+                  <div class="rank-edge"><span>양의 권위 전달</span><b>독립 corroboration · 관리자 검증 · 실제 결과 검증</b></div>
+                  <div class="rank-edge"><span>권위 0 처리</span><b>유료 · 광고 · 자기추천 · 복사 · Agent 추론</b></div>
+                  <div class="rank-edge"><span>담합 방어</span><b>상호 organic edge 80% 감쇠</b></div>
+                  <div class="rank-edge"><span>작성자 신뢰</span><b>채택·무효 이력 75% + 유료 구매자 평가 25%</b></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 08 PAID URL -->
+      <section class="slide-shell">
+        <article class="slide">
+          <div class="content">
+            <div class="topline"><span class="section">Core abstraction / x402 personal DB</span><span>08 / 18</span></div>
+            <h2 class="slide-title compact">개인의 DB를 검색 가능한 사이트로, 각 경험 문서를 결제 가능한 URL로 만듭니다.</h2>
+            <p class="subtitle">문서의 존재와 안전한 메타데이터는 무료로 발견됩니다. 원문은 잠겨 있고, 정확한 결제 요구를 충족한 요청에만 해당 버전의 passage를 반환합니다.</p>
+            <div class="http-layout">
+              <div class="web-analogy">
+                <div class="analogy-column">
+                  <div class="card-kicker">Public web</div><h3>검색 가능한 웹페이지</h3>
+                  <div class="analogy-list">
+                    <div class="analogy-item"><b>사이트</b><span>한 발행자의 정보 공간</span></div>
+                    <div class="analogy-item"><b>페이지 URL</b><span>주소가 있는 문서</span></div>
+                    <div class="analogy-item"><b>검색 인덱스</b><span>본문과 링크를 랭킹</span></div>
+                    <div class="analogy-item"><b>클릭</b><span>문서를 무료로 열람</span></div>
+                  </div>
+                </div>
+                <div class="analogy-arrow">→</div>
+                <div class="analogy-column">
+                  <div class="card-kicker">Obolus human web</div><h3>허가·결제 가능한 경험</h3>
+                  <div class="analogy-list">
+                    <div class="analogy-item"><b>개인 DB</b><span>한 사람의 동의된 memory namespace</span></div>
+                    <div class="analogy-item"><b>경험 URL</b><span>해시·버전이 있는 인간 근거 문서</span></div>
+                    <div class="analogy-item"><b>무료 메타데이터</b><span>분야·가격·신뢰·최신성만 검색</span></div>
+                    <div class="analogy-item"><b>Paid open</b><span>소유자에게 지불한 문서만 공개</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="http-sequence">
+                <div>
+                  <div class="card-kicker">한 문서의 HTTP 생애주기</div>
+                  <div class="endpoint">GET /people/paris-17/memories/dinner-v3</div>
+                </div>
+                <div class="sequence-list">
+                  <div class="sequence-line"><span class="n">01</span><span class="status">SEARCH</span><p>Agent는 원문 없이 handle·카테고리·가격·해시·품질 점수를 비교합니다.</p></div>
+                  <div class="sequence-line focus"><span class="n">02</span><span class="status">HTTP 402</span><p>서버가 ₩15 상당 USDC, Solana Devnet, 수취인, 문서 버전을 요구합니다.</p></div>
+                  <div class="sequence-line"><span class="n">03</span><span class="status">PAY</span><p>Pay.sh가 challenge를 검증하고 승인된 지갑으로 서명한 뒤 요청을 재시도합니다.</p></div>
+                  <div class="sequence-line focus"><span class="n">04</span><span class="status">HTTP 200</span><p>정산이 확인된 exact passage snapshot과 receipt만 반환합니다.</p></div>
+                  <div class="sequence-line"><span class="n">05</span><span class="status">CITE</span><p>Gemini는 허용된 handle만 인용해 합의·차이·한계를 정리합니다.</p></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 09 AGENTIC COMMERCE -->
+      <section class="slide-shell">
+        <article class="slide">
+          <div class="content">
+            <div class="topline"><span class="section">Why now / the agentic commerce gap</span><span>09 / 18</span></div>
+            <h2 class="slide-title compact">Agent는 웹을 탐색할 수 있게 됐지만, 작은 리소스를 스스로 사는 표준은 이제 만들어지고 있습니다.</h2>
+            <p class="subtitle">기존 결제는 사람이 화면에서 장바구니를 확인한다는 전제를 가집니다. Agent가 API·데이터·콘텐츠를 대신 발견하고 구매하려면 권한, 정확한 가격, 기계 검증 가능한 영수증이 필요합니다.</p>
+            <div class="commerce-layout">
+              <div class="commerce-gap">
+                <div>
+                  <div class="card-kicker">The missing transaction layer</div>
+                  <h3>발견과 호출은 자동화됐지만, 결제와 전달 사이가 끊겨 있습니다.</h3>
+                  <p>API key 구독이나 카드 결제는 문서 한 건, 모델 한 번, 데이터 passage 하나를 실시간으로 사고 여러 소유자에게 나누어 지급하기 어렵습니다.</p>
+                </div>
+                <div class="agent-route">
+                  <div class="agent-node">AI Agent<br />의도·예산</div><div class="agent-arrow">→</div>
+                  <div class="agent-node">유료 데이터<br />발견</div><div class="agent-arrow">→</div>
+                  <div class="agent-node blocked">표준 결제·권한·영수증<br />부족</div>
+                </div>
+              </div>
+              <div class="industry-proof">
+                <div class="logo-wall" aria-label="에이전틱 커머스 생태계 기업 예시">
+                  <div class="logo-cell">Google AP2</div><div class="logo-cell">Cloudflare</div><div class="logo-cell">Coinbase x402</div>
+                  <div class="logo-cell">Solana Pay.sh</div><div class="logo-cell">Mastercard</div><div class="logo-cell">PayPal</div>
+                </div>
+                <div class="industry-note"><strong>시장 신호:</strong> Google은 AP2를 60개 이상의 결제·기술 기업과 발표했고, Cloudflare는 AI crawler와 콘텐츠 소유자의 직접 결제에 HTTP 402를 적용했습니다. Obolus는 같은 변화의 데이터 시장 버전입니다.</div>
+                <div class="industry-note"><strong>Obolus의 전환:</strong> Agent가 “어떤 사람의 어떤 경험이 필요한가”를 먼저 계산하고, 질문별 예산 안에서 선택한 문서만 구매합니다. 데이터 소유자는 광고가 아니라 실제 열람에서 직접 수익을 얻습니다.</div>
+              </div>
+            </div>
+            <div class="source"><span>출처: <a href="https://cloud.google.com/blog/products/ai-machine-learning/announcing-agents-to-payments-ap2-protocol">Google Cloud AP2</a> · <a href="https://blog.cloudflare.com/introducing-ai-crawl-control/">Cloudflare Pay Per Crawl / AI Crawl Control</a></span><span>로고는 생태계 설명용 · 모두 Obolus 파트너라는 의미 아님</span></div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 10 WHY THE STACK -->
+      <section class="slide-shell">
+        <article class="slide dark">
+          <div class="content">
+            <div class="topline"><span class="section">Micropayment / why x402, Pay.sh, Solana</span><span>10 / 18</span></div>
+            <h2 class="slide-title compact">마이크로페이가 사업 모델이기 때문에, 결제 프로토콜과 체인은 핵심 제품입니다.</h2>
+            <p class="subtitle">월 구독으로 데이터 전체를 잠그지 않습니다. 검색은 무료이고 실제로 열린 인간 근거와 채택된 Open Call 답변에서만 거래가 발생합니다.</p>
+            <div class="tech-layout">
+              <div class="tech-column">
+                <div class="card-kicker">01 · HTTP boundary</div><div class="tech-name">x402</div>
+                <div class="tech-role">유료 문서 URL이 가격·자산·네트워크·수취인을 기계가 읽을 수 있는 Payment Required challenge로 돌려줍니다.</div>
+                <div class="why"><strong>왜 필요한가</strong><br />검색과 결제를 같은 HTTP 워크플로로 연결해 Agent가 별도 계약 없이 리소스 단위로 구매합니다.</div>
+              </div>
+              <div class="tech-column">
+                <div class="card-kicker">02 · Agent wallet</div><div class="tech-name">Pay.sh</div>
+                <div class="tech-role">402를 감지하고 exact challenge를 검증한 뒤 보호된 지갑에 승인을 요청하고, payment proof를 붙여 원 요청을 재시도합니다.</div>
+                <div class="why"><strong>왜 필요한가</strong><br />Claude·Codex·MCP Agent가 private key를 보지 않고도 유료 API를 호출할 수 있습니다.</div>
+              </div>
+              <div class="tech-column">
+                <div class="card-kicker">03 · Settlement rail</div><div class="tech-name">Solana USDC</div>
+                <div class="tech-role">문서마다 다른 소유자에게 작은 금액을 빠르게 분배하고, Agent와 서버가 동일한 거래 receipt를 검증합니다.</div>
+                <div class="why"><strong>왜 필요한가</strong><br />카드의 고정 수수료·월별 정산보다 수원 단위 다수 수취인 결제에 적합합니다.</div>
+              </div>
+              <div class="price-ledger">
+                <div class="price-item"><b>검색 ₩0</b><span>안전한 메타데이터·랭킹·견적</span></div>
+                <div class="price-item"><b>문서 ₩5 / ₩15 / ₩25</b><span>현재 데모 DB의 인간 근거 1건</span></div>
+                <div class="price-item"><b>Open Call ₩300–₩800</b><span>현재 UI의 신규 답변 1건 예시</span></div>
+                <div class="price-item"><b>소유자 90% · 프로토콜 10%</b><span>구매자에게 보이는 가격 안에서 투명하게 분배 · 추가 구독료 없음</span></div>
+              </div>
+            </div>
+            <div class="source"><span>출처: <a href="https://github.com/solana-foundation/pay">Solana Foundation Pay.sh</a> · <a href="https://github.com/solana-foundation/pay-kit">Solana Pay Kit</a></span><span>가격은 현재 코드의 데모 정책 · 상용 가격은 PoC로 검증</span></div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 11 PAYMENT SEQUENCE -->
+      <section class="slide-shell">
+        <article class="slide diagram-slide">
+          <div class="content">
+            <div class="topline"><span class="section">Payment sequence / x402 · Pay.sh · Solana</span><span>11 / 18</span></div>
+            <h2 class="slide-title compact">무료 검색부터 유료 원문 공개까지, 하나의 검증 가능한 상태 흐름으로 연결합니다.</h2>
+            <p class="subtitle">Agent는 먼저 후보를 비교하고 정확한 문서·가격·수취인을 고정한 뒤 결제합니다. 정산된 버전의 passage만 최종 답변에 전달됩니다.</p>
+            <div class="original-diagram-wrap protocol-diagram-wrap" aria-label="Obolus x402와 Pay.sh 결제 시퀀스">
+              <svg viewBox="0 0 1500 550" role="img" aria-labelledby="payment-sequence-title">
+                <title id="payment-sequence-title">구매자 질문부터 Solana USDC 정산과 결제된 근거 반환까지의 시퀀스</title>
+                <defs>
+                  <marker id="arrowData" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#171717" /></marker>
+                  <marker id="arrowPayment" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#5a6060" /></marker>
+                  <marker id="arrowTrust" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#969c99" /></marker>
+                </defs>
+
+                <rect x="35" y="16" width="175" height="48" class="diagram-node dark-node" /><text x="122" y="46" text-anchor="middle" class="diagram-title inverse">구매자 / Agent</text>
+                <rect x="275" y="16" width="175" height="48" class="diagram-node" /><text x="362" y="46" text-anchor="middle" class="diagram-title">Rust Core</text>
+                <rect x="515" y="16" width="175" height="48" class="diagram-node" /><text x="602" y="39" text-anchor="middle" class="diagram-title">유료 DB URL</text><text x="602" y="56" text-anchor="middle" class="diagram-small">x402 / MPP</text>
+                <rect x="755" y="16" width="175" height="48" class="diagram-node" /><text x="842" y="39" text-anchor="middle" class="diagram-title">Pay.sh Agent</text><text x="842" y="56" text-anchor="middle" class="diagram-small">CLOUD RUN</text>
+                <rect x="995" y="16" width="175" height="48" class="diagram-node" /><text x="1082" y="39" text-anchor="middle" class="diagram-title">Cloud KMS</text><text x="1082" y="56" text-anchor="middle" class="diagram-small">NON-EXPORTABLE KEY</text>
+                <rect x="1235" y="16" width="105" height="48" class="diagram-node" /><text x="1287" y="39" text-anchor="middle" class="diagram-title">Solana</text><text x="1287" y="56" text-anchor="middle" class="diagram-small">DEVNET</text>
+                <rect x="1370" y="16" width="105" height="48" class="diagram-node dark-node" /><text x="1422" y="39" text-anchor="middle" class="diagram-title inverse">소유자</text><text x="1422" y="56" text-anchor="middle" class="diagram-small inverse">USDC WALLET</text>
+
+                <line x1="122" y1="64" x2="122" y2="528" class="diagram-lane" /><line x1="362" y1="64" x2="362" y2="528" class="diagram-lane" /><line x1="602" y1="64" x2="602" y2="528" class="diagram-lane" /><line x1="842" y1="64" x2="842" y2="528" class="diagram-lane" /><line x1="1082" y1="64" x2="1082" y2="528" class="diagram-lane" /><line x1="1287" y1="64" x2="1287" y2="528" class="diagram-lane" /><line x1="1422" y1="64" x2="1422" y2="528" class="diagram-lane" />
+
+                <line x1="122" y1="92" x2="355" y2="92" class="diagram-data-line" /><text x="238" y="83" text-anchor="middle" class="diagram-label">01 질문 · 무료 메타데이터 검색</text>
+                <line x1="355" y1="126" x2="129" y2="126" class="diagram-data-line" /><text x="242" y="117" text-anchor="middle" class="diagram-label">02 후보 · 커버리지 · 정확한 총가격</text>
+                <line x1="122" y1="160" x2="355" y2="160" class="diagram-data-line" /><text x="238" y="151" text-anchor="middle" class="diagram-label">03 질문별 최대 예산 한 번 승인</text>
+                <rect x="282" y="180" width="160" height="54" class="diagram-note" /><text x="362" y="200" text-anchor="middle" class="diagram-small">04 IMMUTABLE JOB</text><text x="362" y="218" text-anchor="middle" class="diagram-label">hash · version · consent</text><text x="362" y="231" text-anchor="middle" class="diagram-small">recipient · amount · mint</text>
+
+                <line x1="370" y1="255" x2="834" y2="255" class="diagram-data-line" /><text x="602" y="246" text-anchor="middle" class="diagram-label">05 funded research job 실행</text>
+                <line x1="834" y1="289" x2="609" y2="289" class="diagram-data-line" /><text x="721" y="280" text-anchor="middle" class="diagram-label">06 GET /paid-human-document</text>
+                <line x1="602" y1="323" x2="835" y2="323" class="diagram-data-line" /><text x="718" y="314" text-anchor="middle" class="diagram-label">07 402 challenge · 가격 · 수취인</text>
+                <rect x="768" y="341" width="148" height="49" class="diagram-note" /><text x="842" y="360" text-anchor="middle" class="diagram-small">08 VERIFY EXACT INTENT</text><text x="842" y="378" text-anchor="middle" class="diagram-label">amount · asset · network</text>
+
+                <line x1="850" y1="405" x2="1074" y2="405" class="diagram-payment-line" /><text x="962" y="396" text-anchor="middle" class="diagram-label">09 제한된 서명 요청</text>
+                <line x1="1090" y1="438" x2="1279" y2="438" class="diagram-payment-line" /><text x="1184" y="429" text-anchor="middle" class="diagram-label">10 USDC transaction</text>
+                <line x1="1295" y1="462" x2="1414" y2="462" class="diagram-payment-line" /><text x="1354" y="452" text-anchor="middle" class="diagram-label">11 소유자 정산</text>
+                <line x1="1279" y1="486" x2="850" y2="486" class="diagram-trust-line" /><text x="1064" y="477" text-anchor="middle" class="diagram-label">12 confirmed receipt</text>
+                <line x1="834" y1="510" x2="609" y2="510" class="diagram-data-line" /><text x="721" y="501" text-anchor="middle" class="diagram-label">13 결제 증명 포함 재요청</text>
+                <line x1="594" y1="528" x2="370" y2="528" class="diagram-data-line" /><text x="482" y="519" text-anchor="middle" class="diagram-label">14 paid callback · 확정 passage</text>
+                <path d="M 354 535 H 130" class="diagram-data-line" /><text x="242" y="547" text-anchor="middle" class="diagram-small">15 PAID EVIDENCE ONLY → GEMINI CITED ANSWER</text>
+              </svg>
+            </div>
+            <div class="diagram-legend"><div class="legend-lines"><span class="legend-line">질문·데이터</span><span class="legend-line payment">결제·정산</span><span class="legend-line trust">영수증·검증</span></div><span>결제 전 원문 비공개 · exact quote 검증 · 정산된 passage만 전달</span></div>
+            <div class="source"><span>결제는 내용의 진실이 아니라, 어떤 버전이 누구에게 얼마로 열렸는지를 증명</span><span>HTTP 402 → Pay.sh verification → Solana USDC → paid callback</span></div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 12 TRUST AND RECEIPT -->
+      <section class="slide-shell">
+        <article class="slide">
+          <div class="content">
+            <div class="topline"><span class="section">Trust / verifiable invoice, separated authority</span><span>12 / 18</span></div>
+            <h2 class="slide-title compact">중앙 서비스라도 “무엇을·누구에게·얼마에 열었는가”는 청구서와 체인 영수증으로 검증합니다.</h2>
+            <div class="trust-layout">
+              <div class="receipt">
+                <div class="receipt-head"><div><div class="card-kicker">Evidence access invoice</div><h3>정확한 유료 문서 약정</h3></div><div class="receipt-total">₩15</div></div>
+                <dl class="receipt-rows">
+                  <div class="receipt-row"><dt>query_id</dt><dd>q_paris_weekday_2026</dd></div>
+                  <div class="receipt-row"><dt>document</dt><dd>KOPARIS_4 · dinner preference</dd></div>
+                  <div class="receipt-row"><dt>content_hash</dt><dd>6f5d…21b9</dd></div>
+                  <div class="receipt-row"><dt>version / consent</dt><dd>v3 / consent-v2</dd></div>
+                  <div class="receipt-row"><dt>recipient</dt><dd>verified owner wallet · 90%</dd></div>
+                  <div class="receipt-row"><dt>asset / network</dt><dd>USDC / Solana Devnet</dd></div>
+                  <div class="receipt-row"><dt>transaction</dt><dd>Explorer signature + settled timestamp</dd></div>
+                </dl>
+                <p class="receipt-foot">결제 전에 이 필드를 immutable snapshot으로 고정합니다. 결제 후 내용·가격·수취인이 바뀌면 delivery를 거부합니다.</p>
+              </div>
+              <div class="trust-paths">
+                <div class="trust-path">
+                  <div class="card-kicker">Hosted web</div><h3>사용자 지갑 권한과 서비스 결제 권한을 분리합니다.</h3>
+                  <p>Phantom은 소유 증명과 사용자가 선택한 USDC 예치만 서명합니다. 질문은 출금 가능한 Obolus 선불 잔액 안에서만 예약되며, Cloud KMS의 별도 서비스 키가 확정된 job만 처리합니다.</p>
+                  <div class="key-line"><span class="key-dot"></span> 사용자 private key·seed·SPL delegate는 서버에 없음</div>
+                </div>
+                <div class="trust-path">
+                  <div class="card-kicker">Local agent / MCP</div><h3>더 강한 로컬 수탁 경로도 제공합니다.</h3>
+                  <p>Pay.sh가 사용자의 OS credential store와 biometric approval로 로컬에서 서명합니다. Obolus MCP는 검색·정확한 견적만 준비하고, 모델은 raw key나 임의 URL·금액을 받을 수 없습니다.</p>
+                  <div class="key-line"><span class="key-dot"></span> 서버에는 payment proof와 query-bound intent만 전달</div>
+                </div>
+                <div class="trust-principle"><div><strong>온체인</strong><br />금액·수취인·서명·시간·receipt</div><div><strong>오프체인</strong><br />질문 원문·개인 memory·reflection·검색 인덱스</div></div>
+              </div>
+            </div>
+            <div class="source"><span>결제는 문서의 진실성을 보증하지 않음 · 접근한 버전과 경제적 권리만 증명</span><span>Automatic payment = bounded authority, not unrestricted wallet access</span></div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 13 IMMUTABLE SETTLEMENT -->
+      <section class="slide-shell">
+        <article class="slide diagram-slide">
+          <div class="content">
+            <div class="topline"><span class="section">Mainnet hardening / immutable settlement program · ROADMAP</span><span>13 / 18</span></div>
+            <h2 class="slide-title compact">서버는 거래를 제안할 뿐, 사용자 자금을 움직일 권한은 갖지 않습니다.</h2>
+            <p class="subtitle">사용자가 청구서 해시를 직접 서명하면, 주문마다 생성되는 Solana PDA가 총액·수취인·수수료·만료·환불 조건을 검증하고 집행합니다.</p>
+            <div class="original-diagram-wrap program-diagram-wrap" aria-label="Obulus Mainnet 불변 정산 프로그램과 주문별 PDA 사기 방지 구조">
+              <svg viewBox="0 0 1500 430" role="img" aria-labelledby="program-architecture-title">
+                <title id="program-architecture-title">중앙 서버는 검색과 청구서 초안만 만들고, 사용자 서명과 불변 Solana 프로그램 및 주문별 PDA가 실제 자금 이동을 통제하는 구조</title>
+                <defs>
+                  <marker id="arrowProgramData" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#171717" /></marker>
+                  <marker id="arrowProgramPay" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#5a6060" /></marker>
+                  <marker id="arrowProgramTrust" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#969c99" /></marker>
+                </defs>
+
+                <rect x="20" y="34" width="245" height="350" class="diagram-zone" />
+                <text x="42" y="61" class="diagram-small">USER AUTHORITY</text>
+                <rect x="43" y="87" width="198" height="66" class="diagram-node dark-node" />
+                <text x="142" y="114" text-anchor="middle" class="diagram-title inverse">Buyer Wallet</text>
+                <text x="142" y="137" text-anchor="middle" class="diagram-small inverse">SIGN INVOICE HASH</text>
+                <rect x="43" y="178" width="198" height="66" class="diagram-node" />
+                <text x="142" y="205" text-anchor="middle" class="diagram-title">Agent / Pay.sh</text>
+                <text x="142" y="228" text-anchor="middle" class="diagram-small">LOCAL PAYMENT SIGNER</text>
+                <rect x="43" y="270" width="198" height="90" class="diagram-note" />
+                <text x="142" y="297" text-anchor="middle" class="diagram-label">사용자가 고정하는 범위</text>
+                <text x="142" y="321" text-anchor="middle" class="diagram-small">TOTAL · PER-QUERY CAP · EXPIRY</text>
+                <text x="142" y="341" text-anchor="middle" class="diagram-small">USDC MINT · PROGRAM ID · REVOKE</text>
+
+                <rect x="290" y="34" width="325" height="350" class="diagram-zone" />
+                <text x="312" y="61" class="diagram-small">CENTRAL SERVICE · CANNOT MOVE FUNDS</text>
+                <rect x="314" y="87" width="277" height="60" class="diagram-node" />
+                <text x="452" y="112" text-anchor="middle" class="diagram-title">Search · Rank · Select</text>
+                <text x="452" y="133" text-anchor="middle" class="diagram-small">FREE METADATA · MINIMUM BUNDLE</text>
+                <rect x="314" y="171" width="277" height="60" class="diagram-node dark-node" />
+                <text x="452" y="196" text-anchor="middle" class="diagram-title inverse">Canonical Invoice Draft</text>
+                <text x="452" y="217" text-anchor="middle" class="diagram-small inverse">QUERY HASH · BUNDLE ROOT · SPLITS</text>
+                <rect x="314" y="255" width="277" height="60" class="diagram-node" />
+                <text x="452" y="280" text-anchor="middle" class="diagram-title">Encrypted Delivery</text>
+                <text x="452" y="301" text-anchor="middle" class="diagram-small">CONTENT HASH · VERSION · ACK</text>
+                <rect x="314" y="333" width="277" height="28" class="diagram-note" />
+                <text x="452" y="352" text-anchor="middle" class="diagram-small">NO BUYER KEY · NO PDA KEY · NO WITHDRAW PATH</text>
+
+                <rect x="640" y="20" width="515" height="378" class="diagram-zone dark-zone" />
+                <text x="664" y="49" class="diagram-small inverse">IMMUTABLE SOLANA SETTLEMENT PROGRAM</text>
+                <rect x="666" y="73" width="218" height="68" class="diagram-node" />
+                <text x="775" y="99" text-anchor="middle" class="diagram-title">Program Verification</text>
+                <text x="775" y="121" text-anchor="middle" class="diagram-small">SIGNER · MINT · CAP · EXPIRY · RESOLVER</text>
+                <rect x="909" y="73" width="220" height="68" class="diagram-node" />
+                <text x="1019" y="99" text-anchor="middle" class="diagram-title">Line-item Rules</text>
+                <text x="1019" y="121" text-anchor="middle" class="diagram-small">OWNER · AMOUNT · FEE CAP · ROOT</text>
+                <rect x="666" y="172" width="463" height="95" class="diagram-node dark-node" />
+                <text x="897" y="204" text-anchor="middle" class="diagram-title inverse">Order-specific Invoice PDA</text>
+                <text x="897" y="229" text-anchor="middle" class="diagram-label inverse">[ “obulus-invoice”, payer, invoiceHash ]</text>
+                <text x="897" y="250" text-anchor="middle" class="diagram-small inverse">NO PRIVATE KEY · UNIQUE NONCE · LOCKED STATE</text>
+                <rect x="666" y="295" width="137" height="55" class="diagram-note" /><text x="734" y="318" text-anchor="middle" class="diagram-label">Funded</text><text x="734" y="338" text-anchor="middle" class="diagram-small">USDC LOCKED</text>
+                <rect x="829" y="295" width="137" height="55" class="diagram-note" /><text x="897" y="318" text-anchor="middle" class="diagram-label">Delivered</text><text x="897" y="338" text-anchor="middle" class="diagram-small">HASH MATCH</text>
+                <rect x="992" y="295" width="137" height="55" class="diagram-note" /><text x="1060" y="318" text-anchor="middle" class="diagram-label">Settled</text><text x="1060" y="338" text-anchor="middle" class="diagram-small">ATOMIC SPLIT</text>
+
+                <rect x="1180" y="34" width="300" height="350" class="diagram-zone" />
+                <text x="1203" y="61" class="diagram-small">PROGRAM-ENFORCED OUTCOMES</text>
+                <rect x="1205" y="87" width="250" height="60" class="diagram-node dark-node" />
+                <text x="1330" y="112" text-anchor="middle" class="diagram-title inverse">Contributor Wallets</text>
+                <text x="1330" y="133" text-anchor="middle" class="diagram-small inverse">EXACT LINE-ITEM PAYOUTS</text>
+                <rect x="1205" y="171" width="250" height="60" class="diagram-node" />
+                <text x="1330" y="196" text-anchor="middle" class="diagram-title">Protocol Fee</text>
+                <text x="1330" y="217" text-anchor="middle" class="diagram-small">CAPPED IN SIGNED INVOICE</text>
+                <rect x="1205" y="255" width="250" height="60" class="diagram-node" />
+                <text x="1330" y="280" text-anchor="middle" class="diagram-title">Timeout Refund</text>
+                <text x="1330" y="301" text-anchor="middle" class="diagram-small">ONLY TO FIXED REFUND ADDRESS</text>
+                <rect x="1205" y="333" width="250" height="28" class="diagram-note" />
+                <text x="1330" y="352" text-anchor="middle" class="diagram-small">EXPLORER RECEIPT · CLIENT SDK</text>
+
+                <path d="M 241 211 H 306" fill="none" stroke="#171717" stroke-width="1.8" marker-end="url(#arrowProgramData)" /><text x="273" y="200" text-anchor="middle" class="diagram-small">1 QUERY</text>
+                <path d="M 452 147 V 163" fill="none" stroke="#171717" stroke-width="1.8" marker-end="url(#arrowProgramData)" />
+                <path d="M 314 201 H 267 V 120 H 249" fill="none" stroke="#969c99" stroke-width="1.5" stroke-dasharray="2 5" marker-end="url(#arrowProgramTrust)" /><text x="275" y="108" class="diagram-small">2 REVIEW</text>
+                <path d="M 241 120 H 630 V 107 H 658" fill="none" stroke="#5a6060" stroke-width="2.2" stroke-dasharray="7 5" marker-end="url(#arrowProgramPay)" /><text x="456" y="108" text-anchor="middle" class="diagram-small">3 EXACT INVOICE SIGNATURE</text>
+                <path d="M 884 107 H 901" fill="none" stroke="#171717" stroke-width="1.8" marker-end="url(#arrowProgramData)" />
+                <path d="M 897 141 V 164" fill="none" stroke="#5a6060" stroke-width="2.2" stroke-dasharray="7 5" marker-end="url(#arrowProgramPay)" />
+                <path d="M 897 267 V 287" fill="none" stroke="#5a6060" stroke-width="2.2" stroke-dasharray="7 5" marker-end="url(#arrowProgramPay)" />
+                <path d="M 803 322 H 821" fill="none" stroke="#171717" stroke-width="1.8" marker-end="url(#arrowProgramData)" /><path d="M 966 322 H 984" fill="none" stroke="#171717" stroke-width="1.8" marker-end="url(#arrowProgramData)" />
+                <path d="M 591 285 H 650 V 322 H 821" fill="none" stroke="#969c99" stroke-width="1.5" stroke-dasharray="2 5" marker-end="url(#arrowProgramTrust)" /><text x="623" y="275" class="diagram-small">4 DELIVERY PROOF</text>
+                <path d="M 1129 322 H 1170 V 117 H 1197" fill="none" stroke="#5a6060" stroke-width="2.2" stroke-dasharray="7 5" marker-end="url(#arrowProgramPay)" /><text x="1163" y="192" text-anchor="end" class="diagram-small">5 ATOMIC PAYOUT</text>
+                <path d="M 1060 350 V 370 H 1170 V 285 H 1197" fill="none" stroke="#969c99" stroke-width="1.5" stroke-dasharray="2 5" marker-end="url(#arrowProgramTrust)" />
+              </svg>
+            </div>
+            <div class="diagram-legend"><div class="legend-lines"><span class="legend-line">검색·청구 데이터</span><span class="legend-line payment">서명·자금 이동</span><span class="legend-line trust">검증·환불</span></div><span>PDA에는 개인키가 없고, Program만 서명된 조건 안에서 invoke_signed 가능</span></div>
+            <div class="source"><span>Native Solana Program·브라우저 instruction client 구현 · 구매자 서명·PDA·분할·분쟁·환불 불변조건 native test 완료</span><span>Mainnet 적용 전 SBF build·외부 감사·Devnet 통합·불변 배포 필요</span></div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 14 FRAUD CONTROLS -->
+      <section class="slide-shell">
+        <article class="slide">
+          <div class="content">
+            <div class="topline"><span class="section">Fraud controls / implemented code · audit required</span><span>14 / 18</span></div>
+            <h2 class="slide-title compact">청구서에 없는 금액·수취인·문서는 결제되지 않습니다.</h2>
+            <p class="subtitle">사람이 읽는 청구서와 Program이 검증하는 canonical invoice가 같은 해시를 공유하고, 결제 이후에는 전달된 문서 버전과 실제 정산 결과까지 하나의 영수증으로 묶입니다.</p>
+            <div class="fraud-layout">
+              <div class="contract-invoice">
+                <div class="receipt-head"><div><div class="card-kicker">Signed evidence invoice</div><h3>파리 평일 저녁 질문</h3></div><div class="receipt-total">₩60</div></div>
+                <dl class="receipt-rows">
+                  <div class="receipt-row"><dt>program / status</dt><dd>obulus_settlement_v1 · audit pending</dd></div>
+                  <div class="receipt-row"><dt>payer / signer</dt><dd>Buyer 7Hg…91K · exact ₩60 invoice</dd></div>
+                  <div class="receipt-row"><dt>query_hash</dt><dd>sha256(q_paris_weekday_2026)</dd></div>
+                  <div class="receipt-row"><dt>bundle_root</dt><dd>4 documents · bundle hash 94c1…a027</dd></div>
+                  <div class="receipt-row"><dt>line_items</dt><dd>doc hash + version + owner + ₩15 × 4</dd></div>
+                  <div class="receipt-row"><dt>protocol_fee</dt><dd>10% included · maximum fixed</dd></div>
+                  <div class="receipt-row"><dt>expiry / dispute window</dt><dd>delivery 10 min · review 5 min</dd></div>
+                  <div class="receipt-row"><dt>refund_address</dt><dd>same verified buyer wallet</dd></div>
+                  <div class="receipt-row"><dt>dispute_resolver</dt><dd>precommitted independent resolver</dd></div>
+                  <div class="receipt-row"><dt>invoice_hash</dt><dd>2e71…c90b · USER SIGNED</dd></div>
+                </dl>
+                <p class="receipt-foot"><strong>결제 후 영수증:</strong> Invoice PDA · transaction signature · finality · 각 owner 지급액 · 전달 시각 · content hash/version · consent version · citation ID.</p>
+              </div>
+              <div class="fraud-controls">
+                <div class="risk-list">
+                  <div class="risk-row"><span class="risk">SESSION THEFT</span><span class="control"><strong>로그인 세션만으로는 결제 불가</strong>구매자 지갑 또는 로컬 Pay.sh 결제 계정이 정확한 청구서가 들어 있는 트랜잭션에 서명해야 합니다.</span></div>
+                  <div class="risk-row"><span class="risk">INVOICE TAMPERING</span><span class="control"><strong>서버가 문서·가격을 바꾸면 해시 불일치</strong>Program이 signer·mint·총액·bundle root·수취인 split을 다시 검증합니다.</span></div>
+                  <div class="risk-row"><span class="risk">DOUBLE CHARGE</span><span class="control"><strong>주문별 PDA와 nonce로 한 번만 처리</strong>동일 invoiceHash의 중복 funding·settlement를 거부하고 idempotency를 유지합니다.</span></div>
+                  <div class="risk-row"><span class="risk">NO DELIVERY</span><span class="control"><strong>구매자 또는 로컬 Agent의 ACK 전에는 정산하지 않음</strong>전달 없이 만료된 주문은 청구서에 고정된 구매자 주소로만 환불합니다.</span></div>
+                  <div class="risk-row"><span class="risk">FALSE REFUND</span><span class="control"><strong>전달 후 자동 만료 환불을 금지</strong>5분 이의제기 시간이 지나면 정산되고, 분쟁은 미리 지정된 독립 resolver만 환불 승인할 수 있습니다.</span></div>
+                  <div class="risk-row"><span class="risk">FALSE / SPAM DATA</span><span class="control"><strong>결제 증명과 진실성 검증을 분리</strong>content hash·provenance·품질 gate·구매자 피드백·분쟁·평판 감쇠가 별도 방어합니다.</span></div>
+                </div>
+                <div class="invoice-states">
+                  <div class="invoice-state">CREATED<br />서명 대기</div>
+                  <div class="invoice-state">FUNDED<br />PDA 예치</div>
+                  <div class="invoice-state">DELIVERED<br />hash 확인</div>
+                  <div class="invoice-state">SETTLED<br />분할 지급</div>
+                  <div class="invoice-state branch">DISPUTED<br />지급 보류</div>
+                  <div class="invoice-state branch">REFUNDED<br />잔액 반환</div>
+                </div>
+              </div>
+            </div>
+            <div class="source"><span>개인 질문·원문·PII는 온체인에 올리지 않고 hash·금액·상태·최소 식별자만 기록</span><span>금융 안전은 Program · 데이터 품질은 provenance/quality/dispute 계층</span></div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 15 ARCHITECTURE -->
+      <section class="slide-shell">
+        <article class="slide diagram-slide">
+          <div class="content">
+            <div class="topline"><span class="section">Architecture / data, intelligence, settlement</span><span>15 / 18</span></div>
+            <h2 class="slide-title compact">개인 원문은 오프체인에, 판단 규칙은 결정론적 코어에, 지급 증명은 Solana에 둡니다.</h2>
+            <p class="subtitle">Cloudflare의 사용자 경험, Google Cloud의 Rust·Gemini·KMS, Solana의 문서 단위 정산을 하나의 검증 가능한 경로로 연결했습니다.</p>
+            <div class="original-diagram-wrap system-diagram-wrap" aria-label="Obolus 전체 기술 아키텍처">
+              <svg viewBox="0 0 1500 570" role="img" aria-labelledby="system-architecture-title">
+                <title id="system-architecture-title">사용자 인터페이스, Rust 코어, 인간 메모리 데이터, Gemini, Pay.sh와 Solana 정산을 연결한 Obolus 전체 구조</title>
+                <defs>
+                  <marker id="arrowData" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#171717" /></marker>
+                  <marker id="arrowPayment" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#5a6060" /></marker>
+                  <marker id="arrowTrust" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#969c99" /></marker>
+                </defs>
+
+                <rect x="18" y="55" width="205" height="448" class="diagram-zone" />
+                <text x="40" y="82" class="diagram-small">USERS &amp; AGENTS</text>
+                <rect x="42" y="105" width="157" height="58" class="diagram-node dark-node" /><text x="120" y="130" text-anchor="middle" class="diagram-title inverse">기업 구매자</text><text x="120" y="150" text-anchor="middle" class="diagram-small inverse">WEB CHAT</text>
+                <rect x="42" y="190" width="157" height="58" class="diagram-node" /><text x="120" y="215" text-anchor="middle" class="diagram-title">기여자</text><text x="120" y="235" text-anchor="middle" class="diagram-small">OPEN CALL · MEMORY</text>
+                <rect x="42" y="275" width="157" height="58" class="diagram-node" /><text x="120" y="300" text-anchor="middle" class="diagram-title">외부 AI Agent</text><text x="120" y="320" text-anchor="middle" class="diagram-small">CLI · MCP</text>
+                <rect x="42" y="360" width="157" height="58" class="diagram-node" /><text x="120" y="385" text-anchor="middle" class="diagram-title">지갑 경계</text><text x="120" y="405" text-anchor="middle" class="diagram-small">PHANTOM · LOCAL PAY.SH</text>
+                <rect x="42" y="445" width="157" height="38" class="diagram-note" /><text x="120" y="469" text-anchor="middle" class="diagram-small">RAW KEY NEVER ENTERS AI</text>
+
+                <rect x="245" y="28" width="955" height="500" class="diagram-zone" />
+                <text x="270" y="57" class="diagram-small">CLOUDFLARE EDGE + OBOLUS DOMAIN CORE / GOOGLE CLOUD</text>
+                <rect x="275" y="78" width="260" height="54" class="diagram-node" /><text x="405" y="102" text-anchor="middle" class="diagram-title">Cloudflare Pages · React</text><text x="405" y="121" text-anchor="middle" class="diagram-small">CHAT · DASHBOARD · MEMORY</text>
+                <rect x="565" y="78" width="260" height="54" class="diagram-node" /><text x="695" y="102" text-anchor="middle" class="diagram-title">CLI / MCP Tools</text><text x="695" y="121" text-anchor="middle" class="diagram-small">26 MARKETPLACE ACTIONS</text>
+                <rect x="855" y="78" width="315" height="54" class="diagram-node dark-node" /><text x="1012" y="102" text-anchor="middle" class="diagram-title inverse">Cloud Run · Rust / Axum API</text><text x="1012" y="121" text-anchor="middle" class="diagram-small inverse">SESSION · CAPABILITY · POLICY</text>
+
+                <rect x="275" y="160" width="565" height="151" class="diagram-zone dark-zone" />
+                <text x="298" y="184" class="diagram-small inverse">DETERMINISTIC QUERY + MARKETPLACE ORCHESTRATION</text>
+                <rect x="298" y="202" width="155" height="40" class="diagram-node" /><text x="375" y="227" text-anchor="middle" class="diagram-label">질문 구조화</text>
+                <rect x="470" y="202" width="155" height="40" class="diagram-node" /><text x="547" y="227" text-anchor="middle" class="diagram-label">Coverage HIT/MISS</text>
+                <rect x="642" y="202" width="175" height="40" class="diagram-node" /><text x="729" y="227" text-anchor="middle" class="diagram-label">Hybrid Ranker</text>
+                <rect x="298" y="255" width="155" height="40" class="diagram-node" /><text x="375" y="280" text-anchor="middle" class="diagram-label">예산·다양성 선택</text>
+                <rect x="470" y="255" width="155" height="40" class="diagram-node" /><text x="547" y="280" text-anchor="middle" class="diagram-label">Evidence Verify</text>
+                <rect x="642" y="255" width="175" height="40" class="diagram-node" /><text x="729" y="280" text-anchor="middle" class="diagram-label">Ingestion · 품질</text>
+
+                <rect x="870" y="160" width="300" height="151" class="diagram-zone" />
+                <text x="892" y="184" class="diagram-small">VERTEX AI / GEMINI</text>
+                <rect x="892" y="202" width="118" height="40" class="diagram-node" /><text x="951" y="227" text-anchor="middle" class="diagram-label">무료 Baseline</text>
+                <rect x="1023" y="202" width="125" height="40" class="diagram-node" /><text x="1085" y="227" text-anchor="middle" class="diagram-label">인터뷰 질문</text>
+                <rect x="892" y="255" width="256" height="40" class="diagram-node dark-node" /><text x="1020" y="280" text-anchor="middle" class="diagram-label inverse">Paid Evidence Synthesis</text>
+
+                <rect x="275" y="337" width="895" height="164" fill="#f7f7f5" stroke="#969c99" stroke-width="1.5" stroke-dasharray="7 5" rx="4" />
+                <text x="298" y="361" class="diagram-small">ENCRYPTED OFF-CHAIN HUMAN DATA + LEDGER</text>
+                <rect x="298" y="380" width="155" height="58" class="diagram-node" /><text x="375" y="404" text-anchor="middle" class="diagram-title">Metadata</text><text x="375" y="424" text-anchor="middle" class="diagram-small">FREE DISCOVERY</text>
+                <rect x="470" y="380" width="155" height="58" class="diagram-node dark-node" /><text x="547" y="404" text-anchor="middle" class="diagram-title inverse">Human Docs</text><text x="547" y="424" text-anchor="middle" class="diagram-small inverse">LOCKED PASSAGES</text>
+                <rect x="642" y="380" width="155" height="58" class="diagram-node" /><text x="719" y="404" text-anchor="middle" class="diagram-title">Memory Stream</text><text x="719" y="424" text-anchor="middle" class="diagram-small">OBSERVE · VERIFY · REFLECT</text>
+                <rect x="814" y="380" width="155" height="58" class="diagram-node" /><text x="891" y="404" text-anchor="middle" class="diagram-title">Evidence Graph</text><text x="891" y="424" text-anchor="middle" class="diagram-small">TRUST · OUTCOME</text>
+                <rect x="986" y="380" width="161" height="58" class="diagram-node" /><text x="1066" y="404" text-anchor="middle" class="diagram-title">Research Ledger</text><text x="1066" y="424" text-anchor="middle" class="diagram-small">JOB · QUOTE · RECEIPT</text>
+                <rect x="298" y="451" width="849" height="31" class="diagram-note" /><text x="722" y="472" text-anchor="middle" class="diagram-small">CONSENT VERSION · LOCK · ACCESS POLICY · CONTENT HASH · CORRECTION HISTORY · EARNINGS</text>
+
+                <rect x="1222" y="55" width="260" height="448" class="diagram-zone" />
+                <text x="1246" y="82" class="diagram-small">PAYMENT + SETTLEMENT</text>
+                <rect x="1247" y="105" width="210" height="54" class="diagram-node" /><text x="1352" y="129" text-anchor="middle" class="diagram-title">x402 Gateway</text><text x="1352" y="148" text-anchor="middle" class="diagram-small">EXACT CHALLENGE</text>
+                <rect x="1247" y="177" width="210" height="54" class="diagram-node" /><text x="1352" y="201" text-anchor="middle" class="diagram-title">Pay.sh / MPP</text><text x="1352" y="220" text-anchor="middle" class="diagram-small">PAYMENT + RECOVERY</text>
+                <rect x="1247" y="249" width="210" height="54" class="diagram-node dark-node" /><text x="1352" y="273" text-anchor="middle" class="diagram-title inverse">Cloud KMS</text><text x="1352" y="292" text-anchor="middle" class="diagram-small inverse">NON-EXPORTABLE SIGNER</text>
+                <rect x="1247" y="321" width="210" height="54" class="diagram-node" /><text x="1352" y="345" text-anchor="middle" class="diagram-title">Solana USDC</text><text x="1352" y="364" text-anchor="middle" class="diagram-small">DEVNET SETTLEMENT</text>
+                <rect x="1247" y="393" width="210" height="54" class="diagram-node dark-node" /><text x="1352" y="417" text-anchor="middle" class="diagram-title inverse">Contributor Wallet</text><text x="1352" y="436" text-anchor="middle" class="diagram-small inverse">90% OWNER PAYOUT</text>
+                <rect x="1247" y="461" width="210" height="27" class="diagram-note" /><text x="1352" y="479" text-anchor="middle" class="diagram-small">RECEIPT · REFUND · RECOVERY</text>
+
+                <path d="M 199 134 H 267" class="diagram-data-line" /><path d="M 199 304 H 557" class="diagram-data-line" /><path d="M 199 219 H 267 V 275 H 290" class="diagram-data-line" />
+                <path d="M 535 105 H 847" class="diagram-data-line" /><path d="M 825 105 H 847" class="diagram-data-line" /><path d="M 1012 132 V 152" class="diagram-data-line" />
+                <path d="M 840 235 H 862" class="diagram-data-line" /><path d="M 870 276 H 825" class="diagram-data-line" />
+                <path d="M 375 303 V 372" class="diagram-data-line" /><path d="M 547 303 V 372" class="diagram-data-line" /><path d="M 729 303 V 372" class="diagram-data-line" />
+                <path d="M 547 380 V 319 H 1020 V 303" class="diagram-data-line" /><path d="M 891 380 V 319 H 730 V 303" class="diagram-trust-line" />
+                <path d="M 1147 409 H 1214 V 204 H 1239" class="diagram-payment-line" /><path d="M 1352 231 V 241" class="diagram-payment-line" /><path d="M 1352 303 V 313" class="diagram-payment-line" /><path d="M 1352 375 V 385" class="diagram-payment-line" />
+                <path d="M 1247 475 H 1160 V 447 H 1147" class="diagram-trust-line" /><path d="M 199 389 H 1214 V 132 H 1239" class="diagram-payment-line" />
+              </svg>
+            </div>
+            <div class="diagram-legend"><div class="legend-lines"><span class="legend-line">질문·데이터</span><span class="legend-line payment">결제·정산</span><span class="legend-line trust">신뢰·복구</span></div><span>확률적 AI는 해석 · 결정론적 시스템은 동의·가격·지급을 집행</span></div>
+            <div class="source"><span>개인 원문은 결제 전 Gemini에 전달되지 않으며 온체인에 기록되지 않음</span><span>독립 근거·실제 결과 검증은 품질 고도화 로드맵</span></div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 16 AUTONOMY AND GCP -->
+      <section class="slide-shell">
+        <article class="slide">
+          <div class="content">
+            <div class="topline"><span class="section">AI autonomy / bounded multi-step agency</span><span>16 / 18</span></div>
+            <h2 class="slide-title compact">Gemini가 계획하고 도구를 고르되, 동의·가격·결제는 코드가 강제합니다.</h2>
+            <p class="subtitle">자율성은 “LLM이 모든 것을 한다”가 아니라, 확률적 해석과 결정론적 통제를 올바른 순서로 결합하는 데서 나옵니다.</p>
+            <div class="autonomy-layout">
+              <div class="agent-loop">
+                <div class="agent-step ai"><span class="n">01</span><strong>Gemini function call #1</strong><span>자연어 질문에서 지역·분야·대상·근거 수를 허용된 schema 안에서 계획합니다.</span></div>
+                <div class="agent-step"><span class="n">02</span><strong>Rust search tools</strong><span>원문 없이 필터링·랭킹·중복 제거·예산 최적화를 실행하고 HIT / PARTIAL / MISS를 계산합니다.</span></div>
+                <div class="agent-step ai"><span class="n">03</span><strong>Gemini function call #2</strong><span>aggregate coverage를 보고 구매 제안·부분 Open Call·무료 baseline·종료 중 허용된 다음 행동을 고릅니다.</span></div>
+                <div class="agent-step"><span class="n">04</span><strong>사용자 승인 + payment tools</strong><span>지출 제안은 정확한 문서 묶음과 최대 금액을 보여준 뒤 멈춥니다. 승인 이후에만 Pay.sh를 호출합니다.</span></div>
+                <div class="agent-step ai"><span class="n">05</span><strong>Paid evidence synthesis</strong><span>별도 Gemini 호출은 정산된 passage와 citation allowlist만 받아 합의·차이·한계를 작성합니다.</span></div>
+              </div>
+              <div class="gcp-stack">
+                <div class="gcp-summary"><div class="card-kicker">Equivalent autonomous decision structure</div><h3>A2A를 구현했다고 과장하지 않고, 두 단계 계획–도구 실행–재계획 루프로 자율적 의사결정을 증명합니다.</h3></div>
+                <div class="gcp-services">
+                  <div class="gcp-service"><b>Vertex AI / Gemini</b><span>계획, coverage 후속 판단, paid synthesis</span></div>
+                  <div class="gcp-service"><b>Cloud Run × 4</b><span>API, gateway, payment/recovery, protected Pay front</span></div>
+                  <div class="gcp-service"><b>Cloud SQL</b><span>memory, quote, ledger, dispute, idempotency</span></div>
+                  <div class="gcp-service"><b>Cloud KMS</b><span>외부 반출 불가 Ed25519 서비스 signer</span></div>
+                  <div class="gcp-service"><b>Cloud Tasks</b><span>instance loss 후에도 settlement delivery 재시도</span></div>
+                  <div class="gcp-service"><b>Secret Manager / IAM</b><span>서비스별 최소 권한과 비밀 범위 분리</span></div>
+                  <div class="gcp-service"><b>MCP · 26 tools</b><span>외부 Agent가 검색·견적·Open Call·memory 사용</span></div>
+                  <div class="gcp-service"><b>Fail-closed policies</b><span>citation·금액·수취인·URL 불일치 즉시 차단</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 17 MARKET & BUSINESS MODEL -->
+      <section class="slide-shell">
+        <article class="slide">
+          <div class="content">
+            <div class="topline"><span class="section">Market / transaction-led business model</span><span>17 / 18</span></div>
+            <h2 class="slide-title compact">큰 인사이트 시장에서 시작하지만, 수익은 구독이 아니라 근거 거래량에 비례합니다.</h2>
+            <p class="subtitle">초기에는 반복 질문이 많은 금융·소비재·F&amp;B 인사이트 팀의 실제 예산으로 좁은 기여자 집단을 먼저 구축합니다. 첫 프로젝트에서 만든 검증 DB가 이후 질문에서 재사용될수록 거래 원가는 낮아집니다.</p>
+            <div class="market-size-layout">
+              <div class="market-rings">
+                <div class="market-ring"><div><div class="ring-label">TAM</div><div class="ring-value">$142B</div><div class="ring-desc">전 세계 insights 산업<br />ESOMAR · 2023</div></div><span class="badge">SOURCE</span></div>
+                <div class="market-ring"><div><div class="ring-label">SAM</div><div class="ring-value">$29.1B</div><div class="ring-desc">미국 marketing research &amp; public opinion polling 매출<br />U.S. Census · 2022</div></div><span class="badge">SOURCE</span></div>
+                <div class="market-ring"><div><div class="ring-label">SOM</div><div class="ring-value">거래량 기반</div><div class="ring-desc">정액 계약 수가 아니라 하루 evidence open 수와 성공 정산 수수료로 측정</div></div><span class="badge invert">ASSUMPTION</span></div>
+              </div>
+              <div class="volume-model">
+                <div class="volume-head"><div class="card-kicker">Bottom-up protocol revenue · 검증 가정</div><h3>작은 단가 × Agent 규모가 사업의 핵심입니다.</h3></div>
+                <div class="volume-cases">
+                  <div class="volume-case"><div class="card-kicker">Milestone A</div><div class="case-value">연 ₩5.5억</div><div class="case-formula">100만 opens/일 × ₩15<br />× protocol 10% × 365일</div></div>
+                  <div class="volume-case"><div class="card-kicker">Milestone B</div><div class="case-value">연 ₩54.8억</div><div class="case-formula">1,000만 opens/일 × ₩15<br />× protocol 10% × 365일</div></div>
+                </div>
+                <div class="wedge"><strong>첫 PoC가 검증할 것:</strong> 공고 대비 검증 문서 생성률·첫 HIT까지 걸린 시간·질문당 비용·근거 재사용률·거짓/중복 차단률·소유자 수익. 위 계산은 매출 예측이 아니라 machine-scale economics를 보여주는 단위 모델입니다.</div>
+              </div>
+            </div>
+            <div class="source"><span>출처: <a href="https://community.esomar.org/knowledge-center/library?publication=3019">ESOMAR</a> · <a href="https://fred.stlouisfed.org/series/REVEF54191ALLEST">FRED / U.S. Census Bureau</a></span><span>환율·성장률·고객 수를 임의로 시장 수치에 포함하지 않음</span></div>
+          </div>
+        </article>
+      </section>
+
+      <!-- 18 FUTURE -->
+      <section class="slide-shell">
+        <article class="slide dark">
+          <div class="content">
+            <div class="topline"><span class="section">Future / the paid human web</span><span>18 / 18</span></div>
+            <h2 class="slide-title compact">공개 웹 다음에는, 허가하고 지불할 수 있는 인간 경험의 네트워크가 필요합니다.</h2>
+            <div class="future-layout">
+              <div class="future-thesis">
+                <p class="statement">웹은 공개 정보를 검색 가능하게 만들었습니다.<br /><br />Obolus는 아직 웹에 없던 인간의 경험을 <strong>검색·허가·결제 가능하게</strong> 만듭니다.</p>
+                <p class="closing">장기 해자는 체인 자체가 아닙니다. 시간이 지날수록 함께 쌓이는 인간 memory, 실제 질문 수요, 근거 관계, 유료 재사용, 구매 후 결과의 그래프입니다.</p>
+              </div>
+              <div class="roadmap">
+                <div class="roadmap-row"><span class="phase">NOW · DEVNET</span><div><h3>검색·메모리·결제·환불 기술 증명</h3><p>bounded Gemini loop, x402/Pay.sh, Devnet USDC, KMS, MCP</p></div><span class="badge invert state">IMPLEMENTED</span></div>
+                <div class="roadmap-row"><span class="phase">PILOT</span><div><h3>하나의 수요로 검증된 첫 DB 네트워크 구축</h3><p>기업 후원 Open Call, 100–300명 anchor cohort, 인터뷰 품질 검증, 결과 기반 calibration</p></div><span class="badge state">NEXT</span></div>
+                <div class="roadmap-row"><span class="phase">MAINNET</span><div><h3>상용 결제·규제·운영 안전성</h3><p>Mainnet USDC, HA DB, 키 회전, 모니터링, KYC/세무·개인정보 검토</p></div><span class="badge state">ROADMAP</span></div>
+                <div class="roadmap-row"><span class="phase">NETWORK</span><div><h3>Agent가 호출하는 글로벌 human evidence layer</h3><p>다수 데이터 제공자, 분야별 authority graph, machine-scale microsettlement</p></div><span class="badge state">VISION</span></div>
+              </div>
+            </div>
+            <div class="source"><span>Obolus · Human evidence infrastructure for AI decisions</span><span>Search is free. Human evidence is paid per open.</span></div>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <nav class="nav" aria-label="슬라이드 이동">
+      <button type="button" id="prev" aria-label="이전 슬라이드">←</button>
+      <div class="counter"><span id="current">01</span> / <span id="total">18</span></div>
+      <button type="button" id="next" aria-label="다음 슬라이드">→</button>
+      <button type="button" class="pdf" id="print">PDF</button>
+    </nav>
+
+    <script>
+      const deck = document.getElementById('deck')
+      const shells = [...document.querySelectorAll('.slide-shell')]
+      const current = document.getElementById('current')
+      const total = document.getElementById('total')
+      let index = 0
+
+      function fit() {
+        const scale = Math.min(window.innerWidth / 1600, window.innerHeight / 900)
+        document.documentElement.style.setProperty('--scale', String(scale))
+      }
+
+      function updateCounter() {
+        current.textContent = String(index + 1).padStart(2, '0')
+        total.textContent = String(shells.length).padStart(2, '0')
+      }
+
+      function go(nextIndex) {
+        index = Math.max(0, Math.min(shells.length - 1, nextIndex))
+        shells[index].scrollIntoView({ behavior: 'smooth', block: 'start' })
+        updateCounter()
+      }
+
+      document.getElementById('prev').addEventListener('click', () => go(index - 1))
+      document.getElementById('next').addEventListener('click', () => go(index + 1))
+      document.getElementById('print').addEventListener('click', () => window.print())
+
+      document.addEventListener('keydown', (event) => {
+        if (['ArrowRight', 'PageDown', ' '].includes(event.key)) { event.preventDefault(); go(index + 1) }
+        if (['ArrowLeft', 'PageUp'].includes(event.key)) { event.preventDefault(); go(index - 1) }
+        if (event.key === 'Home') { event.preventDefault(); go(0) }
+        if (event.key === 'End') { event.preventDefault(); go(shells.length - 1) }
+        if (event.key.toLowerCase() === 'p') window.print()
+      })
+
+      deck.addEventListener('scroll', () => {
+        const nearest = Math.round(deck.scrollTop / window.innerHeight)
+        if (nearest !== index && nearest >= 0 && nearest < shells.length) {
+          index = nearest
+          updateCounter()
+        }
+      }, { passive: true })
+
+      window.addEventListener('resize', fit)
+      fit()
+      updateCounter()
+    </script>
+  </body>
+</html>
