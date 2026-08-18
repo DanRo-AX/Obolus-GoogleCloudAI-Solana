@@ -553,39 +553,36 @@ export default function Memory() {
 
         {tab === 'answers' ? (
           <>
-            {/* Stat row — one hairline-divided container instead of three
-                stacked bordered cards, matching the Dashboard's quiet-mono-meta
-                + prominent-figure language. */}
-            <div className="grid grid-cols-1 divide-y divide-border rounded-[6px] border border-border bg-card sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-              <Stat
-                icon={<Coins className="size-3.5" />}
-                label={t('Earned to date')}
-                value={`₩${total.toLocaleString()}`}
-                sub={`${earnings?.eventCount ?? settled.length}${t(' payouts')}${earnings?.heldKrw ? ` · ₩${earnings.heldKrw.toLocaleString()}${t(' held 14 days')}` : ''}`}
-              />
-              <Stat
-                icon={<Sparkles className="size-3.5" />}
-                label={t('Earned via auto-match')}
-                value={`₩${autoEarned.toLocaleString()}`}
-                sub={`${total ? Math.round((autoEarned / total) * 100) : 0}%${t(' of your earnings')}`}
-              />
-              <Stat
-                icon={<Flame className="size-3.5" />}
-                label={t('Documents you wrote')}
-                value={`${settled.length}`}
-                sub={`${t('across')} ${shelves.length}${t(' shelves')}`}
-              />
-            </div>
+            {/* Overview — the three figures and the account lines beneath them
+                read as one open zone: whitespace between the figures, quiet
+                hairlines between the account rows, and no bordered boxes stacked
+                on each other. */}
+            <div>
+              <div className="grid grid-cols-1 gap-y-6 sm:grid-cols-3 sm:gap-x-8 sm:gap-y-0">
+                <Stat
+                  icon={<Coins className="size-3.5" />}
+                  label={t('Earned to date')}
+                  value={`₩${total.toLocaleString()}`}
+                  sub={`${earnings?.eventCount ?? settled.length}${t(' payouts')}${earnings?.heldKrw ? ` · ₩${earnings.heldKrw.toLocaleString()}${t(' held 14 days')}` : ''}`}
+                />
+                <Stat
+                  icon={<Sparkles className="size-3.5" />}
+                  label={t('Earned via auto-match')}
+                  value={`₩${autoEarned.toLocaleString()}`}
+                  sub={`${total ? Math.round((autoEarned / total) * 100) : 0}%${t(' of your earnings')}`}
+                />
+                <Stat
+                  icon={<Flame className="size-3.5" />}
+                  label={t('Documents you wrote')}
+                  value={`${settled.length}`}
+                  sub={`${t('across')} ${shelves.length}${t(' shelves')}`}
+                />
+              </div>
 
-            {/* Account status — balance and payout/wallet state used to be two
-                near-identical bordered cards stacked on top of each other; one
-                Banner with a hairline divide-y row per topic reads as a single
-                zone instead of a stack of duplicate boxes. */}
-            {balance || profile ? (
-              <Banner tone="neutral" className="overflow-hidden p-0">
-                <div className="divide-y divide-border/60">
+              {balance || profile ? (
+                <div className="mt-6 divide-y divide-border/60 border-t border-border/60">
                   {balance ? (
-                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
                       <span>{t('Off-chain call credit')} <strong className="text-foreground">₩{balance.availableKrw.toLocaleString()}</strong></span>
                       <span>{t('Reserved')} <strong className="text-foreground">₩{balance.reservedKrw.toLocaleString()}</strong></span>
                       <span>{t('Held 14 days')} <strong className="text-foreground">₩{balance.heldKrw.toLocaleString()}</strong></span>
@@ -604,7 +601,7 @@ export default function Memory() {
                   ) : null}
 
                   {profile ? (
-                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
                       <span className="flex items-center gap-1.5">
                         <Wallet className="size-3.5" />
                         {t('Payouts to')}{' '}
@@ -646,8 +643,8 @@ export default function Memory() {
                     </div>
                   ) : null}
                 </div>
-              </Banner>
-            ) : null}
+              ) : null}
+            </div>
 
             {earnings?.claimableKrw ? (
               <Banner tone="teal" className="px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
@@ -672,8 +669,10 @@ export default function Memory() {
               </Banner>
             ) : null}
 
-            {/* Auto-match — the line you leave in the water ------------------ */}
-            <Banner tone="neutral" className="flex flex-wrap items-center gap-4">
+            {/* Auto-match — the line you leave in the water. A hairline-topped
+                row rather than a boxed banner, so it flows on from the account
+                lines instead of reading as another stacked block. */}
+            <div className="flex flex-wrap items-center gap-4 border-t border-border/60 pt-6">
               <Switch
                 checked={autoMatch}
                 onCheckedChange={setAutoMatch}
@@ -688,7 +687,7 @@ export default function Memory() {
                     : t('Leave it on and SHELF quotes your documents the moment one fits a question — no open call, no waiting. USDC lands in your wallet each time someone opens one, with nothing new written.')}
                 </span>
               </div>
-            </Banner>
+            </div>
 
             {/* Shelf spread ------------------------------------------------ */}
             {shelves.length ? (
@@ -1038,7 +1037,7 @@ function Stat({
   sub: string
 }) {
   return (
-    <div className="px-4 py-3.5">
+    <div>
       <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
         {icon}
         {label}
