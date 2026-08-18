@@ -22,15 +22,12 @@ export function ThesisSection() {
         </p>
 
         <h2 className="mt-5 max-w-[38rem] text-balance font-display text-[30px] leading-[1.12] sm:max-w-[46rem] sm:text-[44px]">
-          {t('Every agent on the internet reads for free.')}
+          {t('Sold by the cigarette, not by the pack.')}
         </h2>
-        <p className="mt-4 max-w-[34rem] text-balance font-display text-[22px] leading-snug text-muted-foreground sm:text-[28px]">
-          {t('So nobody bothered writing down the part worth reading.')}
-        </p>
 
-        <p className="mt-6 max-w-2xl text-pretty text-[15px] leading-7 text-muted-foreground">
+        <p className="mt-6 max-w-2xl text-pretty text-[17px] leading-8 text-foreground/90">
           {t(
-            'Publishing a blog post is one thing. Writing down where you eat lunch on a Tuesday, what it cost, how long the queue was is another. Nobody ever had a reason to give that away.',
+            'What people know from living it has only ever sold whole — a panel study, a yearly pass, three hundred lives pressed into one report. Here the unit is one document, one open, one answer.',
           )}
         </p>
 
@@ -41,9 +38,9 @@ export function ThesisSection() {
                 but the pale one on purpose. */}
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-0 opacity-[0.08]"
+              className="pointer-events-none absolute inset-0 opacity-[0.16]"
               style={{
-                background: cardGradient('general model baseline'),
+                background: cardGradient('general model baseline', 'deep'),
                 WebkitMaskImage: WASH_MASK,
                 maskImage: WASH_MASK,
               }}
@@ -73,9 +70,9 @@ export function ThesisSection() {
                 stronger, differently-hued wash from the survey-card palette. */}
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-0 opacity-[0.16]"
+              className="pointer-events-none absolute inset-0 opacity-[0.34]"
               style={{
-                background: cardGradient('firsthand paris locals'),
+                background: cardGradient('firsthand paris locals', 'deep'),
                 WebkitMaskImage: WASH_MASK,
                 maskImage: WASH_MASK,
               }}
