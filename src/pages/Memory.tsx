@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { AuthUnavailable } from '@/components/AuthUnavailable'
 import { Avatar } from '@/components/Avatar'
+import { PrepaidTopUp } from '@/components/PrepaidTopUp'
 import { AvatarPicker } from '@/components/AvatarPicker'
 import { CategoryIcon } from '@/components/CategoryIcon'
 import { Button } from '@/components/ui/button'
@@ -648,6 +649,8 @@ export default function Memory() {
                 </div>
               </Banner>
             ) : null}
+
+            <PrepaidTopUp />
 
             {earnings?.claimableKrw ? (
               <Banner tone="teal" className="px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">

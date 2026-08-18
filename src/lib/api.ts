@@ -578,6 +578,42 @@ export function getPrepaidBalance(): Promise<PrepaidBalance> {
   return apiFetch('/api/v1/prepaid/balance')
 }
 
+export type PrepaidDepositReceipt = {
+  id: string
+  wallet: string
+  amountAtomic: string
+  availableAtomic: string
+  transactionSignature?: string
+}
+
+/**
+ * Standalone prepaid top-up credit.
+ *
+ * Drop-in client for a backend route that does NOT exist yet:
+ * `POST /api/v1/prepaid/deposits`. Today every credit to
+ * `prepaid_accounts.available_atomic` is welded to a payment-bundle purchase
+ * (credit_prepaid_deposit is only reachable from bundle settlement, which also
+ * reserves a research budget). A standalone "add N USDC, buy nothing" deposit
+ * needs a route that verifies a settled USDC transfer to the prepaid `payTo`
+ * and calls `credit_prepaid_deposit` WITHOUT the following
+ * `reserve_prepaid_budget`. Until that route ships, `depositPrepaidAtomic` in
+ * x402.ts is gated off and this is never called.
+ */
+export function creditPrepaidDeposit(
+  walletSessionToken: string,
+  amountAtomic: string,
+  transactionSignature?: string,
+): Promise<PrepaidDepositReceipt> {
+  return apiFetch('/api/v1/prepaid/deposits', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-openshelf-wallet-session': walletSessionToken,
+    },
+    body: JSON.stringify({ amountAtomic, transactionSignature }),
+  })
+}
+
 export function getPaymentBundleQuote(
   quoteId: string,
   queryAccessToken: string,

@@ -11,6 +11,7 @@ import { getBase58Decoder } from '@solana/kit'
 import {
   createPrepaidWalletSession,
   createWalletAuthChallenge,
+  creditPrepaidDeposit,
   getOpenCallFundingQuote,
   getPaymentBundleQuote,
   listOpenCalls,
@@ -58,6 +59,18 @@ const PENDING_OPEN_CALL_KEY = 'openshelf:pending-funded-open-call:v1'
 const PENDING_RESEARCH_KEY = 'openshelf:pending-research-job:v1'
 const DEFAULT_TOP_UP_ATOMIC = prepaidTopUpAtomic(import.meta.env.VITE_PREPAID_TOPUP_USDC)
 
+/** One USDC in atomic units (6 decimals). Top-up steps in whole-USDC amounts. */
+export const USDC_ATOMIC = 1_000_000
+
+/**
+ * Standalone top-up is gated OFF until the backend exposes a deposit route that
+ * credits `prepaid_accounts.available_atomic` without reserving a research
+ * budget (see creditPrepaidDeposit in api.ts). Flip VITE_PREPAID_DEPOSIT_ENABLED
+ * once that route ships; the helper below then works end-to-end unchanged.
+ */
+export const PREPAID_DEPOSIT_ENABLED =
+  import.meta.env.VITE_PREPAID_DEPOSIT_ENABLED === 'true'
+
 export class PaymentError extends Error {
   code: 'cancelled' | 'identity_mismatch' | 'failed'
 
@@ -73,6 +86,56 @@ export class PaymentError extends Error {
 export function explorerUrl(sig: string, network = 'devnet') {
   const cluster = network.includes('mainnet') ? '' : '?cluster=devnet'
   return `https://explorer.solana.com/tx/${sig}${cluster}`
+}
+
+export type PrepaidDepositResult = {
+  availableAtomic: string
+  amountAtomic: number
+  txSig?: string
+}
+
+/**
+ * Standalone USDC prepaid top-up — adds `amountAtomic` to the verified wallet's
+ * prepaid balance without opening any document.
+ *
+ * It deliberately reuses the SAME one-time spend-authorization signature and
+ * `/api/v1/prepaid/session` path the paid-open flow uses
+ * (`ensurePrepaidWalletSession`), so no wallet-signing logic is duplicated. The
+ * remaining step — verify a settled USDC transfer to the prepaid `payTo` and
+ * credit it WITHOUT reserving a research budget — needs a backend deposit route
+ * that does not exist yet (`credit_prepaid_deposit` is only reachable from
+ * bundle settlement today). The helper is therefore gated behind
+ * `PREPAID_DEPOSIT_ENABLED` and stays inert until `POST /api/v1/prepaid/deposits`
+ * ships; the UI disables the submit until then, so no request is ever sent to a
+ * missing endpoint.
+ */
+export async function depositPrepaidAtomic(amountAtomic: number): Promise<PrepaidDepositResult> {
+  if (!Number.isInteger(amountAtomic) || amountAtomic < USDC_ATOMIC) {
+    throw new PaymentError('Choose a top-up amount of at least 1 USDC.')
+  }
+  if (amountAtomic % USDC_ATOMIC !== 0) {
+    throw new PaymentError('Top-up amounts are whole USDC only.')
+  }
+  const provider = getPhantom()
+  if (!provider?.publicKey) {
+    throw new PaymentError('Connect your Phantom wallet before topping up.')
+  }
+  if (!PREPAID_DEPOSIT_ENABLED) {
+    throw new PaymentError(
+      'Standalone top-up is waiting on the prepaid deposit endpoint and is disabled until it ships.',
+    )
+  }
+  const wallet = provider.publicKey.toString()
+  // Reuse the exact prepaid spend-authorization + /api/v1/prepaid/session path.
+  const session = await ensurePrepaidWalletSession(provider, wallet)
+  // When the deposit route ships, sign a USDC transfer to session.payTo with the
+  // x402 ExactSvmScheme (as openOverX402 does) and pass its signature here.
+  const receipt = await creditPrepaidDeposit(session.token, amountAtomic.toString())
+  return {
+    availableAtomic: receipt.availableAtomic,
+    amountAtomic,
+    txSig: receipt.transactionSignature,
+  }
 }
 
 export async function openDocuments(req: OpenRequest): Promise<OpenResult> {
