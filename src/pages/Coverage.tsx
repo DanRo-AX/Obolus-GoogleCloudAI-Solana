@@ -59,7 +59,7 @@ export default function Coverage() {
 
   return (
     <div className="page-enter flex-1 overflow-y-auto">
-      <div className="space-y-8 p-4 sm:p-6">
+      <div className="mx-auto max-w-4xl space-y-8 p-4 sm:p-6">
         <section>
           <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
             <h1 className="font-sans text-base font-medium">{t('Thin shelves')}</h1>

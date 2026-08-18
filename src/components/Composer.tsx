@@ -37,6 +37,7 @@ export function Composer({
   const [household, setHousehold] = useState('')
   const [field, setField] = useState<CategoryId | ''>('')
   const ref = useRef<HTMLTextAreaElement>(null)
+  const composingRef = useRef(false)
   const navigate = useNavigate()
   const { createChat } = useUi()
   const t = useT()
@@ -103,7 +104,21 @@ export function Composer({
         autoFocus={autoFocus}
         value={value}
         onChange={(e) => setValue(e.target.value)}
+        onCompositionStart={() => {
+          composingRef.current = true
+        }}
+        onCompositionEnd={(e) => {
+          composingRef.current = false
+          // Commit the finalized value once the IME closes composition, so the
+          // controlled value ends the frame in sync with the DOM.
+          setValue(e.currentTarget.value)
+        }}
         onKeyDown={(e) => {
+          // The Enter that closes a Hangul composition arrives as an
+          // isComposing/229 keydown. Submitting there re-inserts the last
+          // syllable (안녕 → 안녕녕) and sends mid-composition — let the IME
+          // finish first, then a real Enter submits.
+          if (e.nativeEvent.isComposing || e.keyCode === 229) return
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault()
             submit()
