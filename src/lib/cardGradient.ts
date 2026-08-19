@@ -133,3 +133,76 @@ export function cardGradient(
     `linear-gradient(${angle}deg, color-mix(in oklab, ${c1} ${s.lin1}%, black), color-mix(in oklab, ${c2} ${s.lin2}%, white))`,
   ].join(', ')
 }
+
+/**
+ * POSITION-BASED "flow" banner — the dashboard survey grid's mode.
+ *
+ * `cardGradient(seed)` gives every question a FIXED colour hashed from its
+ * text. One card looks fine, but a full grid of independent hashes clashes —
+ * random neighbouring hues the founder called "정신 없다". `flowGradient(index)`
+ * throws the hash away: hue is driven purely by the card's position in the
+ * currently displayed list, so neighbours always share a nearby tone and the
+ * grid reads as one calm cohesive sweep instead of a jumble.
+ *
+ *   hue(index) = FLOW_BASE_HUE − index · FLOW_HUE_STEP
+ *
+ * The banners stay as RICH and smooth as the landing's `deep` cards — this is
+ * not a pale wash. The trick is oklch: chroma and lightness are pinned to one
+ * vivid, perceptually-even band, so every card is equally saturated and equally
+ * bright and ONLY the hue travels down the grid. A small per-card step (13°)
+ * keeps adjacent cards analogous; walking down, the tone drifts slowly from a
+ * rich indigo-violet through blue and teal toward green — a smooth spectral
+ * ribbon (sky → water → foliage), never a rainbow of clashing hues. Because the
+ * sweep is a function of display order, it stays cohesive under any sort
+ * (new / popular / pay / fit): re-sorting re-indexes the list and the gradient
+ * simply re-flows in the new order.
+ *
+ * Each card is still a real gradient banner — a soft top-left highlight and a
+ * deeper anchoring bottom-right corner over a diagonal — matching the landing's
+ * depth, just harmonised with its neighbours rather than fighting them. The
+ * within-card wash shifts by one full card-step, so the bottom tone of a card
+ * meets the top tone of the next and the grid connects seam-to-seam.
+ *
+ * This is intentionally separate from `cardGradient` so every landing-page
+ * caller — which relies on the vivid `deep` hashed look — is untouched.
+ */
+
+/** Top of the grid: a rich indigo-violet (oklch hue), near the landing violet. */
+const FLOW_BASE_HUE = 274
+/** Degrees of hue per card. Small, so any two adjacent cards stay analogous. */
+const FLOW_HUE_STEP = 13
+
+/** Wrap any hue into the [0, 360) range CSS expects. */
+function normHue(h: number): number {
+  return ((h % 360) + 360) % 360
+}
+
+/**
+ * Build the rich, position-driven banner for card `index` (0-based) in the
+ * current display order. Same index → same banner; neighbouring indices →
+ * neighbouring tones. oklch keeps every card equally vivid and bright, so the
+ * whole column reads as one smooth, saturated sweep.
+ */
+export function flowGradient(index: number): string {
+  const i = Number.isFinite(index) && index > 0 ? Math.floor(index) : 0
+  // Dominant hue for this card, plus companions shifted along the same
+  // direction the grid flows, so the wash inside one card connects to the next.
+  const h = normHue(FLOW_BASE_HUE - i * FLOW_HUE_STEP)
+  const hMid = normHue(FLOW_BASE_HUE - (i + 0.5) * FLOW_HUE_STEP)
+  const hFoot = normHue(FLOW_BASE_HUE - (i + 1) * FLOW_HUE_STEP)
+
+  // One vivid oklch band, shared by every card: even chroma + lightness so only
+  // hue travels down the grid. Rich like the landing's `deep`, not a pale tint.
+  const glow = `oklch(0.78 0.11 ${h})` // soft top-left highlight
+  const top = `oklch(0.66 0.165 ${h})`
+  const mid = `oklch(0.60 0.18 ${hMid})`
+  const foot = `oklch(0.5 0.17 ${hFoot})` // deeper anchoring corner, for depth
+
+  return [
+    // top-left highlight — the bright meeting point, keeps it from reading flat
+    `radial-gradient(120% 105% at 22% 14%, color-mix(in oklab, ${glow} 85%, transparent) 0%, transparent 60%)`,
+    // deeper bottom-right corner, mirroring the landing `deep` shaded anchor
+    `radial-gradient(120% 110% at 88% 100%, color-mix(in oklab, ${foot} 92%, black) 0%, transparent 66%)`,
+    `linear-gradient(146deg, ${top} 0%, ${mid} 55%, ${foot} 100%)`,
+  ].join(', ')
+}
