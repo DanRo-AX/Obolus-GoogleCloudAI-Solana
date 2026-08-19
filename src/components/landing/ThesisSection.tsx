@@ -13,23 +13,18 @@ import { cardGradient } from '@/lib/cardGradient'
 export function ThesisSection() {
   const t = useT()
   return (
-    <section className="border-t border-border px-4 py-20 sm:px-8 sm:py-28">
+    <section className="border-t border-border px-4 py-28 sm:px-8 sm:py-40">
       <div className="mx-auto max-w-[92rem]">
         {/* The thesis, centred — the page's one deliberate break from the
             left-aligned column, so the eye lands here before the comparison. */}
-        <div className="mx-auto max-w-3xl text-center">
-          <h2 className="text-balance font-display text-[30px] leading-[1.14] sm:text-[46px]">
+        <div className="mx-auto max-w-4xl text-center">
+          <h2 className="text-balance font-display text-[32px] leading-[1.06] tracking-[-0.01em] sm:text-[56px]">
             {t('Firsthand knowledge only sold in bulk. Here it sells one answer at a time.')}
           </h2>
-          <p className="mx-auto mt-6 max-w-2xl text-pretty text-[17px] leading-8 text-foreground/80">
-            {t(
-              'A panel of three hundred, a year-long subscription, one thick report — that used to be the smallest thing you could buy. Here the unit is a single document, a single open, a single answer. You pay only for the evidence you need, and the person who lived it is paid for it.',
-            )}
-          </p>
         </div>
 
         {/* The gap, shown: a dull generic answer beside a vivid human one. */}
-        <div className="mt-16 grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
+        <div className="mt-20 grid grid-cols-1 items-stretch gap-4 sm:mt-24 lg:grid-cols-2">
           {/* The general model — flat, grey, free. Deliberately no colour. */}
           <div className="flex flex-col rounded-lg border border-border bg-muted-2/30">
             <div className="flex items-baseline justify-between gap-3 px-6 pt-6 sm:px-8 sm:pt-8">

@@ -39,6 +39,28 @@
  * Obolus and SHELF stay in Latin script, always.
  */
 export const KO: Record<string, string> = {
+  // Landing refresh (2026-08): trimmed copy for the OpenAI-style minimal pass.
+  'Ask the people who lived it. Pay them by the answer.': '겪은 사람에게 묻고, 답 하나에 값을 치러요.',
+  'It opens a handful, not the index': '색인이 아니라 몇 건만',
+  'Search and ranking are free. You only pay to open a document.': '검색과 순위는 공짜예요. 문서를 열 때만 값을 내요.',
+  'Five people who lived it beat the average of everything.': '겪은 다섯 사람이 전체 평균을 이겨요.',
+  '₩5 to ₩25 to open one, fee included. No subscription, no minimum.': '한 건 ₩5~₩25, 수수료 포함. 구독도 최소 금액도 없어요.',
+  'One screen, one question. No panel to sit on.': '화면 하나, 질문 하나. 앉아 있을 패널은 없어요.',
+  'Your answer lands on your shelf and can be quoted again.': '답은 내 문서로 남고, 나중에 다시 인용돼요.',
+  '90% of every open settles to you in USDC on Solana.': '열기마다 90%가 솔라나 USDC로 정산돼요.',
+  'Open calls right now, by field. Pick one you have lived.': '분야별로 지금 열린 설문이에요. 겪은 분야를 골라요.',
+  'Amounts are what is still unclaimed on each call': '금액은 각 설문에 아직 안 받아 간 몫',
+  'So nobody is asked to. You pay only for what was opened.': '그래서 아무도 승인 안 해요. 열린 것에만 값을 내요.',
+  'A search that finds nothing costs nothing': '아무것도 못 찾은 검색은 공짜',
+  'Only the documents actually opened appear on the receipt.': '실제로 연 문서만 영수증에 올라와요.',
+  'The displayed won price is the whole price. Settlement moves in USDC on Solana.': '표시된 ₩ 가격이 전부예요. 정산은 솔라나 USDC로 움직여요.',
+  'The 10% fee is included in the price, never added at checkout.': '10% 수수료는 가격에 포함돼요. 결제 때 따로 안 붙어요.',
+  'What your day actually costs, and where it goes.': '하루가 실제로 얼마 드는지, 어디로 가는지.',
+  'The fields you have lived — work, family, health.': '겪어 본 분야 — 일, 가족, 건강.',
+  'Your name, face, or email — an asker sees a handle.': '이름, 얼굴, 이메일. 질문자는 활동명만 봐요.',
+  'Bank details, card numbers, or national ID.': '계좌 정보, 카드 번호, 주민번호.',
+  'Your seed phrase or authority over the rest of your wallet.': '시드 문구나 지갑의 나머지 권한.',
+
   'Lang': '언어',
   'Illustration': '예시',
   'example': '예시',
