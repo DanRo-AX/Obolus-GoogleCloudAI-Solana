@@ -18,13 +18,13 @@ import { cardGradient } from '@/lib/cardGradient'
 export function TwoSidesSection() {
   const t = useT()
   return (
-    <section className="border-t border-border px-4 py-20 sm:px-8 sm:py-28">
+    <section className="border-t border-border px-4 py-28 sm:px-8 sm:py-40">
       <div className="mx-auto max-w-[92rem]">
-        <h2 className="max-w-3xl text-balance font-display text-[32px] leading-[1.1] sm:text-[44px]">
+        <h2 className="max-w-4xl text-balance font-display text-[32px] leading-[1.05] tracking-[-0.01em] sm:text-[54px]">
           {t('One of you is searching. One of you has lived it.')}
         </h2>
 
-        <div className="mt-14 grid grid-cols-1 gap-12 lg:grid-cols-[1fr_auto_1fr] lg:gap-0">
+        <div className="mt-16 grid grid-cols-1 gap-12 sm:mt-24 lg:grid-cols-[1fr_auto_1fr] lg:gap-0">
           <Side
             side="asking"
             eyebrow="If you came to ask"
@@ -122,37 +122,29 @@ function Side({
 const ASKING = [
   {
     head: 'Ask in plain language',
-    body: 'Searching and ranking cost nothing. You only ever pay to open a document.',
+    body: 'Search and ranking are free. You only pay to open a document.',
   },
   {
-    head: 'SHELF opens a handful, not the index',
-    body: 'Five documents that lived it beat the average of everything. Blend it all and you are back to a generic answer.',
-  },
-  {
-    head: 'If nothing fits, it posts an open call',
-    body: 'A miss does not return “no results”. Name what one answer is worth and the call goes to people who would know.',
+    head: 'It opens a handful, not the index',
+    body: 'Five people who lived it beat the average of everything.',
   },
   {
     head: 'You pay per open, in won',
-    body: '₩5 to ₩25 to open one document. No subscription, no seat, no minimum. The displayed price already includes the 10% protocol fee.',
+    body: '₩5 to ₩25 to open one, fee included. No subscription, no minimum.',
   },
 ]
 
 const ANSWERING = [
   {
-    head: 'Say what you actually know',
-    body: 'Pick the fields you have lived. Calls in those fields sort to the top of your board.',
-  },
-  {
     head: 'Answer one question, not a form',
-    body: 'One screen, one question, a few warm-ups first. No forty-question form, no panel to sit on.',
+    body: 'One screen, one question. No panel to sit on.',
   },
   {
-    head: 'It stays yours and keeps working',
-    body: 'Your answer lands on your shelf as a document. SHELF can quote it later with no open call at all.',
+    head: 'It stays yours and keeps earning',
+    body: 'Your answer lands on your shelf and can be quoted again.',
   },
   {
     head: 'Money arrives without asking',
-    body: 'Every qualified open settles 90% of its ₩5 to ₩25 price to you. The 10% protocol fee funds payment, recovery, quality and network operations.',
+    body: '90% of every open settles to you in USDC on Solana.',
   },
 ]

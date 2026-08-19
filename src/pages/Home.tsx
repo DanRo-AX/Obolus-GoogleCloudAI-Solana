@@ -1,25 +1,22 @@
-import { FaqSection } from '@/components/FaqSection'
 import { FieldsSection } from '@/components/landing/FieldsSection'
 import { Hero } from '@/components/landing/Hero'
-import { NotASurveySection } from '@/components/landing/NotASurveySection'
 import { SettlementSection } from '@/components/landing/SettlementSection'
 import { SiteFooter } from '@/components/landing/SiteFooter'
 import { ThesisSection } from '@/components/landing/ThesisSection'
 import { TrustSection } from '@/components/landing/TrustSection'
 import { TwoSidesSection } from '@/components/landing/TwoSidesSection'
-import { HOME_FAQ } from '@/data/faq'
 
 /**
  * The landing.
  *
- * The previous version borrowed a numbered-section rail from the whitepaper,
- * which made a marketing page read like a spec and — more to the point — read
- * like the site it was cloned from. This one argues instead: state the gap,
- * split the market in two, name the category it will be filed under anyway,
- * show the live board, show the receipt, then state the terms.
+ * Earlier passes argued the product like a whitepaper — a numbered rail, a
+ * paragraph under every heading, a survey-comparison table, a full FAQ. It read
+ * like an essay. This one is a product landing: one confident line per section,
+ * a lot of air between them, and the few things worth looking at — the vivid
+ * comparison, the live board, the receipt — given room to be the focus.
  *
- * Each section carries its own layout rather than a shared frame, so scrolling
- * changes shape. Full-bleed rules and mono eyebrows are what hold it together.
+ * Each section carries its own layout so scrolling changes shape; a generous
+ * vertical cadence and full-bleed rules are what hold it together.
  */
 export default function Home() {
   return (
@@ -28,9 +25,8 @@ export default function Home() {
         <Hero />
         <ThesisSection />
         <TwoSidesSection />
-        <NotASurveySection />
 
-        <section className="border-t border-border py-20 sm:py-28">
+        <section className="border-t border-border py-28 sm:py-40">
           <div className="mx-auto max-w-[92rem]">
             <FieldsSection />
           </div>
@@ -38,13 +34,6 @@ export default function Home() {
 
         <SettlementSection />
         <TrustSection />
-
-        <div className="border-t border-border px-4 sm:px-8">
-          <div className="mx-auto max-w-[92rem]">
-            <FaqSection items={HOME_FAQ} className="px-0 py-20 sm:px-0" />
-          </div>
-        </div>
-
         <SiteFooter />
       </div>
     </div>

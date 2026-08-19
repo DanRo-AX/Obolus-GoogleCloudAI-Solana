@@ -12,34 +12,33 @@ import { useT } from '@/i18n'
  */
 
 const GIVE = [
-  'What your day actually costs, where it goes, what you gave up on.',
-  'The fields you have actually lived — work, family, health, whatever they are.',
+  'What your day actually costs, and where it goes.',
+  'The fields you have lived — work, family, health.',
   'A wallet address, so money has somewhere to land.',
-  'When you buy evidence, only the USDC you choose to deposit becomes withdrawable Obolus prepaid credit.',
 ]
 
 const NEVER = [
-  'Your name, your face, your email — an asker sees a handle and nothing else.',
-  'Bank details, card numbers, national ID. We never ask and never store them.',
-  'Your seed phrase, private key, token delegate, or authority over the rest of your wallet.',
+  'Your name, face, or email — an asker sees a handle.',
+  'Bank details, card numbers, or national ID.',
+  'Your seed phrase or authority over the rest of your wallet.',
 ]
 
 export function TrustSection() {
   const t = useT()
   return (
-    <section className="border-t border-border px-4 py-20 sm:px-8 sm:py-28">
+    <section className="border-t border-border px-4 py-28 sm:px-8 sm:py-40">
       <div className="mx-auto max-w-[92rem]">
         <p className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
           {t('The deal, in full')}
         </p>
 
-        <h2 className="mt-5 max-w-3xl text-balance font-display text-[32px] leading-[1.1] sm:text-[44px]">
+        <h2 className="mt-5 max-w-4xl text-balance font-display text-[32px] leading-[1.05] tracking-[-0.01em] sm:text-[54px]">
           {t(
             'You are writing down your life. Here is exactly what happens to it.',
           )}
         </h2>
 
-        <div className="mt-14 grid grid-cols-1 gap-12 lg:grid-cols-2 lg:gap-20">
+        <div className="mt-16 grid grid-cols-1 gap-12 sm:mt-24 lg:grid-cols-2 lg:gap-20">
           <div>
             <p className="font-mono text-[10px] uppercase tracking-[1.5px] text-foreground">
               {t('What you hand over')}

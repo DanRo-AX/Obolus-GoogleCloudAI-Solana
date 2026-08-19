@@ -35,16 +35,14 @@ export function FieldsSection() {
 
   return (
     <div className="px-4 sm:px-6">
-      <h2 className="max-w-3xl text-balance font-display text-[30px] leading-[1.15] font-medium sm:text-[38px]">
+      <h2 className="max-w-4xl text-balance font-display text-[32px] leading-[1.05] tracking-[-0.01em] font-medium sm:text-[52px]">
         {t('Somebody is already paying for what you know')}
       </h2>
-      <p className="mt-4 max-w-2xl text-pretty text-[15px] leading-7 text-muted-foreground">
-        {t(
-          'These are the open calls right now, by field. Pick a field you have actually lived and the money is on the other side of one honest answer. The answer lands on your shelf and earns again every time an asker pays to open it.',
-        )}
+      <p className="mt-5 max-w-xl text-pretty text-[17px] leading-8 text-muted-foreground">
+        {t('Open calls right now, by field. Pick one you have lived.')}
       </p>
 
-      <div className="mt-5 flex flex-wrap items-center gap-x-8 gap-y-2 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
+      <div className="mt-8 flex flex-wrap items-center gap-x-8 gap-y-2 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
         <span>
           <span className="tabular-nums text-foreground">{totalOpen}</span>
           {t(' open calls')}
@@ -57,7 +55,7 @@ export function FieldsSection() {
         </span>
       </div>
 
-      <div className="mt-8 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-10 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {rows.map((r) => (
           <Link
             key={r.id}
@@ -107,10 +105,8 @@ export function FieldsSection() {
         ))}
       </div>
 
-      <p className="mt-6 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-        {t(
-          'Amounts are what is still unclaimed on each call — price per answer × slots left',
-        )}
+      <p className="mt-8 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+        {t('Amounts are what is still unclaimed on each call')}
       </p>
     </div>
   )
