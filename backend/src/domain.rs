@@ -1563,6 +1563,29 @@ pub struct AuthResponse {
     pub wallet: Option<String>,
 }
 
+/// One page of a curated, read-only admin table view. The shape is generic on
+/// purpose — `columns` names the returned columns and each entry in `rows` is a
+/// positional array aligned to `columns` — so the frontend renders any curated
+/// table with a single component. Only non-sensitive columns are ever
+/// projected into this response (see `Store::admin_table_page`); credential,
+/// token, secret, and hash columns are excluded at the SQL layer.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminTablePage {
+    /// Stable slug of the table this page came from (e.g. `"users"`).
+    pub table: String,
+    /// Ordered, safe column names for the returned rows.
+    pub columns: Vec<String>,
+    /// Rows as positional cell arrays aligned to `columns`.
+    pub rows: Vec<Vec<serde_json::Value>>,
+    /// Page size actually applied after the hard cap.
+    pub limit: usize,
+    /// Row offset this page started at.
+    pub offset: usize,
+    /// Whether at least one more row exists past this page.
+    pub has_more: bool,
+}
+
 /// Session response intended for a local CLI/MCP client. The bearer token
 /// is returned only after Pay.sh proves local wallet ownership through SIWX.
 #[derive(Debug, Clone, Serialize)]

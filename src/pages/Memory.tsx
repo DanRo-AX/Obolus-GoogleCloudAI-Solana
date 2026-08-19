@@ -7,6 +7,7 @@ import {
   Loader2,
   Lock,
   ShieldAlert,
+  ShieldCheck,
   Sparkles,
   Star,
   Trash2,
@@ -357,6 +358,14 @@ export default function Memory() {
               )}
               {t('Export')}
             </Button>
+            {account?.role === 'admin' ? (
+              <Button asChild variant="mono" size="monoSm">
+                <Link to="/admin">
+                  <ShieldCheck className="size-3" />
+                  {t('Admin')}
+                </Link>
+              </Button>
+            ) : null}
             <Button asChild variant="monoGhost" size="monoSm">
               <Link to="/dashboard">{t('Browse open calls')}</Link>
             </Button>

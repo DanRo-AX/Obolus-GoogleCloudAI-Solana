@@ -10,6 +10,7 @@ import { AppLayout } from '@/components/AppLayout'
 import { Splash } from '@/components/Splash'
 import { TooltipProvider } from '@/components/ui/primitives'
 import { UiProvider } from '@/state/ui'
+const Admin = lazy(() => import('@/pages/Admin'))
 const AdminDisputes = lazy(() => import('@/pages/AdminDisputes'))
 const AdminOperations = lazy(() => import('@/pages/AdminOperations'))
 const Archive = lazy(() => import('@/pages/Archive'))
@@ -39,6 +40,7 @@ const TITLES: Record<string, string> = {
   '/terms': 'Terms · Obolus',
   '/privacy': 'Privacy · Obolus',
   '/login': 'Obolus',
+  '/admin': 'Admin · Obolus',
   '/admin/operations': 'Operations · Obolus',
 }
 
@@ -69,6 +71,7 @@ export default function App() {
                 <Route path="/memory" element={<Memory />} />
                 <Route path="/onboarding" element={<Onboarding />} />
                 <Route path="/answer/:orderId" element={<Survey />} />
+                <Route path="/admin" element={<Admin />} />
                 <Route path="/admin/disputes" element={<AdminDisputes />} />
                 <Route path="/admin/operations" element={<AdminOperations />} />
                 <Route path="/coverage" element={<Coverage />} />

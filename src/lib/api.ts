@@ -732,6 +732,38 @@ export function getAdminOperations(): Promise<AdminOperationsSnapshot> {
   return apiFetch('/api/v1/admin/operations')
 }
 
+/**
+ * One page of a curated, read-only admin table. The shape is generic — the
+ * backend only ever projects non-sensitive columns (credential, token, secret,
+ * and hash columns are redacted server-side) — so a single component renders
+ * every table. Each entry in `rows` is a positional array aligned to `columns`.
+ */
+export type AdminTablePage = {
+  table: string
+  columns: string[]
+  rows: (string | number | boolean | null)[][]
+  limit: number
+  offset: number
+  hasMore: boolean
+}
+
+/** Max rows a single admin table page will render/request. */
+export const ADMIN_TABLE_PAGE_SIZE = 25
+
+export function getAdminTable(
+  path: string,
+  offset = 0,
+  limit = ADMIN_TABLE_PAGE_SIZE,
+): Promise<AdminTablePage> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  })
+  return apiFetch(
+    `/api/v1/admin/tables/${encodeURIComponent(path)}?${params.toString()}`,
+  )
+}
+
 export function submitDocumentFeedback(
   queryId: string,
   handle: string,

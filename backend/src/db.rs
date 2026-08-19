@@ -465,6 +465,16 @@ pub trait FromCell: Sized {
     fn from_cell(cell: &Cell) -> Result<Self>;
 }
 
+/// Read a column without asserting its SQL type. Used by the admin table
+/// viewer, which renders whatever a curated projection returns as generic
+/// JSON, so it must accept text, integer, real, boolean, or null in the same
+/// position across rows.
+impl FromCell for Cell {
+    fn from_cell(cell: &Cell) -> Result<Self> {
+        Ok(cell.clone())
+    }
+}
+
 impl FromCell for String {
     fn from_cell(cell: &Cell) -> Result<Self> {
         match cell {

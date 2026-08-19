@@ -14,7 +14,8 @@ use thiserror::Error;
 use crate::{
     db::{self, Connection, OptionalExtension, Transaction},
     domain::{
-        AccountControls, AdminOperationsSnapshot, AiBaseline, AiBaselineDraft, AiLiquidityMetrics,
+        AccountControls, AdminOperationsSnapshot, AdminTablePage, AiBaseline, AiBaselineDraft,
+        AiLiquidityMetrics,
         AnswerIssue, BalanceSummary, BeginResearchPaymentRequest, BindPayShChallengesRequest,
         ChainSettlementReceipt, ChatAnswer, Citation, ClaimPaymentAttemptRequest,
         ContributorManifest, ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
@@ -200,6 +201,39 @@ pub enum AiGenerationClaim {
 #[derive(Clone)]
 pub struct Store {
     connection: Arc<Mutex<Connection>>,
+    /// Public Solana addresses whose signed-in sessions are treated as admin,
+    /// regardless of the persisted `users.role`. Baked-in by default (see
+    /// [`DEFAULT_ADMIN_WALLETS`]) so a deploy needs no env change; the
+    /// `OPENSHELF_ADMIN_WALLETS` environment variable overrides the list when
+    /// set. Held behind an `Arc` so cloning the `Store` stays cheap.
+    admin_wallets: Arc<Vec<String>>,
+}
+
+/// Wallets granted admin access with no env configuration. These are public
+/// Solana addresses (safe to commit); they carry no signing authority here —
+/// membership only elevates a session that has already proven ownership of the
+/// wallet through the normal sign-in flow.
+const DEFAULT_ADMIN_WALLETS: &[&str] = &[
+    "G74HqEPzpUd9nLhXpkWViQsWxK3PVnqzHHe6Q7mY8AAY",
+    "HZykqSgk8zxjfdqdZG5QEUVxanSJwPtvo7qaXL5ThMeH",
+];
+
+/// Resolve the admin wallet allowlist. `OPENSHELF_ADMIN_WALLETS` (comma
+/// separated) overrides the baked-in default when it is set to a non-empty
+/// value; otherwise the two [`DEFAULT_ADMIN_WALLETS`] apply. Blank entries are
+/// dropped so a stray trailing comma cannot admit the empty string.
+fn load_admin_wallets() -> Vec<String> {
+    match std::env::var("OPENSHELF_ADMIN_WALLETS") {
+        Ok(raw) if !raw.trim().is_empty() => raw
+            .split(',')
+            .map(|wallet| wallet.trim().to_owned())
+            .filter(|wallet| !wallet.is_empty())
+            .collect(),
+        _ => DEFAULT_ADMIN_WALLETS
+            .iter()
+            .map(|wallet| (*wallet).to_owned())
+            .collect(),
+    }
 }
 
 #[derive(Debug, Error)]
@@ -222,6 +256,135 @@ pub enum StoreError {
     RateLimited(String),
     #[error("document was not quoted for this query")]
     DocumentNotQuoted,
+}
+
+/// Hard cap on an admin table page, regardless of the requested `limit`.
+const ADMIN_TABLE_MAX_PAGE: usize = 100;
+
+/// Curated, read-only tables exposed through the admin table viewer. Each
+/// variant maps to a fixed table, an explicit safe-column projection, and a
+/// deterministic ordering. The projections deliberately omit every credential,
+/// token, secret, and hash column (e.g. `users.password_hash`,
+/// `settlements.transaction_signature`) so those values can never reach a
+/// response. The set of variants is the allowlist — an arbitrary table name
+/// can never be queried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdminTable {
+    Users,
+    Balances,
+    OpenCalls,
+    Settlements,
+    PrepaidAccounts,
+    DisputeEvents,
+}
+
+impl AdminTable {
+    /// Stable slug used both as the SQL table name and the `table` echoed back
+    /// to the client.
+    fn slug(self) -> &'static str {
+        match self {
+            Self::Users => "users",
+            Self::Balances => "balances",
+            Self::OpenCalls => "open_calls",
+            Self::Settlements => "settlements",
+            Self::PrepaidAccounts => "prepaid_accounts",
+            Self::DisputeEvents => "dispute_events",
+        }
+    }
+
+    /// The only columns ever read for this table. Sensitive columns are
+    /// intentionally absent: `users.password_hash`;
+    /// `settlements.transaction_signature` and `settlements.document_handles_json`;
+    /// and every `*token_hash`/secret column on adjacent tables (which are not
+    /// exposed at all).
+    fn columns(self) -> &'static [&'static str] {
+        match self {
+            Self::Users => &["id", "email", "role", "created_at", "deleted_at"],
+            Self::Balances => &[
+                "user_id",
+                "available_krw",
+                "reserved_krw",
+                "held_krw",
+                "updated_at",
+            ],
+            Self::OpenCalls => &[
+                "id",
+                "owner_id",
+                "question",
+                "unit_price_krw",
+                "target",
+                "answered",
+                "status",
+                "category",
+                "shelf",
+                "escrow_mode",
+                "escrow_remaining_krw",
+                "created_at",
+            ],
+            Self::Settlements => {
+                &["id", "query_id", "payer", "total_krw", "mode", "created_at"]
+            }
+            Self::PrepaidAccounts => &[
+                "wallet",
+                "pay_to",
+                "network",
+                "asset",
+                "available_atomic",
+                "total_deposited_atomic",
+                "updated_at",
+                "created_at",
+            ],
+            Self::DisputeEvents => &[
+                "user_id",
+                "memory_id",
+                "reason",
+                "status",
+                "reviewer_id",
+                "review_note",
+                "reviewed_at",
+                "created_at",
+            ],
+        }
+    }
+
+    /// Deterministic ordering so pagination is stable across pages.
+    fn order_by(self) -> &'static str {
+        match self {
+            Self::Users => "created_at DESC, id ASC",
+            Self::Balances => "updated_at DESC, user_id ASC",
+            Self::OpenCalls => "created_at DESC, id ASC",
+            Self::Settlements => "created_at DESC, id ASC",
+            Self::PrepaidAccounts => "created_at DESC, wallet ASC",
+            Self::DisputeEvents => "created_at DESC, user_id ASC",
+        }
+    }
+
+    fn select_sql(self) -> String {
+        // Every interpolated fragment is a compile-time constant from this
+        // enum — never user input — so this string carries no injection risk.
+        format!(
+            "SELECT {} FROM {} ORDER BY {} LIMIT ?1 OFFSET ?2",
+            self.columns().join(", "),
+            self.slug(),
+            self.order_by(),
+        )
+    }
+}
+
+/// Render a generic DB cell as JSON for the admin table viewer. Blob columns
+/// are never part of a curated projection; if one somehow appears it collapses
+/// to null rather than leaking raw bytes.
+fn admin_cell_to_json(cell: db::Cell) -> serde_json::Value {
+    match cell {
+        db::Cell::Null => serde_json::Value::Null,
+        db::Cell::Integer(value) => serde_json::Value::from(value),
+        db::Cell::Real(value) => serde_json::Number::from_f64(value)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        db::Cell::Bool(value) => serde_json::Value::Bool(value),
+        db::Cell::Text(value) => serde_json::Value::String(value),
+        db::Cell::Bytes(_) => serde_json::Value::Null,
+    }
 }
 
 #[derive(Debug)]
@@ -322,6 +485,7 @@ impl Store {
         connection.pragma_update(None, "synchronous", "NORMAL")?;
         let store = Self {
             connection: Arc::new(Mutex::new(connection)),
+            admin_wallets: Arc::new(load_admin_wallets()),
         };
         store.migrate()?;
         if seed_demo {
@@ -7761,21 +7925,104 @@ impl Store {
         })
     }
 
-    fn require_admin(&self, user_id: &str) -> Result<(), StoreError> {
-        let role = self
-            .connection()?
+    /// Whether a session belongs to an administrator. True when the persisted
+    /// `users.role` is `admin`, or when any wallet bound to the user is in the
+    /// admin allowlist (see [`load_admin_wallets`]). Unknown or soft-deleted
+    /// users are never admin. This is the single source of truth behind both
+    /// [`Store::require_admin`] and the `role` reported by
+    /// `GET /api/v1/auth/me`, so an allowlisted wallet needs no persisted role
+    /// write to reach every admin surface.
+    pub fn is_admin(&self, user_id: &str) -> Result<bool, StoreError> {
+        let connection = self.connection()?;
+        let role = connection
             .query_row(
                 "SELECT role FROM users WHERE id = ?1 AND deleted_at IS NULL",
                 [user_id],
                 |row| row.get::<_, String>(0),
             )
             .optional()?;
-        if role.as_deref() != Some("admin") {
-            return Err(StoreError::Unauthorized(
-                "administrator access is required".to_owned(),
-            ));
+        let Some(role) = role else {
+            // Unknown or soft-deleted user: never admin.
+            return Ok(false);
+        };
+        if role == "admin" {
+            return Ok(true);
         }
-        Ok(())
+        if self.admin_wallets.is_empty() {
+            return Ok(false);
+        }
+        let mut statement =
+            connection.prepare("SELECT wallet FROM wallet_identities WHERE user_id = ?1")?;
+        let wallets = statement
+            .query_map([user_id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(wallets.iter().any(|wallet| {
+            self.admin_wallets
+                .iter()
+                .any(|allowed| allowed == wallet.trim())
+        }))
+    }
+
+    fn require_admin(&self, user_id: &str) -> Result<(), StoreError> {
+        if self.is_admin(user_id)? {
+            Ok(())
+        } else {
+            Err(StoreError::Unauthorized(
+                "administrator access is required".to_owned(),
+            ))
+        }
+    }
+
+    /// One page of a curated, read-only admin table. Admin-gated through the
+    /// same allowlist/role gate as the rest of the console — non-admins get
+    /// `StoreError::Unauthorized`. `limit` is clamped to
+    /// `[1, ADMIN_TABLE_MAX_PAGE]`, and only the safe columns named by
+    /// [`AdminTable::columns`] are read, so no credential, token, secret, or
+    /// hash column can appear in the result.
+    pub fn admin_table_page(
+        &self,
+        user_id: &str,
+        table: AdminTable,
+        limit: usize,
+        offset: usize,
+    ) -> Result<AdminTablePage, StoreError> {
+        self.require_admin(user_id)?;
+        let limit = limit.clamp(1, ADMIN_TABLE_MAX_PAGE);
+        let columns = table.columns();
+        let column_count = columns.len();
+        let sql = table.select_sql();
+        // Fetch one extra row to learn whether a further page exists, without a
+        // second COUNT(*) query. `limit` is capped at 100, so `limit + 1` and
+        // its i64 conversion cannot overflow.
+        let probe = i64::try_from(limit + 1)
+            .map_err(|_| StoreError::Validation("page size is too large".to_owned()))?;
+        let offset_param = i64::try_from(offset)
+            .map_err(|_| StoreError::Validation("page offset is too large".to_owned()))?;
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(&sql)?;
+        let mut rows = statement
+            .query_map(params![probe, offset_param], |row| {
+                let mut cells = Vec::with_capacity(column_count);
+                for index in 0..column_count {
+                    cells.push(row.get::<_, db::Cell>(index)?);
+                }
+                Ok(cells)
+            })?
+            .collect::<Result<Vec<Vec<db::Cell>>, _>>()?;
+        let has_more = rows.len() > limit;
+        rows.truncate(limit);
+        let rows = rows
+            .into_iter()
+            .map(|cells| cells.into_iter().map(admin_cell_to_json).collect())
+            .collect();
+        Ok(AdminTablePage {
+            table: table.slug().to_owned(),
+            columns: columns.iter().map(|column| (*column).to_owned()).collect(),
+            rows,
+            limit,
+            offset,
+            has_more,
+        })
     }
 
     pub fn ai_liquidity_metrics(&self, user_id: &str) -> Result<AiLiquidityMetrics, StoreError> {
@@ -18687,10 +18934,10 @@ mod tests {
     };
 
     use super::{
-        AI_GENERATION_BUDGET_WINDOW_MS, AiArtifactMetadata, AiGenerationClaim, BASE64_STANDARD,
-        BUNDLE_FUNDING_AGENT_DIRECT, LOGIN_FAILURE_LIMIT, MAX_AVATAR_JSON_BYTES,
-        PayShDeliveryRequest, PaymentQuotePolicy, Store, StoreError, WALLET_CHALLENGE_LIMIT,
-        as_i64, as_u64, hex_digest, new_id, now_ms, siwx_message,
+        AI_GENERATION_BUDGET_WINDOW_MS, AdminTable, AiArtifactMetadata, AiGenerationClaim,
+        BASE64_STANDARD, BUNDLE_FUNDING_AGENT_DIRECT, DEFAULT_ADMIN_WALLETS, LOGIN_FAILURE_LIMIT,
+        MAX_AVATAR_JSON_BYTES, PayShDeliveryRequest, PaymentQuotePolicy, Store, StoreError,
+        WALLET_CHALLENGE_LIMIT, as_i64, as_u64, hex_digest, new_id, now_ms, siwx_message,
     };
 
     #[test]
@@ -18892,6 +19139,99 @@ mod tests {
 
     fn ensure_user(store: &Store, user_id: &str) {
         store.provision_user_for_test(user_id).unwrap();
+    }
+
+    #[test]
+    fn admin_allowlisted_wallet_is_admin_without_a_persisted_role_write() {
+        let store = Store::in_memory().unwrap();
+        ensure_user(&store, "wallet-admin");
+        // The user's persisted role stays 'user'; only the allowlisted wallet
+        // binding elevates the session.
+        store
+            .bind_wallet_identity("wallet-admin", DEFAULT_ADMIN_WALLETS[0])
+            .unwrap();
+
+        assert!(store.is_admin("wallet-admin").unwrap());
+        // require_admin passes for the allowlisted wallet, so the pre-existing
+        // operations console lights up for it (previously dark in prod).
+        assert!(store.admin_operations_snapshot("wallet-admin").is_ok());
+        // And the curated table viewer is reachable.
+        let page = store
+            .admin_table_page("wallet-admin", AdminTable::Users, 50, 0)
+            .unwrap();
+        assert!(!page.rows.is_empty());
+    }
+
+    #[test]
+    fn admin_table_page_serves_every_curated_table() {
+        let store = Store::in_memory().unwrap();
+        ensure_user(&store, "surveyor");
+        store.set_user_role("surveyor", "admin").unwrap();
+        // Each projection's SQL must be valid against the migrated schema; a
+        // wrong column name would fail here rather than in production.
+        for table in [
+            AdminTable::Users,
+            AdminTable::Balances,
+            AdminTable::OpenCalls,
+            AdminTable::Settlements,
+            AdminTable::PrepaidAccounts,
+            AdminTable::DisputeEvents,
+        ] {
+            let page = store.admin_table_page("surveyor", table, 10, 0).unwrap();
+            assert!(!page.columns.is_empty());
+            // Every row is aligned to the column header.
+            assert!(page.rows.iter().all(|row| row.len() == page.columns.len()));
+        }
+    }
+
+    #[test]
+    fn admin_table_page_rejects_non_admins() {
+        let store = Store::in_memory().unwrap();
+        ensure_user(&store, "plain-user");
+
+        assert!(!store.is_admin("plain-user").unwrap());
+        assert!(matches!(
+            store.admin_table_page("plain-user", AdminTable::Users, 50, 0),
+            Err(StoreError::Unauthorized(_))
+        ));
+        // An unknown user id is never admin either.
+        assert!(!store.is_admin("ghost").unwrap());
+    }
+
+    #[test]
+    fn admin_table_page_omits_sensitive_columns_and_caps_page_size() {
+        let store = Store::in_memory().unwrap();
+        ensure_user(&store, "table-admin");
+        store.set_user_role("table-admin", "admin").unwrap();
+
+        let page = store
+            .admin_table_page("table-admin", AdminTable::Users, 10_000, 0)
+            .unwrap();
+        assert_eq!(page.table, "users");
+        // The hard cap is applied even when a caller asks for more.
+        assert_eq!(page.limit, 100);
+        // The provisioned admin row is present.
+        assert!(!page.rows.is_empty());
+
+        // No secret/hash column is projected — not in the header, and not
+        // anywhere in the serialized payload (which also proves the
+        // 'test-only-hash' password value never leaks).
+        assert!(!page.columns.iter().any(|column| column == "password_hash"));
+        let serialized = serde_json::to_string(&page).unwrap();
+        assert!(!serialized.contains("password_hash"));
+        assert!(!serialized.contains("test-only-hash"));
+
+        // Settlements never expose the on-chain signature or the raw handles blob.
+        let settlements = store
+            .admin_table_page("table-admin", AdminTable::Settlements, 50, 0)
+            .unwrap();
+        assert!(
+            !settlements
+                .columns
+                .iter()
+                .any(|column| column == "transaction_signature"
+                    || column == "document_handles_json")
+        );
     }
 
     fn onboard(store: &Store, user_id: &str) {
