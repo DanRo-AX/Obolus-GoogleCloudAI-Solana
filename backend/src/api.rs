@@ -40,7 +40,8 @@ use crate::{
         PaymentProgress, PaymentQuote, PayoutClaim, PayoutClaimBacklog, PrepaidBalance,
         PrepaidWalletSession, PrepareDirectPayShPaymentRequest, PreparePayoutClaimRequest,
         PrepareResearchPaymentRequest, PublicDocument, PublicEvidenceRecord,
-        RecordChainSettlementRequest, RecoveredPaidDocument, RegisterRequest,
+        RecordChainSettlementRequest, RecordPrepaidDepositRequest, RecoveredPaidDocument,
+        RegisterRequest,
         ReleaseResearchPaymentRequest, ResearchJobPlan, ResearchJobStatus,
         ResearchPaymentReconciliation, ResetPasswordRequest, ResolveError, ResolveQuestionRequest,
         ResolveQuestionResponse, ReviewDisputeRequest, ReviewDocumentFeedbackRequest,
@@ -536,6 +537,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/prepaid/session", post(create_prepaid_session))
         .route("/api/v1/prepaid/balance", get(prepaid_balance))
+        .route("/api/v1/prepaid/deposits", post(record_prepaid_deposit))
         .route(
             "/api/v1/payment-bundles/{id}",
             get(payment_bundle_quote_for_payer),
@@ -1818,7 +1820,9 @@ async fn create_open_call(
         ));
     }
     let user = authenticated(&state, &headers)?;
-    let call = state.store.create_open_call(&user.id, &request)?;
+    let call = state
+        .store
+        .create_open_call(&user.id, &request, &state.payment_policy)?;
     AppState::dispatch_pending_emails(Arc::clone(&state));
     Ok((StatusCode::CREATED, Json(call)))
 }
@@ -2454,6 +2458,22 @@ async fn prepaid_balance(
                 .prepaid_balance(&user.id, &state.payment_policy)?,
         ),
     ))
+}
+
+/// Records a facilitator-attested prepaid USDC top-up. Gated with
+/// `require_internal` (Product Decision (e)): the pay.sh gateway posts here after
+/// it verifies the Phantom-signed transfer on-chain, matching every other
+/// chain-settlement record route. Idempotent by transaction signature.
+async fn record_prepaid_deposit(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<RecordPrepaidDepositRequest>,
+) -> Result<(HeaderMap, Json<PrepaidBalance>), ApiError> {
+    require_internal(&state, &headers)?;
+    let balance = state
+        .store
+        .record_prepaid_deposit(&request, &state.payment_policy)?;
+    Ok((private_no_store_headers(), Json(balance)))
 }
 
 async fn payment_bundle_quote_for_payer(
@@ -3992,7 +4012,10 @@ mod tests {
             serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
                 .unwrap();
         assert_eq!(body["user"]["email"], "buyer@example.com");
-        assert_eq!(body["balance"]["availableKrw"], 100_000);
+        // Pure web3 (Product Decision (a)): no signup credit — new accounts start
+        // at a zero internal balance.
+        assert_eq!(body["balance"]["availableKrw"], 0);
+        assert_eq!(body["balance"]["availableAtomic"], "0");
     }
 
     #[tokio::test]
@@ -5643,7 +5666,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_created_call_reserves_the_full_budget() {
+    async fn a_paid_open_call_requires_prepaid_usdc_and_never_touches_the_internal_pot() {
+        // Pure web3 (Product Decision (b)): a paid open call funds from real
+        // prepaid USDC. Without a prepaid balance the post fails cleanly (409,
+        // which the frontend turns into a "충전 필요" prompt) and the internal
+        // KRW pot is never used as a fallback.
         let app = demo_app();
         let cookie = register(&app, "escrow@example.com").await;
         let response = app
@@ -5667,7 +5694,8 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        // No KRW fallback: the internal pot stays at zero, nothing reserved.
         let response = app
             .oneshot(
                 Request::get("/api/v1/account/balance")
@@ -5680,8 +5708,52 @@ mod tests {
         let body: Value =
             serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
                 .unwrap();
-        assert_eq!(body["availableKrw"], 97_900);
-        assert_eq!(body["reservedKrw"], 2_100);
+        assert_eq!(body["availableKrw"], 0);
+        assert_eq!(body["reservedKrw"], 0);
+        assert_eq!(body["availableAtomic"], "0");
+        assert_eq!(body["reservedAtomic"], "0");
+    }
+
+    #[tokio::test]
+    async fn prepaid_deposit_route_is_internal_only() {
+        // Product Decision (e): the prepaid top-up route is posted by the pay.sh
+        // gateway after it verifies the transfer on-chain, so it is gated with
+        // require_internal — not a public user route.
+        let app = demo_app();
+        let body = json!({
+            "transactionSignature": "gateway-topup-sig-1",
+            "payer": "GatewayPayerWalletPlaceholder1111111111111",
+            "payTo": "GatewayReceiverPlaceholder11111111111111",
+            "network": "solana:devnet",
+            "asset": "usdc",
+            "amountAtomic": "5000000"
+        })
+        .to_string();
+        // Without the internal token, the route is rejected outright.
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/prepaid/deposits")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        // With the internal token the request clears the auth gate (it then fails
+        // on the demo policy's missing bundle receiver — a 409, never a 401).
+        let authorized = app
+            .oneshot(
+                Request::post("/api/v1/prepaid/deposits")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(super::INTERNAL_TOKEN_HEADER, super::DEFAULT_INTERNAL_TOKEN)
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(authorized.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -5696,8 +5768,10 @@ mod tests {
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
                         json!({
+                            // Pure web3: a free call needs no prepaid funding; the
+                            // paid-funding path is covered by the prepaid tests.
                             "question": "Which winter boots work for field research in Svalbard?",
-                            "unitPrice": 700,
+                            "unitPrice": 0,
                             "target": 1,
                             "chatId": "chat-survey-registration",
                             "shelf": "Svalbard field researchers",

@@ -20,6 +20,20 @@ use postgres::{Client, NoTls};
 
 use sha2::{Digest, Sha256};
 
+/// Shared payment policy for `create_open_call`. These races use zero-price
+/// calls, so no prepaid funding is drawn, but the store method still requires a
+/// policy since open calls are funded from prepaid USDC.
+fn open_call_policy() -> PaymentQuotePolicy {
+    PaymentQuotePolicy {
+        fallback_recipient: Some(bs58::encode([71_u8; 32]).into_string()),
+        bundle_recipient: Some(bs58::encode([72_u8; 32]).into_string()),
+        network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".to_owned(),
+        asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".to_owned(),
+        krw_per_usdc: 1_350,
+        ttl_ms: 300_000,
+    }
+}
+
 /// Exercises the production database engine with two independent application
 /// connections. SQLite's process mutex cannot prove these Cloud Run races.
 #[test]
@@ -1580,6 +1594,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
                 category: "travel".to_owned(),
                 filters: SearchFilters::default(),
             },
+            &open_call_policy(),
         )
         .expect("zero-price last-slot call should be created");
     drop(answer_setup);
@@ -1840,6 +1855,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
                 category: "travel".to_owned(),
                 filters: SearchFilters::default(),
             },
+            &open_call_policy(),
         )
         .expect("dispute-race call should be created");
     let voided = dispute_setup

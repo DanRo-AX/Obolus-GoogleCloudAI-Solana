@@ -29,7 +29,8 @@ use crate::{
         PaymentBundleSnapshot, PaymentDocumentProgress, PaymentDocumentSnapshot, PaymentProgress,
         PaymentQuote, PayoutClaim, PayoutClaimBacklog, PrepaidBalance, PrepaidWalletSession,
         PrepareDirectPayShPaymentRequest, PrepareResearchPaymentRequest, PublicDocument,
-        PublicEvidenceRecord, RecordChainSettlementRequest, RecoveredPaidDocument,
+        PublicEvidenceRecord, RecordChainSettlementRequest, RecordPrepaidDepositRequest,
+        RecoveredPaidDocument,
         ReleaseResearchPaymentRequest, ResearchJobPlan, ResearchJobStatus,
         ResearchPaymentReconciliation, ResolveQuestionResponse, ReviewDisputeRequest,
         ReviewDocumentFeedbackRequest, SearchFilters, Settlement, SettlementOperationsMetrics,
@@ -69,7 +70,12 @@ const MAX_AVATAR_JSON_BYTES: usize = 400_000;
 const PAYOUT_HOLD_MS: u64 = 14 * 24 * 60 * 60 * 1_000;
 const ANSWER_RESERVATION_TTL_MS: u64 = 10 * 60 * 1_000;
 const AGENT_MATCH_THRESHOLD: f32 = 0.82;
-const SIGNUP_CREDIT_KRW: u64 = 100_000;
+/// The pinned KRW→USDC rate for the internal (off-chain earnings) ledger and
+/// the one-time historical backfill. It mirrors `api.rs`'s `PAY_SH_KRW_PER_USDC`
+/// and the production `OPENSHELF_KRW_PER_USDC` guard. Pure-web3 re-denomination:
+/// the legacy `*_krw` columns stay as nullable legacy, and every runtime amount
+/// is now carried in USDC atomic units (6 decimals) converted at this rate.
+const KRW_PER_USDC_PINNED: u64 = 1_350;
 const LOGIN_FAILURE_WINDOW_MS: u64 = 15 * 60 * 1_000;
 const LOGIN_BLOCK_MS: u64 = 15 * 60 * 1_000;
 /// Wallet challenge creation and verification attempts allowed per wallet in
@@ -436,6 +442,9 @@ impl StoredCall {
             id: self.id.clone(),
             question: self.question.clone(),
             unit_price: self.unit_price,
+            unit_price_atomic: krw_to_atomic_pinned(self.unit_price)
+                .unwrap_or(0)
+                .to_string(),
             target: self.target,
             answered: self.answered,
             created_at: self.created_at,
@@ -584,22 +593,14 @@ impl Store {
                 "an account with this email already exists".to_owned(),
             ));
         }
+        // Pure web3 (Product Decision (a)): no signup credit. New accounts start
+        // at a zero internal balance and fund open calls with real prepaid USDC.
         transaction.execute(
             "INSERT INTO balances
-             (user_id, available_krw, reserved_krw, held_krw, updated_at)
-             VALUES (?1, ?2, 0, 0, ?3)",
-            params![id, as_i64(SIGNUP_CREDIT_KRW)?, as_i64(created_at)?],
-        )?;
-        transaction.execute(
-            "INSERT INTO funding_events
-             (id, user_id, kind, amount_krw, created_at)
-             VALUES (?1, ?2, 'sandbox_signup_credit', ?3, ?4)",
-            params![
-                new_id("fund"),
-                id,
-                as_i64(SIGNUP_CREDIT_KRW)?,
-                as_i64(created_at)?
-            ],
+             (user_id, available_krw, reserved_krw, held_krw,
+              available_atomic, reserved_atomic, held_atomic, updated_at)
+             VALUES (?1, 0, 0, 0, 0, 0, 0, ?2)",
+            params![id, as_i64(created_at)?],
         )?;
         transaction.commit()?;
         Ok(UserAccount {
@@ -1330,7 +1331,8 @@ impl Store {
         self.release_matured_holds(user_id)?;
         self.connection()?
             .query_row(
-                "SELECT available_krw, reserved_krw, held_krw
+                "SELECT available_krw, reserved_krw, held_krw,
+                        available_atomic, reserved_atomic, held_atomic
                  FROM balances WHERE user_id = ?1",
                 [user_id],
                 |row| {
@@ -1339,6 +1341,9 @@ impl Store {
                         available_krw: as_u64(row.get(0)?)?,
                         reserved_krw: as_u64(row.get(1)?)?,
                         held_krw: as_u64(row.get(2)?)?,
+                        available_atomic: as_u64(row.get(3)?)?.to_string(),
+                        reserved_atomic: as_u64(row.get(4)?)?.to_string(),
+                        held_atomic: as_u64(row.get(5)?)?.to_string(),
                     })
                 },
             )
@@ -1356,17 +1361,35 @@ impl Store {
             params![user_id, as_i64(now)?],
             |row| as_u64(row.get(0)?),
         )?;
+        let matured_atomic = transaction.query_row(
+            "SELECT COALESCE(CAST(SUM(amount_atomic) AS BIGINT), 0) FROM earning_events
+             WHERE author_id = ?1 AND payout_status = 'held' AND available_at <= ?2",
+            params![user_id, as_i64(now)?],
+            |row| as_u64(row.get(0)?),
+        )?;
         if matured > 0 {
             transaction.execute(
                 "UPDATE earning_events SET payout_status = 'accrued'
                  WHERE author_id = ?1 AND payout_status = 'held' AND available_at <= ?2",
                 params![user_id, as_i64(now)?],
             )?;
+            // Move both the legacy KRW and the USDC-atomic hold to available. The
+            // KRW guard stays authoritative; the atomic move is clamped so it can
+            // never dip below zero.
             let moved = transaction.execute(
                 "UPDATE balances SET held_krw = held_krw - ?1,
-                    available_krw = available_krw + ?1, updated_at = ?2
-                 WHERE user_id = ?3 AND held_krw >= ?1",
-                params![as_i64(matured)?, as_i64(now)?, user_id],
+                    available_krw = available_krw + ?1,
+                    held_atomic = CASE WHEN held_atomic >= ?2
+                        THEN held_atomic - ?2 ELSE 0 END,
+                    available_atomic = available_atomic + ?2,
+                    updated_at = ?3
+                 WHERE user_id = ?4 AND held_krw >= ?1",
+                params![
+                    as_i64(matured)?,
+                    as_i64(matured_atomic)?,
+                    as_i64(now)?,
+                    user_id
+                ],
             )?;
             if moved != 1 {
                 return Err(StoreError::Conflict(
@@ -1404,9 +1427,10 @@ impl Store {
         )?;
         connection.execute(
             "INSERT OR IGNORE INTO balances
-             (user_id, available_krw, reserved_krw, held_krw, updated_at)
-             VALUES (?1, ?2, 0, 0, ?3)",
-            params![user_id, as_i64(SIGNUP_CREDIT_KRW)?, as_i64(now)?],
+             (user_id, available_krw, reserved_krw, held_krw,
+              available_atomic, reserved_atomic, held_atomic, updated_at)
+             VALUES (?1, 0, 0, 0, 0, 0, 0, ?2)",
+            params![user_id, as_i64(now)?],
         )?;
         Ok(())
     }
@@ -2517,6 +2541,7 @@ impl Store {
         install_rollback_recovery_schema(connection)?;
         backfill_bundle_payout_claims(connection)?;
         backfill_content_hashes(connection)?;
+        backfill_usdc_atomic_columns(connection)?;
         seed_public_evidence(connection)?;
         transaction.commit()?;
         Ok(())
@@ -3535,6 +3560,7 @@ impl Store {
                 answer: answer.trim().to_owned(),
                 shelf,
                 earned: 0,
+                earned_atomic: "0".to_owned(),
                 created_at: now,
                 via: "Shelf starter".to_owned(),
                 status: "settled".to_owned(),
@@ -3992,6 +4018,7 @@ impl Store {
         &self,
         owner_id: &str,
         request: &CreateOpenCallRequest,
+        policy: &PaymentQuotePolicy,
     ) -> Result<OpenCall, StoreError> {
         validate_open_call(request)?;
         let id = new_id("call");
@@ -4002,33 +4029,112 @@ impl Store {
             .unit_price
             .checked_mul(request.target as u64)
             .ok_or_else(|| StoreError::Validation("open-call budget is too large".to_owned()))?;
+        // Pure web3 (Product Decision (b)): fund the escrow from real prepaid
+        // USDC, never the retired internal KRW pot. Keep the KRW amount only as
+        // a legacy display value (Decision (c)).
+        let unit_price_atomic = krw_to_atomic_pinned(request.unit_price)?;
+        let total_atomic = unit_price_atomic
+            .checked_mul(request.target as u64)
+            .ok_or_else(|| StoreError::Validation("open-call budget is too large".to_owned()))?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
-        let changed = transaction.execute(
-            "UPDATE balances
-             SET available_krw = available_krw - ?1,
-                 reserved_krw = reserved_krw + ?1,
-                 updated_at = ?2
-             WHERE user_id = ?3 AND available_krw >= ?1",
-            params![as_i64(total)?, as_i64(created_at)?, owner_id],
-        )?;
-        if changed == 0 {
-            return Err(StoreError::Conflict(
-                "insufficient sandbox balance to reserve this open call".to_owned(),
-            ));
-        }
+        // A funded call (positive unit price) reserves USDC from the owner's
+        // prepaid balance. A zero-price call carries no escrow.
+        let (escrow_mode, escrow_wallet, escrow_asset, escrow_network, payer_wallet): (
+            &str,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = if total_atomic > 0 {
+            validate_payment_policy(policy)?;
+            let pay_to = policy
+                .bundle_recipient
+                .as_deref()
+                .map(str::trim)
+                .filter(|wallet| valid_solana_address(wallet))
+                .ok_or_else(|| {
+                    StoreError::Conflict(
+                        "funded open calls require a configured OPENSHELF_BUNDLE_RECEIVER"
+                            .to_owned(),
+                    )
+                })?
+                .to_owned();
+            let network = policy.network.trim().to_owned();
+            let asset = policy.asset.trim().to_owned();
+            let wallet = user_prepaid_wallet(&transaction, owner_id.trim(), created_at)?
+                .ok_or_else(|| {
+                    StoreError::Conflict(
+                        "connect a Phantom wallet and top up USDC before funding an open call"
+                            .to_owned(),
+                    )
+                })?;
+            // Debit the prepaid balance. A short debit fails cleanly with no KRW
+            // fallback so the frontend can surface a "충전 필요" (top-up) prompt.
+            let debited = transaction.execute(
+                "UPDATE prepaid_accounts
+                 SET available_atomic = available_atomic - ?1, updated_at = ?2
+                 WHERE wallet = ?3 AND pay_to = ?4 AND network = ?5 AND asset = ?6
+                   AND available_atomic >= ?1",
+                params![
+                    as_i64(total_atomic)?,
+                    as_i64(created_at)?,
+                    wallet,
+                    pay_to,
+                    network,
+                    asset,
+                ],
+            )?;
+            if debited != 1 {
+                return Err(StoreError::Conflict(
+                    "prepaid USDC balance is insufficient to fund this open call; top up to continue"
+                        .to_owned(),
+                ));
+            }
+            let balance_after =
+                prepaid_available(&transaction, &wallet, &pay_to, &network, &asset)?;
+            transaction.execute(
+                "INSERT INTO prepaid_ledger
+                 (id, wallet, pay_to, network, asset, kind, reference_id,
+                  delta_atomic, balance_after_atomic, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'open_call_reservation', ?6, ?7, ?8, ?9)",
+                params![
+                    new_id("prepaid-ledger"),
+                    wallet,
+                    pay_to,
+                    network,
+                    asset,
+                    id,
+                    -(as_i64(total_atomic)?),
+                    as_i64(balance_after)?,
+                    as_i64(created_at)?,
+                ],
+            )?;
+            (
+                "prepaid",
+                Some(pay_to),
+                Some(asset),
+                Some(network),
+                Some(wallet),
+            )
+        } else {
+            ("sandbox", None, None, None, None)
+        };
         transaction.execute(
             "INSERT INTO open_calls
-             (id, owner_id, question, unit_price_krw, target, answered, created_at,
-              chat_id, shelf, category, status, escrow_remaining_krw,
-              target_age_band, target_region, target_household, target_field)
-             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7, ?8, ?9, 'open', ?10,
-                     ?11, ?12, ?13, ?14)",
+             (id, owner_id, question, unit_price_krw, unit_price_atomic, target, answered,
+              created_at, chat_id, shelf, category, status, escrow_remaining_krw,
+              target_age_band, target_region, target_household, target_field,
+              escrow_mode, escrow_wallet, escrow_asset, escrow_network,
+              escrow_total_atomic, escrow_remaining_atomic, payer_wallet)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9, ?10, 'open', ?11,
+                     ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?20, ?21)",
             params![
                 id,
                 owner_id,
                 request.question.trim(),
                 as_i64(request.unit_price)?,
+                as_i64(unit_price_atomic)?,
                 request.target as i64,
                 as_i64(created_at)?,
                 request.chat_id,
@@ -4039,17 +4145,24 @@ impl Store {
                 request.filters.region,
                 request.filters.household,
                 request.filters.field,
+                escrow_mode,
+                escrow_wallet,
+                escrow_asset,
+                escrow_network,
+                as_i64(total_atomic)?,
+                payer_wallet,
             ],
         )?;
         transaction.execute(
             "INSERT INTO funding_events
-             (id, user_id, open_call_id, kind, amount_krw, created_at)
-             VALUES (?1, ?2, ?3, 'open_call_reserved', ?4, ?5)",
+             (id, user_id, open_call_id, kind, amount_krw, amount_atomic, created_at)
+             VALUES (?1, ?2, ?3, 'open_call_reserved', ?4, ?5, ?6)",
             params![
                 new_id("fund"),
                 owner_id,
                 id,
                 as_i64(total)?,
+                as_i64(total_atomic)?,
                 as_i64(created_at)?
             ],
         )?;
@@ -4683,22 +4796,24 @@ impl Store {
         let call_id = new_id("call");
         let settlement_id = new_id("call-chain");
         let confirmed_at = now_ms();
+        let unit_price_atomic = krw_to_atomic_pinned(call_request.unit_price)?;
         transaction.execute(
             "INSERT INTO open_calls
-             (id, owner_id, question, unit_price_krw, target, answered, created_at,
-              chat_id, shelf, category, status, escrow_remaining_krw,
+             (id, owner_id, question, unit_price_krw, unit_price_atomic, target, answered,
+              created_at, chat_id, shelf, category, status, escrow_remaining_krw,
               target_age_band, target_region, target_household, target_field,
               escrow_mode, escrow_wallet, escrow_asset, escrow_network,
               escrow_total_atomic, escrow_remaining_atomic,
               funding_transaction_signature, payer_wallet)
-             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7, ?8, ?9, 'open', ?10,
-                     ?11, ?12, ?13, ?14, 'x402_solana_escrow', ?15, ?16, ?17,
-                     ?18, ?18, ?19, ?20)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9, ?10, 'open', ?11,
+                     ?12, ?13, ?14, ?15, 'x402_solana_escrow', ?16, ?17, ?18,
+                     ?19, ?19, ?20, ?21)",
             params![
                 call_id,
                 owner_id,
                 call_request.question.trim(),
                 as_i64(call_request.unit_price)?,
+                as_i64(unit_price_atomic)?,
                 call_request.target as i64,
                 as_i64(confirmed_at)?,
                 call_request.chat_id,
@@ -5315,27 +5430,25 @@ impl Store {
                     ));
                 }
             } else {
+                // Prepaid/sandbox settlement: draw down the USDC escrow. The
+                // escrow was funded from prepaid at creation (Decision (b)), so
+                // there is no internal reserved balance to release. The legacy
+                // KRW escrow decrement stays as the authoritative gate.
+                let answer_atomic = krw_to_atomic_pinned(call.unit_price)?;
                 let changed = transaction.execute(
                     "UPDATE open_calls SET answered = answered + 1,
                         escrow_remaining_krw = escrow_remaining_krw - unit_price_krw,
+                        escrow_remaining_atomic = CASE
+                            WHEN COALESCE(escrow_remaining_atomic, 0) >= ?2
+                            THEN escrow_remaining_atomic - ?2 ELSE 0 END,
                         status = CASE WHEN answered + 1 >= target THEN 'filled' ELSE status END
                      WHERE id = ?1 AND status = 'open' AND answered < target
                        AND escrow_remaining_krw >= unit_price_krw",
-                    [open_call_id],
+                    params![open_call_id, as_i64(answer_atomic)?],
                 )?;
                 if changed != 1 {
                     return Err(StoreError::Conflict(
                         "this open call is already full or its escrow is exhausted".to_owned(),
-                    ));
-                }
-                let changed = transaction.execute(
-                    "UPDATE balances SET reserved_krw = reserved_krw - ?1, updated_at = ?2
-                     WHERE user_id = ?3 AND reserved_krw >= ?1",
-                    params![as_i64(call.unit_price)?, as_i64(created_at)?, call.owner_id],
-                )?;
-                if changed == 0 && call.unit_price > 0 {
-                    return Err(StoreError::Conflict(
-                        "reserved balance is inconsistent with this call".to_owned(),
                     ));
                 }
             }
@@ -5481,6 +5594,9 @@ impl Store {
             answer: answer.trim().to_owned(),
             shelf: updated_call.shelf.clone(),
             earned: if voided { 0 } else { updated_call.unit_price },
+            earned_atomic: krw_to_atomic_pinned(if voided { 0 } else { updated_call.unit_price })
+                .unwrap_or(0)
+                .to_string(),
             created_at,
             via: "Open call".to_owned(),
             status: if voided { "voided" } else { "settled" }.to_owned(),
@@ -6517,22 +6633,13 @@ impl Store {
                     .to_owned(),
             ));
         }
+        // Pure web3 (Product Decision (a)): no signup credit for wallet signups.
         transaction.execute(
             "INSERT INTO balances
-             (user_id, available_krw, reserved_krw, held_krw, updated_at)
-             VALUES (?1, ?2, 0, 0, ?3)",
-            params![id, as_i64(SIGNUP_CREDIT_KRW)?, as_i64(created_at)?],
-        )?;
-        transaction.execute(
-            "INSERT INTO funding_events
-             (id, user_id, kind, amount_krw, created_at)
-             VALUES (?1, ?2, 'sandbox_signup_credit', ?3, ?4)",
-            params![
-                new_id("fund"),
-                id,
-                as_i64(SIGNUP_CREDIT_KRW)?,
-                as_i64(created_at)?
-            ],
+             (user_id, available_krw, reserved_krw, held_krw,
+              available_atomic, reserved_atomic, held_atomic, updated_at)
+             VALUES (?1, 0, 0, 0, 0, 0, 0, ?2)",
+            params![id, as_i64(created_at)?],
         )?;
         let bound = transaction.execute(
             "INSERT OR IGNORE INTO wallet_identities (wallet, user_id, created_at)
@@ -7085,7 +7192,7 @@ impl Store {
             "SELECT e.id, e.settlement_id, e.memory_id, d.handle, e.source,
                     e.amount_krw, e.recipient_wallet, e.payout_status,
                     e.available_at, e.created_at, pc.id, pc.status,
-                    pc.transaction_signature, pc.amount_atomic
+                    pc.transaction_signature, pc.amount_atomic, e.amount_atomic
              FROM earning_events e
              LEFT JOIN documents d ON d.id = e.document_id
              LEFT JOIN payout_claims pc ON pc.earning_event_id = e.id
@@ -7110,11 +7217,33 @@ impl Store {
             .iter()
             .filter(|event| event.payout_status == "claimable")
             .fold(0_u64, |sum, event| sum.saturating_add(event.amount_krw));
+        // USDC-atomic aggregates mirror the KRW ones, summed from the per-event
+        // atomic amounts (Product Decision (f): atomic values are JSON strings).
+        let event_atomic = |event: &EarningEvent| event.amount_atomic.parse::<u64>().unwrap_or(0);
+        let accrued_atomic = events
+            .iter()
+            .fold(0_u64, |sum, event| sum.saturating_add(event_atomic(event)));
+        let held_atomic = events
+            .iter()
+            .filter(|event| event.payout_status == "held")
+            .fold(0_u64, |sum, event| sum.saturating_add(event_atomic(event)));
+        let available_atomic = events
+            .iter()
+            .filter(|event| event.payout_status == "accrued")
+            .fold(0_u64, |sum, event| sum.saturating_add(event_atomic(event)));
+        let claimable_atomic = events
+            .iter()
+            .filter(|event| event.payout_status == "claimable")
+            .fold(0_u64, |sum, event| sum.saturating_add(event_atomic(event)));
         Ok(EarningsSummary {
             accrued_krw,
             held_krw,
             available_krw,
             claimable_krw,
+            accrued_atomic: accrued_atomic.to_string(),
+            held_atomic: held_atomic.to_string(),
+            available_atomic: available_atomic.to_string(),
+            claimable_atomic: claimable_atomic.to_string(),
             event_count: events.len(),
             events,
         })
@@ -7762,7 +7891,7 @@ impl Store {
         }
 
         if request.decision == "approved" {
-            let (memory, call_id, category, price, owner_id) = transaction
+            let (memory, call_id, category, price, _owner_id) = transaction
                 .query_row(
                     "SELECT m.id, m.question, m.answer, m.shelf, m.earned_krw,
                             m.created_at, m.via, m.status, m.flags_json, m.rating,
@@ -7896,27 +8025,22 @@ impl Store {
                     reviewed_at,
                 )?;
             } else {
+                // Prepaid/sandbox escrow draw-down; no internal reserve to release.
+                let answer_atomic = krw_to_atomic_pinned(price)?;
                 let changed = transaction.execute(
                     "UPDATE open_calls SET answered = answered + 1,
                         escrow_remaining_krw = escrow_remaining_krw - unit_price_krw,
+                        escrow_remaining_atomic = CASE
+                            WHEN COALESCE(escrow_remaining_atomic, 0) >= ?2
+                            THEN escrow_remaining_atomic - ?2 ELSE 0 END,
                         status = CASE WHEN answered + 1 >= target THEN 'filled' ELSE status END
                      WHERE id = ?1 AND status = 'open' AND answered < target
                        AND escrow_remaining_krw >= unit_price_krw",
-                    [call_id.as_str()],
+                    params![call_id.as_str(), as_i64(answer_atomic)?],
                 )?;
                 if changed != 1 {
                     return Err(StoreError::Conflict(
                         "the original call no longer has enough escrow".to_owned(),
-                    ));
-                }
-                let changed = transaction.execute(
-                    "UPDATE balances SET reserved_krw = reserved_krw - ?1, updated_at = ?2
-                     WHERE user_id = ?3 AND reserved_krw >= ?1",
-                    params![as_i64(price)?, as_i64(reviewed_at)?, owner_id],
-                )?;
-                if changed != 1 {
-                    return Err(StoreError::Conflict(
-                        "reserved balance is inconsistent with this call".to_owned(),
                     ));
                 }
                 insert_earning_event(
@@ -8361,6 +8485,13 @@ impl Store {
                     now,
                 )?;
             }
+        } else if call.escrow_mode == "prepaid" {
+            // Refund the unspent USDC escrow back to the owner's prepaid balance
+            // (Product Decision (b): open calls are funded from prepaid).
+            let refund_atomic = call.escrow_remaining_atomic.unwrap_or(0);
+            if refund_atomic > 0 {
+                refund_open_call_prepaid(&transaction, &call, refund_atomic, now)?;
+            }
         } else {
             let changed = transaction.execute(
                 "UPDATE balances
@@ -8720,6 +8851,61 @@ impl Store {
                 .collect::<Result<Vec<_>, _>>()?
         };
         let now = deletion_started_at;
+        // Return unspent USDC escrow from prepaid-funded open calls back to the
+        // owner's prepaid account first, so the sweep below withdraws it too.
+        let prepaid_call_refunds = {
+            let mut statement = transaction.prepare(
+                "SELECT id, COALESCE(escrow_remaining_atomic, 0), escrow_wallet,
+                        payer_wallet, escrow_asset, escrow_network
+                 FROM open_calls WHERE owner_id = ?1 AND status = 'open'
+                   AND escrow_mode = 'prepaid' AND COALESCE(escrow_remaining_atomic, 0) > 0",
+            )?;
+            statement
+                .query_map([user_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        as_u64(row.get(1)?)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        for (call_id, refund_atomic, pay_to, wallet, asset, network) in prepaid_call_refunds {
+            let (pay_to, wallet, asset, network) = match (pay_to, wallet, asset, network) {
+                (Some(pay_to), Some(wallet), Some(asset), Some(network)) => {
+                    (pay_to, wallet, asset, network)
+                }
+                _ => continue,
+            };
+            ensure_prepaid_account(&transaction, &wallet, &pay_to, &network, &asset, now)?;
+            transaction.execute(
+                "UPDATE prepaid_accounts
+                 SET available_atomic = available_atomic + ?1, updated_at = ?2
+                 WHERE wallet = ?3 AND pay_to = ?4 AND network = ?5 AND asset = ?6",
+                params![as_i64(refund_atomic)?, as_i64(now)?, wallet, pay_to, network, asset],
+            )?;
+            let balance = prepaid_available(&transaction, &wallet, &pay_to, &network, &asset)?;
+            transaction.execute(
+                "INSERT INTO prepaid_ledger
+                 (id, wallet, pay_to, network, asset, kind, reference_id,
+                  delta_atomic, balance_after_atomic, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'open_call_refund', ?6, ?7, ?8, ?9)",
+                params![
+                    new_id("prepaid-ledger"),
+                    wallet,
+                    pay_to,
+                    network,
+                    asset,
+                    call_id,
+                    as_i64(refund_atomic)?,
+                    as_i64(balance)?,
+                    as_i64(now)?,
+                ],
+            )?;
+        }
         for wallet in &prepaid_wallets {
             #[allow(clippy::type_complexity)]
             let prepaid = {
@@ -9729,6 +9915,7 @@ impl Store {
                 id: settlement_id,
                 count: 1,
                 total,
+                total_atomic: krw_to_atomic_pinned(total).unwrap_or(0).to_string(),
                 tx_sig: None,
                 network: Some(resource.network.clone()),
             },
@@ -9765,6 +9952,9 @@ impl Store {
                             id: row.get(0)?,
                             count: 1,
                             total: as_u64(row.get(1)?)?,
+                            total_atomic: krw_to_atomic_pinned(as_u64(row.get(1)?)?)
+                                .unwrap_or(0)
+                                .to_string(),
                             tx_sig: None,
                             network: Some(row.get(6)?),
                         },
@@ -10107,6 +10297,7 @@ impl Store {
                 id: settlement_id,
                 count: 1,
                 total,
+                total_atomic: krw_to_atomic_pinned(total).unwrap_or(0).to_string(),
                 tx_sig: None,
                 network: Some(resource.network.clone()),
             },
@@ -10867,6 +11058,108 @@ impl Store {
             pay_to: pay_to.to_owned(),
             network: policy.network.trim().to_owned(),
             asset: policy.asset.trim().to_owned(),
+            available_atomic: available_atomic.to_string(),
+        })
+    }
+
+    /// Records a facilitator-attested prepaid USDC top-up and credits the
+    /// prepaid balance standalone — decoupled from any purchase/settlement
+    /// (unlike the bundle-settlement path where `credit_prepaid_deposit` was
+    /// welded to a document purchase). Idempotent by transaction signature
+    /// (`prepaid_ledger UNIQUE(kind, reference_id)`): a duplicate POST returns
+    /// the existing balance without double-crediting, and a signature already
+    /// claimed by another settlement route is rejected as cross-route replay.
+    pub fn record_prepaid_deposit(
+        &self,
+        request: &RecordPrepaidDepositRequest,
+        policy: &PaymentQuotePolicy,
+    ) -> Result<PrepaidBalance, StoreError> {
+        validate_payment_policy(policy)?;
+        let bundle_receiver = policy
+            .bundle_recipient
+            .as_deref()
+            .map(str::trim)
+            .filter(|wallet| !wallet.is_empty())
+            .ok_or_else(|| {
+                StoreError::Conflict(
+                    "prepaid deposits require a configured OPENSHELF_BUNDLE_RECEIVER".to_owned(),
+                )
+            })?;
+        let signature = request.transaction_signature.trim();
+        let payer = request.payer.trim();
+        let pay_to = request.pay_to.trim();
+        let network = request.network.trim();
+        let asset = request.asset.trim();
+        if signature.is_empty() {
+            return Err(StoreError::Validation(
+                "transactionSignature is required".to_owned(),
+            ));
+        }
+        if !valid_solana_address(payer) {
+            return Err(StoreError::Validation(
+                "payer must be a valid Solana address".to_owned(),
+            ));
+        }
+        // Product Decision (e): validate the recipient/network/asset against the
+        // configured policy so a deposit cannot park credit under a rogue key.
+        if pay_to != bundle_receiver {
+            return Err(StoreError::Conflict(
+                "deposit recipient does not match the configured bundle receiver".to_owned(),
+            ));
+        }
+        if network != policy.network.trim() || asset != policy.asset.trim() {
+            return Err(StoreError::Conflict(
+                "deposit network or asset does not match the payment policy".to_owned(),
+            ));
+        }
+        let amount_atomic = request.amount_atomic.trim().parse::<u64>().map_err(|_| {
+            StoreError::Validation("amountAtomic must be an unsigned integer".to_owned())
+        })?;
+        if amount_atomic == 0 {
+            return Err(StoreError::Validation(
+                "amountAtomic must be greater than zero".to_owned(),
+            ));
+        }
+        if amount_atomic > MAX_PREPAID_TOP_UP_ATOMIC {
+            return Err(StoreError::Validation(
+                "amountAtomic exceeds the maximum prepaid top-up".to_owned(),
+            ));
+        }
+        let now = now_ms();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        // Idempotency: a duplicate deposit returns the existing balance rather
+        // than double-crediting. Checked before claiming so a replay does not
+        // trip the ledger's UNIQUE(kind, reference_id) as a hard error.
+        let already_recorded = transaction
+            .query_row(
+                "SELECT 1 FROM prepaid_ledger
+                 WHERE kind = 'deposit' AND reference_id = ?1",
+                [signature],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !already_recorded {
+            claim_chain_transaction(&transaction, signature, "prepaid_topup", signature)?;
+            credit_prepaid_deposit(
+                &transaction,
+                payer,
+                pay_to,
+                network,
+                asset,
+                signature,
+                amount_atomic,
+                now,
+            )?;
+        }
+        let available_atomic = prepaid_available(&transaction, payer, pay_to, network, asset)?;
+        transaction.commit()?;
+        Ok(PrepaidBalance {
+            wallet: payer.to_owned(),
+            pay_to: pay_to.to_owned(),
+            network: network.to_owned(),
+            asset: asset.to_owned(),
             available_atomic: available_atomic.to_string(),
         })
     }
@@ -13326,6 +13619,7 @@ impl Store {
                 id: settlement_id,
                 count: citations.len(),
                 total,
+                total_atomic: krw_to_atomic_pinned(total).unwrap_or(0).to_string(),
                 tx_sig: None,
                 network: Some("demo".to_owned()),
             },
@@ -13855,27 +14149,22 @@ fn settle_agent_match(
             ));
         }
     } else {
+        // Prepaid/sandbox escrow draw-down; no internal reserve to release.
+        let answer_atomic = krw_to_atomic_pinned(call.unit_price)?;
         let changed = transaction.execute(
             "UPDATE open_calls SET answered = answered + 1,
                 escrow_remaining_krw = escrow_remaining_krw - unit_price_krw,
+                escrow_remaining_atomic = CASE
+                    WHEN COALESCE(escrow_remaining_atomic, 0) >= ?2
+                    THEN escrow_remaining_atomic - ?2 ELSE 0 END,
                 status = CASE WHEN answered + 1 >= target THEN 'filled' ELSE status END
              WHERE id = ?1 AND status = 'open' AND answered < target
                AND escrow_remaining_krw >= unit_price_krw",
-            [call.id.as_str()],
+            params![call.id.as_str(), as_i64(answer_atomic)?],
         )?;
         if changed != 1 {
             return Err(StoreError::Conflict(
                 "this open call is already full or its escrow is exhausted".to_owned(),
-            ));
-        }
-        let changed = transaction.execute(
-            "UPDATE balances SET reserved_krw = reserved_krw - ?1, updated_at = ?2
-             WHERE user_id = ?3 AND reserved_krw >= ?1",
-            params![as_i64(call.unit_price)?, as_i64(created_at)?, call.owner_id],
-        )?;
-        if changed == 0 && call.unit_price > 0 {
-            return Err(StoreError::Conflict(
-                "reserved balance is inconsistent with this call".to_owned(),
             ));
         }
     }
@@ -14397,6 +14686,7 @@ fn earning_from_row(row: &db::Row) -> db::Result<EarningEvent> {
         document_handle: row.get(3)?,
         source: row.get(4)?,
         amount_krw: as_u64(row.get(5)?)?,
+        amount_atomic: as_u64(row.get(14)?)?.to_string(),
         recipient_wallet: row.get(6)?,
         payout_status,
         payout_claim_id: row.get(10)?,
@@ -14970,6 +15260,57 @@ fn release_prepaid_budget(
     Ok(())
 }
 
+/// Returns unspent USDC escrow from a cancelled/withdrawn prepaid-funded open
+/// call back to the owner's prepaid account. For a `prepaid` escrow the owner's
+/// wallet is stored in `payer_wallet` and the prepaid-account key
+/// (pay_to/asset/network) in the `escrow_*` columns.
+fn refund_open_call_prepaid(
+    connection: &Connection,
+    call: &StoredCall,
+    refund_atomic: u64,
+    now: u64,
+) -> Result<(), StoreError> {
+    let wallet = call.payer_wallet.as_deref().ok_or_else(|| {
+        StoreError::Conflict("prepaid-funded call has no funding wallet".to_owned())
+    })?;
+    let pay_to = call.escrow_wallet.as_deref().ok_or_else(|| {
+        StoreError::Conflict("prepaid-funded call has no recipient".to_owned())
+    })?;
+    let asset = call.escrow_asset.as_deref().ok_or_else(|| {
+        StoreError::Conflict("prepaid-funded call has no asset".to_owned())
+    })?;
+    let network = call.escrow_network.as_deref().ok_or_else(|| {
+        StoreError::Conflict("prepaid-funded call has no network".to_owned())
+    })?;
+    ensure_prepaid_account(connection, wallet, pay_to, network, asset, now)?;
+    let amount = as_i64(refund_atomic)?;
+    connection.execute(
+        "UPDATE prepaid_accounts
+         SET available_atomic = available_atomic + ?1, updated_at = ?2
+         WHERE wallet = ?3 AND pay_to = ?4 AND network = ?5 AND asset = ?6",
+        params![amount, as_i64(now)?, wallet, pay_to, network, asset],
+    )?;
+    let balance = prepaid_available(connection, wallet, pay_to, network, asset)?;
+    connection.execute(
+        "INSERT INTO prepaid_ledger
+         (id, wallet, pay_to, network, asset, kind, reference_id,
+          delta_atomic, balance_after_atomic, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'open_call_refund', ?6, ?7, ?8, ?9)",
+        params![
+            new_id("prepaid-ledger"),
+            wallet,
+            pay_to,
+            network,
+            asset,
+            call.id,
+            amount,
+            as_i64(balance)?,
+            as_i64(now)?,
+        ],
+    )?;
+    Ok(())
+}
+
 fn load_research_job_status(
     connection: &Connection,
     job_id: &str,
@@ -15231,11 +15572,14 @@ fn insert_earning_event(
     } else {
         created_at
     };
+    // Earnings accrue in USDC atomic (Product Decision (b): the internal ledger
+    // is USDC-denominated) with the legacy KRW written in parallel (Decision (c)).
+    let amount_atomic = krw_to_atomic_pinned(amount_krw)?;
     transaction.execute(
         "INSERT INTO earning_events
          (id, settlement_id, memory_id, document_id, author_id, source, amount_krw,
-          recipient_wallet, payout_status, available_at, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+          amount_atomic, recipient_wallet, payout_status, available_at, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             new_id("earning"),
             settlement_id,
@@ -15244,6 +15588,7 @@ fn insert_earning_event(
             author_id,
             source,
             as_i64(amount_krw)?,
+            as_i64(amount_atomic)?,
             recipient_wallet,
             if held { "held" } else { "accrued" },
             as_i64(available_at)?,
@@ -15252,21 +15597,29 @@ fn insert_earning_event(
     )?;
     transaction.execute(
         if held {
-            "UPDATE balances SET held_krw = held_krw + ?1, updated_at = ?2 WHERE user_id = ?3"
+            "UPDATE balances SET held_krw = held_krw + ?1, held_atomic = held_atomic + ?2,
+                 updated_at = ?3 WHERE user_id = ?4"
         } else {
-            "UPDATE balances SET available_krw = available_krw + ?1, updated_at = ?2 WHERE user_id = ?3"
+            "UPDATE balances SET available_krw = available_krw + ?1,
+                 available_atomic = available_atomic + ?2, updated_at = ?3 WHERE user_id = ?4"
         },
-        params![as_i64(amount_krw)?, as_i64(created_at)?, author_id],
+        params![
+            as_i64(amount_krw)?,
+            as_i64(amount_atomic)?,
+            as_i64(created_at)?,
+            author_id
+        ],
     )?;
     transaction.execute(
         "INSERT INTO funding_events
-         (id, user_id, open_call_id, kind, amount_krw, created_at)
-         VALUES (?1, ?2, NULL, ?3, ?4, ?5)",
+         (id, user_id, open_call_id, kind, amount_krw, amount_atomic, created_at)
+         VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6)",
         params![
             new_id("fund"),
             author_id,
             format!("earning_{source}"),
             as_i64(amount_krw)?,
+            as_i64(amount_atomic)?,
             as_i64(created_at)?,
         ],
     )?;
@@ -15287,8 +15640,8 @@ fn insert_onchain_earning_event(
     transaction.execute(
         "INSERT INTO earning_events
          (id, settlement_id, memory_id, document_id, author_id, source, amount_krw,
-          recipient_wallet, payout_status, available_at, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'document_open', ?6, ?7, 'onchain', ?8, ?8)",
+          amount_atomic, recipient_wallet, payout_status, available_at, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'document_open', ?6, ?7, ?8, 'onchain', ?9, ?9)",
         params![
             new_id("earning"),
             settlement_id,
@@ -15296,6 +15649,7 @@ fn insert_onchain_earning_event(
             document_id,
             author_id,
             as_i64(amount_krw)?,
+            as_i64(krw_to_atomic_pinned(amount_krw)?)?,
             recipient_wallet,
             as_i64(created_at)?,
         ],
@@ -15317,15 +15671,16 @@ fn insert_open_call_onchain_earning_event(
     connection.execute(
         "INSERT INTO earning_events
          (id, settlement_id, memory_id, document_id, author_id, source, amount_krw,
-          recipient_wallet, payout_status, available_at, created_at)
-         VALUES (?1, NULL, ?2, ?3, ?4, 'open_call_onchain', ?5, ?6,
-                 'claimable', ?7, ?7)",
+          amount_atomic, recipient_wallet, payout_status, available_at, created_at)
+         VALUES (?1, NULL, ?2, ?3, ?4, 'open_call_onchain', ?5, ?6, ?7,
+                 'claimable', ?8, ?8)",
         params![
             earning_id,
             memory_id,
             document_id,
             author_id,
             as_i64(amount_krw)?,
+            as_i64(krw_to_atomic_pinned(amount_krw)?)?,
             recipient_wallet,
             as_i64(created_at)?,
         ],
@@ -17959,6 +18314,9 @@ fn memory_from_row(row: &db::Row) -> db::Result<MemoryEntry> {
         answer: row.get(2)?,
         shelf: row.get(3)?,
         earned: as_u64(row.get(4)?)?,
+        earned_atomic: krw_to_atomic_pinned(as_u64(row.get(4)?)?)
+            .unwrap_or(0)
+            .to_string(),
         created_at: as_u64(row.get(5)?)?,
         via: row.get(6)?,
         status: row.get(7)?,
@@ -18381,6 +18739,18 @@ fn krw_to_usdc_atomic(amount_krw: u64, krw_per_usdc: u64) -> Result<u64, StoreEr
     let atomic = numerator.div_ceil(denominator).max(1);
     u64::try_from(atomic)
         .map_err(|_| StoreError::Validation("payment amount is too large".to_owned()))
+}
+
+/// Runtime KRW→USDC-atomic conversion at the pinned internal rate. `div_ceil`
+/// (Product Decision (d)) so live quoting stays consistent with
+/// `krw_to_usdc_atomic`; the one-time migration backfill uses half-up rounding
+/// instead. A zero-KRW amount converts to zero atomic (a free open call has no
+/// escrow), unlike `krw_to_usdc_atomic` which floors quotes at 1.
+pub(crate) fn krw_to_atomic_pinned(amount_krw: u64) -> Result<u64, StoreError> {
+    if amount_krw == 0 {
+        return Ok(0);
+    }
+    krw_to_usdc_atomic(amount_krw, KRW_PER_USDC_PINNED)
 }
 
 fn load_bundle_invoice_documents(
@@ -19141,28 +19511,45 @@ fn seed_open_calls(transaction: &Transaction<'_>) -> Result<(), StoreError> {
         ),
     ];
     for (id, category, shelf, question, price, target, answered, aged_hours) in seeds {
+        let unit_price_atomic = krw_to_atomic_pinned(price)?;
         transaction.execute(
             "INSERT OR IGNORE INTO open_calls
-             (id, owner_id, question, unit_price_krw, target, answered, created_at,
-              chat_id, shelf, category, status, escrow_remaining_krw)
-             VALUES (?1, 'seed-buyer', ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8, 'open', ?9)",
+             (id, owner_id, question, unit_price_krw, unit_price_atomic, target, answered,
+              created_at, chat_id, shelf, category, status, escrow_remaining_krw,
+              escrow_mode, escrow_total_atomic, escrow_remaining_atomic)
+             VALUES (?1, 'seed-buyer', ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9, 'open', ?10,
+                     'sandbox', ?11, ?12)",
             params![
                 id,
                 question,
                 price,
+                as_i64(unit_price_atomic)?,
                 target,
                 answered,
                 as_i64(now_ms().saturating_sub(aged_hours * 3_600_000))?,
                 shelf,
                 category,
                 price * (target - answered),
+                as_i64(unit_price_atomic.saturating_mul(target))?,
+                as_i64(unit_price_atomic.saturating_mul(target - answered))?,
             ],
         )?;
         transaction.execute(
             "UPDATE open_calls
-             SET status = 'open', escrow_remaining_krw = ?2 * (?3 - ?4)
+             SET status = 'open', escrow_remaining_krw = ?2 * (?3 - ?4),
+                 unit_price_atomic = ?5,
+                 escrow_total_atomic = ?6,
+                 escrow_remaining_atomic = ?7
              WHERE id = ?1 AND owner_id = 'seed-buyer'",
-            params![id, price, target, answered],
+            params![
+                id,
+                price,
+                target,
+                answered,
+                as_i64(unit_price_atomic)?,
+                as_i64(unit_price_atomic.saturating_mul(target))?,
+                as_i64(unit_price_atomic.saturating_mul(target - answered))?,
+            ],
         )?;
     }
     Ok(())
@@ -19299,6 +19686,91 @@ fn add_column_if_missing(
     Ok(())
 }
 
+/// Additive KRW→USDC-atomic (6-dec) re-denomination of the internal ledger.
+///
+/// For every impacted table this adds a `*_atomic` sibling next to the legacy
+/// `*_krw` column (Product Decision (c): keep `*_krw` as nullable legacy, never
+/// dropped — the migration stays reversible and zero-loss) and idempotently
+/// backfills it. Conversion uses **half-up** rounding expressed in integer SQL
+/// as `(krw * 1_000_000 + krw_per_usdc/2) / krw_per_usdc` (Product Decision (d):
+/// half-up only in this one-time backfill; the runtime helper keeps `div_ceil`).
+/// Every backfill is guarded `WHERE <atomic> = 0 AND <krw> > 0`, so re-running
+/// `migrate()` is a no-op and `*_krw` is never mutated. One DDL path serves both
+/// SQLite and Postgres via the `db.rs` translation layer.
+fn backfill_usdc_atomic_columns(connection: &Connection) -> Result<(), StoreError> {
+    // Per-column atomic siblings. `escrow_total_atomic`/`escrow_remaining_atomic`
+    // on open_calls already exist (nullable, on-chain funded) and are handled
+    // separately below.
+    for (table, column) in [
+        ("balances", "available_atomic"),
+        ("balances", "reserved_atomic"),
+        ("balances", "held_atomic"),
+        ("open_calls", "unit_price_atomic"),
+        ("funding_events", "amount_atomic"),
+        ("earning_events", "amount_atomic"),
+        ("memory_entries", "earned_atomic"),
+        ("settlements", "total_atomic"),
+        ("payment_bundle_documents", "price_atomic"),
+        ("query_matches", "quoted_price_atomic"),
+    ] {
+        add_column_if_missing(connection, table, column, "INTEGER NOT NULL DEFAULT 0")?;
+    }
+
+    // The half-up rounding divisor half, added before the integer division.
+    let rate = KRW_PER_USDC_PINNED;
+    let half = rate / 2;
+    // (atomic_col, krw_col, table) simple one-to-one conversions.
+    for (table, atomic_col, krw_col) in [
+        ("balances", "available_atomic", "available_krw"),
+        ("balances", "reserved_atomic", "reserved_krw"),
+        ("balances", "held_atomic", "held_krw"),
+        ("open_calls", "unit_price_atomic", "unit_price_krw"),
+        ("funding_events", "amount_atomic", "amount_krw"),
+        ("earning_events", "amount_atomic", "amount_krw"),
+        ("memory_entries", "earned_atomic", "earned_krw"),
+        ("settlements", "total_atomic", "total_krw"),
+        ("payment_bundle_documents", "price_atomic", "price_krw"),
+        ("query_matches", "quoted_price_atomic", "quoted_price_krw"),
+    ] {
+        let converted = connection.execute(
+            &format!(
+                "UPDATE {table}
+                 SET {atomic_col} = ({krw_col} * 1000000 + {half}) / {rate}
+                 WHERE {atomic_col} = 0 AND {krw_col} > 0"
+            ),
+            params![],
+        )?;
+        if converted > 0 {
+            // One-line per-table count for the canary to diff against expected.
+            tracing::info!(
+                table = table,
+                column = atomic_col,
+                rows = converted,
+                "usdc backfill: converted krw rows to atomic"
+            );
+        }
+    }
+
+    // Open-call escrow: reuse the existing nullable atomic escrow columns for
+    // sandbox/legacy calls that were never funded on-chain, deriving them from
+    // the freshly-backfilled unit_price_atomic. Only touch rows still missing an
+    // atomic escrow so on-chain funded calls are left untouched.
+    connection.execute(
+        "UPDATE open_calls
+         SET escrow_total_atomic = unit_price_atomic * target
+         WHERE escrow_total_atomic IS NULL AND unit_price_atomic > 0",
+        params![],
+    )?;
+    connection.execute(
+        "UPDATE open_calls
+         SET escrow_remaining_atomic = unit_price_atomic * (target - answered)
+         WHERE escrow_remaining_atomic IS NULL AND status = 'open'
+           AND unit_price_atomic > 0 AND target >= answered",
+        params![],
+    )?;
+    Ok(())
+}
+
 fn valid_email(email: &str) -> bool {
     let mut parts = email.split('@');
     let local = parts.next().unwrap_or_default();
@@ -19343,8 +19815,9 @@ mod tests {
     use super::{
         AI_GENERATION_BUDGET_WINDOW_MS, AdminTable, AiArtifactMetadata, AiGenerationClaim,
         BASE64_STANDARD, BUNDLE_FUNDING_AGENT_DIRECT, DEFAULT_ADMIN_WALLETS, LOGIN_FAILURE_LIMIT,
-        MAX_AVATAR_JSON_BYTES, PayShDeliveryRequest, PaymentQuotePolicy, Store, StoreError,
-        WALLET_CHALLENGE_LIMIT, as_i64, as_u64, hex_digest, new_id, now_ms, siwx_message,
+        MAX_AVATAR_JSON_BYTES, MAX_PREPAID_TOP_UP_ATOMIC, PayShDeliveryRequest, PaymentQuotePolicy,
+        Store, StoreError, WALLET_CHALLENGE_LIMIT, as_i64, as_u64, hex_digest, krw_to_atomic_pinned,
+        new_id, now_ms, siwx_message,
     };
 
     #[test]
@@ -19500,8 +19973,248 @@ mod tests {
         )
     }
 
+    // Pure web3: open calls fund from real prepaid USDC (Product Decision (b)).
+    // A single shared bundle receiver keeps the deposit, the funding debit and
+    // the balance reads on the same prepaid-account key.
+    fn open_call_receiver() -> String {
+        bs58::encode(SigningKey::from_bytes(&[200; 32]).verifying_key().as_bytes()).into_string()
+    }
+
+    fn open_call_test_policy() -> PaymentQuotePolicy {
+        prepaid_test_policy(open_call_receiver())
+    }
+
+    /// Binds a deterministic wallet to `owner` and tops up a generous prepaid
+    /// USDC balance so the owner can fund open calls. Idempotent per owner.
+    fn fund_open_call_wallet(store: &Store, owner: &str) -> String {
+        fund_open_call_wallet_amount(store, owner, MAX_PREPAID_TOP_UP_ATOMIC)
+    }
+
+    /// As `fund_open_call_wallet`, but deposits a specific USDC-atomic amount so
+    /// tests can exercise the insufficient-funds path.
+    fn fund_open_call_wallet_amount(store: &Store, owner: &str, amount_atomic: u64) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(b"open-call-wallet:");
+        hasher.update(owner.as_bytes());
+        let seed: [u8; 32] = hasher.finalize().into();
+        let wallet =
+            bs58::encode(SigningKey::from_bytes(&seed).verifying_key().as_bytes()).into_string();
+        let session_token = seed.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let policy = open_call_test_policy();
+        // Bind the wallet and open a prepaid session so the wallet has a canonical
+        // owner (the store's readiness invariant requires it). Idempotent per
+        // owner: repeat calls no-op once the owner is established.
+        let _ = store.bind_wallet_identity(owner, &wallet);
+        let _ = store.issue_prepaid_wallet_session(owner, &wallet, &session_token, 300_000, &policy);
+        store
+            .record_prepaid_deposit(
+                &crate::domain::RecordPrepaidDepositRequest {
+                    transaction_signature: format!("open-call-deposit-{owner}-{amount_atomic}"),
+                    payer: wallet.clone(),
+                    pay_to: open_call_receiver(),
+                    network: policy.network.clone(),
+                    asset: policy.asset.clone(),
+                    amount_atomic: amount_atomic.to_string(),
+                },
+                &policy,
+            )
+            .unwrap();
+        wallet
+    }
+
+    fn svalbard_open_call_request(target: usize) -> CreateOpenCallRequest {
+        CreateOpenCallRequest {
+            question: "Which winter boots work for field research in Svalbard?".to_owned(),
+            unit_price: 700,
+            target,
+            chat_id: None,
+            shelf: "Svalbard field researchers".to_owned(),
+            category: "travel".to_owned(),
+            filters: SearchFilters::default(),
+        }
+    }
+
+    #[test]
+    fn usdc_backfill_converts_krw_columns_half_up_and_is_idempotent() {
+        let store = Store::in_memory().unwrap();
+        ensure_user(&store, "backfill-user");
+        // Simulate legacy pre-migration rows: KRW set, atomic still zero.
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE balances
+                 SET available_krw = 1, reserved_krw = 1350, held_krw = 2,
+                     available_atomic = 0, reserved_atomic = 0, held_atomic = 0
+                 WHERE user_id = ?1",
+                ["backfill-user"],
+            )
+            .unwrap();
+        // Re-running migrate() runs the guarded backfill.
+        store.migrate().unwrap();
+        let read = |store: &Store| -> (u64, u64, u64, u64) {
+            store
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT available_atomic, reserved_atomic, held_atomic, available_krw
+                     FROM balances WHERE user_id = ?1",
+                    ["backfill-user"],
+                    |row| {
+                        Ok((
+                            as_u64(row.get(0)?)?,
+                            as_u64(row.get(1)?)?,
+                            as_u64(row.get(2)?)?,
+                            as_u64(row.get(3)?)?,
+                        ))
+                    },
+                )
+                .unwrap()
+        };
+        let (available_atomic, reserved_atomic, held_atomic, available_krw) = read(&store);
+        // Half-up: (krw * 1_000_000 + 675) / 1350. For 1 KRW this is 741, whereas
+        // plain truncation would give 740 — proving the rounding is half-up.
+        assert_eq!(available_atomic, 741);
+        assert_ne!(available_atomic, 1_000_000u64 / 1350); // 740, truncation
+        assert_eq!(reserved_atomic, 1_000_000); // 1350 KRW == exactly 1.0 USDC
+        assert_eq!(held_atomic, 1481); // 2 KRW -> (2_000_000 + 675)/1350
+        // Zero data loss: the KRW column is never mutated.
+        assert_eq!(available_krw, 1);
+        // Idempotent: a second migrate() converts nothing further.
+        store.migrate().unwrap();
+        assert_eq!(read(&store).0, 741);
+    }
+
+    #[test]
+    fn create_open_call_funds_from_prepaid_with_no_signup_credit_or_krw_fallback() {
+        let store = Store::in_memory().unwrap();
+        let policy = open_call_test_policy();
+        let unit_atomic = krw_to_atomic_pinned(700).unwrap();
+
+        // Product Decision (a): a fresh account has no signup credit.
+        ensure_user(&store, "web3-buyer");
+        let balance = store.balance("web3-buyer").unwrap();
+        assert_eq!(balance.available_krw, 0);
+        assert_eq!(balance.available_atomic, "0");
+        let signup_credits: u64 = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM funding_events WHERE kind = 'sandbox_signup_credit'",
+                params![],
+                |row| as_u64(row.get(0)?),
+            )
+            .unwrap();
+        assert_eq!(signup_credits, 0);
+
+        // With no prepaid wallet at all, a paid call fails cleanly (no fallback).
+        let err = store
+            .create_open_call("web3-buyer", &svalbard_open_call_request(2), &policy)
+            .unwrap_err();
+        assert!(matches!(err, StoreError::Conflict(_)));
+        assert_eq!(store.balance("web3-buyer").unwrap().reserved_krw, 0);
+
+        // Fund only enough prepaid USDC for a single unit.
+        fund_open_call_wallet_amount(&store, "web3-buyer", unit_atomic);
+        // Requesting two units now fails on insufficient prepaid — never KRW.
+        let err = store
+            .create_open_call("web3-buyer", &svalbard_open_call_request(2), &policy)
+            .unwrap_err();
+        assert!(err.to_string().contains("insufficient"));
+        assert_eq!(store.balance("web3-buyer").unwrap().reserved_krw, 0);
+        assert_eq!(store.balance("web3-buyer").unwrap().available_krw, 0);
+
+        // A one-unit call succeeds and debits exactly one unit from prepaid.
+        let call = store
+            .create_open_call("web3-buyer", &svalbard_open_call_request(1), &policy)
+            .unwrap();
+        assert_eq!(call.escrow_mode, "prepaid");
+        assert_eq!(call.unit_price_atomic, unit_atomic.to_string());
+        assert_eq!(
+            store
+                .prepaid_balance("web3-buyer", &policy)
+                .unwrap()
+                .available_atomic,
+            "0"
+        );
+        // The internal KRW pot was never used as a funding source.
+        let balance = store.balance("web3-buyer").unwrap();
+        assert_eq!(balance.available_krw, 0);
+        assert_eq!(balance.reserved_krw, 0);
+    }
+
+    #[test]
+    fn record_prepaid_deposit_credits_standalone_and_is_idempotent() {
+        let store = Store::in_memory().unwrap();
+        let policy = open_call_test_policy();
+        let payer =
+            bs58::encode(SigningKey::from_bytes(&[151; 32]).verifying_key().as_bytes()).into_string();
+        let deposit = crate::domain::RecordPrepaidDepositRequest {
+            transaction_signature: "prepaid-topup-signature-1".to_owned(),
+            payer: payer.clone(),
+            pay_to: open_call_receiver(),
+            network: policy.network.clone(),
+            asset: policy.asset.clone(),
+            amount_atomic: "5000000".to_owned(),
+        };
+        // Standalone credit — decoupled from any purchase/settlement.
+        let first = store.record_prepaid_deposit(&deposit, &policy).unwrap();
+        assert_eq!(first.available_atomic, "5000000");
+        assert_eq!(first.wallet, payer);
+        // Idempotent replay of the same signature: same balance, no double credit.
+        let second = store.record_prepaid_deposit(&deposit, &policy).unwrap();
+        assert_eq!(second.available_atomic, "5000000");
+        let ledger_rows: u64 = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM prepaid_ledger
+                 WHERE kind = 'deposit' AND reference_id = ?1",
+                ["prepaid-topup-signature-1"],
+                |row| as_u64(row.get(0)?),
+            )
+            .unwrap();
+        assert_eq!(ledger_rows, 1);
+        // A second distinct deposit accumulates.
+        let mut more = deposit.clone();
+        more.transaction_signature = "prepaid-topup-signature-2".to_owned();
+        more.amount_atomic = "2000000".to_owned();
+        assert_eq!(
+            store.record_prepaid_deposit(&more, &policy).unwrap().available_atomic,
+            "7000000"
+        );
+        // Over the per-top-up cap: a clean validation error, nothing credited.
+        let mut oversized = deposit.clone();
+        oversized.transaction_signature = "prepaid-topup-signature-3".to_owned();
+        oversized.amount_atomic = (MAX_PREPAID_TOP_UP_ATOMIC + 1).to_string();
+        assert!(matches!(
+            store.record_prepaid_deposit(&oversized, &policy).unwrap_err(),
+            StoreError::Validation(_)
+        ));
+        // A signature already used by another settlement route is rejected.
+        {
+            let connection = store.connection().unwrap();
+            connection
+                .execute(
+                    "INSERT INTO chain_transaction_registry
+                     (transaction_signature, settlement_kind, quote_id, created_at)
+                     VALUES ('cross-route-sig', 'open_call', 'some-quote', 0)",
+                    params![],
+                )
+                .unwrap();
+        }
+        let mut cross_route = deposit.clone();
+        cross_route.transaction_signature = "cross-route-sig".to_owned();
+        assert!(matches!(
+            store.record_prepaid_deposit(&cross_route, &policy).unwrap_err(),
+            StoreError::Conflict(_)
+        ));
+    }
+
     fn create_svalbard_call(store: &Store, owner: &str, target: usize) -> crate::domain::OpenCall {
         ensure_user(store, owner);
+        fund_open_call_wallet(store, owner);
         store
             .create_open_call(
                 owner,
@@ -19514,6 +20227,7 @@ mod tests {
                     category: "travel".to_owned(),
                     filters: SearchFilters::default(),
                 },
+                &open_call_test_policy(),
             )
             .unwrap()
     }
@@ -20884,7 +21598,8 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(cardinalities, (1, 1, 1, 1));
+        // Pure web3: no signup-credit funding_events row is written anymore.
+        assert_eq!(cardinalities, (1, 1, 0, 1));
 
         let poisoned = Store::in_memory().unwrap();
         poisoned
@@ -23131,6 +23846,7 @@ mod tests {
                     category: "invented-category".to_owned(),
                     filters: SearchFilters::default(),
                 },
+                &open_call_test_policy(),
             )
             .unwrap_err();
         assert!(error.to_string().contains("unsupported category"));
@@ -24452,7 +25168,9 @@ mod tests {
             )
             .unwrap();
         assert_eq!(event_status, "held");
-        assert_eq!(available_krw, 100_000);
+        // Pure web3: no signup credit, so the internal pot starts and stays at 0
+        // (the held earning was zeroed above to simulate ledger corruption).
+        assert_eq!(available_krw, 0);
         assert_eq!(held_krw, 0);
     }
 
@@ -24510,6 +25228,9 @@ mod tests {
     fn targeting_is_enforced_and_an_accepted_answer_returns_to_its_chat() {
         let store = Store::in_memory().unwrap();
         ensure_user(&store, "target-buyer");
+        fund_open_call_wallet(&store, "target-buyer");
+        let unit_atomic = krw_to_atomic_pinned(700).unwrap();
+        let policy = open_call_test_policy();
         let call = store
             .create_open_call(
                 "target-buyer",
@@ -24526,8 +25247,14 @@ mod tests {
                         ..SearchFilters::default()
                     },
                 },
+                &policy,
             )
             .unwrap();
+        // Funding debited real prepaid USDC, never the internal KRW pot.
+        assert_eq!(
+            store.prepaid_balance("target-buyer", &policy).unwrap().available_atomic,
+            (MAX_PREPAID_TOP_UP_ATOMIC - 2 * unit_atomic).to_string()
+        );
 
         onboard(&store, "seoul-researcher");
         let mismatch = store
@@ -24559,15 +25286,23 @@ mod tests {
                 .is_empty()
         );
 
+        // The buyer's internal KRW pot is retired as a funding source: it never
+        // moves. The escrow lives in prepaid USDC, spent one answer at a time.
         let buyer = store.balance("target-buyer").unwrap();
-        assert_eq!(buyer.available_krw, 98_600);
-        assert_eq!(buyer.reserved_krw, 700);
+        assert_eq!(buyer.available_krw, 0);
+        assert_eq!(buyer.reserved_krw, 0);
         let contributor = store.balance("svalbard-researcher").unwrap();
-        assert_eq!(contributor.available_krw, 100_700);
+        assert_eq!(contributor.available_krw, 700);
+        assert_eq!(contributor.available_atomic, unit_atomic.to_string());
 
         store.cancel_open_call("target-buyer", &call.id).unwrap();
+        // Cancelling refunds the one unspent escrow slot back to prepaid.
+        assert_eq!(
+            store.prepaid_balance("target-buyer", &policy).unwrap().available_atomic,
+            (MAX_PREPAID_TOP_UP_ATOMIC - unit_atomic).to_string()
+        );
         let refunded = store.balance("target-buyer").unwrap();
-        assert_eq!(refunded.available_krw, 99_300);
+        assert_eq!(refunded.available_krw, 0);
         assert_eq!(refunded.reserved_krw, 0);
         assert!(
             store
@@ -24613,11 +25348,10 @@ mod tests {
         let memory = store.list_memory("researcher-1").unwrap();
         assert_eq!(memory[0].status, "voided");
         assert_eq!(memory[0].earned, 0);
-        assert_eq!(store.balance("buyer").unwrap().reserved_krw, 700);
-        assert_eq!(
-            store.balance("researcher-1").unwrap().available_krw,
-            100_000
-        );
+        // Pure web3: the buyer's internal pot never reserved (funding came from
+        // prepaid USDC) and the rejected dispute pays the contributor nothing.
+        assert_eq!(store.balance("buyer").unwrap().reserved_krw, 0);
+        assert_eq!(store.balance("researcher-1").unwrap().available_krw, 0);
     }
 
     #[test]
@@ -24628,7 +25362,9 @@ mod tests {
             .upsert_profile("delete-me", &profile_request("delete_me"))
             .unwrap();
         let call = create_svalbard_call(&store, "delete-me", 1);
-        assert_eq!(store.balance("delete-me").unwrap().reserved_krw, 700);
+        // Pure web3: funding came from prepaid USDC, so the internal pot never
+        // reserves.
+        assert_eq!(store.balance("delete-me").unwrap().reserved_krw, 0);
         assert!(matches!(
             store
                 .claim_ai_generation("shelf_starters", "delete-me", &"9".repeat(64), &[])
