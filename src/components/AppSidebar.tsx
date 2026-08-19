@@ -21,6 +21,7 @@ import {
 import { NAV_ITEMS } from '@/data/nav'
 import { STRIKE_LIMIT } from '@/data/onboarding'
 import { deterministicAvatar } from '@/lib/avatar'
+import { formatUsdcShort } from '@/lib/usdc'
 import { cn } from '@/lib/utils'
 import { useLang, useT } from '@/i18n'
 import { useUi } from '@/state/ui'
@@ -90,8 +91,10 @@ function LiveStrip() {
   const fits = profile
     ? open.filter((o) => profile.speaksTo.includes(o.category)).length
     : open.length
-  const earned = earnings?.accruedKrw ?? 0
-  const held = earnings?.heldKrw ?? 0
+  const earned = formatUsdcShort(earnings?.accruedAtomic ?? '0') ?? '0.00'
+  const held = earnings?.heldAtomic && earnings.heldAtomic !== '0'
+    ? formatUsdcShort(earnings.heldAtomic)
+    : null
 
   return (
     <div className="grid grid-cols-2 border-t border-border pt-2">
@@ -103,10 +106,10 @@ function LiveStrip() {
           {profile ? t('Earned') : t('Paid out')}
         </span>
         <span className="truncate text-[14px] font-medium leading-none tabular-nums text-foreground">
-          ₩{earned.toLocaleString()}
+          {earned} USDC
           {held ? (
             <span className="ml-1 text-[9px] font-normal text-muted-foreground">
-              · ₩{held.toLocaleString()} {t('held')}
+              · {held} USDC {t('held')}
             </span>
           ) : null}
         </span>
@@ -367,7 +370,7 @@ export function AppSidebar() {
                 ) : account ? (
                   <div className="space-y-2 border-t border-border pt-2.5">
                     <p className="px-1 text-xs leading-5 text-muted-foreground">
-                      ₩{(balance?.availableKrw ?? 0).toLocaleString()} {t('available for evidence opens')}
+                      {formatUsdcShort(balance?.availableAtomic ?? '0') ?? '0.00'} USDC {t('available for evidence opens')}
                     </p>
                     <div className="flex gap-2">
                       <Button asChild variant="mono" size="monoSm" className="flex-1">

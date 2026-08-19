@@ -5,6 +5,7 @@ import { CategoryIcon } from '@/components/CategoryIcon'
 import { Button } from '@/components/ui/button'
 import { CATEGORIES } from '@/data/categories'
 import { useT } from '@/i18n'
+import { formatUsdcFromKrw } from '@/lib/usdc'
 import { useUi } from '@/state/ui'
 
 const RANKING = [
@@ -101,7 +102,7 @@ export default function Coverage() {
             <div className="flex flex-wrap gap-x-5 gap-y-1 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
               <span><strong className="text-foreground">{totals.calls}</strong> {t('Open questions')}</span>
               <span><strong className="text-foreground">{totals.remaining}</strong> {t('Answers wanted')}</span>
-              <span><strong className="text-foreground">₩{totals.budget.toLocaleString()}</strong> {t('On the table')}</span>
+              <span><strong className="text-foreground">{formatUsdcFromKrw(totals.budget)} USDC</strong> {t('On the table')}</span>
             </div>
           </div>
 
@@ -134,8 +135,8 @@ export default function Coverage() {
                   </span>
                   <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.calls}</span>
                   <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.remaining}</span>
-                  <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.topRate ? `₩${row.topRate.toLocaleString()}` : '—'}</span>
-                  <span className="text-right font-mono text-xs tabular-nums text-foreground">{row.budget ? `₩${row.budget.toLocaleString()}` : '—'}</span>
+                  <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.topRate ? `${formatUsdcFromKrw(row.topRate)}` : '—'}</span>
+                  <span className="text-right font-mono text-xs tabular-nums text-foreground">{row.budget ? `${formatUsdcFromKrw(row.budget)}` : '—'}</span>
                 </Link>
               ))}
             </div>

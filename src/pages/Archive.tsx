@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Badge, Chip } from '@/components/ui/primitives'
 import { SettlementInvoiceDialog } from '@/components/SettlementInvoiceDialog'
 import { useT } from '@/i18n'
+import { formatUsdcFromKrw } from '@/lib/usdc'
 import type { SettlementPreviewEnvelope } from '@/lib/api'
 import { useUi, type Chat } from '@/state/ui'
 
@@ -129,7 +130,7 @@ export function ArchivePanel() {
           <span className="flex items-center gap-1.5">
             <Coins className="size-3.5" />
             <span className="tabular-nums text-foreground">
-              ₩{totals.spent.toLocaleString()}
+              {formatUsdcFromKrw(totals.spent)} USDC
             </span>
             {t(' spent')}
           </span>
@@ -219,7 +220,7 @@ function ThreadCard({ row }: { row: Row }) {
             <span className="font-mono text-xs tabular-nums text-muted-foreground">
               {docs.length}{t(' opened')} ·{' '}
               <span className="text-foreground">
-                ₩{spent.toLocaleString()}
+                {formatUsdcFromKrw(spent)} USDC
               </span>
             </span>
           ) : (
@@ -275,7 +276,7 @@ function ThreadCard({ row }: { row: Row }) {
                     {d.shelf}
                   </Badge>
                   <span className="ml-auto font-mono text-xs tabular-nums">
-                    ₩{d.price.toLocaleString()}
+                    {formatUsdcFromKrw(d.price)} USDC
                   </span>
                 </div>
               ))}

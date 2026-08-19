@@ -176,6 +176,10 @@ export type BalanceSummary = {
   availableKrw: number
   reservedKrw: number
   heldKrw: number
+  /** USDC atomic (6-dec) mirrors of the balances above, as JSON strings. */
+  availableAtomic: string
+  reservedAtomic: string
+  heldAtomic: string
 }
 
 export type AuthSession = {
@@ -932,6 +936,8 @@ export type EarningEvent = {
   documentHandle?: string
   source: 'seed' | 'open_call' | 'dispute_restored' | 'document_open' | 'document_open_bundle'
   amountKrw: number
+  /** USDC atomic (6-dec) accrued amount for this event, as a JSON string. */
+  amountAtomic: string
   recipientWallet?: string
   payoutStatus: 'accrued' | 'held' | 'onchain' | 'claimable' | 'paid'
   payoutClaimId?: string
@@ -947,6 +953,11 @@ export type EarningsSummary = {
   heldKrw: number
   availableKrw: number
   claimableKrw: number
+  /** USDC atomic (6-dec) aggregates mirroring the KRW fields, as JSON strings. */
+  accruedAtomic: string
+  heldAtomic: string
+  availableAtomic: string
+  claimableAtomic: string
   eventCount: number
   events: EarningEvent[]
 }
