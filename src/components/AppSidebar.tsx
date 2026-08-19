@@ -4,7 +4,6 @@ import { Activity, LogIn, LogOut, PanelLeft, ShieldCheck } from 'lucide-react'
 import { Avatar } from '@/components/Avatar'
 import { BrandMark } from '@/components/ui/BrandMark'
 import { Button } from '@/components/ui/button'
-import { Chip } from '@/components/ui/primitives'
 import { NAV_ITEMS } from '@/data/nav'
 import { STRIKE_LIMIT } from '@/data/onboarding'
 import { deterministicAvatar } from '@/lib/avatar'
@@ -127,25 +126,32 @@ function LiveStrip() {
 }
 
 /**
- * Two languages, one control — now the same Chip grammar as the dashboard's
- * filter row instead of a bespoke pill-in-a-tray.
+ * Two languages, one control — a conventional website-style language
+ * dropdown: a native <select> labelled "Lang" that shows the current
+ * language and lets you pick EN / 한국어 from a list. Native gives us
+ * keyboard, focus and the platform mobile picker for free. The locale
+ * wiring is unchanged from the old toggle — the same useLang().setLang,
+ * which still persists to localStorage and re-renders every t().
  */
 function LangSwitch() {
   const { lang, setLang } = useLang()
+  const t = useT()
   return (
-    <div className="flex items-center gap-1.5">
-      {(['en', 'ko'] as const).map((code) => (
-        <Chip
-          key={code}
-          active={lang === code}
-          onClick={() => setLang(code)}
-          aria-pressed={lang === code}
-          className="h-8 flex-1 justify-center"
-        >
-          {code === 'en' ? 'EN' : '한국어'}
-        </Chip>
-      ))}
-    </div>
+    <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+      <span className="shrink-0">{t('Lang')}</span>
+      <select
+        value={lang}
+        onChange={(event) => setLang(event.target.value === 'ko' ? 'ko' : 'en')}
+        className="h-11 flex-1 cursor-pointer rounded-[4px] border border-border bg-transparent px-2 font-mono text-[11px] uppercase tracking-[1px] text-foreground transition-colors hover:border-foreground/25 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring sm:h-8"
+      >
+        <option value="en" className="bg-background normal-case tracking-normal text-foreground">
+          EN
+        </option>
+        <option value="ko" className="bg-background normal-case tracking-normal text-foreground">
+          한국어
+        </option>
+      </select>
+    </label>
   )
 }
 
