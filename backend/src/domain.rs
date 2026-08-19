@@ -339,6 +339,9 @@ pub struct OpenCallDraft {
     pub answers_needed: usize,
     pub suggested_unit_price_krw: u64,
     pub suggested_budget_krw: u64,
+    /// USDC atomic (6-dec) suggestions as JSON strings (Product Decision (f)).
+    pub suggested_unit_price_atomic: String,
+    pub suggested_budget_atomic: String,
 }
 
 /// A bounded action that one of Obulus's cooperating agents may expose in an
@@ -444,6 +447,8 @@ pub struct OpenCall {
     pub id: String,
     pub question: String,
     pub unit_price: u64,
+    /// USDC atomic (6-dec) unit price as a JSON string (Product Decision (f)).
+    pub unit_price_atomic: String,
     pub target: usize,
     pub answered: usize,
     pub created_at: u64,
@@ -571,6 +576,8 @@ pub struct MemoryEntry {
     pub answer: String,
     pub shelf: String,
     pub earned: u64,
+    /// USDC atomic (6-dec) earned amount as a JSON string (Product Decision (f)).
+    pub earned_atomic: String,
     pub created_at: u64,
     pub via: String,
     pub status: String,
@@ -886,6 +893,8 @@ pub struct EarningEvent {
     pub document_handle: Option<String>,
     pub source: String,
     pub amount_krw: u64,
+    /// USDC atomic (6-dec) amount as a JSON string (Product Decision (f)).
+    pub amount_atomic: String,
     pub recipient_wallet: Option<String>,
     pub payout_status: String,
     pub payout_claim_id: Option<String>,
@@ -903,6 +912,11 @@ pub struct EarningsSummary {
     pub held_krw: u64,
     pub available_krw: u64,
     pub claimable_krw: u64,
+    /// USDC atomic (6-dec) aggregates as JSON strings (Product Decision (f)).
+    pub accrued_atomic: String,
+    pub held_atomic: String,
+    pub available_atomic: String,
+    pub claimable_atomic: String,
     pub event_count: usize,
     pub events: Vec<EarningEvent>,
 }
@@ -1057,6 +1071,8 @@ pub struct Settlement {
     pub id: String,
     pub count: usize,
     pub total: u64,
+    /// USDC atomic (6-dec) settlement total as a JSON string (Product Decision (f)).
+    pub total_atomic: String,
     pub tx_sig: Option<String>,
     pub network: Option<String>,
 }
@@ -1228,6 +1244,21 @@ pub struct PrepaidBalance {
 pub struct CreatePrepaidWithdrawalRequest {
     /// Omit to withdraw the full available balance.
     pub amount_atomic: Option<String>,
+}
+
+/// A facilitator-attested prepaid top-up. The pay.sh gateway verifies the
+/// on-chain USDC transfer to the bundle receiver and posts this to the
+/// `require_internal` deposit route; the Rust backend records it as evidence and
+/// credits the prepaid balance (idempotent by `transactionSignature`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordPrepaidDepositRequest {
+    pub transaction_signature: String,
+    pub payer: String,
+    pub pay_to: String,
+    pub network: String,
+    pub asset: String,
+    pub amount_atomic: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1606,6 +1637,10 @@ pub struct BalanceSummary {
     pub available_krw: u64,
     pub reserved_krw: u64,
     pub held_krw: u64,
+    /// USDC atomic (6-dec) balances as JSON strings (Product Decision (f)).
+    pub available_atomic: String,
+    pub reserved_atomic: String,
+    pub held_atomic: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
