@@ -19,7 +19,7 @@ export const HOME_FAQ: Faq[] = [
   },
   {
     q: 'How is this different from a survey panel?',
-    a: 'A panel trades whole: 300 people, two weeks, one report. Here the unit is one question, one answer, one open. Sold by the cigarette, not by the pack.\n\nThe order is reversed too. Search comes first — if documents already on the shelves fit, SHELF opens them and no open call goes out. The call fires only when the shelves come up empty.\n\nAn answer written once does not disappear. A panel study ends and the report goes in a drawer; a document stays on your shelf and matches the next question. The same answer earns more than once.'
+    a: 'A panel trades whole: 300 people, two weeks, one report. Here the unit is one question, one answer, one open — you buy the single answer you need, not the whole study.\n\nThe order is reversed too. Search comes first — if documents already on the shelves fit, SHELF opens them and no open call goes out. The call fires only when the shelves come up empty.\n\nAn answer written once does not disappear. A panel study ends and the report goes in a drawer; a document stays on your shelf and matches the next question. The same answer earns more than once.'
   },
   {
     q: 'How does a shelf grow?',

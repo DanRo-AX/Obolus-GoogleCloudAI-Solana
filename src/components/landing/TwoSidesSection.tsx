@@ -5,34 +5,24 @@ import { Button } from '@/components/ui/button'
 import { useT } from '@/i18n'
 import { cardGradient } from '@/lib/cardGradient'
 
-/** The wash is strongest at the top of a card and fades before the text. */
-const WASH_MASK = 'linear-gradient(to bottom, black 0%, transparent 72%)'
-
 /**
  * The market has two sides and they never meet, so the section is two loops
  * that never touch — one for the person asking, one for the person answering.
  *
  * Each loop is a swipeable rail of cards rather than a stacked list, so the
  * four beats read as steps you move through instead of a paragraph you skim.
- * Every card carries a faint gradient wash from the survey-card palette and a
- * hairline in the side's own accent, which is the only point of colour the
- * section ever spends.
+ * Every card leads with a vivid survey-card gradient banner at full strength —
+ * the same colour the dashboard cards carry — so the rail reads as a row of
+ * real cards rather than a bulleted list.
  */
 export function TwoSidesSection() {
   const t = useT()
   return (
     <section className="border-t border-border px-4 py-20 sm:px-8 sm:py-28">
       <div className="mx-auto max-w-[92rem]">
-        <div className="flex flex-wrap items-end justify-between gap-6">
-          <div>
-            <p className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-              {t('Two sides, one shelf')}
-            </p>
-            <h2 className="mt-5 max-w-3xl text-balance font-display text-[32px] leading-[1.1] sm:text-[44px]">
-              {t('One of you is searching. One of you has lived it.')}
-            </h2>
-          </div>
-        </div>
+        <h2 className="max-w-3xl text-balance font-display text-[32px] leading-[1.1] sm:text-[44px]">
+          {t('One of you is searching. One of you has lived it.')}
+        </h2>
 
         <div className="mt-14 grid grid-cols-1 gap-12 lg:grid-cols-[1fr_auto_1fr] lg:gap-0">
           <Side
@@ -96,29 +86,20 @@ function Side({
         {steps.map((s, i) => (
           <article
             key={s.head}
-            className="relative flex snap-start basis-[86%] shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-background p-6 sm:basis-[62%] lg:basis-[calc(50%-0.375rem)]"
+            className="flex snap-start basis-[86%] shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-background sm:basis-[62%] lg:basis-[calc(50%-0.375rem)]"
           >
-            <span
-              aria-hidden
-              className="absolute inset-x-0 top-0 h-px"
-              style={{ backgroundColor: accent }}
-            />
+            {/* The vivid banner — full-strength survey-card gradient, the step
+                number sitting on it in a white chip that stays readable over
+                any hue the seed lands on. */}
             <div
-              aria-hidden
-              className="pointer-events-none absolute inset-0 opacity-[0.12]"
-              style={{
-                background: cardGradient(`${side}-step-${i}`, 'deep'),
-                WebkitMaskImage: WASH_MASK,
-                maskImage: WASH_MASK,
-              }}
-            />
-            <div className="relative z-10 flex h-full flex-col gap-2.5">
-              <span
-                className="font-mono text-[11px] tabular-nums"
-                style={{ color: accent }}
-              >
+              className="relative h-16 shrink-0"
+              style={{ background: cardGradient(`${side}-step-${i}`, 'deep') }}
+            >
+              <span className="absolute bottom-2.5 left-3.5 rounded-md bg-white/90 px-1.5 py-0.5 font-mono text-[11px] font-medium tabular-nums text-foreground shadow-[0_1px_2px_rgba(20,20,25,0.18)] backdrop-blur-sm">
                 {String(i + 1).padStart(2, '0')}
               </span>
+            </div>
+            <div className="flex flex-1 flex-col gap-2.5 p-5 sm:p-6">
               <span className="text-[15px] font-medium">{t(s.head)}</span>
               <span className="text-pretty text-sm leading-relaxed text-muted-foreground">
                 {t(s.body)}
