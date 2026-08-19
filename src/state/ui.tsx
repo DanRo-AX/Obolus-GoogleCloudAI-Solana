@@ -39,6 +39,7 @@ import {
   type DemographicBands,
   type ContributorNotification,
   type ServerProfile,
+  type SettlementPreviewEnvelope,
   type TargetFilters,
 } from '@/lib/api'
 import { shouldClearAuthentication } from '@/lib/authBootstrap'
@@ -87,6 +88,8 @@ export type ChatMessage = {
     network?: string
     partial?: boolean
     mode?: 'direct' | 'bundle_escrow' | 'open_call_escrow' | 'pay_sh_direct' | 'pay_sh_orchestrated'
+    /** Exact buyer-readable commitment shown before automatic settlement. */
+    invoice?: SettlementPreviewEnvelope
   }
   /** Kept privately in local chat state so a paid buyer can recover and rate. */
   paymentContext?: PaymentContext

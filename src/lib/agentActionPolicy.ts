@@ -35,6 +35,9 @@ export function branchForAgentAction(
 
   return {
     phase: 'ask-order',
-    generateBaseline: nextAction === undefined && aiBaselineEligible,
+    // A targeted Open Call and a free public answer are complementary. The
+    // former buys missing firsthand experience; the latter answers everything
+    // that public sources can already establish without opening private data.
+    generateBaseline: aiBaselineEligible,
   }
 }

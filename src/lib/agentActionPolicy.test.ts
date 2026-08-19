@@ -10,10 +10,10 @@ describe('branchForAgentAction', () => {
     })
   })
 
-  it('offers an Open Call without silently generating an AI baseline', () => {
+  it('offers an Open Call while also preparing the free public answer', () => {
     assert.deepEqual(branchForAgentAction('miss', true, 'propose_open_call'), {
       phase: 'ask-order',
-      generateBaseline: false,
+      generateBaseline: true,
     })
   })
 

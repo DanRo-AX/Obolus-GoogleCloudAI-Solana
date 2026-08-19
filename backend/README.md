@@ -51,7 +51,7 @@ directory. Configuration:
 | `OPENSHELF_ROLLBACK_AUDIT_BUCKET` | none locally; required in managed environments | GCS bucket receiving create-only payment and model-call intents before external transport is authorized |
 | `OPENSHELF_ROLLBACK_AUDIT_PREFIX` | bucket root | Validated lower-case object prefix; set to `obolus/rollback-audit` when using shared `ax-apps-storage` |
 | `OPENSHELF_ENV` | `development` | `development/dev/local/test` or managed `staging/stage/production/prod`; unknown values fail startup |
-| `OPENSHELF_SEED_DEMO` | local-environment-dependent | Seed demo personas/calls; forbidden in managed environments |
+| `OPENSHELF_SEED_DEMO` | `false` | Explicit test/UI-fixture opt-in; synthetic personas/calls are forbidden in managed environments |
 | `OPENSHELF_FRONTEND_ORIGIN` | `http://localhost:4319` | Exact credentialed CORS origin |
 | `OPENSHELF_AGENT_API_ORIGIN` | `http://127.0.0.1:8787` | Exact public API origin embedded in one-time Pay SIWX wallet-link resources; remote production values require HTTPS |
 | `OPENSHELF_SECURE_COOKIES` | production-dependent | Force the `Secure` session-cookie flag |
@@ -147,7 +147,8 @@ override above is only for a local published-port container.
 | `POST` | `/api/v1/auth/logout` | Revoke an HttpOnly wallet session |
 | `GET` | `/api/v1/auth/me` | Read the authenticated account and sandbox balance |
 | `POST` | `/api/v1/questions/resolve` | Search, rank, and return HIT/MISS plus a safe quote |
-| `POST` | `/api/v1/questions/{id}/ai-baseline` | Generate/cache general AI liquidity only when human coverage is thin (query token required) |
+| `GET` | `/api/v1/public-evidence` | Search source-, license-, date-, record-ID-, and hash-bound open institutional records; never human coverage |
+| `POST` | `/api/v1/questions/{id}/ai-baseline` | Generate/cache a free public answer with official records and Google Search grounding, without opening private human passages (query token required) |
 | `POST` | `/api/v1/answers/synthesize` | Synthesize only server-proven opened passages (query token required) |
 | `GET/POST` | `/api/v1/shelf-starters` | List or explicitly generate AI interview prompts; never fake buyers or bounties |
 | `POST` | `/api/v1/shelf-starters/{id}/answer` | Turn a quality-checked human answer—not the AI prompt—into a priced document |

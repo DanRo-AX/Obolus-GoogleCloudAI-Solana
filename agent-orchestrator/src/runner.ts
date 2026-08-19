@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { Challenge } from 'mppx'
 import { PayShPaymentNotSentError } from './payment-errors.js'
+import { validateSettlementInvoice, type SettlementInvoice } from './settlement-invoice.js'
 
 export type PayShResource = {
   quoteId: string
@@ -12,6 +13,9 @@ export type PayShResource = {
   amountAtomic: string
   ownerAmountAtomic: string
   platformAmountAtomic: string
+  contentHash: string
+  documentVersion: number
+  consentVersion: string
   priceKrw: number
   expiresAt: number
   status: string
@@ -27,6 +31,8 @@ export type ResearchJobPlan = {
   amountAtomic: string
   status: string
   resources: PayShResource[]
+  invoice: SettlementInvoice
+  invoiceHash: string
 }
 
 export type ResearchApi = {
@@ -278,6 +284,7 @@ function assertPlan(plan: ResearchJobPlan, options: RunOptions): void {
       `research budget wallet ${plan.payTo} does not match KMS signer ${options.signerAddress}`,
     )
   }
+  validateSettlementInvoice(plan)
   const budget = BigInt(plan.amountAtomic)
   const pending = plan.resources.reduce((sum, item) => sum + BigInt(item.amountAtomic), 0n)
   if (budget <= 0n || pending > budget) throw new Error('research plan exceeds funded budget')

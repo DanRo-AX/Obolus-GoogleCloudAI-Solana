@@ -400,7 +400,7 @@ fn prune_states(states: &mut Vec<SelectionState>) {
 
 fn validate(request: &ResolveQuestionRequest) -> Result<(), ResolveError> {
     let question = request.question.trim();
-    if question.chars().count() < 8 {
+    if question.chars().count() < 2 {
         return Err(ResolveError::QuestionTooShort);
     }
     if question.chars().count() > 1000 {

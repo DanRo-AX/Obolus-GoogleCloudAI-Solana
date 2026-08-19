@@ -1,0 +1,25 @@
+[package]
+name = "obulus-settlement-program"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = []
+no-entrypoint = []
+
+[dependencies]
+borsh = { version = "1.8.0", features = ["derive"] }
+solana-program = "4.1.0"
+solana-system-interface = { version = "3.3.0", features = ["bincode"] }
+spl-token = { version = "9.0.0", features = ["no-entrypoint"] }
+thiserror = "2"
+
+[dev-dependencies]
+sha2 = "0.10"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ["cfg(target_os, values(\"solana\"))"] }

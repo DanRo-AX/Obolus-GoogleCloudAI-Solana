@@ -39,11 +39,12 @@ use crate::{
         PaymentAttemptRelease, PaymentBundleQuote, PaymentBundleSnapshot, PaymentDocumentSnapshot,
         PaymentProgress, PaymentQuote, PayoutClaim, PayoutClaimBacklog, PrepaidBalance,
         PrepaidWalletSession, PrepareDirectPayShPaymentRequest, PreparePayoutClaimRequest,
-        PrepareResearchPaymentRequest, PublicDocument, RecordChainSettlementRequest,
-        RecoveredPaidDocument, RegisterRequest, ReleaseResearchPaymentRequest, ResearchJobPlan,
-        ResearchJobStatus, ResearchPaymentReconciliation, ResetPasswordRequest, ResolveError,
-        ResolveQuestionRequest, ResolveQuestionResponse, ReviewDisputeRequest,
-        ReviewDocumentFeedbackRequest, SettleResearchPaymentRequest, ShelfStarter, SiwxPayload,
+        PrepareResearchPaymentRequest, PublicDocument, PublicEvidenceRecord,
+        RecordChainSettlementRequest, RecoveredPaidDocument, RegisterRequest,
+        ReleaseResearchPaymentRequest, ResearchJobPlan, ResearchJobStatus,
+        ResearchPaymentReconciliation, ResetPasswordRequest, ResolveError, ResolveQuestionRequest,
+        ResolveQuestionResponse, ReviewDisputeRequest, ReviewDocumentFeedbackRequest,
+        SettleResearchPaymentRequest, SettlementPreviewRequest, ShelfStarter, SiwxPayload,
         SubmitAnswerRequest, SubmitAnswerResponse, SubmitDisputeRequest,
         SubmitDocumentFeedbackRequest, SubmitShelfStarterAnswerRequest,
         SubmitShelfStarterAnswerResponse, SynthesizeAnswerRequest, SynthesizeAnswerResponse,
@@ -414,6 +415,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/auth/logout", post(logout))
         .route("/api/v1/auth/me", get(me))
         .route("/api/v1/questions/resolve", post(resolve_question))
+        .route("/api/v1/public-evidence", get(list_public_evidence))
         .route(
             "/api/v1/questions/{id}/ai-baseline",
             post(generate_ai_baseline),
@@ -537,6 +539,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/payment-bundles/{id}",
             get(payment_bundle_quote_for_payer),
+        )
+        .route(
+            "/api/v1/questions/{id}/settlement-invoice",
+            post(settlement_invoice_preview),
         )
         .route(
             "/api/v1/agent-payment-bundles/{id}",
@@ -1407,6 +1413,8 @@ async fn generate_ai_baseline(
         }));
     }
 
+    let public_evidence = state.store.public_evidence(Some(&question), 6)?;
+
     let provider_fence =
         orchestrator::generation_fence_namespace(orchestrator::AI_BASELINE_POLICY_VERSION);
     let input_hash = token_hash(
@@ -1414,6 +1422,7 @@ async fn generate_ai_baseline(
             "providerFence": provider_fence,
             "queryId": query_id,
             "question": question,
+            "publicEvidence": public_evidence.iter().map(|record| (&record.id, &record.content_hash)).collect::<Vec<_>>(),
         }))
         .expect("AI baseline input is serialisable"),
     );
@@ -1448,7 +1457,7 @@ async fn generate_ai_baseline(
     )
     .await?;
 
-    let generated = match orchestrator::generate_ai_baseline(&question).await {
+    let generated = match orchestrator::generate_ai_baseline(&question, &public_evidence).await {
         Ok(generated) => generated,
         Err(error) => {
             state.store.fail_ai_generation(
@@ -1473,6 +1482,7 @@ async fn generate_ai_baseline(
         &query_id,
         &access_token_hash,
         &generated.draft,
+        &generated.sources,
         &AiArtifactMetadata {
             model: &generated.model,
             mode: &generated.mode,
@@ -1491,6 +1501,23 @@ async fn generate_ai_baseline(
         status: "generated",
         baseline: Some(baseline),
     }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicEvidenceQuery {
+    q: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn list_public_evidence(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<PublicEvidenceQuery>,
+) -> Result<Json<Vec<PublicEvidenceRecord>>, ApiError> {
+    Ok(Json(state.store.public_evidence(
+        query.q.as_deref(),
+        query.limit.unwrap_or(12),
+    )?))
 }
 
 async fn list_shelf_starters(
@@ -2809,6 +2836,21 @@ async fn create_payment_bundle(
         &request,
         &token_hash(access_token),
         &token_hash(wallet_session),
+        &state.payment_policy,
+    )?))
+}
+
+async fn settlement_invoice_preview(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<SettlementPreviewRequest>,
+) -> Result<Json<crate::settlement_invoice::SettlementPreviewEnvelope>, ApiError> {
+    let access_token = query_access_token(&headers)?;
+    Ok(Json(state.store.settlement_invoice_preview(
+        &id,
+        &token_hash(access_token),
+        &request.handles,
         &state.payment_policy,
     )?))
 }

@@ -96,6 +96,33 @@ export type Resolution = {
   }
 }
 
+export type AiSource = {
+  id: string
+  kind: 'official_public_data' | 'web_search' | string
+  title: string
+  publisher: string
+  url: string
+  license?: string | null
+  publishedAt?: string | null
+}
+
+export type PublicEvidenceRecord = {
+  id: string
+  organization: string
+  title: string
+  question: string
+  answer: string
+  category: string
+  tags: string[]
+  sourceUrl: string
+  sourceType: string
+  sourceLicense: string
+  publishedAt: string
+  accessedAt: string
+  sourceRecordId: string
+  contentHash: string
+}
+
 export type AiBaseline = {
   id: string
   queryId: string
@@ -104,6 +131,7 @@ export type AiBaseline = {
   generalPoints: string[]
   humanGaps: string[]
   questionsForPeople: string[]
+  sources: AiSource[]
   model: string
   mode: 'vertex' | 'gemini_api' | string
   policyVersion: string
@@ -330,6 +358,15 @@ export function generateAiBaseline(
     method: 'POST',
     headers: { 'x-openshelf-query-token': paymentAccessToken },
   })
+}
+
+export function listPublicEvidence(
+  query?: string,
+  limit = 12,
+): Promise<PublicEvidenceRecord[]> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (query?.trim()) params.set('q', query.trim())
+  return apiFetch(`/api/v1/public-evidence?${params.toString()}`)
 }
 
 export function listShelfStarters(): Promise<ShelfStarter[]> {
@@ -560,6 +597,56 @@ export type PaymentBundleQuote = {
   resourcePath: string
   bundleHash: string
   status: string
+}
+
+export type SettlementPreviewLineItem = {
+  documentHandle: string
+  documentHash: string
+  documentVersion: number
+  consentVersion: string
+  recipientWallet: string
+  priceKrw: number
+  amountAtomic: string
+  ownerAmountAtomic: string
+  platformAmountAtomic: string
+}
+
+export type SettlementPreview = {
+  scheme: 'obulus-settlement-preview-v1' | string
+  queryId: string
+  queryHash: string
+  documentBundleRoot: string
+  network: string
+  asset: string
+  totalPriceKrw: number
+  totalAmountAtomic: string
+  ownerAmountAtomic: string
+  platformFeeAtomic: string
+  deliveryPolicy: string
+  lineItems: SettlementPreviewLineItem[]
+}
+
+export type SettlementPreviewEnvelope = {
+  invoice: SettlementPreview
+  invoiceHash: string
+}
+
+export function getSettlementInvoicePreview(
+  queryId: string,
+  handles: string[],
+  queryAccessToken: string,
+): Promise<SettlementPreviewEnvelope> {
+  return apiFetch(
+    `/api/v1/questions/${encodeURIComponent(queryId)}/settlement-invoice`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-openshelf-query-token': queryAccessToken,
+      },
+      body: JSON.stringify({ handles }),
+    },
+  )
 }
 
 export function createPrepaidWalletSession(

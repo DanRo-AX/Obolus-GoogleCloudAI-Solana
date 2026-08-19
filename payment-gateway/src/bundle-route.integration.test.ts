@@ -123,6 +123,7 @@ test("the real gateway process routes an explicit agent bundle without a browser
       body: JSON.stringify({
         queryId: "query_process_contract",
         handles: ["HUMAN_A", "HUMAN_B"],
+        expectedInvoiceHash: "b".repeat(64),
       }),
     }).catch((error: unknown) => {
       throw new Error(`gateway request failed: ${String(error)}\n${gatewayDiagnostics}`);
@@ -136,6 +137,7 @@ test("the real gateway process routes an explicit agent bundle without a browser
     body: {
       queryId: "query_process_contract",
       handles: ["HUMAN_A", "HUMAN_B"],
+      expectedInvoiceHash: "b".repeat(64),
     },
   });
 

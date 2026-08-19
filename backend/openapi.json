@@ -67,14 +67,14 @@
     },
     "/api/v1/questions/{queryId}/ai-baseline": {
       "post": {
-        "summary": "Generate or reuse a zero-price general baseline only while human coverage is thin",
+        "summary": "Generate or reuse a zero-price public answer without opening private human evidence",
         "parameters": [
           { "$ref": "#/components/parameters/QueryId" },
           { "$ref": "#/components/parameters/QueryToken" }
         ],
         "responses": {
           "200": {
-            "description": "Generated, cached, or explicitly unavailable AI liquidity",
+            "description": "Generated, cached, or explicitly unavailable grounded public answer",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/AiBaselineResult" }
@@ -82,6 +82,25 @@
             }
           },
           "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/public-evidence": {
+      "get": {
+        "summary": "Search provenance-bound official public records without mixing them into paid human evidence",
+        "parameters": [
+          { "name": "q", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 20, "default": 12 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Open institutional records with source, license, date, record ID, and content hash",
+            "content": {
+              "application/json": {
+                "schema": { "type": "array", "items": { "$ref": "#/components/schemas/PublicEvidenceRecord" } }
+              }
+            }
+          }
         }
       }
     },
@@ -760,7 +779,7 @@
         "type": "object",
         "required": ["question"],
         "properties": {
-          "question": { "type": "string", "minLength": 8, "maxLength": 1000 },
+          "question": { "type": "string", "minLength": 2, "maxLength": 1000 },
           "requestedDocuments": { "type": "integer", "minimum": 1, "maximum": 20, "default": 5 },
           "budgetKrw": { "type": "integer", "minimum": 0 },
           "filters": { "type": "object" }
@@ -860,7 +879,7 @@
       },
       "AiBaseline": {
         "type": "object",
-        "required": ["id", "queryId", "kind", "orientation", "generalPoints", "humanGaps", "questionsForPeople", "priceKrw", "sellable", "countsAsHumanCoverage", "expiresAt"],
+        "required": ["id", "queryId", "kind", "orientation", "generalPoints", "humanGaps", "questionsForPeople", "sources", "priceKrw", "sellable", "countsAsHumanCoverage", "expiresAt"],
         "properties": {
           "id": { "type": "string" },
           "queryId": { "type": "string" },
@@ -869,12 +888,48 @@
           "generalPoints": { "type": "array", "items": { "type": "string" } },
           "humanGaps": { "type": "array", "items": { "type": "string" } },
           "questionsForPeople": { "type": "array", "items": { "type": "string" } },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "kind", "title", "publisher", "url"],
+              "properties": {
+                "id": { "type": "string" },
+                "kind": { "type": "string" },
+                "title": { "type": "string" },
+                "publisher": { "type": "string" },
+                "url": { "type": "string", "format": "uri" },
+                "license": { "type": ["string", "null"] },
+                "publishedAt": { "type": ["string", "null"] }
+              }
+            }
+          },
           "model": { "type": "string" },
           "policyVersion": { "type": "string" },
           "expiresAt": { "type": "integer" },
           "priceKrw": { "const": 0 },
           "sellable": { "const": false },
           "countsAsHumanCoverage": { "const": false }
+        }
+      },
+      "PublicEvidenceRecord": {
+        "type": "object",
+        "required": ["id", "organization", "title", "question", "answer", "category", "tags", "sourceUrl", "sourceType", "sourceLicense", "publishedAt", "accessedAt", "sourceRecordId", "contentHash"],
+        "properties": {
+          "id": { "type": "string" },
+          "organization": { "type": "string" },
+          "title": { "type": "string" },
+          "question": { "type": "string" },
+          "answer": { "type": "string" },
+          "category": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "sourceUrl": { "type": "string", "format": "uri" },
+          "sourceType": { "type": "string" },
+          "sourceLicense": { "type": "string" },
+          "publishedAt": { "type": "string" },
+          "accessedAt": { "type": "string" },
+          "sourceRecordId": { "type": "string" },
+          "contentHash": { "type": "string", "minLength": 64, "maxLength": 64 }
         }
       },
       "ShelfStarter": {

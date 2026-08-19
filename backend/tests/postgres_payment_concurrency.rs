@@ -389,6 +389,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
         query_id: bundle_race_resolution.query_id.clone(),
         handles: bundle_handles.clone(),
         top_up_atomic: None,
+        expected_invoice_hash: None,
     };
     let create_browser = CreatePaymentBundleRequest {
         top_up_atomic: Some("5000000".to_owned()),
@@ -513,6 +514,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
                     query_id: product_bundle_query,
                     handles: vec![product_bundle_handle],
                     top_up_atomic: None,
+                    expected_invoice_hash: None,
                 },
                 &product_bundle_token,
                 &product_bundle_policy,
@@ -585,6 +587,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
                 query_id: attempt_race_resolution.query_id.clone(),
                 handles: vec![attempt_race_resolution.matches[0].handle.clone()],
                 top_up_atomic: None,
+                expected_invoice_hash: None,
             },
             &attempt_race_token,
             &policy,
@@ -1702,6 +1705,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
         query_id: deletion_resolution.query_id.clone(),
         handles: deletion_handles,
         top_up_atomic: Some("5000000".to_owned()),
+        expected_invoice_hash: None,
     };
     let stale_store = Store::open(&database_url).expect("stale-session worker should open");
     let stale_policy = policy.clone();

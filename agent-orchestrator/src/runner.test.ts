@@ -3,18 +3,21 @@ import test from 'node:test'
 import { Challenge } from 'mppx'
 import { PayShPaymentNotSentError } from './payment-errors.js'
 import { runResearchJob, verifyPayShChallenge, type PayShResource, type ResearchApi, type ResearchJobPlan } from './runner.js'
+import { createHostedSettlementInvoice, hashSettlementInvoice } from './settlement-invoice.js'
 
 function plan(resources: ResearchJobPlan['resources']): ResearchJobPlan {
-  return {
+  const base = {
     id: 'bundle_1',
     payer: 'buyer',
     payTo: 'agent',
     network: 'devnet',
-    asset: 'usdc',
+    asset: 'USDC',
     amountAtomic: '30',
     status: 'processing',
     resources,
   }
+  const invoice = createHostedSettlementInvoice(base, '11'.repeat(32), '22'.repeat(32))
+  return { ...base, invoice, invoiceHash: hashSettlementInvoice(invoice) }
 }
 
 function resource(overrides: Partial<PayShResource> = {}): PayShResource {
@@ -22,6 +25,8 @@ function resource(overrides: Partial<PayShResource> = {}): PayShResource {
     quoteId: 'q1', queryId: 'query-1', documentHandle: 'A', recipientWallet: 'owner-a',
     network: 'devnet', asset: 'USDC', amountAtomic: '30', ownerAmountAtomic: '29',
     platformAmountAtomic: '1', priceKrw: 700, expiresAt: Date.now() + 600_000,
+    contentHash: 'aa'.repeat(32), documentVersion: 1,
+    consentVersion: 'openshelf.consent.v1',
     status: 'quoted', resourcePath: '/a?research_job_id=bundle_1',
     ...overrides,
   }
@@ -196,6 +201,72 @@ test('rejects an MPP challenge that charges more than the committed quote', asyn
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+test('rejects a server-mutated recipient before any Pay.sh request is made', async () => {
+  const committed = plan([resource()])
+  committed.resources[0].recipientWallet = 'attacker-wallet'
+  let paid = false
+  let failed = ''
+  const api: ResearchApi = {
+    plan: async () => committed,
+    beginPayment: async () => undefined,
+    complete: async () => undefined,
+    fail: async (_jobId, error) => { failed = error },
+    hold: async () => undefined,
+  }
+  await assert.rejects(runResearchJob({
+    jobId: 'bundle_1', signerAddress: 'agent', payShGatewayBase: 'https://pay', api,
+    retryDelaysMs: [], verifyChallenge: async () => undefined,
+    payClient: { fetch: async () => { paid = true; return new Response('{}') } },
+  }), /invoice recipient does not match/)
+  assert.equal(paid, false)
+  assert.match(failed, /invoice recipient does not match/)
+})
+
+test('rejects a document-version swap before the KMS payment path', async () => {
+  const committed = plan([resource()])
+  committed.invoice.lineItems[0].documentVersion += 1
+  let fenced = false
+  const api: ResearchApi = {
+    plan: async () => committed,
+    beginPayment: async () => { fenced = true },
+    complete: async () => undefined,
+    fail: async () => undefined,
+    hold: async () => undefined,
+  }
+  await assert.rejects(runResearchJob({
+    jobId: 'bundle_1', signerAddress: 'agent', payShGatewayBase: 'https://pay', api,
+    retryDelaysMs: [], verifyChallenge: async () => undefined,
+    payClient: { fetch: async () => new Response('{}') },
+  }), /hash does not match/)
+  assert.equal(fenced, false)
+})
+
+test('Rust and TypeScript share one canonical settlement-invoice hash', () => {
+  const first = resource({
+    amountAtomic: '10', ownerAmountAtomic: '9', documentVersion: 3,
+    consentVersion: 'obulus.consent.v1', priceKrw: 10,
+    expiresAt: 2_000_000_000_000,
+  })
+  const second = resource({
+    quoteId: 'q2', documentHandle: 'B', recipientWallet: 'owner-b',
+    amountAtomic: '20', ownerAmountAtomic: '19', contentHash: 'bb'.repeat(32),
+    consentVersion: 'obulus.consent.v1', priceKrw: 20,
+    expiresAt: 2_000_000_000_000,
+  })
+  const committed = plan([first, second])
+  committed.payTo = 'kms-agent'
+  committed.invoice = createHostedSettlementInvoice(
+    { ...committed, payTo: 'kms-agent' },
+    '11'.repeat(32),
+    '22'.repeat(32),
+  )
+  committed.invoiceHash = hashSettlementInvoice(committed.invoice)
+  assert.equal(
+    committed.invoiceHash,
+    'f568c237259a55b98f2c4f78e393fb3e081a64d4ee9d4d7f502e606d450ede71',
+  )
 })
 
 test('a challenge server that never responds cannot pin the research job forever', async () => {

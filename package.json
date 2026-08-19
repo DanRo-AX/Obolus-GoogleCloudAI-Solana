@@ -45,11 +45,13 @@
     "agent:call": "node integrations/antigravity/openshelf/runtime/server.mjs call",
     "orchestrator:dev": "npm --prefix agent-orchestrator run dev",
     "orchestrator:test": "npm --prefix agent-orchestrator run test",
+    "settlement-program:test": "cargo test --manifest-path programs/obulus-settlement/Cargo.toml",
+    "settlement-program:lint": "cargo clippy --manifest-path programs/obulus-settlement/Cargo.toml --all-targets -- -D warnings",
     "x402:devnet:smoke": "node scripts/devnet-x402-smoke.ts",
     "build:web": "tsc -b tsconfig.app.json tsconfig.node.json && vite build",
     "build": "tsc -b && vite build && node scripts/stage-pitch-deck.mjs",
     "lint": "oxlint",
-    "check:all": "npm run build && npm run verify:pages-bundle && npm run typecheck:pages && npm run lint && npm run test:unit && npm run test:pages && npm run agent:test && npm run local-agent:test && npm run test:finalist-evidence && npm --prefix payment-gateway run typecheck && npm --prefix payment-gateway run test && npm --prefix agent-orchestrator run typecheck && npm --prefix agent-orchestrator run test && cargo test --manifest-path backend/Cargo.toml && cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings",
+    "check:all": "npm run build && npm run verify:pages-bundle && npm run typecheck:pages && npm run lint && npm run test:unit && npm run test:pages && npm run agent:test && npm run local-agent:test && npm run test:finalist-evidence && npm --prefix payment-gateway run typecheck && npm --prefix payment-gateway run test && npm --prefix agent-orchestrator run typecheck && npm --prefix agent-orchestrator run test && cargo test --manifest-path backend/Cargo.toml && cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings && npm run settlement-program:test && npm run settlement-program:lint",
     "preview": "vite preview"
   },
   "dependencies": {

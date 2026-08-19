@@ -19,6 +19,7 @@ payment-gateway/*.ndjson
 payment-gateway/reports/
 payment-gateway/.stryker-tmp/
 backend/target
+programs/*/target
 backend/mutants.out*
 backend/*.db
 backend/*.db-shm

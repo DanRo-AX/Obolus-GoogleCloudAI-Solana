@@ -71,6 +71,8 @@
         background: #151515;
       }
 
+      .slide-shell.omitted { display: none; }
+
       .slide {
         position: absolute;
         left: 50%;
@@ -141,6 +143,33 @@
         width: 34px;
         height: 1px;
         background: currentColor;
+      }
+
+      .topline-right {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+      }
+
+      .criterion {
+        display: inline-flex;
+        align-items: center;
+        min-height: 26px;
+        padding: 0 10px;
+        border: 1px solid var(--black);
+        border-radius: 999px;
+        background: var(--black);
+        color: var(--white);
+        font-size: 10px;
+        font-weight: 680;
+        letter-spacing: .08em;
+        white-space: nowrap;
+      }
+
+      .dark .criterion {
+        border-color: var(--white);
+        background: var(--white);
+        color: var(--black);
       }
 
       h1, h2, h3, p { margin: 0; word-break: keep-all; }
@@ -515,8 +544,8 @@
       .flow-node.black { background: var(--black); color: var(--white); border-color: var(--black); }
       .flow-node .step { color: var(--muted); font-family: "GeistMono"; font-size: 12px; }
       .flow-node.black .step { color: var(--dark-muted); }
-      .flow-node strong { font-size: 20px; line-height: 1.28; }
-      .flow-node small { margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+      .flow-node strong { display: block; font-size: 20px; line-height: 1.28; }
+      .flow-node small { display: block; margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.4; }
       .flow-node.black small { color: var(--dark-muted); }
       .flow-arrow { display: grid; place-items: center; font-size: 26px; }
 
@@ -776,6 +805,17 @@
         border: 1px solid var(--line);
         background: var(--white);
       }
+
+      .http-sequence.protocol-stack { display: flex; flex-direction: column; }
+      .protocol-head h3 { margin-top: 14px; max-width: 760px; font-size: 30px; line-height: 1.2; letter-spacing: -.035em; }
+      .protocol-roles { margin-top: 22px; border-top: 1px solid var(--line); }
+      .protocol-role { display: grid; grid-template-columns: 118px 1fr; gap: 22px; align-items: center; padding: 18px 0; border-bottom: 1px solid var(--line); }
+      .protocol-role strong { font-size: 22px; }
+      .protocol-role p { color: var(--muted); font-size: 15px; line-height: 1.45; }
+      .protocol-signal { margin-top: auto; margin-bottom: 34px; padding: 16px 18px; background: var(--black); color: var(--white); font-size: 15px; line-height: 1.45; }
+      .protocol-signal strong { margin-right: 8px; }
+
+      .market-number .metric.words { font-size: 62px; line-height: 1.02; }
 
       .endpoint {
         margin-top: 15px;
@@ -1040,6 +1080,19 @@
       .gcp-service b { font-size: 15px; }
       .gcp-service span { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.35; }
 
+      .autonomy-slide .slide-title { margin-top: 30px; font-size: 46px; }
+      .autonomy-slide .subtitle { margin-top: 14px; max-width: 1260px; font-size: 18px; line-height: 1.42; }
+      .autonomy-slide .autonomy-layout { margin-top: 18px; margin-bottom: 38px; }
+      .autonomy-slide .agent-step { grid-template-columns: 38px 205px 1fr; gap: 12px; padding: 9px 14px; }
+      .autonomy-slide .agent-step strong { font-size: 16px; }
+      .autonomy-slide .agent-step span { font-size: 12px; line-height: 1.34; }
+      .autonomy-slide .gcp-stack { gap: 10px; }
+      .autonomy-slide .gcp-summary { padding: 15px 17px; }
+      .autonomy-slide .gcp-summary h3 { font-size: 20px; line-height: 1.22; }
+      .autonomy-slide .gcp-service { padding: 10px 12px; }
+      .autonomy-slide .gcp-service b { font-size: 13px; }
+      .autonomy-slide .gcp-service span { margin-top: 4px; font-size: 10.5px; line-height: 1.28; }
+
       .market-size-layout {
         flex: 1;
         display: grid;
@@ -1080,6 +1133,17 @@
       .future-thesis { display: flex; flex-direction: column; justify-content: space-between; }
       .future-thesis .statement { font-size: 48px; font-weight: 590; line-height: 1.16; letter-spacing: -.05em; }
       .future-thesis .closing { color: var(--dark-muted); font-size: 19px; line-height: 1.55; }
+
+      .final-next {
+        margin-top: 24px;
+        padding-top: 18px;
+        border-top: 1px solid var(--dark-line);
+        color: var(--dark-muted);
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      .final-next strong { color: var(--white); }
 
       .roadmap { display: grid; grid-template-rows: repeat(4, 1fr); border: 1px solid var(--dark-line); }
       .roadmap-row { display: grid; grid-template-columns: 140px 1fr 210px; gap: 20px; align-items: center; padding: 20px 24px; border-bottom: 1px solid var(--dark-line); }
@@ -1140,7 +1204,7 @@
           <div class="content">
             <div class="topline">
               <span class="section">Human evidence infrastructure</span>
-              <span>01 / 18</span>
+              <span>01 / 13</span>
             </div>
             <div class="cover-grid">
               <div class="cover-copy">
@@ -1162,17 +1226,17 @@
       <section class="slide-shell">
         <article class="slide">
           <div class="content">
-            <div class="topline"><span class="section">Target / already-paid demand</span><span>02 / 18</span></div>
+            <div class="topline"><span class="section">Target / already-paid demand</span><span class="topline-right"><span class="criterion">비즈니스 가치·UX 30%</span><span>02 / 13</span></span></div>
             <h2 class="slide-title">기업은 사람의 실제 선택을 이해하기 위해 이미 막대한 비용을 쓰고 있습니다.</h2>
             <p class="subtitle">모델·제품·가격·메시지를 결정하려면 공개 웹과 범용 LLM에 없는 실제 인간 데이터가 필요합니다. 문제는 수요가 아니라, 신뢰할 수 있는 데이터를 처음부터 어떻게 확보하고 계속 재사용하느냐입니다.</p>
             <div class="market-body">
               <div class="market-number">
                 <div>
-                  <div class="card-kicker">Global insights industry · 2023</div>
-                  <div class="metric">$142B</div>
-                  <div class="metric-label">시장조사·리서치 소프트웨어·리포팅을 포함한 전 세계 인사이트 산업 규모</div>
+                  <div class="card-kicker">Already-paid demand</div>
+                  <div class="metric words">이미 쓰는<br />조사 예산</div>
+                  <div class="metric-label">패널·인터뷰·사용자 조사·A/B 테스트에 반복적으로 집행되는 기업 예산</div>
                 </div>
-                <p class="note">Obolus는 이 시장 전체를 대체하지 않습니다. 기업이 이미 지불하는 조사 예산으로 검증된 첫 개인 DB를 만들고, 이후 필요한 근거만 반복 거래하는 새로운 데이터 계층을 만듭니다.</p>
+                <p class="note">Obolus는 기존 조사를 한 번에 대체하지 않습니다. 기업이 이미 지불하는 질문의 예산으로 검증된 첫 개인 DB를 만들고, 다음 질문부터 필요한 근거만 재사용합니다.</p>
               </div>
               <div class="target-stack">
                 <div class="card target-card">
@@ -1202,7 +1266,7 @@
               </div>
             </div>
             <div class="source">
-              <span>출처: <a href="https://community.esomar.org/knowledge-center/library?publication=3019">ESOMAR Global Market Research 2024</a> · <a href="https://www.simile.ai/blog/simulation-next-frontier">Simile, Simulation: The Next Frontier for AI</a></span>
+              <span>참고: <a href="https://www.simile.ai/blog/simulation-next-frontier">Simile, Simulation: The Next Frontier for AI</a></span>
               <span>Simile은 시장 신호이며 Obolus 고객으로 주장하지 않음</span>
             </div>
           </div>
@@ -1210,7 +1274,7 @@
       </section>
 
       <!-- 03 CURRENT PROBLEM -->
-      <section class="slide-shell">
+      <section class="slide-shell omitted">
         <article class="slide dark">
           <div class="content">
             <div class="topline"><span class="section">Problem / one-time research economics</span><span>03 / 18</span></div>
@@ -1249,9 +1313,9 @@
       <section class="slide-shell">
         <article class="slide">
           <div class="content">
-            <div class="topline"><span class="section">Solution / incentive-aligned loop</span><span>04 / 18</span></div>
-            <h2 class="slide-title compact">첫 구매자의 예산으로 검증된 개인 DB를 만들고, 다음 질문부터 다시 사용합니다.</h2>
-            <p class="subtitle">Obolus는 아무 데이터나 먼저 쌓지 않습니다. 실제 질문이 들어오면 대상·인원·보상이 명확한 Open Call을 만들고, 조건에 맞는 사람이 구체적인 경험을 직접 답합니다. 품질 검증을 통과한 문서에만 첫 보상이 지급됩니다.</p>
+            <div class="topline"><span class="section">Cold start / incentive-aligned loop</span><span class="topline-right"><span class="criterion">비즈니스 가치·UX 30%</span><span>03 / 13</span></span></div>
+            <h2 class="slide-title compact">초기 DB가 비어 있어도, 구매자의 질문이 보상 공고를 만들고 첫 데이터를 채웁니다.</h2>
+            <p class="subtitle">구매자는 대상·인원·채택 조건·예산을 먼저 제시하고, 조건에 맞는 사람은 확정된 수요에 응답합니다. 검증을 통과한 답변은 현재 질문을 해결하는 동시에 다음 질문에서 다시 검색·정산되는 개인 DB가 됩니다.</p>
             <div class="loop-wrap">
               <div class="loop-lanes">
                 <div class="lane-label"><strong>기업 / Agent</strong><span>더 빠르고 작은 단위로 도메인 근거 확보</span></div>
@@ -1286,8 +1350,8 @@
       <section class="slide-shell">
         <article class="slide dark">
           <div class="content">
-            <div class="topline"><span class="section">Product / one question end-to-end</span><span>05 / 18</span></div>
-            <h2 class="slide-title compact">범용 LLM이 알기 어려운 지역 선택을, 실제 사람의 유료 근거로 답합니다.</h2>
+            <div class="topline"><span class="section">Product / one question end-to-end</span><span class="topline-right"><span class="criterion">비즈니스 가치·UX 30%</span><span>04 / 13</span></span></div>
+            <h2 class="slide-title compact">질문 한 번이면, Agent가 40개 후보에서 필요한 4개 근거만 골라 ₩60에 답합니다.</h2>
             <div class="demo-layout">
               <div class="demo-story">
                 <div class="question-box">
@@ -1311,7 +1375,7 @@
                 <img src="../service-presentation/assets/12-buyer-answer.png" alt="Obolus 질문과 유료 인간 근거 답변 화면" />
               </div>
             </div>
-            <div class="source"><span>가격·문서 수: 현재 저장소 seed 및 발표 시나리오 기준 · 상용 가격 아님</span><span>검색 무료 · 결제된 passage만 합성</span></div>
+            <div class="source"><span>가격·문서 수: 현재 저장소 seed 및 발표 시나리오 기준 · 상용 가격 아님</span><span>검색 무료 · 질문별 예산 한 번 설정 · SOL 불필요 · 문서별 청구서 제공</span></div>
           </div>
         </article>
       </section>
@@ -1320,8 +1384,8 @@
       <section class="slide-shell">
         <article class="slide diagram-slide">
           <div class="content">
-            <div class="topline"><span class="section">Memory / from response to asset</span><span>06 / 18</span></div>
-            <h2 class="slide-title compact">콜드스타트에서 중요한 것은 많이 모으는 것이 아니라, 출처가 남는 첫 개인 DB를 만드는 것입니다.</h2>
+            <div class="topline"><span class="section">Memory / from response to asset</span><span>05 / 13</span></div>
+            <h2 class="slide-title compact">한 번의 응답을 출처·버전·동의가 남는 개인 DB로 적재합니다.</h2>
             <p class="subtitle">사람이 직접 답했다는 사실만으로 내용의 진실이 보장되지는 않습니다. Obolus는 구체성·중복·일관성·과거 채택 이력·구매 후 평가를 서로 다른 신뢰 신호로 관리하고, 검증을 통과한 문서에만 보상합니다.</p>
             <div class="original-diagram-wrap memory-diagram-wrap" aria-label="Obolus 인간 메모리 적재와 재사용 아키텍처">
               <svg viewBox="0 0 1500 430" role="img" aria-labelledby="memory-architecture-title">
@@ -1378,7 +1442,7 @@
       <section class="slide-shell">
         <article class="slide dark">
           <div class="content">
-            <div class="topline"><span class="section">Search / spam-resistant human DB ranking</span><span>07 / 18</span></div>
+            <div class="topline"><span class="section">Search / spam-resistant human DB ranking</span><span>06 / 13</span></div>
             <h2 class="slide-title compact">검색 품질과 보상을 연결하려면, 돈으로 순위를 살 수 없어야 합니다.</h2>
             <p class="subtitle">Google이 관련성·링크 권위·웹스팸 방어를 함께 설계한 원리를 인간 DB에 재해석했습니다. Google의 비공개 현재 알고리즘을 복제했다는 뜻은 아닙니다.</p>
             <div class="defense-layout">
@@ -1409,9 +1473,9 @@
       <section class="slide-shell">
         <article class="slide">
           <div class="content">
-            <div class="topline"><span class="section">Core abstraction / x402 personal DB</span><span>08 / 18</span></div>
-            <h2 class="slide-title compact">개인의 DB를 검색 가능한 사이트로, 각 경험 문서를 결제 가능한 URL로 만듭니다.</h2>
-            <p class="subtitle">문서의 존재와 안전한 메타데이터는 무료로 발견됩니다. 원문은 잠겨 있고, 정확한 결제 요구를 충족한 요청에만 해당 버전의 passage를 반환합니다.</p>
+            <div class="topline"><span class="section">Paid human web / x402 · Pay.sh · Solana</span><span class="topline-right"><span class="criterion">Solana 온체인 결제 15%</span><span>07 / 13</span></span></div>
+            <h2 class="slide-title compact">Agent는 개인 DB를 찾고, ₩5–₩25짜리 경험 문서를 URL 단위로 직접 결제합니다.</h2>
+            <p class="subtitle">x402가 문서의 가격·자산·네트워크·수취인을 표준화하고, Pay.sh가 정확한 조건만 보호된 지갑으로 실행하며, Solana USDC가 서로 다른 데이터 소유자에게 문서 단위로 정산합니다.</p>
             <div class="http-layout">
               <div class="web-analogy">
                 <div class="analogy-column">
@@ -1434,26 +1498,26 @@
                   </div>
                 </div>
               </div>
-              <div class="http-sequence">
-                <div>
-                  <div class="card-kicker">한 문서의 HTTP 생애주기</div>
-                  <div class="endpoint">GET /people/paris-17/memories/dinner-v3</div>
+              <div class="http-sequence protocol-stack">
+                <div class="protocol-head">
+                  <div class="card-kicker">Agentic commerce transaction layer</div>
+                  <h3>발견·권한·결제·전달을 하나의 검증 가능한 요청으로 묶습니다.</h3>
                 </div>
-                <div class="sequence-list">
-                  <div class="sequence-line"><span class="n">01</span><span class="status">SEARCH</span><p>Agent는 원문 없이 handle·카테고리·가격·해시·품질 점수를 비교합니다.</p></div>
-                  <div class="sequence-line focus"><span class="n">02</span><span class="status">HTTP 402</span><p>서버가 ₩15 상당 USDC, Solana Devnet, 수취인, 문서 버전을 요구합니다.</p></div>
-                  <div class="sequence-line"><span class="n">03</span><span class="status">PAY</span><p>Pay.sh가 challenge를 검증하고 승인된 지갑으로 서명한 뒤 요청을 재시도합니다.</p></div>
-                  <div class="sequence-line focus"><span class="n">04</span><span class="status">HTTP 200</span><p>정산이 확인된 exact passage snapshot과 receipt만 반환합니다.</p></div>
-                  <div class="sequence-line"><span class="n">05</span><span class="status">CITE</span><p>Gemini는 허용된 handle만 인용해 합의·차이·한계를 정리합니다.</p></div>
+                <div class="protocol-roles">
+                  <div class="protocol-role"><strong>x402</strong><p>가격·자산·네트워크·수취인을 HTTP 402 응답으로 표현해 유료 URL의 공통 결제 경계를 만듭니다.</p></div>
+                  <div class="protocol-role"><strong>Pay.sh</strong><p>challenge가 정확한지 확인하고 보호된 지갑으로 서명한 뒤 payment proof와 함께 원 요청을 재시도합니다.</p></div>
+                  <div class="protocol-role"><strong>Solana USDC</strong><p>문서마다 다른 데이터 소유자에게 작은 금액을 정산하고, Agent와 서버가 같은 온체인 영수증을 검증합니다.</p></div>
                 </div>
+                <div class="protocol-signal"><strong>왜 지금인가</strong>Google AP2와 Cloudflare Pay Per Crawl처럼 Agent가 발견한 디지털 리소스를 직접 결제하려는 표준이 빠르게 만들어지고 있습니다.</div>
               </div>
             </div>
+            <div class="source"><span>출처: <a href="https://cloud.google.com/blog/products/ai-machine-learning/announcing-agents-to-payments-ap2-protocol">Google Cloud AP2</a> · <a href="https://blog.cloudflare.com/introducing-ai-crawl-control/">Cloudflare Pay Per Crawl</a> · <a href="https://github.com/solana-foundation/pay">Solana Foundation Pay.sh</a></span><span>검색 ₩0 · 현재 데모 문서 ₩5 / ₩15 / ₩25</span></div>
           </div>
         </article>
       </section>
 
       <!-- 09 AGENTIC COMMERCE -->
-      <section class="slide-shell">
+      <section class="slide-shell omitted">
         <article class="slide">
           <div class="content">
             <div class="topline"><span class="section">Why now / the agentic commerce gap</span><span>09 / 18</span></div>
@@ -1487,7 +1551,7 @@
       </section>
 
       <!-- 10 WHY THE STACK -->
-      <section class="slide-shell">
+      <section class="slide-shell omitted">
         <article class="slide dark">
           <div class="content">
             <div class="topline"><span class="section">Micropayment / why x402, Pay.sh, Solana</span><span>10 / 18</span></div>
@@ -1525,9 +1589,9 @@
       <section class="slide-shell">
         <article class="slide diagram-slide">
           <div class="content">
-            <div class="topline"><span class="section">Payment sequence / x402 · Pay.sh · Solana</span><span>11 / 18</span></div>
-            <h2 class="slide-title compact">무료 검색부터 유료 원문 공개까지, 하나의 검증 가능한 상태 흐름으로 연결합니다.</h2>
-            <p class="subtitle">Agent는 먼저 후보를 비교하고 정확한 문서·가격·수취인을 고정한 뒤 결제합니다. 정산된 버전의 passage만 최종 답변에 전달됩니다.</p>
+            <div class="topline"><span class="section">Payment sequence / x402 · Pay.sh · Solana</span><span class="topline-right"><span class="criterion">Solana 온체인 결제 15%</span><span>08 / 13</span></span></div>
+            <h2 class="slide-title compact">Agent가 고른 문서만 Devnet USDC로 정산되고, 결제된 원문만 답변에 들어갑니다.</h2>
+            <p class="subtitle">구매자는 SOL을 준비하거나 문서마다 가스 거래를 승인하지 않습니다. 질문별 예산 안에서 정확한 문서·버전·금액·수취인을 고정하고, 불확실한 응답은 재결제 대신 복구 경로로 확인합니다.</p>
             <div class="original-diagram-wrap protocol-diagram-wrap" aria-label="Obolus x402와 Pay.sh 결제 시퀀스">
               <svg viewBox="0 0 1500 550" role="img" aria-labelledby="payment-sequence-title">
                 <title id="payment-sequence-title">구매자 질문부터 Solana USDC 정산과 결제된 근거 반환까지의 시퀀스</title>
@@ -1549,7 +1613,7 @@
 
                 <line x1="122" y1="92" x2="355" y2="92" class="diagram-data-line" /><text x="238" y="83" text-anchor="middle" class="diagram-label">01 질문 · 무료 메타데이터 검색</text>
                 <line x1="355" y1="126" x2="129" y2="126" class="diagram-data-line" /><text x="242" y="117" text-anchor="middle" class="diagram-label">02 후보 · 커버리지 · 정확한 총가격</text>
-                <line x1="122" y1="160" x2="355" y2="160" class="diagram-data-line" /><text x="238" y="151" text-anchor="middle" class="diagram-label">03 질문별 최대 예산 한 번 승인</text>
+                <line x1="122" y1="160" x2="355" y2="160" class="diagram-data-line" /><text x="238" y="151" text-anchor="middle" class="diagram-label">03 예산 정책 확인 · 별도 gas 거래 없음</text>
                 <rect x="282" y="180" width="160" height="54" class="diagram-note" /><text x="362" y="200" text-anchor="middle" class="diagram-small">04 IMMUTABLE JOB</text><text x="362" y="218" text-anchor="middle" class="diagram-label">hash · version · consent</text><text x="362" y="231" text-anchor="middle" class="diagram-small">recipient · amount · mint</text>
 
                 <line x1="370" y1="255" x2="834" y2="255" class="diagram-data-line" /><text x="602" y="246" text-anchor="middle" class="diagram-label">05 funded research job 실행</text>
@@ -1567,13 +1631,13 @@
               </svg>
             </div>
             <div class="diagram-legend"><div class="legend-lines"><span class="legend-line">질문·데이터</span><span class="legend-line payment">결제·정산</span><span class="legend-line trust">영수증·검증</span></div><span>결제 전 원문 비공개 · exact quote 검증 · 정산된 passage만 전달</span></div>
-            <div class="source"><span>결제는 내용의 진실이 아니라, 어떤 버전이 누구에게 얼마로 열렸는지를 증명</span><span>HTTP 402 → Pay.sh verification → Solana USDC → paid callback</span></div>
+            <div class="source"><span>실제 Devnet USDC funding·owner payout·remainder refund·중복 정산 0 검증</span><span>x402 → Pay.sh → KMS signer → 2개 독립 RPC finality → paid callback</span></div>
           </div>
         </article>
       </section>
 
       <!-- 12 TRUST AND RECEIPT -->
-      <section class="slide-shell">
+      <section class="slide-shell omitted">
         <article class="slide">
           <div class="content">
             <div class="topline"><span class="section">Trust / verifiable invoice, separated authority</span><span>12 / 18</span></div>
@@ -1612,7 +1676,7 @@
       </section>
 
       <!-- 13 IMMUTABLE SETTLEMENT -->
-      <section class="slide-shell">
+      <section class="slide-shell omitted">
         <article class="slide diagram-slide">
           <div class="content">
             <div class="topline"><span class="section">Mainnet hardening / immutable settlement program · ROADMAP</span><span>13 / 18</span></div>
@@ -1707,9 +1771,9 @@
       <section class="slide-shell">
         <article class="slide">
           <div class="content">
-            <div class="topline"><span class="section">Fraud controls / implemented code · audit required</span><span>14 / 18</span></div>
-            <h2 class="slide-title compact">청구서에 없는 금액·수취인·문서는 결제되지 않습니다.</h2>
-            <p class="subtitle">사람이 읽는 청구서와 Program이 검증하는 canonical invoice가 같은 해시를 공유하고, 결제 이후에는 전달된 문서 버전과 실제 정산 결과까지 하나의 영수증으로 묶입니다.</p>
+            <div class="topline"><span class="section">Trust / signed invoice · separated authority</span><span class="topline-right"><span class="criterion">UX + 온체인 신뢰</span><span>09 / 13</span></span></div>
+            <h2 class="slide-title compact">중앙 서버는 청구서를 만들지만, 서명된 조건 밖으로 자금을 움직일 수 없습니다.</h2>
+            <p class="subtitle">사람이 읽는 청구서와 프로그램이 검증하는 canonical invoice가 같은 해시를 공유합니다. 웹의 제한된 선불 권한·Cloud KMS 서비스 키·로컬 Pay.sh 서명은 서로 분리되며, 문서·가격·수취인·환불 조건은 결제 전에 고정됩니다.</p>
             <div class="fraud-layout">
               <div class="contract-invoice">
                 <div class="receipt-head"><div><div class="card-kicker">Signed evidence invoice</div><h3>파리 평일 저녁 질문</h3></div><div class="receipt-total">₩60</div></div>
@@ -1732,9 +1796,7 @@
                   <div class="risk-row"><span class="risk">SESSION THEFT</span><span class="control"><strong>로그인 세션만으로는 결제 불가</strong>구매자 지갑 또는 로컬 Pay.sh 결제 계정이 정확한 청구서가 들어 있는 트랜잭션에 서명해야 합니다.</span></div>
                   <div class="risk-row"><span class="risk">INVOICE TAMPERING</span><span class="control"><strong>서버가 문서·가격을 바꾸면 해시 불일치</strong>Program이 signer·mint·총액·bundle root·수취인 split을 다시 검증합니다.</span></div>
                   <div class="risk-row"><span class="risk">DOUBLE CHARGE</span><span class="control"><strong>주문별 PDA와 nonce로 한 번만 처리</strong>동일 invoiceHash의 중복 funding·settlement를 거부하고 idempotency를 유지합니다.</span></div>
-                  <div class="risk-row"><span class="risk">NO DELIVERY</span><span class="control"><strong>구매자 또는 로컬 Agent의 ACK 전에는 정산하지 않음</strong>전달 없이 만료된 주문은 청구서에 고정된 구매자 주소로만 환불합니다.</span></div>
-                  <div class="risk-row"><span class="risk">FALSE REFUND</span><span class="control"><strong>전달 후 자동 만료 환불을 금지</strong>5분 이의제기 시간이 지나면 정산되고, 분쟁은 미리 지정된 독립 resolver만 환불 승인할 수 있습니다.</span></div>
-                  <div class="risk-row"><span class="risk">FALSE / SPAM DATA</span><span class="control"><strong>결제 증명과 진실성 검증을 분리</strong>content hash·provenance·품질 gate·구매자 피드백·분쟁·평판 감쇠가 별도 방어합니다.</span></div>
+                  <div class="risk-row"><span class="risk">DELIVERY / REFUND</span><span class="control"><strong>전달 확인 전에는 정산하지 않음</strong>미전달 주문은 고정된 구매자 주소로만 환불하고, 전달 후 분쟁은 청구서에 지정된 resolver만 처리합니다.</span></div>
                 </div>
                 <div class="invoice-states">
                   <div class="invoice-state">CREATED<br />서명 대기</div>
@@ -1746,7 +1808,7 @@
                 </div>
               </div>
             </div>
-            <div class="source"><span>개인 질문·원문·PII는 온체인에 올리지 않고 hash·금액·상태·최소 식별자만 기록</span><span>금융 안전은 Program · 데이터 품질은 provenance/quality/dispute 계층</span></div>
+            <div class="source"><span>개인 질문·원문·PII는 온체인에 올리지 않고 hash·금액·상태·최소 식별자만 기록</span><span>Devnet 청구·정산 흐름 구현 · Native Program 테스트 완료 · Mainnet 전 외부 감사 필요</span></div>
           </div>
         </article>
       </section>
@@ -1755,9 +1817,9 @@
       <section class="slide-shell">
         <article class="slide diagram-slide">
           <div class="content">
-            <div class="topline"><span class="section">Architecture / data, intelligence, settlement</span><span>15 / 18</span></div>
-            <h2 class="slide-title compact">개인 원문은 오프체인에, 판단 규칙은 결정론적 코어에, 지급 증명은 Solana에 둡니다.</h2>
-            <p class="subtitle">Cloudflare의 사용자 경험, Google Cloud의 Rust·Gemini·KMS, Solana의 문서 단위 정산을 하나의 검증 가능한 경로로 연결했습니다.</p>
+            <div class="topline"><span class="section">Architecture / deployed cloud-native system</span><span class="topline-right"><span class="criterion">GCP 인프라 확장성 15%</span><span>10 / 13</span></span></div>
+            <h2 class="slide-title compact">Cloud Run 4개 서비스가 AI, 검색, 결제, 복구의 권한과 장애 범위를 분리합니다.</h2>
+            <p class="subtitle">공개 앱은 Cloudflare Pages에 두고, 핵심 API·x402 Gateway·결제/복구 Orchestrator·보호된 Pay.sh Front는 Google Cloud에 독립 배포했습니다. Cloud SQL, Tasks, KMS, Secret Manager와 create-only 감사 저장소가 상태와 키를 보호합니다.</p>
             <div class="original-diagram-wrap system-diagram-wrap" aria-label="Obolus 전체 기술 아키텍처">
               <svg viewBox="0 0 1500 570" role="img" aria-labelledby="system-architecture-title">
                 <title id="system-architecture-title">사용자 인터페이스, Rust 코어, 인간 메모리 데이터, Gemini, Pay.sh와 Solana 정산을 연결한 Obolus 전체 구조</title>
@@ -1776,10 +1838,10 @@
                 <rect x="42" y="445" width="157" height="38" class="diagram-note" /><text x="120" y="469" text-anchor="middle" class="diagram-small">RAW KEY NEVER ENTERS AI</text>
 
                 <rect x="245" y="28" width="955" height="500" class="diagram-zone" />
-                <text x="270" y="57" class="diagram-small">CLOUDFLARE EDGE + OBOLUS DOMAIN CORE / GOOGLE CLOUD</text>
+                <text x="270" y="57" class="diagram-small">CLOUDFLARE EDGE + GOOGLE CLOUD · ASIA-NORTHEAST3</text>
                 <rect x="275" y="78" width="260" height="54" class="diagram-node" /><text x="405" y="102" text-anchor="middle" class="diagram-title">Cloudflare Pages · React</text><text x="405" y="121" text-anchor="middle" class="diagram-small">CHAT · DASHBOARD · MEMORY</text>
-                <rect x="565" y="78" width="260" height="54" class="diagram-node" /><text x="695" y="102" text-anchor="middle" class="diagram-title">CLI / MCP Tools</text><text x="695" y="121" text-anchor="middle" class="diagram-small">26 MARKETPLACE ACTIONS</text>
-                <rect x="855" y="78" width="315" height="54" class="diagram-node dark-node" /><text x="1012" y="102" text-anchor="middle" class="diagram-title inverse">Cloud Run · Rust / Axum API</text><text x="1012" y="121" text-anchor="middle" class="diagram-small inverse">SESSION · CAPABILITY · POLICY</text>
+                <rect x="565" y="78" width="260" height="54" class="diagram-node" /><text x="695" y="102" text-anchor="middle" class="diagram-title">CLI / MCP Tools</text><text x="695" y="121" text-anchor="middle" class="diagram-small">24 MARKETPLACE ACTIONS</text>
+                <rect x="855" y="78" width="315" height="54" class="diagram-node dark-node" /><text x="1012" y="102" text-anchor="middle" class="diagram-title inverse">Cloud Run ① · obolus-api</text><text x="1012" y="121" text-anchor="middle" class="diagram-small inverse">RUST / AXUM · SESSION · POLICY</text>
 
                 <rect x="275" y="160" width="565" height="151" class="diagram-zone dark-zone" />
                 <text x="298" y="184" class="diagram-small inverse">DETERMINISTIC QUERY + MARKETPLACE ORCHESTRATION</text>
@@ -1797,67 +1859,69 @@
                 <rect x="892" y="255" width="256" height="40" class="diagram-node dark-node" /><text x="1020" y="280" text-anchor="middle" class="diagram-label inverse">Paid Evidence Synthesis</text>
 
                 <rect x="275" y="337" width="895" height="164" fill="#f7f7f5" stroke="#969c99" stroke-width="1.5" stroke-dasharray="7 5" rx="4" />
-                <text x="298" y="361" class="diagram-small">ENCRYPTED OFF-CHAIN HUMAN DATA + LEDGER</text>
+                <text x="298" y="361" class="diagram-small">CLOUD SQL + ENCRYPTED OFF-CHAIN HUMAN DATA</text>
                 <rect x="298" y="380" width="155" height="58" class="diagram-node" /><text x="375" y="404" text-anchor="middle" class="diagram-title">Metadata</text><text x="375" y="424" text-anchor="middle" class="diagram-small">FREE DISCOVERY</text>
                 <rect x="470" y="380" width="155" height="58" class="diagram-node dark-node" /><text x="547" y="404" text-anchor="middle" class="diagram-title inverse">Human Docs</text><text x="547" y="424" text-anchor="middle" class="diagram-small inverse">LOCKED PASSAGES</text>
                 <rect x="642" y="380" width="155" height="58" class="diagram-node" /><text x="719" y="404" text-anchor="middle" class="diagram-title">Memory Stream</text><text x="719" y="424" text-anchor="middle" class="diagram-small">OBSERVE · VERIFY · REFLECT</text>
                 <rect x="814" y="380" width="155" height="58" class="diagram-node" /><text x="891" y="404" text-anchor="middle" class="diagram-title">Evidence Graph</text><text x="891" y="424" text-anchor="middle" class="diagram-small">TRUST · OUTCOME</text>
                 <rect x="986" y="380" width="161" height="58" class="diagram-node" /><text x="1066" y="404" text-anchor="middle" class="diagram-title">Research Ledger</text><text x="1066" y="424" text-anchor="middle" class="diagram-small">JOB · QUOTE · RECEIPT</text>
-                <rect x="298" y="451" width="849" height="31" class="diagram-note" /><text x="722" y="472" text-anchor="middle" class="diagram-small">CONSENT VERSION · LOCK · ACCESS POLICY · CONTENT HASH · CORRECTION HISTORY · EARNINGS</text>
+                <rect x="298" y="451" width="849" height="31" class="diagram-note" /><text x="722" y="472" text-anchor="middle" class="diagram-small">CLOUD TASKS RETRY · CREATE-ONLY GCS AUDIT · SECRET MANAGER / IAM · CONTENT HASH</text>
 
                 <rect x="1222" y="55" width="260" height="448" class="diagram-zone" />
-                <text x="1246" y="82" class="diagram-small">PAYMENT + SETTLEMENT</text>
-                <rect x="1247" y="105" width="210" height="54" class="diagram-node" /><text x="1352" y="129" text-anchor="middle" class="diagram-title">x402 Gateway</text><text x="1352" y="148" text-anchor="middle" class="diagram-small">EXACT CHALLENGE</text>
-                <rect x="1247" y="177" width="210" height="54" class="diagram-node" /><text x="1352" y="201" text-anchor="middle" class="diagram-title">Pay.sh / MPP</text><text x="1352" y="220" text-anchor="middle" class="diagram-small">PAYMENT + RECOVERY</text>
-                <rect x="1247" y="249" width="210" height="54" class="diagram-node dark-node" /><text x="1352" y="273" text-anchor="middle" class="diagram-title inverse">Cloud KMS</text><text x="1352" y="292" text-anchor="middle" class="diagram-small inverse">NON-EXPORTABLE SIGNER</text>
-                <rect x="1247" y="321" width="210" height="54" class="diagram-node" /><text x="1352" y="345" text-anchor="middle" class="diagram-title">Solana USDC</text><text x="1352" y="364" text-anchor="middle" class="diagram-small">DEVNET SETTLEMENT</text>
-                <rect x="1247" y="393" width="210" height="54" class="diagram-node dark-node" /><text x="1352" y="417" text-anchor="middle" class="diagram-title inverse">Contributor Wallet</text><text x="1352" y="436" text-anchor="middle" class="diagram-small inverse">90% OWNER PAYOUT</text>
-                <rect x="1247" y="461" width="210" height="27" class="diagram-note" /><text x="1352" y="479" text-anchor="middle" class="diagram-small">RECEIPT · REFUND · RECOVERY</text>
+                <text x="1246" y="82" class="diagram-small">CLOUD RUN PAYMENT PLANE + SOLANA</text>
+                <rect x="1247" y="100" width="210" height="44" class="diagram-node" /><text x="1352" y="119" text-anchor="middle" class="diagram-title">Cloud Run ②</text><text x="1352" y="136" text-anchor="middle" class="diagram-small">OBOLUS-ORCHESTRATOR</text>
+                <rect x="1247" y="158" width="210" height="44" class="diagram-node" /><text x="1352" y="177" text-anchor="middle" class="diagram-title">Cloud Run ③</text><text x="1352" y="194" text-anchor="middle" class="diagram-small">OBOLUS-GATEWAY · X402</text>
+                <rect x="1247" y="216" width="210" height="44" class="diagram-node" /><text x="1352" y="235" text-anchor="middle" class="diagram-title">Cloud Run ④</text><text x="1352" y="252" text-anchor="middle" class="diagram-small">PROTECTED OBOLUS-PAY</text>
+                <rect x="1247" y="274" width="210" height="44" class="diagram-node dark-node" /><text x="1352" y="293" text-anchor="middle" class="diagram-title inverse">Cloud KMS</text><text x="1352" y="310" text-anchor="middle" class="diagram-small inverse">NON-EXPORTABLE SIGNER</text>
+                <rect x="1247" y="332" width="210" height="44" class="diagram-node" /><text x="1352" y="351" text-anchor="middle" class="diagram-title">Solana USDC</text><text x="1352" y="368" text-anchor="middle" class="diagram-small">DEVNET · 2-RPC FINALITY</text>
+                <rect x="1247" y="390" width="210" height="44" class="diagram-node dark-node" /><text x="1352" y="409" text-anchor="middle" class="diagram-title inverse">Contributor Wallet</text><text x="1352" y="426" text-anchor="middle" class="diagram-small inverse">OWNER PAYOUT</text>
+                <rect x="1247" y="448" width="210" height="40" class="diagram-note" /><text x="1352" y="464" text-anchor="middle" class="diagram-small">RECEIPT · REFUND</text><text x="1352" y="480" text-anchor="middle" class="diagram-small">IDEMPOTENT RECOVERY</text>
 
                 <path d="M 199 134 H 267" class="diagram-data-line" /><path d="M 199 304 H 557" class="diagram-data-line" /><path d="M 199 219 H 267 V 275 H 290" class="diagram-data-line" />
                 <path d="M 535 105 H 847" class="diagram-data-line" /><path d="M 825 105 H 847" class="diagram-data-line" /><path d="M 1012 132 V 152" class="diagram-data-line" />
                 <path d="M 840 235 H 862" class="diagram-data-line" /><path d="M 870 276 H 825" class="diagram-data-line" />
                 <path d="M 375 303 V 372" class="diagram-data-line" /><path d="M 547 303 V 372" class="diagram-data-line" /><path d="M 729 303 V 372" class="diagram-data-line" />
                 <path d="M 547 380 V 319 H 1020 V 303" class="diagram-data-line" /><path d="M 891 380 V 319 H 730 V 303" class="diagram-trust-line" />
-                <path d="M 1147 409 H 1214 V 204 H 1239" class="diagram-payment-line" /><path d="M 1352 231 V 241" class="diagram-payment-line" /><path d="M 1352 303 V 313" class="diagram-payment-line" /><path d="M 1352 375 V 385" class="diagram-payment-line" />
-                <path d="M 1247 475 H 1160 V 447 H 1147" class="diagram-trust-line" /><path d="M 199 389 H 1214 V 132 H 1239" class="diagram-payment-line" />
+                <path d="M 1147 409 H 1214 V 122 H 1239" class="diagram-payment-line" /><path d="M 1352 144 V 150" class="diagram-payment-line" /><path d="M 1352 202 V 208" class="diagram-payment-line" /><path d="M 1352 260 V 266" class="diagram-payment-line" /><path d="M 1352 318 V 324" class="diagram-payment-line" /><path d="M 1352 376 V 382" class="diagram-payment-line" />
+                <path d="M 1247 468 H 1160 V 447 H 1147" class="diagram-trust-line" /><path d="M 199 389 H 1214 V 180 H 1239" class="diagram-payment-line" />
               </svg>
             </div>
             <div class="diagram-legend"><div class="legend-lines"><span class="legend-line">질문·데이터</span><span class="legend-line payment">결제·정산</span><span class="legend-line trust">신뢰·복구</span></div><span>확률적 AI는 해석 · 결정론적 시스템은 동의·가격·지급을 집행</span></div>
-            <div class="source"><span>개인 원문은 결제 전 Gemini에 전달되지 않으며 온체인에 기록되지 않음</span><span>독립 근거·실제 결과 검증은 품질 고도화 로드맵</span></div>
+            <div class="source"><span>실제 배포: Cloudflare Pages + Cloud Run 4 services + Cloud SQL + Tasks + KMS + Secret Manager</span><span>서비스별 전용 identity · 명시적 revision · 결제/복구 상태 영속화</span></div>
           </div>
         </article>
       </section>
 
       <!-- 16 AUTONOMY AND GCP -->
       <section class="slide-shell">
-        <article class="slide">
+        <article class="slide autonomy-slide">
           <div class="content">
-            <div class="topline"><span class="section">AI autonomy / bounded multi-step agency</span><span>16 / 18</span></div>
-            <h2 class="slide-title compact">Gemini가 계획하고 도구를 고르되, 동의·가격·결제는 코드가 강제합니다.</h2>
-            <p class="subtitle">자율성은 “LLM이 모든 것을 한다”가 아니라, 확률적 해석과 결정론적 통제를 올바른 순서로 결합하는 데서 나옵니다.</p>
+            <div class="topline"><span class="section">AI autonomy / plan · tool · observe · re-plan</span><span class="topline-right"><span class="criterion">AI 기술 자율성 30%</span><span>11 / 13</span></span></div>
+            <h2 class="slide-title compact">Gemini는 답만 쓰는 챗봇이 아니라, 계획하고 도구를 실행한 뒤 결과를 보고 다음 행동을 고릅니다.</h2>
+            <p class="subtitle">Vertex AI function calling을 두 차례 사용합니다. 첫 호출이 검색 계획을 만들고, Rust가 실제 도구를 실행하며, 두 번째 호출이 HIT·PARTIAL·MISS를 관찰해 구매 제안·부분 Open Call·무료 baseline·종료 중 다음 행동을 선택합니다.</p>
             <div class="autonomy-layout">
               <div class="agent-loop">
                 <div class="agent-step ai"><span class="n">01</span><strong>Gemini function call #1</strong><span>자연어 질문에서 지역·분야·대상·근거 수를 허용된 schema 안에서 계획합니다.</span></div>
                 <div class="agent-step"><span class="n">02</span><strong>Rust search tools</strong><span>원문 없이 필터링·랭킹·중복 제거·예산 최적화를 실행하고 HIT / PARTIAL / MISS를 계산합니다.</span></div>
                 <div class="agent-step ai"><span class="n">03</span><strong>Gemini function call #2</strong><span>aggregate coverage를 보고 구매 제안·부분 Open Call·무료 baseline·종료 중 허용된 다음 행동을 고릅니다.</span></div>
-                <div class="agent-step"><span class="n">04</span><strong>사용자 승인 + payment tools</strong><span>지출 제안은 정확한 문서 묶음과 최대 금액을 보여준 뒤 멈춥니다. 승인 이후에만 Pay.sh를 호출합니다.</span></div>
+                <div class="agent-step"><span class="n">04</span><strong>예산 정책 + payment tools</strong><span>사용자가 설정한 session budget 안에서 exact quote만 Pay.sh로 실행하고, 문서별 청구서와 영수증을 남깁니다.</span></div>
                 <div class="agent-step ai"><span class="n">05</span><strong>Paid evidence synthesis</strong><span>별도 Gemini 호출은 정산된 passage와 citation allowlist만 받아 합의·차이·한계를 작성합니다.</span></div>
               </div>
               <div class="gcp-stack">
-                <div class="gcp-summary"><div class="card-kicker">Equivalent autonomous decision structure</div><h3>A2A를 구현했다고 과장하지 않고, 두 단계 계획–도구 실행–재계획 루프로 자율적 의사결정을 증명합니다.</h3></div>
+                <div class="gcp-summary"><div class="card-kicker">A2A에 준하는 역할 분리형 실행 구조</div><h3>Planner → Retrieval Agent → Coverage Agent가 같은 run의 상태를 넘기며 계획–도구 실행–재판단을 완료합니다.</h3></div>
                 <div class="gcp-services">
-                  <div class="gcp-service"><b>Vertex AI / Gemini</b><span>계획, coverage 후속 판단, paid synthesis</span></div>
-                  <div class="gcp-service"><b>Cloud Run × 4</b><span>API, gateway, payment/recovery, protected Pay front</span></div>
-                  <div class="gcp-service"><b>Cloud SQL</b><span>memory, quote, ledger, dispute, idempotency</span></div>
-                  <div class="gcp-service"><b>Cloud KMS</b><span>외부 반출 불가 Ed25519 서비스 signer</span></div>
-                  <div class="gcp-service"><b>Cloud Tasks</b><span>instance loss 후에도 settlement delivery 재시도</span></div>
-                  <div class="gcp-service"><b>Secret Manager / IAM</b><span>서비스별 최소 권한과 비밀 범위 분리</span></div>
-                  <div class="gcp-service"><b>MCP · 26 tools</b><span>외부 Agent가 검색·견적·Open Call·memory 사용</span></div>
-                  <div class="gcp-service"><b>Fail-closed policies</b><span>citation·금액·수취인·URL 불일치 즉시 차단</span></div>
+                  <div class="gcp-service"><b>Research Planner</b><span>질문의 대상·지역·분야·근거 수를 schema 안에서 계획</span></div>
+                  <div class="gcp-service"><b>Retrieval Agent</b><span>검색·랭킹·중복 제거·예산 최적화를 도구로 실행</span></div>
+                  <div class="gcp-service"><b>Coverage Agent</b><span>검색 결과를 관찰하고 HIT·PARTIAL·MISS별 다음 행동 선택</span></div>
+                  <div class="gcp-service"><b>Paid Synthesizer</b><span>정산된 passage와 허용된 citation만 사용해 답변 작성</span></div>
+                  <div class="gcp-service"><b>MCP · 24 tools</b><span>외부 Agent도 검색·견적·Open Call·memory·지급 상태 호출</span></div>
+                  <div class="gcp-service"><b>Durable trace</b><span>agent_runs·agent_steps와 Cloud Run 로그에 단계·도구·결과 기록</span></div>
+                  <div class="gcp-service"><b>Spending boundary</b><span>모델에는 임의 URL·수취인·가격·private passage 권한이 없음</span></div>
+                  <div class="gcp-service"><b>Fail-closed policy</b><span>schema·coverage·citation·금액 불일치는 실행 전 차단</span></div>
                 </div>
               </div>
             </div>
+            <div class="source"><span>실증: 배포된 Cloud Run 실행 로그 · agent_runs / agent_steps · 공개 autonomy evidence</span><span>A2A 프로토콜 구현 주장이 아니라 동등한 다단계 자율 의사결정 구조</span></div>
           </div>
         </article>
       </section>
@@ -1866,7 +1930,7 @@
       <section class="slide-shell">
         <article class="slide">
           <div class="content">
-            <div class="topline"><span class="section">Market / transaction-led business model</span><span>17 / 18</span></div>
+            <div class="topline"><span class="section">Market / transaction-led business model</span><span>12 / 13</span></div>
             <h2 class="slide-title compact">큰 인사이트 시장에서 시작하지만, 수익은 구독이 아니라 근거 거래량에 비례합니다.</h2>
             <p class="subtitle">초기에는 반복 질문이 많은 금융·소비재·F&amp;B 인사이트 팀의 실제 예산으로 좁은 기여자 집단을 먼저 구축합니다. 첫 프로젝트에서 만든 검증 DB가 이후 질문에서 재사용될수록 거래 원가는 낮아집니다.</p>
             <div class="market-size-layout">
@@ -1893,18 +1957,21 @@
       <section class="slide-shell">
         <article class="slide dark">
           <div class="content">
-            <div class="topline"><span class="section">Future / the paid human web</span><span>18 / 18</span></div>
-            <h2 class="slide-title compact">공개 웹 다음에는, 허가하고 지불할 수 있는 인간 경험의 네트워크가 필요합니다.</h2>
+            <div class="topline"><span class="section">Final proof / one working system</span><span>13 / 13</span></div>
+            <h2 class="slide-title compact">네 평가 항목은 하나의 동작하는 Devnet 리서치 경로에서 만납니다.</h2>
             <div class="future-layout">
               <div class="future-thesis">
                 <p class="statement">웹은 공개 정보를 검색 가능하게 만들었습니다.<br /><br />Obolus는 아직 웹에 없던 인간의 경험을 <strong>검색·허가·결제 가능하게</strong> 만듭니다.</p>
-                <p class="closing">장기 해자는 체인 자체가 아닙니다. 시간이 지날수록 함께 쌓이는 인간 memory, 실제 질문 수요, 근거 관계, 유료 재사용, 구매 후 결과의 그래프입니다.</p>
+                <div>
+                  <p class="closing">장기 해자는 체인 자체가 아닙니다. 시간이 지날수록 함께 쌓이는 인간 memory, 실제 질문 수요, 근거 관계, 유료 재사용, 구매 후 결과의 그래프입니다.</p>
+                  <p class="final-next"><strong>다음 검증:</strong> 실제 기업 PoC → Cloud SQL HA·운영 모니터링 → 외부 보안 감사 → Solana Mainnet.</p>
+                </div>
               </div>
               <div class="roadmap">
-                <div class="roadmap-row"><span class="phase">NOW · DEVNET</span><div><h3>검색·메모리·결제·환불 기술 증명</h3><p>bounded Gemini loop, x402/Pay.sh, Devnet USDC, KMS, MCP</p></div><span class="badge invert state">IMPLEMENTED</span></div>
-                <div class="roadmap-row"><span class="phase">PILOT</span><div><h3>하나의 수요로 검증된 첫 DB 네트워크 구축</h3><p>기업 후원 Open Call, 100–300명 anchor cohort, 인터뷰 품질 검증, 결과 기반 calibration</p></div><span class="badge state">NEXT</span></div>
-                <div class="roadmap-row"><span class="phase">MAINNET</span><div><h3>상용 결제·규제·운영 안전성</h3><p>Mainnet USDC, HA DB, 키 회전, 모니터링, KYC/세무·개인정보 검토</p></div><span class="badge state">ROADMAP</span></div>
-                <div class="roadmap-row"><span class="phase">NETWORK</span><div><h3>Agent가 호출하는 글로벌 human evidence layer</h3><p>다수 데이터 제공자, 분야별 authority graph, machine-scale microsettlement</p></div><span class="badge state">VISION</span></div>
+                <div class="roadmap-row"><span class="phase">30% · AI</span><div><h3>Vertex AI의 계획–도구 실행–재판단</h3><p>두 단계 function call, 역할 분리형 agent run, MCP 24 tools, durable trace</p></div><span class="badge invert state">WORKING</span></div>
+                <div class="roadmap-row"><span class="phase">30% · UX</span><div><h3>질문 하나, 무료 검색, 예산 한 번, 명확한 청구서</h3><p>wallet-only sign-in, gas sponsored, SOL 불필요, Open Call로 콜드스타트 해결</p></div><span class="badge invert state">WORKING</span></div>
+                <div class="roadmap-row"><span class="phase">15% · GCP</span><div><h3>Cloud Run 4개 서비스와 영속 복구 계층</h3><p>Cloud SQL, Tasks, KMS, Secret Manager, create-only audit, 전용 identity</p></div><span class="badge invert state">DEPLOYED</span></div>
+                <div class="roadmap-row"><span class="phase">15% · SOL</span><div><h3>x402·Pay.sh·Devnet USDC 온체인 정산</h3><p>funding, owner payout, refund, 2-RPC finality, idempotent recovery</p></div><span class="badge invert state">VERIFIED</span></div>
               </div>
             </div>
             <div class="source"><span>Obolus · Human evidence infrastructure for AI decisions</span><span>Search is free. Human evidence is paid per open.</span></div>
@@ -1915,14 +1982,14 @@
 
     <nav class="nav" aria-label="슬라이드 이동">
       <button type="button" id="prev" aria-label="이전 슬라이드">←</button>
-      <div class="counter"><span id="current">01</span> / <span id="total">18</span></div>
+      <div class="counter"><span id="current">01</span> / <span id="total">13</span></div>
       <button type="button" id="next" aria-label="다음 슬라이드">→</button>
       <button type="button" class="pdf" id="print">PDF</button>
     </nav>
 
     <script>
       const deck = document.getElementById('deck')
-      const shells = [...document.querySelectorAll('.slide-shell')]
+      const shells = [...document.querySelectorAll('.slide-shell:not(.omitted)')]
       const current = document.getElementById('current')
       const total = document.getElementById('total')
       let index = 0

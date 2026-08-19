@@ -105,7 +105,7 @@ test('repository adapter exposes the pinned official Pay CLI', async () => {
 
 test('tool boundary validates schemas before network access', async () => {
   await assert.rejects(
-    () => callTool('ask_people', { question: 'short' }),
+    () => callTool('ask_people', { question: 'x' }),
     /arguments\.question is too short/,
   )
   await assert.rejects(

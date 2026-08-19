@@ -4,11 +4,13 @@ pub mod db;
 pub mod domain;
 pub mod environment;
 pub mod orchestrator;
+pub mod public_evidence;
 pub mod quality;
 pub mod rollback_audit;
 pub mod rollback_sweep;
 pub mod search;
 pub mod seed;
+pub mod settlement_invoice;
 pub mod store;
 
 use std::{sync::Arc, time::Duration};

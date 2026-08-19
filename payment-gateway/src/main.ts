@@ -1239,7 +1239,12 @@ app.post("/api/v1/payment-bundles", async (request, response, next) => {
       });
       return;
     }
-    const body = request.body as { queryId?: unknown; handles?: unknown; topUpAtomic?: unknown };
+    const body = request.body as {
+      queryId?: unknown;
+      handles?: unknown;
+      topUpAtomic?: unknown;
+      expectedInvoiceHash?: unknown;
+    };
     if (
       typeof body?.queryId !== "string" ||
       !Array.isArray(body.handles) ||
@@ -1248,6 +1253,9 @@ app.post("/api/v1/payment-bundles", async (request, response, next) => {
       body.handles.some((handle) => typeof handle !== "string") ||
       (body.topUpAtomic !== undefined &&
         (typeof body.topUpAtomic !== "string" || !/^\d+$/.test(body.topUpAtomic)))
+      || (body.expectedInvoiceHash !== undefined
+        && (typeof body.expectedInvoiceHash !== "string"
+          || !/^[0-9a-f]{64}$/.test(body.expectedInvoiceHash)))
     ) {
       response.status(400).json({
         error: {
@@ -1288,6 +1296,9 @@ app.post("/api/v1/payment-bundles", async (request, response, next) => {
           queryId: body.queryId,
           handles: body.handles,
           ...(fundingMode.kind === "prepaid" ? { topUpAtomic: body.topUpAtomic } : {}),
+          ...(body.expectedInvoiceHash
+            ? { expectedInvoiceHash: body.expectedInvoiceHash }
+            : {}),
         }),
       },
     );

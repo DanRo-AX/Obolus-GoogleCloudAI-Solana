@@ -17,6 +17,7 @@ import {
   prepareOpenCallFundingQuote,
   type CreateOpenCallInput,
   type OpenCallFundingQuote,
+  type SettlementPreviewEnvelope,
 } from '@/lib/api'
 import { getPhantom } from '@/state/wallet'
 import { exactQuotePaymentPolicy, exactResearchBundleQuote } from '@/lib/exactPaymentPolicy'
@@ -29,6 +30,7 @@ export type OpenRequest = {
   question: string
   payer?: string | null
   accessToken: string
+  invoice: SettlementPreviewEnvelope
 }
 
 export type OpenResult = {
@@ -41,6 +43,7 @@ export type OpenResult = {
     network?: string
     partial?: boolean
     mode?: 'direct' | 'bundle_escrow' | 'pay_sh_direct' | 'pay_sh_orchestrated'
+    invoice?: SettlementPreviewEnvelope
   }
 }
 
@@ -332,7 +335,7 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
     ) {
       const recovered = await pollResearchJob(pending.jobId, req.accessToken, 1)
       if (recovered && recovered.status !== 'quoted') {
-        return researchResult(recovered)
+        return researchResult(recovered, req.invoice)
       }
     }
     let walletSession = await ensurePrepaidWalletSession(provider, connectedPayer)
@@ -349,6 +352,7 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
           queryId: req.queryId,
           handles,
           topUpAtomic: DEFAULT_TOP_UP_ATOMIC.toString(),
+          expectedInvoiceHash: req.invoice.invoiceHash,
         }),
       })
     let prepared = await prepare(walletSession.token)
@@ -391,7 +395,7 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
       if (!recovered) {
         throw new Error('The existing Pay.sh research job is still working. Retry to check it again without paying.')
       }
-      return researchResult(recovered)
+      return researchResult(recovered, req.invoice)
     }
     const [
       { x402Client },
@@ -438,7 +442,7 @@ async function openOverX402(req: OpenRequest): Promise<OpenResult> {
     if (!result) {
       throw new Error('The deposit settled and the Pay.sh agent is still working. Retry to recover this same job without paying again.')
     }
-    return researchResult(result)
+    return researchResult(result, req.invoice)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const cancelled = /reject|declin|cancel/i.test(message)
@@ -486,7 +490,10 @@ async function pollResearchJob(
   return null
 }
 
-function researchResult(job: ResearchJobStatus): OpenResult {
+function researchResult(
+  job: ResearchJobStatus,
+  invoice?: SettlementPreviewEnvelope,
+): OpenResult {
   if (job.status === 'payment_reconciliation') {
     throw new PaymentError(
       `Pay.sh payment outcome is being reconciled. Do not retry or approve another payment; the reserved balance has not been refunded.${job.failureReason ? ` ${job.failureReason}` : ''}`,
@@ -515,6 +522,7 @@ function researchResult(job: ResearchJobStatus): OpenResult {
       network: job.network,
       partial: job.status === 'refund_pending' || job.status === 'balance_refunded',
       mode: 'pay_sh_orchestrated',
+      invoice,
     },
   }
 }

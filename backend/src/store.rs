@@ -15,22 +15,22 @@ use crate::{
     db::{self, Connection, OptionalExtension, Transaction},
     domain::{
         AccountControls, AdminOperationsSnapshot, AdminTablePage, AiBaseline, AiBaselineDraft,
-        AiLiquidityMetrics,
-        AnswerIssue, BalanceSummary, BeginResearchPaymentRequest, BindPayShChallengesRequest,
-        ChainSettlementReceipt, ChatAnswer, Citation, ClaimPaymentAttemptRequest,
-        ContributorManifest, ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
-        CreateEvidenceEdgeRequest, CreateOpenCallRequest, CreatePaymentBundleRequest,
-        DemographicBands, DirectPayShPaymentReconciliation, DisputeCase, Document,
-        DocumentFeedback, EarningEvent, EarningsSummary, EvidenceContribution, EvidenceEdge,
-        InterviewResponse, LiquidityState, MarketplaceOperationsMetrics, MemoryAccessEvent,
-        MemoryEntry, MemoryExport, OpenCall, OpenCallFundingQuote, OpenCallFundingSnapshot,
-        OpenCallReservation, OpenDocumentsResponse, OperationsStatusCount, PaidDocument,
-        PayShResource, PaymentAttemptFence, PaymentAttemptReconciliation, PaymentAttemptRelease,
-        PaymentBundleQuote, PaymentBundleSnapshot, PaymentDocumentProgress,
-        PaymentDocumentSnapshot, PaymentProgress, PaymentQuote, PayoutClaim, PayoutClaimBacklog,
-        PrepaidBalance, PrepaidWalletSession, PrepareDirectPayShPaymentRequest,
-        PrepareResearchPaymentRequest, PublicDocument, RecordChainSettlementRequest,
-        RecoveredPaidDocument, ReleaseResearchPaymentRequest, ResearchJobPlan, ResearchJobStatus,
+        AiLiquidityMetrics, AiSource, AnswerIssue, BalanceSummary, BeginResearchPaymentRequest,
+        BindPayShChallengesRequest, ChainSettlementReceipt, ChatAnswer, Citation,
+        ClaimPaymentAttemptRequest, ContributorManifest, ContributorMemoryLink,
+        ContributorNotification, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
+        CreateOpenCallRequest, CreatePaymentBundleRequest, DemographicBands,
+        DirectPayShPaymentReconciliation, DisputeCase, Document, DocumentFeedback, EarningEvent,
+        EarningsSummary, EvidenceContribution, EvidenceEdge, InterviewResponse, LiquidityState,
+        MarketplaceOperationsMetrics, MemoryAccessEvent, MemoryEntry, MemoryExport, OpenCall,
+        OpenCallFundingQuote, OpenCallFundingSnapshot, OpenCallReservation, OpenDocumentsResponse,
+        OperationsStatusCount, PaidDocument, PayShResource, PaymentAttemptFence,
+        PaymentAttemptReconciliation, PaymentAttemptRelease, PaymentBundleQuote,
+        PaymentBundleSnapshot, PaymentDocumentProgress, PaymentDocumentSnapshot, PaymentProgress,
+        PaymentQuote, PayoutClaim, PayoutClaimBacklog, PrepaidBalance, PrepaidWalletSession,
+        PrepareDirectPayShPaymentRequest, PrepareResearchPaymentRequest, PublicDocument,
+        PublicEvidenceRecord, RecordChainSettlementRequest, RecoveredPaidDocument,
+        ReleaseResearchPaymentRequest, ResearchJobPlan, ResearchJobStatus,
         ResearchPaymentReconciliation, ResolveQuestionResponse, ReviewDisputeRequest,
         ReviewDocumentFeedbackRequest, SearchFilters, Settlement, SettlementOperationsMetrics,
         ShelfStarter, ShelfStarterDraft, SiwxPayload, SubmitAnswerResponse,
@@ -39,10 +39,28 @@ use crate::{
         WalletChallengePurpose,
     },
     environment::{boolean_value, managed_runtime_environment, monotonic_unix_time_ms},
-    params, quality, seed,
+    params, public_evidence, quality, seed,
+    settlement_invoice::{
+        HOSTED_PAY_SH_MODE, SETTLEMENT_INVOICE_SCHEME, SETTLEMENT_PREVIEW_SCHEME,
+        SettlementInvoice, SettlementInvoiceLineItem, SettlementPreview, SettlementPreviewEnvelope,
+        SettlementPreviewLineItem,
+    },
 };
 
 const STRIKE_LIMIT: usize = 3;
+
+type BundleInvoiceDocument = (
+    String, // document id
+    String, // handle
+    String, // author id
+    String, // recipient wallet
+    u64,    // price KRW
+    String, // shelf
+    String, // content
+    String, // content hash
+    u32,    // document version
+    String, // consent version
+);
 const AUTO_MATCH_STRIKE_LIMIT: usize = 2;
 /// A 256KB image, base64-encoded, plus JSON wrapper overhead. This is a
 /// devnet demo with no object storage — the avatar (parts config or data URL)
@@ -465,7 +483,10 @@ impl Store {
         }
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         let production = production_environment()?;
-        let seed_demo = env_flag("OPENSHELF_SEED_DEMO", !production)?;
+        // Unit tests intentionally keep the versioned fixture corpus. Normal
+        // local and managed runtimes start without synthetic human records
+        // unless a developer opts in explicitly.
+        let seed_demo = env_flag("OPENSHELF_SEED_DEMO", cfg!(test))?;
         if production && seed_demo {
             return Err(StoreError::Validation(
                 "OPENSHELF_SEED_DEMO cannot be enabled in production".to_owned(),
@@ -490,8 +511,42 @@ impl Store {
         store.migrate()?;
         if seed_demo {
             store.seed()?;
+        } else {
+            store.deactivate_demo_seed_data()?;
         }
         Ok(store)
+    }
+
+    /// Removes the application-owned fixture corpus from every active product
+    /// surface without deleting rows that may already be referenced by a local
+    /// payment audit. User-authored records are never matched by these exact
+    /// id/author/handle triples.
+    fn deactivate_demo_seed_data(&self) -> Result<(), StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        for document in seed::documents() {
+            transaction.execute(
+                "UPDATE documents SET locked = 1
+                 WHERE id = ?1 AND author_id = ?2 AND handle = ?3",
+                params![document.id, document.author_id, document.handle],
+            )?;
+        }
+        for call_id in [
+            "call_seed_1",
+            "call_seed_2",
+            "call_seed_3",
+            "call_seed_4",
+            "call_seed_5",
+        ] {
+            transaction.execute(
+                "UPDATE open_calls
+                 SET status = 'cancelled', escrow_remaining_krw = 0
+                 WHERE id = ?1 AND owner_id = 'seed-buyer'",
+                [call_id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     fn connection(&self) -> Result<MutexGuard<'_, Connection>, StoreError> {
@@ -1424,7 +1479,26 @@ impl Store {
                 mode TEXT NOT NULL,
                 policy_version TEXT NOT NULL,
                 generated_at INTEGER NOT NULL,
-                expires_at INTEGER NOT NULL
+                expires_at INTEGER NOT NULL,
+                sources_json TEXT NOT NULL DEFAULT '[]'
+            );
+
+            CREATE TABLE IF NOT EXISTS public_evidence (
+                id TEXT PRIMARY KEY,
+                organization TEXT NOT NULL,
+                title TEXT NOT NULL,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                category TEXT NOT NULL,
+                tags_json TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                source_license TEXT NOT NULL,
+                published_at TEXT NOT NULL,
+                accessed_at TEXT NOT NULL,
+                source_record_id TEXT NOT NULL UNIQUE,
+                content_hash TEXT NOT NULL,
+                verified_at INTEGER NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS ai_generation_budgets (
@@ -2217,6 +2291,12 @@ impl Store {
         ] {
             add_column_if_missing(connection, "documents", name, definition)?;
         }
+        add_column_if_missing(
+            connection,
+            "ai_baselines",
+            "sources_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
         for (name, definition) in [
             ("content_snapshot", "TEXT NOT NULL DEFAULT ''"),
             ("shelf_snapshot", "TEXT NOT NULL DEFAULT ''"),
@@ -2437,6 +2517,7 @@ impl Store {
         install_rollback_recovery_schema(connection)?;
         backfill_bundle_payout_claims(connection)?;
         backfill_content_hashes(connection)?;
+        seed_public_evidence(connection)?;
         transaction.commit()?;
         Ok(())
     }
@@ -2454,7 +2535,7 @@ impl Store {
             // user-authored rows safe, while this narrow update lets corrected
             // seed pricing reach an existing development database on restart.
             transaction.execute(
-                "UPDATE documents SET price_krw = ?1
+                "UPDATE documents SET price_krw = ?1, locked = 0
                  WHERE id = ?2 AND handle = ?3 AND author_id = ?4",
                 params![
                     as_i64(document.price_krw)?,
@@ -2489,6 +2570,45 @@ impl Store {
             .query_map([AUTO_MATCH_STRIKE_LIMIT as i64], document_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(documents)
+    }
+
+    /// Searches only open institutional records. These rows are never mixed
+    /// into the paid human resolver, so they cannot satisfy human coverage or
+    /// create contributor earnings.
+    pub fn public_evidence(
+        &self,
+        query: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<PublicEvidenceRecord>, StoreError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT id, organization, title, question, answer, category, tags_json,
+                    source_url, source_type, source_license, published_at, accessed_at,
+                    source_record_id, content_hash
+             FROM public_evidence",
+        )?;
+        let mut records = statement
+            .query_map(params![], public_evidence_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        let query = query.unwrap_or_default().trim();
+        if !query.is_empty() {
+            records.retain(|record| public_evidence_score(query, record) > 0);
+            records.sort_by(|left, right| {
+                public_evidence_score(query, right)
+                    .cmp(&public_evidence_score(query, left))
+                    .then_with(|| right.published_at.cmp(&left.published_at))
+                    .then_with(|| left.id.cmp(&right.id))
+            });
+        } else {
+            records.sort_by(|left, right| {
+                right
+                    .published_at
+                    .cmp(&left.published_at)
+                    .then_with(|| left.id.cmp(&right.id))
+            });
+        }
+        records.truncate(limit.clamp(1, 20));
+        Ok(records)
     }
 
     pub fn evidence_edges(&self) -> Result<Vec<EvidenceEdge>, StoreError> {
@@ -3109,8 +3229,9 @@ impl Store {
         Ok(())
     }
 
-    /// Returns the server-owned question and a still-live cached baseline.
-    /// Human-covered queries are rejected before any model call can happen.
+    /// Returns the server-owned question and a still-live cached public answer.
+    /// Public context is deliberately available even when paid human evidence
+    /// exists; it remains zero-price, non-sellable, and visibly separate.
     pub fn ai_baseline_context(
         &self,
         query_id: &str,
@@ -3119,19 +3240,14 @@ impl Store {
         let query_id = query_id.trim();
         let connection = self.connection()?;
         require_query_access(&connection, query_id, payment_token_hash)?;
-        let (question, liquidity_state) = connection
+        let question = connection
             .query_row(
-                "SELECT question, liquidity_state FROM queries WHERE id = ?1",
+                "SELECT question FROM queries WHERE id = ?1",
                 [query_id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                |row| row.get::<_, String>(0),
             )
             .optional()?
             .ok_or(StoreError::NotFound("query"))?;
-        if liquidity_state == "human_covered" {
-            return Err(StoreError::Conflict(
-                "human coverage is sufficient; AI liquidity is disabled".to_owned(),
-            ));
-        }
         let baseline = load_ai_baseline(&connection, query_id, now_ms())?;
         Ok((question, baseline))
     }
@@ -3141,32 +3257,27 @@ impl Store {
         query_id: &str,
         payment_token_hash: &str,
         draft: &AiBaselineDraft,
+        sources: &[AiSource],
         metadata: &AiArtifactMetadata<'_>,
     ) -> Result<AiBaseline, StoreError> {
         let query_id = query_id.trim();
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
         require_query_access(&transaction, query_id, payment_token_hash)?;
-        let liquidity_state = transaction
-            .query_row(
-                "SELECT liquidity_state FROM queries WHERE id = ?1",
-                [query_id],
-                |row| row.get::<_, String>(0),
-            )
+        transaction
+            .query_row("SELECT 1 FROM queries WHERE id = ?1", [query_id], |row| {
+                row.get::<_, i64>(0)
+            })
             .optional()?
             .ok_or(StoreError::NotFound("query"))?;
-        if liquidity_state == "human_covered" {
-            return Err(StoreError::Conflict(
-                "human coverage is sufficient; AI liquidity is disabled".to_owned(),
-            ));
-        }
         let generated_at = now_ms();
         let expires_at = generated_at.saturating_add(metadata.ttl_ms.max(60_000));
         transaction.execute(
             "INSERT INTO ai_baselines
              (id, query_id, orientation, general_points_json, human_gaps_json,
-              questions_for_people_json, model, mode, policy_version, generated_at, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+              questions_for_people_json, model, mode, policy_version, generated_at, expires_at,
+              sources_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT(query_id) DO UPDATE SET
                id = excluded.id,
                orientation = excluded.orientation,
@@ -3177,7 +3288,8 @@ impl Store {
                mode = excluded.mode,
                policy_version = excluded.policy_version,
                generated_at = excluded.generated_at,
-               expires_at = excluded.expires_at
+               expires_at = excluded.expires_at,
+               sources_json = excluded.sources_json
              WHERE ai_baselines.expires_at <= ?10",
             params![
                 new_id("baseline"),
@@ -3194,6 +3306,7 @@ impl Store {
                 metadata.policy_version.trim(),
                 as_i64(generated_at)?,
                 as_i64(expires_at)?,
+                serde_json::to_string(sources).expect("AI sources are serialisable"),
             ],
         )?;
         transaction.commit()?;
@@ -9375,6 +9488,9 @@ impl Store {
             amount_atomic: amount_atomic.to_string(),
             owner_amount_atomic: evidence_payment_split(amount_atomic).0.to_string(),
             platform_amount_atomic: evidence_payment_split(amount_atomic).1.to_string(),
+            content_hash: quote.content_hash.clone(),
+            document_version: quote.document_version,
+            consent_version: quote.consent_version.clone(),
             price_krw: quote.price_krw,
             krw_per_usdc: quote.krw_per_usdc,
             expires_at: quote.expires_at,
@@ -10868,6 +10984,51 @@ impl Store {
         Ok(claim)
     }
 
+    /// Builds the exact buyer-readable invoice without reserving balance or
+    /// starting settlement. Only payment-safe commitments are returned; the
+    /// private passage remains closed.
+    pub fn settlement_invoice_preview(
+        &self,
+        query_id: &str,
+        payment_token_hash: &str,
+        requested_handles: &[String],
+        policy: &PaymentQuotePolicy,
+    ) -> Result<SettlementPreviewEnvelope, StoreError> {
+        let query_id = query_id.trim();
+        if requested_handles.is_empty() || requested_handles.len() > 100 {
+            return Err(StoreError::Validation(
+                "between 1 and 100 document handles are required".to_owned(),
+            ));
+        }
+        let handles = requested_handles
+            .iter()
+            .map(|handle| handle.trim().to_owned())
+            .collect::<Vec<_>>();
+        if handles.iter().any(String::is_empty)
+            || handles.iter().collect::<HashSet<_>>().len() != handles.len()
+        {
+            return Err(StoreError::Validation(
+                "document handles must be non-empty and unique".to_owned(),
+            ));
+        }
+        validate_payment_policy(policy)?;
+        let mut connection = self.connection()?;
+        require_query_access(&connection, query_id, payment_token_hash)?;
+        let question = connection
+            .query_row(
+                "SELECT question FROM queries WHERE id = ?1",
+                [query_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound("query"))?;
+        let transaction = connection.transaction()?;
+        let documents = load_bundle_invoice_documents(&transaction, query_id, &handles, policy)?;
+        let preview = build_settlement_preview(query_id, &question, &documents, policy)?;
+        transaction.commit()?;
+        Ok(preview)
+    }
+
     pub fn create_payment_bundle(
         &self,
         request: &CreatePaymentBundleRequest,
@@ -10946,25 +11107,12 @@ impl Store {
             ));
         }
 
-        #[allow(clippy::type_complexity)]
-        let mut documents: Vec<(
-            String,
-            String,
-            String,
-            String,
-            u64,
-            String,
-            String,
-            String,
-            u32,
-            String,
-        )> = Vec::with_capacity(handles.len());
         let now = now_ms();
         let mut connection = self.connection()?;
         require_query_access(&connection, query_id, payment_token_hash)?;
         let transaction = connection.transaction()?;
-        transaction.query_row(
-            "SELECT id FROM queries WHERE id = ?1 /*FOR_UPDATE*/",
+        let question = transaction.query_row(
+            "SELECT question FROM queries WHERE id = ?1 /*FOR_UPDATE*/",
             [query_id],
             |row| row.get::<_, String>(0),
         )?;
@@ -10988,114 +11136,30 @@ impl Store {
         } else {
             None
         };
-        for handle in &handles {
-            let row = transaction
-                .query_row(
-                    "SELECT d.id, d.handle, d.author_id, p.wallet, qm.quoted_price_krw,
-                            d.shelf, d.content, d.content_hash, d.version,
-                            COALESCE(p.consent_version, 'seed.v1'), p.wallet_verified_at
-                     FROM query_matches qm
-                     JOIN documents d ON d.handle = qm.document_handle
-                     LEFT JOIN profiles p ON p.user_id = d.author_id
-                     WHERE qm.query_id = ?1 AND qm.document_handle = ?2 AND d.locked = 0
-                       AND COALESCE(p.auto_match, 1) = 1
-                       AND (SELECT COUNT(*) FROM memory_entries strikes
-                            WHERE strikes.user_id = d.author_id
-                              AND strikes.status = 'voided') < ?3",
-                    params![query_id, handle, AUTO_MATCH_STRIKE_LIMIT as i64],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, Option<String>>(3)?,
-                            as_u64(row.get(4)?)?,
-                            row.get::<_, String>(5)?,
-                            row.get::<_, String>(6)?,
-                            row.get::<_, String>(7)?,
-                            as_u64(row.get(8)?)?.min(u32::MAX as u64) as u32,
-                            row.get::<_, String>(9)?,
-                            row.get::<_, Option<i64>>(10)?,
-                        ))
-                    },
-                )
-                .optional()?
-                .ok_or(StoreError::DocumentNotQuoted)?;
-            let registered_author = transaction
-                .query_row(
-                    "SELECT id FROM users
-                     WHERE id = ?1 AND deleted_at IS NULL /*FOR_UPDATE*/",
-                    [&row.2],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?;
-            if registered_author.is_none() && !row.2.starts_with("author_") {
-                return Err(StoreError::DocumentNotQuoted);
-            }
-            let recipient_wallet = if row.10.is_some() {
-                row.3.filter(|wallet| !wallet.trim().is_empty())
-            } else if row.2.starts_with("author_") {
-                policy.fallback_recipient.clone()
-            } else {
-                return Err(StoreError::Conflict(format!(
-                    "author of {} must verify a payout wallet before purchase",
-                    row.1
-                )));
-            }
-            .ok_or_else(|| StoreError::Conflict(format!("{} has no payout recipient", row.1)))?;
-            if !valid_solana_address(&recipient_wallet) {
-                return Err(StoreError::Validation(format!(
-                    "payout recipient for {} is not a Solana public key",
-                    row.1
-                )));
-            }
-            documents.push((
-                row.0,
-                row.1,
-                row.2,
-                recipient_wallet,
-                row.4,
-                row.5,
-                row.6,
-                row.7,
-                row.8,
-                row.9,
+        let documents = load_bundle_invoice_documents(&transaction, query_id, &handles, policy)?;
+        let invoice_preview = build_settlement_preview(query_id, &question, &documents, policy)?;
+        let invoice_changed = request
+            .expected_invoice_hash
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some_and(|expected| expected != invoice_preview.invoice_hash);
+        if invoice_changed {
+            return Err(StoreError::Conflict(
+                "the settlement invoice changed after it was shown; review the new invoice"
+                    .to_owned(),
             ));
         }
 
-        let total_price_krw = documents.iter().try_fold(0_u64, |total, doc| {
-            total.checked_add(doc.4).ok_or_else(|| {
-                StoreError::Validation("bundle price exceeds the supported range".to_owned())
-            })
-        })?;
-        // Fund the exact sum of the downstream Pay.sh charges. Rounding only
-        // the aggregate can underfund the service wallet by up to N-1 atomic
-        // units because each independently paid DB rounds up on its own.
-        let amount_atomic = documents.iter().try_fold(0_u64, |total, document| {
-            total
-                .checked_add(krw_to_usdc_atomic(document.4, policy.krw_per_usdc)?)
-                .ok_or_else(|| {
-                    StoreError::Validation("payment amount exceeds the supported range".to_owned())
-                })
-        })?;
-        let bundle_commitment = documents
-            .iter()
-            .map(|doc| {
-                serde_json::json!({
-                    "handle": doc.1,
-                    "recipientWallet": doc.3,
-                    "priceKrw": doc.4,
-                    "contentHash": doc.7,
-                    "documentVersion": doc.8,
-                    "consentVersion": doc.9,
-                })
-            })
-            .collect::<Vec<_>>();
-        let bundle_hash = hex_digest(
-            serde_json::to_string(&bundle_commitment)
-                .map_err(|error| StoreError::Validation(error.to_string()))?
-                .as_bytes(),
-        );
+        let total_price_krw = invoice_preview.invoice.total_price_krw;
+        // The preview uses the same per-document conversion and rounding as
+        // Pay.sh, so its total is the exact budget the worker may consume.
+        let amount_atomic = invoice_preview
+            .invoice
+            .total_amount_atomic
+            .parse::<u64>()
+            .map_err(|_| StoreError::Validation("invalid invoice amount".to_owned()))?;
+        let bundle_hash = invoice_preview.invoice.document_bundle_root.clone();
         let existing = transaction
             .query_row(
                 "SELECT id, expires_at,
@@ -11578,7 +11642,8 @@ impl Store {
         transaction.commit()?;
         drop(connection);
 
-        let query_id = self.payment_bundle_quote(job_id)?.query_id;
+        let bundle_quote = self.payment_bundle_quote(job_id)?;
+        let query_id = bundle_quote.query_id.clone();
         let mut resources = Vec::with_capacity(handles.len());
         for handle in handles {
             let quote = self.payment_quote_with_bundle_owner(
@@ -11605,6 +11670,76 @@ impl Store {
                 .push_str(&format!("&research_job_id={}", job_id.trim()));
             resources.push(resource);
         }
+        let query_hash = {
+            let connection = self.connection()?;
+            let question = connection
+                .query_row(
+                    "SELECT question FROM queries WHERE id = ?1",
+                    [&query_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .ok_or(StoreError::NotFound("query"))?;
+            hex_digest(question.as_bytes())
+        };
+        let platform_fee_atomic = resources.iter().try_fold(0_u64, |sum, resource| {
+            let amount = resource
+                .platform_amount_atomic
+                .parse::<u64>()
+                .map_err(|_| {
+                    StoreError::Validation(
+                        "Pay.sh platform amount is not a valid integer".to_owned(),
+                    )
+                })?;
+            sum.checked_add(amount).ok_or_else(|| {
+                StoreError::Validation("invoice platform amount overflowed".to_owned())
+            })
+        })?;
+        let pending_amount_atomic = resources.iter().try_fold(0_u64, |sum, resource| {
+            let amount = resource.amount_atomic.parse::<u64>().map_err(|_| {
+                StoreError::Validation("Pay.sh amount is not a valid integer".to_owned())
+            })?;
+            sum.checked_add(amount)
+                .ok_or_else(|| StoreError::Validation("invoice amount overflowed".to_owned()))
+        })?;
+        let invoice_expires_at = resources
+            .iter()
+            .map(|resource| resource.expires_at)
+            .min()
+            .unwrap_or(bundle_quote.expires_at);
+        let invoice = SettlementInvoice {
+            scheme: SETTLEMENT_INVOICE_SCHEME.to_owned(),
+            settlement_mode: HOSTED_PAY_SH_MODE.to_owned(),
+            job_id: job_id.trim().to_owned(),
+            payer: payer.clone(),
+            authorization: pay_to.clone(),
+            refund_address: payer.clone(),
+            query_hash,
+            document_bundle_root: bundle_quote.bundle_hash,
+            network: network.clone(),
+            asset: asset.clone(),
+            total_amount_atomic: pending_amount_atomic.to_string(),
+            platform_fee_atomic: platform_fee_atomic.to_string(),
+            expires_at: invoice_expires_at,
+            delivery_policy: "paid_snapshot_only".to_owned(),
+            line_items: resources
+                .iter()
+                .map(|resource| SettlementInvoiceLineItem {
+                    quote_id: resource.quote_id.clone(),
+                    document_handle: resource.document_handle.clone(),
+                    document_hash: resource.content_hash.clone(),
+                    document_version: resource.document_version,
+                    consent_version: resource.consent_version.clone(),
+                    recipient_wallet: resource.recipient_wallet.clone(),
+                    amount_atomic: resource.amount_atomic.clone(),
+                    owner_amount_atomic: resource.owner_amount_atomic.clone(),
+                    platform_amount_atomic: resource.platform_amount_atomic.clone(),
+                })
+                .collect(),
+        };
+        let invoice_hash = invoice
+            .hash()
+            .map_err(|error| StoreError::Validation(error.to_string()))?;
         Ok(ResearchJobPlan {
             id: job_id.trim().to_owned(),
             payer,
@@ -11614,6 +11749,8 @@ impl Store {
             amount_atomic: amount_atomic.to_string(),
             status: "processing".to_owned(),
             resources,
+            invoice,
+            invoice_hash,
         })
     }
 
@@ -13290,12 +13427,13 @@ fn load_ai_baseline(
         String,
         u64,
         u64,
+        String,
     );
     let stored = connection
         .query_row(
             "SELECT id, orientation, general_points_json, human_gaps_json,
                     questions_for_people_json, model, mode, policy_version,
-                    generated_at, expires_at
+                    generated_at, expires_at, sources_json
              FROM ai_baselines
              WHERE query_id = ?1 AND expires_at > ?2",
             params![query_id, as_i64(now)?],
@@ -13311,6 +13449,7 @@ fn load_ai_baseline(
                     row.get(7)?,
                     as_u64(row.get(8)?)?,
                     as_u64(row.get(9)?)?,
+                    row.get(10)?,
                 ))
             },
         )
@@ -13329,6 +13468,7 @@ fn load_ai_baseline(
         policy_version,
         generated_at,
         expires_at,
+        sources_json,
     ): StoredBaseline = stored;
     let parse_list = |json: &str| {
         serde_json::from_str::<Vec<String>>(json)
@@ -13342,6 +13482,8 @@ fn load_ai_baseline(
         general_points: parse_list(&general_points_json)?,
         human_gaps: parse_list(&human_gaps_json)?,
         questions_for_people: parse_list(&questions_for_people_json)?,
+        sources: serde_json::from_str(&sources_json)
+            .map_err(|_| StoreError::Validation("stored AI sources are malformed".to_owned()))?,
         model,
         mode,
         policy_version,
@@ -17836,6 +17978,106 @@ fn memory_from_row(row: &db::Row) -> db::Result<MemoryEntry> {
     })
 }
 
+fn seed_public_evidence(connection: &Connection) -> Result<(), StoreError> {
+    let verified_at = now_ms();
+    for mut record in public_evidence::records() {
+        record.content_hash = sha256_hex(&format!(
+            "{}\n{}\n{}",
+            record.answer, record.source_url, record.source_record_id
+        ));
+        connection.execute(
+            "INSERT INTO public_evidence
+             (id, organization, title, question, answer, category, tags_json,
+              source_url, source_type, source_license, published_at, accessed_at,
+              source_record_id, content_hash, verified_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+             ON CONFLICT(id) DO UPDATE SET
+               organization = excluded.organization,
+               title = excluded.title,
+               question = excluded.question,
+               answer = excluded.answer,
+               category = excluded.category,
+               tags_json = excluded.tags_json,
+               source_url = excluded.source_url,
+               source_type = excluded.source_type,
+               source_license = excluded.source_license,
+               published_at = excluded.published_at,
+               accessed_at = excluded.accessed_at,
+               source_record_id = excluded.source_record_id,
+               content_hash = excluded.content_hash,
+               verified_at = excluded.verified_at",
+            params![
+                record.id,
+                record.organization,
+                record.title,
+                record.question,
+                record.answer,
+                record.category,
+                serde_json::to_string(&record.tags).expect("public evidence tags are serialisable"),
+                record.source_url,
+                record.source_type,
+                record.source_license,
+                record.published_at,
+                record.accessed_at,
+                record.source_record_id,
+                record.content_hash,
+                as_i64(verified_at)?,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn public_evidence_from_row(row: &db::Row) -> db::Result<PublicEvidenceRecord> {
+    Ok(PublicEvidenceRecord {
+        id: row.get(0)?,
+        organization: row.get(1)?,
+        title: row.get(2)?,
+        question: row.get(3)?,
+        answer: row.get(4)?,
+        category: row.get(5)?,
+        tags: serde_json::from_str(&row.get::<_, String>(6)?).unwrap_or_default(),
+        source_url: row.get(7)?,
+        source_type: row.get(8)?,
+        source_license: row.get(9)?,
+        published_at: row.get(10)?,
+        accessed_at: row.get(11)?,
+        source_record_id: row.get(12)?,
+        content_hash: row.get(13)?,
+    })
+}
+
+fn public_evidence_score(query: &str, record: &PublicEvidenceRecord) -> usize {
+    let query = query.to_lowercase();
+    let haystack = format!(
+        "{} {} {} {} {}",
+        record.organization,
+        record.title,
+        record.question,
+        record.answer,
+        record.tags.join(" ")
+    )
+    .to_lowercase();
+    let mut score = 0;
+    for token in query
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| token.chars().count() >= 2)
+    {
+        if haystack.contains(token) {
+            score += 2;
+        }
+    }
+    for tag in &record.tags {
+        if query.contains(&tag.to_lowercase()) {
+            score += 4;
+        }
+    }
+    if query.contains(&record.organization.to_lowercase()) {
+        score += 8;
+    }
+    score
+}
+
 fn document_from_row(row: &db::Row) -> db::Result<Document> {
     let created_at = as_u64(row.get(9)?)?;
     let age_days = now_ms().saturating_sub(created_at) / 86_400_000;
@@ -18139,6 +18381,165 @@ fn krw_to_usdc_atomic(amount_krw: u64, krw_per_usdc: u64) -> Result<u64, StoreEr
     let atomic = numerator.div_ceil(denominator).max(1);
     u64::try_from(atomic)
         .map_err(|_| StoreError::Validation("payment amount is too large".to_owned()))
+}
+
+fn load_bundle_invoice_documents(
+    transaction: &Transaction<'_>,
+    query_id: &str,
+    handles: &[String],
+    policy: &PaymentQuotePolicy,
+) -> Result<Vec<BundleInvoiceDocument>, StoreError> {
+    let mut documents = Vec::with_capacity(handles.len());
+    for handle in handles {
+        let row = transaction
+            .query_row(
+                "SELECT d.id, d.handle, d.author_id, p.wallet, qm.quoted_price_krw,
+                        d.shelf, d.content, d.content_hash, d.version,
+                        COALESCE(p.consent_version, 'seed.v1'), p.wallet_verified_at
+                 FROM query_matches qm
+                 JOIN documents d ON d.handle = qm.document_handle
+                 LEFT JOIN profiles p ON p.user_id = d.author_id
+                 WHERE qm.query_id = ?1 AND qm.document_handle = ?2 AND d.locked = 0
+                   AND COALESCE(p.auto_match, 1) = 1
+                   AND (SELECT COUNT(*) FROM memory_entries strikes
+                        WHERE strikes.user_id = d.author_id
+                          AND strikes.status = 'voided') < ?3",
+                params![query_id, handle, AUTO_MATCH_STRIKE_LIMIT as i64],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        as_u64(row.get(4)?)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                        as_u64(row.get(8)?)?.min(u32::MAX as u64) as u32,
+                        row.get::<_, String>(9)?,
+                        row.get::<_, Option<i64>>(10)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::DocumentNotQuoted)?;
+        let registered_author = transaction
+            .query_row(
+                "SELECT id FROM users
+                 WHERE id = ?1 AND deleted_at IS NULL /*FOR_UPDATE*/",
+                [&row.2],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if registered_author.is_none() && !row.2.starts_with("author_") {
+            return Err(StoreError::DocumentNotQuoted);
+        }
+        let recipient_wallet = if row.10.is_some() {
+            row.3.filter(|wallet| !wallet.trim().is_empty())
+        } else if row.2.starts_with("author_") {
+            policy.fallback_recipient.clone()
+        } else {
+            return Err(StoreError::Conflict(format!(
+                "author of {} must verify a payout wallet before purchase",
+                row.1
+            )));
+        }
+        .ok_or_else(|| StoreError::Conflict(format!("{} has no payout recipient", row.1)))?;
+        if !valid_solana_address(&recipient_wallet) {
+            return Err(StoreError::Validation(format!(
+                "payout recipient for {} is not a Solana public key",
+                row.1
+            )));
+        }
+        documents.push((
+            row.0,
+            row.1,
+            row.2,
+            recipient_wallet,
+            row.4,
+            row.5,
+            row.6,
+            row.7,
+            row.8,
+            row.9,
+        ));
+    }
+    Ok(documents)
+}
+
+fn build_settlement_preview(
+    query_id: &str,
+    question: &str,
+    documents: &[BundleInvoiceDocument],
+    policy: &PaymentQuotePolicy,
+) -> Result<SettlementPreviewEnvelope, StoreError> {
+    let total_price_krw = documents.iter().try_fold(0_u64, |total, document| {
+        total.checked_add(document.4).ok_or_else(|| {
+            StoreError::Validation("bundle price exceeds the supported range".to_owned())
+        })
+    })?;
+    let commitments = documents
+        .iter()
+        .map(|document| {
+            serde_json::json!({
+                "handle": document.1,
+                "recipientWallet": document.3,
+                "priceKrw": document.4,
+                "contentHash": document.7,
+                "documentVersion": document.8,
+                "consentVersion": document.9,
+            })
+        })
+        .collect::<Vec<_>>();
+    let document_bundle_root = hex_digest(
+        serde_json::to_string(&commitments)
+            .map_err(|error| StoreError::Validation(error.to_string()))?
+            .as_bytes(),
+    );
+    let mut total_amount_atomic = 0_u64;
+    let mut owner_amount_atomic = 0_u64;
+    let mut platform_fee_atomic = 0_u64;
+    let mut line_items = Vec::with_capacity(documents.len());
+    for document in documents {
+        let amount = krw_to_usdc_atomic(document.4, policy.krw_per_usdc)?;
+        let (owner, platform) = evidence_payment_split(amount);
+        total_amount_atomic = total_amount_atomic
+            .checked_add(amount)
+            .ok_or_else(|| StoreError::Validation("invoice amount overflowed".to_owned()))?;
+        owner_amount_atomic = owner_amount_atomic
+            .checked_add(owner)
+            .ok_or_else(|| StoreError::Validation("invoice owner amount overflowed".to_owned()))?;
+        platform_fee_atomic = platform_fee_atomic.checked_add(platform).ok_or_else(|| {
+            StoreError::Validation("invoice platform amount overflowed".to_owned())
+        })?;
+        line_items.push(SettlementPreviewLineItem {
+            document_handle: document.1.clone(),
+            document_hash: document.7.clone(),
+            document_version: document.8,
+            consent_version: document.9.clone(),
+            recipient_wallet: document.3.clone(),
+            price_krw: document.4,
+            amount_atomic: amount.to_string(),
+            owner_amount_atomic: owner.to_string(),
+            platform_amount_atomic: platform.to_string(),
+        });
+    }
+    SettlementPreview {
+        scheme: SETTLEMENT_PREVIEW_SCHEME.to_owned(),
+        query_id: query_id.to_owned(),
+        query_hash: hex_digest(question.as_bytes()),
+        document_bundle_root,
+        network: policy.network.trim().to_owned(),
+        asset: policy.asset.trim().to_owned(),
+        total_price_krw,
+        total_amount_atomic: total_amount_atomic.to_string(),
+        owner_amount_atomic: owner_amount_atomic.to_string(),
+        platform_fee_atomic: platform_fee_atomic.to_string(),
+        delivery_policy: "paid_snapshot_only; unopened_or_failed_amount_refunded".to_owned(),
+        line_items,
+    }
+    .envelope()
+    .map_err(|error| StoreError::Validation(error.to_string()))
 }
 
 fn evidence_payment_split(amount_atomic: u64) -> (u64, u64) {
@@ -18756,6 +19157,12 @@ fn seed_open_calls(transaction: &Transaction<'_>) -> Result<(), StoreError> {
                 category,
                 price * (target - answered),
             ],
+        )?;
+        transaction.execute(
+            "UPDATE open_calls
+             SET status = 'open', escrow_remaining_krw = ?2 * (?3 - ?4)
+             WHERE id = ?1 AND owner_id = 'seed-buyer'",
+            params![id, price, target, answered],
         )?;
     }
     Ok(())
@@ -20527,11 +20934,32 @@ mod tests {
             krw_per_usdc: 1_350,
             ttl_ms: 300_000,
         };
+        let preview = store
+            .settlement_invoice_preview(&resolved.query_id, &payment_token_hash, &handles, &policy)
+            .unwrap();
+        assert_eq!(preview.invoice.line_items.len(), handles.len());
+        assert_eq!(preview.invoice_hash.len(), 64);
+        assert_eq!(
+            preview.invoice.document_bundle_root,
+            preview.invoice.document_bundle_root.to_lowercase(),
+        );
         let create = CreatePaymentBundleRequest {
             query_id: resolved.query_id.clone(),
             handles: handles.clone(),
             top_up_atomic: None,
+            expected_invoice_hash: Some(preview.invoice_hash.clone()),
         };
+        assert!(matches!(
+            store.create_agent_payment_bundle(
+                &CreatePaymentBundleRequest {
+                    expected_invoice_hash: Some("0".repeat(64)),
+                    ..create.clone()
+                },
+                &payment_token_hash,
+                &policy,
+            ),
+            Err(StoreError::Conflict(message)) if message.contains("invoice changed")
+        ));
         assert!(matches!(
             store.create_agent_payment_bundle(
                 &CreatePaymentBundleRequest {
@@ -20800,6 +21228,7 @@ mod tests {
                     query_id: direct_resolution.query_id.clone(),
                     handles: vec![direct_handle],
                     top_up_atomic: None,
+                    expected_invoice_hash: None,
                 },
                 &direct_token,
                 &policy,
@@ -20891,6 +21320,7 @@ mod tests {
                     query_id: bundle_resolution.query_id.clone(),
                     handles: vec![bundle_handle.clone()],
                     top_up_atomic: None,
+                    expected_invoice_hash: None,
                 },
                 &bundle_token,
                 &policy,
@@ -21122,6 +21552,7 @@ mod tests {
                     query_id: resolved.query_id.clone(),
                     handles: vec![handle.clone()],
                     top_up_atomic: Some("5000000".to_owned()),
+                    expected_invoice_hash: None,
                 },
                 &payment_token_hash,
                 &super::hex_digest(wallet_session.as_bytes()),
@@ -21257,6 +21688,7 @@ mod tests {
             query_id: resolved.query_id.clone(),
             handles: handles.clone(),
             top_up_atomic: Some("5000000".to_owned()),
+            expected_invoice_hash: None,
         };
         let wallet_session = "e".repeat(64);
         store
@@ -21397,6 +21829,12 @@ mod tests {
         let plan = store.research_job_plan(&quote.id, &policy).unwrap();
         assert_eq!(plan.status, "processing");
         assert_eq!(plan.resources.len(), 2);
+        assert_eq!(plan.invoice.job_id, quote.id);
+        assert_eq!(plan.invoice.payer, payer);
+        assert_eq!(plan.invoice.document_bundle_root, quote.bundle_hash);
+        assert_eq!(plan.invoice_hash.len(), 64);
+        assert_eq!(plan.invoice.line_items.len(), plan.resources.len());
+        assert_eq!(plan.invoice.hash().unwrap(), plan.invoice_hash);
         assert_eq!(
             plan.resources
                 .iter()
@@ -21755,6 +22193,7 @@ mod tests {
                 .map(|matched| matched.handle.clone())
                 .collect(),
             top_up_atomic: Some("5000000".to_owned()),
+            expected_invoice_hash: None,
         };
         let partial_quote = store
             .create_payment_bundle(
@@ -22006,6 +22445,7 @@ mod tests {
             query_id: resolved.query_id.clone(),
             handles: vec![resolved.matches[0].handle.clone()],
             top_up_atomic: Some("5000000".to_owned()),
+            expected_invoice_hash: None,
         };
         let funded_quote = store
             .create_payment_bundle(&create, &payment_token_hash, &session_hash, &policy)
@@ -22085,6 +22525,7 @@ mod tests {
             query_id: second_resolution.query_id.clone(),
             handles: vec![second_resolution.matches[0].handle.clone()],
             top_up_atomic: Some("5000000".to_owned()),
+            expected_invoice_hash: None,
         };
         let stale_quote = store
             .create_payment_bundle(&second_request, &second_token_hash, &session_hash, &policy)
@@ -24672,6 +25113,7 @@ mod tests {
             query_id: resolved.query_id.clone(),
             handles,
             top_up_atomic: Some("5000000".to_owned()),
+            expected_invoice_hash: None,
         };
         let session_hash = super::hex_digest(session_token.as_bytes());
         let quote = store
@@ -25710,6 +26152,7 @@ mod tests {
                         "When did you last stay there for more than two hours?".to_owned(),
                     ],
                 },
+                &[],
                 &AiArtifactMetadata {
                     model: "gemini-test",
                     mode: "test",
@@ -26000,7 +26443,7 @@ mod tests {
     }
 
     #[test]
-    fn sufficient_human_supply_disables_ai_liquidity_even_when_budget_blocks_purchase() {
+    fn public_answers_remain_available_without_becoming_human_liquidity() {
         let store = Store::in_memory().unwrap();
         let question = "Where do Seongsu residents eat weekday lunch without a long queue?";
         let response = Resolver::new(store.documents().unwrap())
@@ -26017,10 +26460,65 @@ mod tests {
         store
             .record_resolution(question, &response, Some(&token_hash))
             .unwrap();
-        let error = store
+        let (_, cached) = store
             .ai_baseline_context(&response.query_id, &token_hash)
-            .unwrap_err();
-        assert!(error.to_string().contains("AI liquidity is disabled"));
+            .unwrap();
+        assert!(cached.is_none());
+
+        let baseline = store
+            .record_ai_baseline(
+                &response.query_id,
+                &token_hash,
+                &AiBaselineDraft {
+                    orientation: "Public information can be answered without opening a private human passage."
+                        .to_owned(),
+                    general_points: vec!["Firsthand Seongsu preferences remain a separately paid evidence lane."
+                        .to_owned()],
+                    human_gaps: vec!["A resident's current queue experience still requires a person."
+                        .to_owned()],
+                    questions_for_people: vec![],
+                },
+                &[],
+                &AiArtifactMetadata {
+                    model: "gemini-test",
+                    mode: "test",
+                    policy_version: "grounded-public-answer-v2",
+                    ttl_ms: 60_000,
+                },
+            )
+            .unwrap();
+        assert!(!baseline.counts_as_human_coverage);
+        assert!(!baseline.sellable);
+    }
+
+    #[test]
+    fn curated_public_records_are_provenance_bound_and_never_enter_human_search() {
+        let store = Store::in_memory().unwrap();
+        let human_documents_before = store.documents().unwrap().len();
+        let records = store.public_evidence(Some("애플 2024 매출"), 10).unwrap();
+
+        assert!(!records.is_empty());
+        assert_eq!(records[0].organization, "Apple Inc.");
+        assert!(records[0].source_url.starts_with("https://www.sec.gov/"));
+        assert!(!records[0].source_license.is_empty());
+        assert_eq!(records[0].content_hash.len(), 64);
+        assert_eq!(store.documents().unwrap().len(), human_documents_before);
+    }
+
+    #[test]
+    fn normal_runtime_deactivates_only_the_versioned_demo_market() {
+        let store = Store::in_memory().unwrap();
+        assert!(!store.documents().unwrap().is_empty());
+        assert!(!store.list_open_calls(None).unwrap().is_empty());
+
+        store.deactivate_demo_seed_data().unwrap();
+        assert!(store.documents().unwrap().is_empty());
+        assert!(store.list_open_calls(None).unwrap().is_empty());
+        assert!(store.public_evidence(None, 20).unwrap().len() >= 6);
+
+        store.seed().unwrap();
+        assert!(!store.documents().unwrap().is_empty());
+        assert!(!store.list_open_calls(None).unwrap().is_empty());
     }
 
     #[test]

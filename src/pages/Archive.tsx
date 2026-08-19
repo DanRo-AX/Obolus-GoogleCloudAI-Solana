@@ -9,7 +9,9 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge, Chip } from '@/components/ui/primitives'
+import { SettlementInvoiceDialog } from '@/components/SettlementInvoiceDialog'
 import { useT } from '@/i18n'
+import type { SettlementPreviewEnvelope } from '@/lib/api'
 import { useUi, type Chat } from '@/state/ui'
 
 /**
@@ -28,6 +30,12 @@ type Row = {
   spent: number
   txSig?: string
   network?: string
+  receipts: {
+    invoice: SettlementPreviewEnvelope
+    txSigs: string[]
+    network?: string
+    partial?: boolean
+  }[]
 }
 
 function summarise(chat: Chat): Row {
@@ -35,6 +43,7 @@ function summarise(chat: Chat): Row {
   let spent = 0
   let txSig: string | undefined
   let network: string | undefined
+  const receipts: Row['receipts'] = []
 
   for (const m of chat.messages) {
     for (const c of m.citations ?? []) {
@@ -44,9 +53,21 @@ function summarise(chat: Chat): Row {
       spent += m.settlement.total
       txSig = m.settlement.txSig ?? txSig
       network = m.settlement.network ?? network
+      if (m.settlement.invoice) {
+        receipts.push({
+          invoice: m.settlement.invoice,
+          txSigs: m.settlement.txSigs?.length
+            ? m.settlement.txSigs
+            : m.settlement.txSig
+              ? [m.settlement.txSig]
+              : [],
+          network: m.settlement.network,
+          partial: m.settlement.partial,
+        })
+      }
     }
   }
-  return { chat, docs, spent, txSig, network }
+  return { chat, docs, spent, txSig, network, receipts }
 }
 
 /**
@@ -179,7 +200,7 @@ export default function Archive() {
 }
 
 function ThreadCard({ row }: { row: Row }) {
-  const { chat, docs, spent, txSig, network } = row
+  const { chat, docs, spent, txSig, network, receipts } = row
   const t = useT()
   const [open, setOpen] = useState(false)
 
@@ -228,6 +249,20 @@ function ThreadCard({ row }: { row: Row }) {
 
           {open ? (
             <div className="border-t border-border">
+              {receipts.length ? (
+                <div className="flex flex-wrap gap-2 border-b border-border bg-muted-2/35 px-5 py-3">
+                  {receipts.map((receipt) => (
+                    <SettlementInvoiceDialog
+                      key={receipt.invoice.invoiceHash}
+                      invoice={receipt.invoice}
+                      settled
+                      partial={receipt.partial}
+                      txSigs={receipt.txSigs}
+                      network={receipt.network}
+                    />
+                  ))}
+                </div>
+              ) : null}
               {docs.map((d, i) => (
                 <div
                   key={`${d.handle}-${i}`}

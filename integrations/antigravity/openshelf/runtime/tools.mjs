@@ -76,7 +76,7 @@ export const tools = [
       'Resolve a question against human documents, returning coverage, exact prices, and an open-call draft when human supply is missing. This does not spend money.',
     inputSchema: objectSchema(
       {
-        question: string('The concrete question to ask people.', { minLength: 8, maxLength: 1000 }),
+        question: string('The question to ask Obulus. Public facts can be answered for free; firsthand human evidence remains a separate paid lane.', { minLength: 2, maxLength: 1000 }),
         requestedDocuments: integer('Maximum human documents to rank.', { minimum: 1, maximum: 20 }),
         budgetKrw: integer('Optional total budget ceiling in KRW.', { minimum: 1 }),
         filters: filtersSchema,

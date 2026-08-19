@@ -163,7 +163,7 @@ Switch in the sidebar footer. The choice survives a reload.
 - **Prepaid credit with recovery**: prove wallet ownership once, top up when low. A browser that loses the response reconciles against the server and retries only the handles that were never paid.
 - **Open-call escrow**: a paid call reserves its full budget up front. Accepted answers release one unit each, and cancellation or account deletion returns the exact unused remainder as a payout claim.
 - **A conduct ladder stated before signup**: two upheld voids remove documents from auto-match and hold new earnings for 14 days; a third blocks new answers. One dispute can restore a wrongly voided answer through admin review.
-- **AI as liquidity, never as an author**: when human coverage is thin, Gemini on Vertex AI may give a free general baseline. It lives in `ai_baselines`, has no price, cannot be resold, earns no authority, and can never fill an open-call slot.
+- **Public answers without impersonating people**: Gemini on Vertex AI can answer ordinary and current public-information questions with Google Search grounding, while curated official records retain their publisher, source URL, license, date, record ID, and content hash. These answers have no price, cannot be resold, earn no human authority, and never fill an open-call slot. Private human passages remain closed until paid.
 - **A deliberately narrow contributor memory agent**: it reuses an existing paid answer only for an opted-in call that is 82%+ near-identical and still passes targeting, pricing, lock, and conduct rules. Everything else needs the person.
 - **Receipts**: every chat, every purchased document, every transaction link, in one place.
 

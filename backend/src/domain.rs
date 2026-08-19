@@ -128,6 +128,43 @@ pub struct AiBaselineDraft {
     pub questions_for_people: Vec<String>,
 }
 
+/// A source used by the free public-information lane. These records never
+/// become paid human evidence and never contribute authority to a person.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSource {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub publisher: String,
+    pub url: String,
+    pub license: Option<String>,
+    pub published_at: Option<String>,
+}
+
+/// An openly reusable, institutionally published fact stored separately from
+/// contributor documents. It can ground a free answer, but cannot be sold,
+/// counted as human coverage, or earn PageRank for a contributor.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicEvidenceRecord {
+    pub id: String,
+    pub organization: String,
+    pub title: String,
+    pub question: String,
+    pub answer: String,
+    pub category: String,
+    pub tags: Vec<String>,
+    pub source_url: String,
+    pub source_type: String,
+    pub source_license: String,
+    pub published_at: String,
+    pub accessed_at: String,
+    pub source_record_id: String,
+    #[serde(default)]
+    pub content_hash: String,
+}
+
 /// An ephemeral, zero-price market-liquidity response. It is not a Document,
 /// cannot enter ranking/authority/memory, and never counts toward a call.
 #[derive(Debug, Clone, Serialize)]
@@ -140,6 +177,7 @@ pub struct AiBaseline {
     pub general_points: Vec<String>,
     pub human_gaps: Vec<String>,
     pub questions_for_people: Vec<String>,
+    pub sources: Vec<AiSource>,
     pub model: String,
     pub mode: String,
     pub policy_version: String,
@@ -1069,6 +1107,9 @@ pub struct PayShResource {
     pub amount_atomic: String,
     pub owner_amount_atomic: String,
     pub platform_amount_atomic: String,
+    pub content_hash: String,
+    pub document_version: u32,
+    pub consent_version: String,
     pub price_krw: u64,
     pub krw_per_usdc: u64,
     pub expires_at: u64,
@@ -1113,6 +1154,16 @@ pub struct CreatePaymentBundleRequest {
     /// Preferred refill size when the verified prepaid wallet cannot cover
     /// this job. The server always raises it to at least the exact deficit.
     pub top_up_atomic: Option<String>,
+    /// Hash of the buyer-readable invoice shown before automatic settlement.
+    /// When present, any change to the selected documents, versions, consent,
+    /// recipients, or economics aborts before a balance is reserved.
+    pub expected_invoice_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettlementPreviewRequest {
+    pub handles: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1223,6 +1274,8 @@ pub struct ResearchJobPlan {
     pub amount_atomic: String,
     pub status: String,
     pub resources: Vec<PayShResource>,
+    pub invoice: crate::settlement_invoice::SettlementInvoice,
+    pub invoice_hash: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1638,7 +1691,7 @@ pub struct ChatAnswer {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ResolveError {
-    #[error("question must contain at least 8 non-whitespace characters")]
+    #[error("question must contain at least 2 non-whitespace characters")]
     QuestionTooShort,
     #[error("question must be 1000 characters or fewer")]
     QuestionTooLong,

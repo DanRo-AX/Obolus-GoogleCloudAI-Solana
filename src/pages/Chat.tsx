@@ -14,6 +14,7 @@ import {
   ThumbsUp,
 } from 'lucide-react'
 import { Composer } from '@/components/Composer'
+import { SettlementInvoiceDialog } from '@/components/SettlementInvoiceDialog'
 import { Button } from '@/components/ui/button'
 import { Banner, bannerToneStyle } from '@/components/ui/primitives'
 import { useT } from '@/i18n'
@@ -21,12 +22,14 @@ import { branchForAgentAction } from '@/lib/agentActionPolicy'
 import {
   getChatAnswers,
   generateAiBaseline,
+  getSettlementInvoicePreview,
   resolveQuestion,
   submitDocumentFeedback,
   synthesizeAnswer,
   type DocumentFeedback,
   type AiBaseline,
   type Resolution,
+  type SettlementPreviewEnvelope,
 } from '@/lib/api'
 import { krwPerUsdc } from '@/lib/browserPaymentConfig'
 import { DATA_OWNER_BPS, PROTOCOL_FEE_BPS } from '@/lib/pricingPolicy'
@@ -116,6 +119,9 @@ export default function Chat() {
   const [count, setCount] = useState<number | null>(null)
   const [placedOrderId, setPlacedOrderId] = useState<string | null>(null)
   const [payError, setPayError] = useState<string | null>(null)
+  const [settlementInvoice, setSettlementInvoice] = useState<SettlementPreviewEnvelope | null>(null)
+  const [invoiceLoading, setInvoiceLoading] = useState(false)
+  const [invoiceError, setInvoiceError] = useState<string | null>(null)
   const [mintCopied, setMintCopied] = useState(false)
   const [queryId, setQueryId] = useState<string | null>(
     () => chat?.paymentSession?.queryId ?? null,
@@ -155,6 +161,40 @@ export default function Chat() {
   )
   const paymentIncomplete = phase === 'failed' && Boolean(paymentSession?.docs.length)
 
+  useEffect(() => {
+    if (!paymentSession?.queryId || !paymentSession.accessToken || !pending.length) {
+      setSettlementInvoice(null)
+      setInvoiceError(null)
+      setInvoiceLoading(false)
+      return
+    }
+    let cancelled = false
+    setInvoiceLoading(true)
+    setInvoiceError(null)
+    void getSettlementInvoicePreview(
+      paymentSession.queryId,
+      pending.map((citation) => citation.handle),
+      paymentSession.accessToken,
+    ).then(
+      (invoice) => {
+        if (!cancelled) setSettlementInvoice(invoice)
+      },
+      (error: unknown) => {
+        if (!cancelled) {
+          setSettlementInvoice(null)
+          setInvoiceError(
+            error instanceof Error ? error.message : t('The invoice could not be prepared.'),
+          )
+        }
+      },
+    ).finally(() => {
+      if (!cancelled) setInvoiceLoading(false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [paymentSession?.accessToken, paymentSession?.queryId, pending, t])
+
   const total = pending.reduce((sum, c) => sum + c.price, 0)
   const estimatedUsdc =
     pending.reduce(
@@ -175,6 +215,26 @@ export default function Chat() {
         (value): value is number => typeof value === 'number' && value >= 0,
       ),
     [openCallDraft?.suggestedUnitPriceKrw],
+  )
+
+  const requestPublicAnswer = useCallback(
+    async (resolvedQueryId: string, accessToken: string) => {
+      if (!chatId || aiBaselineStatus === 'loading') return
+      setAiBaselineStatus('loading')
+      try {
+        const result = await generateAiBaseline(resolvedQueryId, accessToken)
+        if (result.baseline) {
+          setAiBaseline(result.baseline)
+          setAiBaselineStatus('ready')
+          patchChat(chatId, { aiBaseline: result.baseline })
+        } else {
+          setAiBaselineStatus('unavailable')
+        }
+      } catch {
+        setAiBaselineStatus('unavailable')
+      }
+    },
+    [aiBaselineStatus, chatId, patchChat],
   )
 
   /** Steps 6–7. Reserve prepaid credit, then server-side Pay.sh orchestration. */
@@ -221,11 +281,17 @@ export default function Chat() {
       setPhase('settling')
       setPayError(null)
       try {
+        const invoice = settlementInvoice ?? await getSettlementInvoicePreview(
+          session.queryId,
+          citations.map((citation) => citation.handle),
+          session.accessToken,
+        )
         const request = {
           queryId: resolvedQueryId,
           question: prompt ?? '',
           payer,
           accessToken: session.accessToken,
+          invoice,
           docs: citations.map((c) => ({
             handle: c.handle,
             shelf: c.shelf,
@@ -263,6 +329,7 @@ export default function Chat() {
             network: result.settlement.network,
             partial: result.settlement.partial,
             mode: result.settlement.mode,
+            invoice: result.settlement.invoice,
           },
           paymentContext: {
             queryId: session.queryId,
@@ -300,6 +367,7 @@ export default function Chat() {
       patchChat,
       prompt,
       refreshLedger,
+      settlementInvoice,
       t,
       wallet,
     ],
@@ -557,15 +625,16 @@ export default function Chat() {
                 ) : null}
 
                 {m.settlement ? (
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[4px] bg-foreground/[0.04] px-3 py-2 font-mono text-xs text-muted-foreground">
-                    <Coins className="size-3.5" />
-                    <span>
-                      {m.settlement.count} {t('opens')} ·{' '}
-                      <span className="tabular-nums text-foreground">
-                        ₩{m.settlement.total.toLocaleString()}
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[4px] bg-foreground/[0.04] px-3 py-2 font-mono text-xs text-muted-foreground">
+                      <Coins className="size-3.5" />
+                      <span>
+                        {m.settlement.count} {t('opens')} ·{' '}
+                        <span className="tabular-nums text-foreground">
+                          ₩{m.settlement.total.toLocaleString()}
+                        </span>
                       </span>
-                    </span>
-                    <span className="text-muted-foreground/60">
+                      <span className="text-muted-foreground/60">
                       {m.settlement.network === 'demo'
                         ? t('off-chain application ledger · token settlement disabled')
                         : m.settlement.network === 'sandbox-escrow'
@@ -581,27 +650,41 @@ export default function Chat() {
                         : m.settlement.mode === 'pay_sh_orchestrated'
                           ? t('prepaid balance · SHELF paid each author through Pay.sh')
                           : t('settled through x402 · unopened documents cost nothing')}
-                    </span>
-                    {(m.settlement.txSigs?.length
-                      ? m.settlement.txSigs
-                      : m.settlement.txSig
-                        ? [m.settlement.txSig]
-                        : []
-                    ).map((signature, index, signatures) => (
-                      <a
-                        key={signature}
-                        href={explorerUrl(
-                          signature,
-                          m.settlement?.network ?? 'devnet',
-                        )}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground"
-                      >
-                        {signatures.length > 1 ? `tx ${index + 1}` : signature.slice(0, 8)}…
-                        <ArrowUpRight className="size-3" />
-                      </a>
-                    ))}
+                      </span>
+                      {(m.settlement.txSigs?.length
+                        ? m.settlement.txSigs
+                        : m.settlement.txSig
+                          ? [m.settlement.txSig]
+                          : []
+                      ).map((signature, index, signatures) => (
+                        <a
+                          key={signature}
+                          href={explorerUrl(
+                            signature,
+                            m.settlement?.network ?? 'devnet',
+                          )}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground"
+                        >
+                          {signatures.length > 1 ? `tx ${index + 1}` : signature.slice(0, 8)}…
+                          <ArrowUpRight className="size-3" />
+                        </a>
+                      ))}
+                    </div>
+                    {m.settlement.invoice ? (
+                      <SettlementInvoiceDialog
+                        invoice={m.settlement.invoice}
+                        settled
+                        partial={m.settlement.partial}
+                        txSigs={m.settlement.txSigs?.length
+                          ? m.settlement.txSigs
+                          : m.settlement.txSig
+                            ? [m.settlement.txSig]
+                            : []}
+                        network={m.settlement.network}
+                      />
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -662,6 +745,33 @@ export default function Chat() {
                       {mintCopied ? t('Mint copied') : t('Copy mint')}
                     </Button>
                   </div>
+                  <SettlementInvoiceDialog
+                    invoice={settlementInvoice}
+                    loading={invoiceLoading}
+                    error={invoiceError}
+                  />
+                  {aiBaselineStatus === 'loading' ? (
+                    <div className="flex w-full items-center gap-2 rounded-[4px] border border-border px-3 py-2 text-xs text-muted-foreground">
+                      <Loader2 className="size-3 animate-spin" />
+                      {t('Searching verified public sources')}
+                    </div>
+                  ) : null}
+                  {aiBaseline ? <AiBaselineCard baseline={aiBaseline} /> : null}
+                  {!aiBaseline && aiBaselineStatus !== 'loading' && paymentSession ? (
+                    <Button
+                      type="button"
+                      variant="monoMuted"
+                      size="mono"
+                      onClick={() =>
+                        void requestPublicAnswer(
+                          paymentSession.queryId,
+                          paymentSession.accessToken,
+                        )
+                      }
+                    >
+                      {t('Answer from public sources first')}
+                    </Button>
+                  ) : null}
                   {!account ? (
                     <Button
                       variant="mono"
@@ -686,7 +796,7 @@ export default function Chat() {
                         )
                       }
                     >
-                      {t('Open with prepaid balance')}
+                      {t('Start automatic settlement')}
                     </Button>
                   ) : (
                     <Button
@@ -954,15 +1064,16 @@ export default function Chat() {
 
 function AiBaselineCard({ baseline }: { baseline: AiBaseline }) {
   const t = useT()
+  const sources = baseline.sources ?? []
   return (
     <section className="w-full rounded-[6px] border p-4 text-left" style={bannerToneStyle('violet')}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[1px] text-[#5540BE]">
           <Sparkles className="size-3" />
-          {t('AI general baseline')}
+          {t('Obulus public answer')}
         </div>
         <span className="rounded-full border border-[#6D5BD0]/20 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.7px] text-[#6D5BD0]">
-          {t('Free · not human evidence')}
+          {t('Free · public sources · not human evidence')}
         </span>
       </div>
       <p className="mt-3 text-sm leading-6 text-foreground/85">
@@ -976,21 +1087,47 @@ function AiBaselineCard({ baseline }: { baseline: AiBaseline }) {
           </li>
         ))}
       </ul>
-      <div className="mt-4 border-t border-[#6D5BD0]/15 pt-3">
-        <p className="font-mono text-[9px] font-medium uppercase tracking-[1px] text-muted-foreground">
-          {t('Still needs people')}
-        </p>
-        <ul className="mt-2 space-y-1.5 text-[13px] leading-5 text-foreground/75">
-          {baseline.humanGaps.map((gap) => (
-            <li key={gap} className="flex gap-2">
-              <span aria-hidden className="text-[#C24D32]">—</span>
-              <span>{gap}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
+      {sources.length ? (
+        <div className="mt-4 border-t border-[#6D5BD0]/15 pt-3">
+          <p className="font-mono text-[9px] font-medium uppercase tracking-[1px] text-muted-foreground">
+            {t('Public sources')}
+          </p>
+          <div className="mt-2 grid gap-1.5">
+            {sources.map((source) => (
+              <a
+                key={`${source.id}:${source.url}`}
+                href={source.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-start justify-between gap-3 rounded-[4px] border border-[#6D5BD0]/15 bg-background/60 px-3 py-2 text-xs leading-5 transition-colors hover:border-[#6D5BD0]/35"
+              >
+                <span>
+                  <strong className="font-medium text-foreground">{source.publisher}</strong>
+                  <span className="ml-1.5 text-muted-foreground">{source.title}</span>
+                </span>
+                <ArrowUpRight className="mt-0.5 size-3 shrink-0 text-muted-foreground" />
+              </a>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {baseline.humanGaps.length ? (
+        <div className="mt-4 border-t border-[#6D5BD0]/15 pt-3">
+          <p className="font-mono text-[9px] font-medium uppercase tracking-[1px] text-muted-foreground">
+            {t('Still needs people')}
+          </p>
+          <ul className="mt-2 space-y-1.5 text-[13px] leading-5 text-foreground/75">
+            {baseline.humanGaps.map((gap) => (
+              <li key={gap} className="flex gap-2">
+                <span aria-hidden className="text-[#C24D32]">—</span>
+                <span>{gap}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <p className="mt-3 font-mono text-[9px] uppercase leading-4 tracking-[0.7px] text-muted-foreground">
-        {t('₩0 · question sent to Gemini on Vertex AI without private shelf passages · cannot be bought or resold · never enters Shelf ranking')}
+        {t('₩0 · verified public records and Google Search grounding only · private human passages stay closed · never enters human ranking')}
       </p>
     </section>
   )
