@@ -1,9 +1,23 @@
 import { Fragment } from 'react'
 import { NavLink, Link } from 'react-router-dom'
-import { Activity, LogIn, LogOut, PanelLeft, ShieldCheck } from 'lucide-react'
+import {
+  Activity,
+  ChevronDown,
+  Languages,
+  LogIn,
+  LogOut,
+  PanelLeft,
+  ShieldCheck,
+} from 'lucide-react'
 import { Avatar } from '@/components/Avatar'
 import { BrandMark } from '@/components/ui/BrandMark'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from '@/components/ui/primitives'
 import { NAV_ITEMS } from '@/data/nav'
 import { STRIKE_LIMIT } from '@/data/onboarding'
 import { deterministicAvatar } from '@/lib/avatar'
@@ -126,32 +140,57 @@ function LiveStrip() {
 }
 
 /**
- * Two languages, one control — a conventional website-style language
- * dropdown: a native <select> labelled "Lang" that shows the current
- * language and lets you pick EN / 한국어 from a list. Native gives us
- * keyboard, focus and the platform mobile picker for free. The locale
- * wiring is unchanged from the old toggle — the same useLang().setLang,
- * which still persists to localStorage and re-renders every t().
+ * Two languages, one control — a Radix dropdown styled to match the sidebar's
+ * mono controls (@radix-ui/react-dropdown-menu via the ui/primitives wrappers,
+ * not a native <select>). The trigger carries the "Lang" caption and the
+ * current language; the menu lists EN / 한국어 with a checkmark on the active
+ * one. Radix hands us keyboard, focus and aria for free. The locale wiring is
+ * unchanged from the old <select> — the same useLang().setLang, which still
+ * persists to localStorage and re-renders every t().
  */
 function LangSwitch() {
   const { lang, setLang } = useLang()
   const t = useT()
+  const current = lang === 'ko' ? '한국어' : 'EN'
   return (
-    <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-      <span className="shrink-0">{t('Lang')}</span>
-      <select
-        value={lang}
-        onChange={(event) => setLang(event.target.value === 'ko' ? 'ko' : 'en')}
-        className="h-11 flex-1 cursor-pointer rounded-[4px] border border-border bg-transparent px-2 font-mono text-[11px] uppercase tracking-[1px] text-foreground transition-colors hover:border-foreground/25 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring sm:h-8"
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label={`${t('Lang')} · ${current}`}
+        className="group/lang flex h-11 w-full cursor-pointer items-center justify-between gap-2 rounded-[4px] border border-border bg-transparent px-2.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground outline-hidden transition-colors hover:border-foreground/25 hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring data-[state=open]:border-foreground/25 data-[state=open]:text-foreground sm:h-8"
       >
-        <option value="en" className="bg-background normal-case tracking-normal text-foreground">
+        <span className="flex min-w-0 items-center gap-2">
+          <Languages className="size-3.5 shrink-0 opacity-70" />
+          <span className="truncate">{t('Lang')}</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1.5">
+          <span className="font-mono text-[11px] normal-case tracking-normal text-foreground">
+            {current}
+          </span>
+          <ChevronDown className="size-3.5 shrink-0 opacity-60 transition-transform duration-200 group-data-[state=open]/lang:rotate-180" />
+        </span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        side="top"
+        align="start"
+        sideOffset={6}
+        className="w-(--radix-dropdown-menu-trigger-width)"
+      >
+        <DropdownMenuCheckboxItem
+          checked={lang === 'en'}
+          onCheckedChange={() => setLang('en')}
+          className="font-mono text-[11px] uppercase tracking-[1px]"
+        >
           EN
-        </option>
-        <option value="ko" className="bg-background normal-case tracking-normal text-foreground">
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={lang === 'ko'}
+          onCheckedChange={() => setLang('ko')}
+          className="text-[13px]"
+        >
           한국어
-        </option>
-      </select>
-    </label>
+        </DropdownMenuCheckboxItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
