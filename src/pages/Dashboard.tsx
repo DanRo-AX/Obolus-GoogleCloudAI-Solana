@@ -6,7 +6,6 @@ import {
   Bell,
   Bot,
   ChevronDown,
-  Clock,
   Coins,
   MessageSquareText,
   Mail,
@@ -33,7 +32,7 @@ import {
 import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from '@/data/categories'
 import { AGE_BANDS, HOUSEHOLDS, REGIONS, STRIKE_LIMIT } from '@/data/onboarding'
 import { useLang } from '@/i18n'
-import { flowGradient } from '@/lib/cardGradient'
+import { cardGradient, cardTexture } from '@/lib/cardGradient'
 import { Avatar } from '@/components/Avatar'
 import { deterministicAvatar } from '@/lib/avatar'
 import {
@@ -79,10 +78,10 @@ function fitScore(o: Order) {
  * if a dark surface is added later.
  *
  * The open-calls card banner below no longer uses this — it paints with
- * `flowGradient` (src/lib/cardGradient.ts) instead, a rich gradient whose hue
- * flows by the card's position in the grid so neighbours connect into one calm
- * sweep. This helper stays for the "Build human supply" callout's leading
- * avatar, which still wants a single-accent tint.
+ * `cardGradient` (src/lib/cardGradient.ts) instead, a keyword-hashed
+ * multicolor gradient per variant 7 ("Airbnb 리스팅"). This helper stays for
+ * the "Build human supply" callout's leading avatar, which still wants a
+ * single-accent tint.
  */
 function categoryBannerStyle(accent?: string): CSSProperties {
   if (!accent) return { background: 'var(--muted)' }
@@ -529,17 +528,13 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* category rail --------------------------------------------------
-            A vertical rail instead of a horizontal strip: eleven fields never
-            fit across the top without truncating or scrolling sideways, and a
-            field you cannot see is a field nobody filters by. On a phone the
-            rail lies down and scrolls sideways, so the swipe cue still has a
-            job — it only shows where the scrolling actually happens. */}
+        {/* A quiet editorial index. Colour belongs to the work cards below,
+            not to navigation, so fields are plain text with one active rule. */}
         <p className="-mb-3 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground sm:hidden">
           {t('Swipe to browse fields')} →
         </p>
-        <div className="-mx-4 grid gap-6 sm:-mx-6 lg:grid-cols-[184px_1fr] lg:gap-0">
-          <nav className="flex gap-1 overflow-x-auto px-4 pb-1 sm:px-6 lg:min-h-[70vh] lg:flex-col lg:overflow-visible lg:border-r lg:border-border lg:px-2 lg:pb-0">
+        <div className="space-y-5">
+          <nav className="-mx-4 flex gap-6 overflow-x-auto border-b border-border px-4 sm:-mx-6 sm:px-6 lg:mx-0 lg:overflow-visible lg:px-0">
             <CatTab
               active={category === 'all'}
               onClick={() => setCategory('all')}
@@ -553,13 +548,11 @@ export default function Dashboard() {
                 onClick={() => setCategory(c.id)}
                 label={t(c.label)}
                 count={counts.get(c.id) ?? 0}
-                category={c.id}
-                accent={c.accent}
               />
             ))}
           </nav>
 
-          <div className="min-w-0 space-y-6 px-4 sm:px-6 lg:pl-6">
+          <div className="min-w-0 space-y-6">
         {/* toolbar ----------------------------------------------------------
             Search replaces the old value/hide-filled/fits-me chip row; sort
             moves down here from the tab row now that the column switcher —
@@ -571,7 +564,7 @@ export default function Dashboard() {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={t('Search category or title')}
-              className="h-9 w-full rounded-[2px] border border-border bg-transparent pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-foreground/40"
+              className="h-10 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground/70 focus:border-foreground/35 focus:shadow-[0_0_0_3px_rgba(0,0,0,0.035)]"
             />
           </div>
           {q ? (
@@ -593,7 +586,7 @@ export default function Dashboard() {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex h-11 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 font-mono text-xs uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9"
+                className="flex h-10 cursor-pointer items-center gap-2 rounded-md border border-border bg-background px-3 text-xs text-muted-foreground transition-colors hover:border-foreground/20 hover:text-foreground"
               >
                 {t('Sort')}
                 <span className="text-foreground">{t(activeSort.label)}</span>
@@ -679,15 +672,11 @@ export default function Dashboard() {
             </Button>
           </div>
         ) : (
-          // Marketplace card grid — variant 7 ("Airbnb 리스팅"): a big top
-          // "photo" region (here, a rich position-flow gradient via
-          // flowGradient(index), so adjacent cards' tones connect into one
-          // calm sweep instead of clashing) plus a bottom text block, not a
-          // dense hairline list. A circular avatar-style slot overlaps the
-          // banner's bottom-left edge; the category glyph itself moved down
-          // into the meta row so the banner stays photo-like and text-free.
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {list.map((order, index) => {
+          // Editorial case-study grid: a generous visual thumbnail first,
+          // then the question and only the marketplace facts needed to act.
+          // This deliberately avoids the bordered "dashboard widget" look.
+          <div className="grid grid-cols-1 gap-x-5 gap-y-9 sm:grid-cols-2 lg:grid-cols-3">
+            {list.map((order) => {
               const done = order.answered >= order.target
               const cancelled = order.status === 'cancelled'
               const cat = CATEGORY_BY_ID[order.category]
@@ -714,120 +703,88 @@ export default function Dashboard() {
                 <div
                   key={order.id}
                   className={cn(
-                    'flex flex-col overflow-hidden rounded-[10px] border border-border bg-card transition-colors duration-300',
+                    'group flex min-w-0 flex-col overflow-hidden rounded-[3px] border border-black/10 bg-white shadow-none transition-[opacity,box-shadow] duration-200 ease-out hover:shadow-[0_3px_0_rgba(17,17,17,0.72)] motion-reduce:transition-none',
                     opening && opening !== order.id && 'opacity-30',
-                    opening === order.id && 'bg-foreground/[0.03]',
                     (done || cancelled) && 'opacity-70',
                   )}
                 >
                   <div
-                    className="relative h-[110px] shrink-0 overflow-hidden"
-                    style={{ background: flowGradient(index) }}
+                    className="relative aspect-[16/10] shrink-0 overflow-hidden bg-muted"
+                    style={{ background: cardGradient(`${order.shelf}::${order.question}`, 'deep') }}
                   >
-                    {/* The asker's avatar (deterministic from the shelf name, so the
-                        same contributor always shows the same face), sitting inside
-                        the banner's lower-left rather than hanging below it. */}
-                    <span
-                      className="absolute bottom-2 left-3 flex size-14 items-center justify-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-[0_1px_3px_rgba(20,20,25,0.18)]"
-                      aria-hidden="true"
-                    >
-                      <Avatar
-                        config={deterministicAvatar(order.shelf)}
-                        size={46}
+                    <div className="pointer-events-none absolute inset-0 bg-black/[0.03]" />
+                    <div
+                      className="pointer-events-none absolute inset-0 opacity-80"
+                      style={{
+                        backgroundImage: cardTexture(`${order.shelf}::${order.question}`),
+                        backgroundPosition: 'center',
+                        backgroundSize: 'cover',
+                      }}
+                    />
+
+                    <div className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center text-white drop-shadow-[0_1px_12px_rgba(0,0,0,0.28)]">
+                      <CategoryIcon
+                        id={order.category}
+                        className="size-9 stroke-[1.5]"
                       />
+                    </div>
+
+                    <span className="absolute bottom-3 left-3 flex items-center gap-2 text-white">
+                      <span className="flex size-7 items-center justify-center overflow-hidden rounded-full border border-white/70 bg-white">
+                        <Avatar config={deterministicAvatar(order.shelf)} size={24} />
+                      </span>
+                      <span className="max-w-[12rem] truncate text-[11px] font-medium drop-shadow-sm">
+                        {order.shelf}
+                      </span>
                     </span>
-                    {/* Fit score as an Airbnb-listing-style overlay pill — only
-                        when there is a real score to show (a signed-in, profiled
-                        reader); it stays hidden rather than reading 0%. */}
+
                     {Math.round(fitScore(order) * 100) > 0 ? (
-                      <span className="absolute right-3 top-3 rounded-full bg-white/85 px-2 py-0.5 font-mono text-[10px] font-medium tabular-nums text-foreground shadow-[0_1px_3px_rgba(20,20,25,0.14)] backdrop-blur-sm">
+                      <span className="absolute right-3 top-3 rounded-full bg-white/90 px-2 py-1 font-mono text-[9px] font-medium tabular-nums text-foreground shadow-sm backdrop-blur-sm">
                         {t('Fit')} {Math.round(fitScore(order) * 100)}%
                       </span>
                     ) : null}
                   </div>
-                  <div className="flex flex-1 flex-col px-4 pb-4 pt-4">
-                  {/* The question is the point of the card — primary weight,
-                      first thing the eye lands on, clamped to two lines so a
-                      long ask never pushes the rest of the card down. The
-                      full text only ever shows uncut in the preview modal. */}
-                  <p className="line-clamp-2 text-[16px] font-medium leading-snug tracking-[-0.006em] text-foreground">
+                  <div className="flex flex-1 flex-col bg-white px-5 pb-4 pt-5">
+                  <div className="flex items-center gap-2 text-[12px] font-semibold tracking-[-0.01em] text-neutral-700">
+                    <span>{cat?.label ? t(cat.label) : t('Open call')}</span>
+                    <span aria-hidden="true">·</span>
+                    <span className="tabular-nums">{relative(order.createdAt, t)}</span>
+                  </div>
+
+                  <p className="mt-4 line-clamp-3 min-h-[4.5rem] text-[17px] font-bold leading-[1.42] tracking-[-0.025em] text-neutral-950">
                     {order.question}
                   </p>
 
-                  {/* Meta row — demoted now that the question leads.
-                      Category and shelf collapse into one small muted
-                      string instead of a glyph plus a separately-padded
-                      pill, so a long shelf name ("가게를 3년째 운영합니다")
-                      truncates cleanly with the rest of the line instead of
-                      clipping mid-word inside its own badge. */}
-                  <span
-                    className="mt-1.5 flex min-w-0 items-center gap-1.5 overflow-hidden"
-                    title={cat?.label ? `${t(cat.label)} · ${order.shelf}` : order.shelf}
-                  >
-                    <CategoryIcon
-                      id={order.category}
-                      className="size-3 shrink-0 opacity-70"
-                      style={{ color: cat?.accent ?? 'var(--muted-foreground)' }}
-                    />
-                    <span className="truncate font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground/80">
-                      {cat?.label ? t(cat.label) : null}
-                      {order.shelf ? ` · ${order.shelf}` : null}
-                    </span>
-                  </span>
-
-                  {/* Price is the reason to read this card at all — it gets
-                      real foreground weight and a real number size, paired
-                      with the fraction so both stats land in one glance.
-                      A hairline separates this from the meta line above so
-                      the eye treats it as its own block, not a continuation. */}
-                  <div className="mt-3 flex items-end justify-between gap-3 border-t border-border/60 pt-3">
-                    <div className="flex items-baseline gap-1.5">
-                      <span className="text-xl font-medium tabular-nums text-foreground">
+                  <div className="mt-5 flex items-center justify-between gap-3 border-t border-black/10 pt-3.5">
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-[15px] font-semibold tabular-nums text-foreground">
                         {order.unitPrice === 0
                           ? '₩0'
                           : `₩${order.unitPrice.toLocaleString()}`}
                       </span>
-                      <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                      <span className="text-[11px] text-muted-foreground">
                         {t('Per answer')}
                       </span>
                     </div>
-                    <div className="flex flex-col items-end gap-0.5">
-                      <span className="font-mono text-sm font-semibold tabular-nums text-foreground">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
                         {order.answered}/{order.target} {t('answered')}
                       </span>
                       {reservedByOthers > 0 ? (
-                        <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                        <span className="font-mono text-[9px] uppercase tracking-[1px] text-muted-foreground">
                           {reservedByOthers} {t('slots held')}
                         </span>
                       ) : null}
                     </div>
                   </div>
 
-                  {/* A thin, square-ended bar rather than a pill — Linear's
-                      progress language stays close to a hairline rule, now
-                      sitting under a legible number instead of carrying the
-                      whole state on its own. */}
-                  <div className="mt-1.5 h-1 overflow-hidden rounded-[2px] bg-foreground/10">
-                    <div
-                      className="h-full rounded-[2px] bg-[#0F766E] transition-[width] duration-500"
-                      style={{
-                        width: `${Math.round((order.answered / order.target) * 100)}%`,
-                      }}
-                    />
-                  </div>
-
                   {who && hasNarrowFilters ? (
-                    <p className="mt-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground/85">
+                    <p className="mt-2 line-clamp-1 font-mono text-[9px] uppercase tracking-[0.9px] text-muted-foreground/85">
                       {t('Who answers')} · {who}
                     </p>
                   ) : null}
 
-                  {/* Meta + the per-row CTA share one line — the timestamp
-                      stays a quiet caption while the button reads as the
-                      card's one real action. */}
-                  <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
-                    <Clock className="size-3" />
-                    {relative(order.createdAt, t)}
+                  <div className="mt-2 flex min-h-7 flex-wrap items-center gap-x-3 gap-y-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
                     {order.escrowMode === 'x402_solana_escrow' && !cancelled ? (
                       <span className="text-[#0F766E]">{t('Devnet USDC escrow')}</span>
                     ) : null}
@@ -843,9 +800,9 @@ export default function Dashboard() {
 
                     {tab === 'open' && !done ? (
                       <Button
-                        variant="mono"
+                        variant="monoGhost"
                         size="monoSm"
-                        className="ml-auto shrink-0 font-sans normal-case tracking-normal"
+                        className="ml-auto -mr-2 shrink-0 px-2 font-sans normal-case tracking-normal"
                         onClick={() => {
                           if (!profile) {
                             navigate('/onboarding')
@@ -864,7 +821,7 @@ export default function Dashboard() {
                           ? t('Picking it up…')
                           : fullyReserved
                             ? t('All remaining slots held')
-                            : t('Answer')}
+                            : <>{t('Answer')} <span aria-hidden="true">→</span></>}
                       </Button>
                     ) : null}
                   </div>
@@ -1124,46 +1081,26 @@ function CatTab({
   onClick,
   label,
   count,
-  category,
-  accent,
 }: {
   active: boolean
   onClick: () => void
   label: string
   count: number
-  category?: CategoryId
-  accent?: string
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        // min-h-11 is the accessible touch target, kept over the tighter h-8:
-        // on a phone this rail is the horizontal strip you thumb through.
-        'flex min-h-11 shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap rounded-[4px] px-2.5 text-[13px] tracking-[-0.006em] transition-colors lg:w-full',
+        '-mb-px flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap border-b-2 px-0 text-[13px] tracking-[-0.006em] transition-colors',
         active
-          ? 'bg-background font-medium text-foreground shadow-[0_1px_2px_rgba(20,20,25,0.05)] lg:bg-muted-2'
-          : 'text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground',
-        count === 0 && !active && 'opacity-45',
+          ? 'border-foreground font-medium text-foreground'
+          : 'border-transparent text-muted-foreground hover:text-foreground',
+        count === 0 && !active && 'opacity-40',
       )}
     >
-      {category ? (
-        // The same Material icon as the card badge, shrunk to an inline
-        // glyph — the rail reads as the card grid's index instead of a
-        // separate color-coded list.
-        <CategoryIcon
-          id={category}
-          className="size-3.5 shrink-0"
-          style={{ color: accent }}
-        />
-      ) : (
-        /* The 'All' tab has no category, but the rail still needs its
-           labels to start on the same vertical line. */
-        <span className="size-3.5 shrink-0" />
-      )}
       <span className="truncate">{label}</span>
-      <span className="ml-auto pl-1 font-mono text-[11px] tabular-nums text-muted-foreground">
+      <span className="font-mono text-[10px] tabular-nums text-muted-foreground/80">
         {count}
       </span>
     </button>

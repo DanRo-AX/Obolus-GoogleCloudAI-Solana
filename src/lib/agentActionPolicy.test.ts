@@ -19,11 +19,11 @@ describe('branchForAgentAction', () => {
 
   it('generates a baseline only when the server says the miss is eligible', () => {
     assert.deepEqual(branchForAgentAction('miss', true, 'generate_general_baseline'), {
-      phase: 'ask-order',
+      phase: 'baseline',
       generateBaseline: true,
     })
     assert.deepEqual(branchForAgentAction('miss', false, 'generate_general_baseline'), {
-      phase: 'ask-order',
+      phase: 'baseline',
       generateBaseline: false,
     })
   })
@@ -38,9 +38,9 @@ describe('branchForAgentAction', () => {
     })
   })
 
-  it('preserves the previous miss behavior for an older API response', () => {
+  it('keeps an older eligible miss on the free answer path', () => {
     assert.deepEqual(branchForAgentAction('miss', true), {
-      phase: 'ask-order',
+      phase: 'baseline',
       generateBaseline: true,
     })
   })

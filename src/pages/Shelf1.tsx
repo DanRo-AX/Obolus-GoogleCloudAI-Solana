@@ -113,10 +113,10 @@ export default function Shelf1() {
                   key={s.n}
                   href={`#sec-${s.n}`}
                   className={cn(
-                    'flex items-baseline gap-2.5 rounded-[3px] py-1.5 pl-2 text-[13px] leading-snug transition-colors',
+                    'flex items-baseline gap-2.5 rounded-[2px] px-2.5 py-2 text-[13px] leading-snug transition-colors',
                     active === s.n
-                      ? 'bg-foreground/[0.06] text-foreground'
-                      : 'text-muted-foreground hover:text-foreground',
+                      ? 'bg-black text-white'
+                      : 'text-muted-foreground hover:bg-black/[0.04] hover:text-foreground',
                   )}
                 >
                   <span className="font-mono text-[10px] tabular-nums opacity-60">
@@ -203,12 +203,12 @@ function BlockView({ block }: { block: Block }) {
       )
     case 'quote':
       return (
-        <blockquote className="my-2 border-l-2 border-[#866FF2] pl-5">
-          <p className="font-display text-xl font-medium leading-8 text-foreground sm:text-[22px]">
+        <blockquote className="my-2 rounded-[2px] bg-[#080808] px-6 py-7 text-white sm:px-7 sm:py-8">
+          <p className="max-w-2xl font-display text-xl font-medium leading-8 text-white sm:text-[22px]">
             {t(block.text)}
           </p>
           {block.attribution ? (
-            <cite className="mt-2 block font-mono text-[10px] uppercase not-italic tracking-[1px] text-muted-foreground">
+            <cite className="mt-3 block font-mono text-[10px] uppercase not-italic tracking-[1px] text-white/45">
               {t(block.attribution)}
             </cite>
           ) : null}
@@ -243,24 +243,48 @@ function BlockView({ block }: { block: Block }) {
       )
     case 'note':
       return (
-        <aside className="rounded-[6px] border border-border bg-foreground/[0.03] p-5">
-          <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-            {t(block.label)}
-          </span>
-          <p className="mt-2 text-[15px] leading-7 text-foreground/90">
+        <aside className="rounded-[2px] bg-[#080808] px-6 py-6 text-white sm:px-7 sm:py-7">
+          {block.label ? (
+            <span className="font-mono text-[10px] uppercase tracking-[1.6px] text-white/45">
+              {t(block.label)}
+            </span>
+          ) : null}
+          <p className={cn('max-w-3xl leading-8 text-white/88', block.label ? 'mt-3 text-[16px]' : 'text-[18px]')}>
             {t(block.text)}
           </p>
         </aside>
       )
     case 'code':
       return (
-        <figure className="overflow-hidden rounded-[6px] border border-border">
-          <figcaption className="border-b border-border bg-muted-2 px-4 py-2 font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-            {t(block.caption)}
+        <figure className="overflow-hidden rounded-[9px] border border-black/80 bg-[#111214] text-white shadow-[0_18px_45px_rgba(0,0,0,0.22)] ring-1 ring-white/5">
+          <figcaption className="relative flex h-10 items-center border-b border-white/10 bg-[#202124] px-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+            <span className="flex gap-2" aria-hidden="true">
+              <span className="size-2.5 rounded-full bg-[#ff5f57]" />
+              <span className="size-2.5 rounded-full bg-[#febc2e]" />
+              <span className="size-2.5 rounded-full bg-[#28c840]" />
+            </span>
+            <span className="absolute inset-x-16 text-center font-mono text-[10px] tracking-[0.8px] text-white/45">
+              {t(block.caption)}
+            </span>
           </figcaption>
-          <pre className="overflow-x-auto bg-card px-4 py-4 font-mono text-[13px] leading-[1.85] text-foreground">
-            {block.lines.join('\n')}
-          </pre>
+          <div className="overflow-x-auto bg-[linear-gradient(180deg,#121315_0%,#0d0e10_100%)] px-5 py-5 font-mono text-[13px] leading-[1.9] text-white/88">
+            <div className="mb-2 flex min-w-max gap-2 text-white/42">
+              <span>obulus@agent</span>
+              <span className="text-white/22">~/research</span>
+            </div>
+            {block.lines.map((line, index) => (
+              <div key={`${line}-${index}`} className="flex min-w-max gap-3">
+                <span className={cn('select-none', index === 0 ? 'text-[#74dba5]' : 'text-white/24')}>
+                  {index === 0 ? '$' : '›'}
+                </span>
+                <span className={index === 0 ? 'text-white' : 'text-white/72'}>{t(line)}</span>
+              </div>
+            ))}
+            <div className="mt-1 flex items-center gap-3 text-[#74dba5]">
+              <span>$</span>
+              <span className="h-[1.05em] w-[7px] animate-pulse bg-white/72 motion-reduce:animate-none" />
+            </div>
+          </div>
         </figure>
       )
     case 'compare':
@@ -270,25 +294,23 @@ function BlockView({ block }: { block: Block }) {
             <div
               key={side.label}
               className={cn(
-                'flex flex-col rounded-[6px] border p-5',
-                i === 0
-                  ? 'border-border bg-card'
-                  : 'border-[#866FF2]/30 bg-[#866FF2]/[0.05]',
+                'flex flex-col overflow-hidden rounded-[2px] bg-[#080808] p-6 text-white',
+                i === 1 && 'shadow-[inset_3px_0_0_rgba(255,255,255,0.75)]',
               )}
             >
-              <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
+              <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-white/45">
                 {t(side.label)}
               </span>
-              <span className="mt-2 text-[15px] font-medium">
+              <span className="mt-3 text-[16px] font-semibold text-white">
                 {t(side.title)}
               </span>
               <ul className="mt-3 flex flex-col gap-2">
                 {side.lines.map((l) => (
                   <li
                     key={l}
-                    className="flex gap-2.5 text-[13px] leading-relaxed text-foreground/80"
+                    className="flex gap-2.5 text-[13px] leading-relaxed text-white/72"
                   >
-                    <span className="mt-2 size-1 shrink-0 rounded-full bg-muted-foreground/50" />
+                    <span className="mt-2 size-1 shrink-0 rounded-full bg-white/45" />
                     <span>{t(l)}</span>
                   </li>
                 ))}
@@ -306,8 +328,8 @@ function Lifecycle() {
   const t = useT()
 
   return (
-    <div className="mt-10 overflow-hidden rounded-[6px] border border-border">
-      <div className="border-b border-border bg-muted-2 px-4 py-2 font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
+    <div className="mt-12">
+      <div className="border-b border-foreground/70 pb-4 font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
         {t('One question, end to end')}
       </div>
       <table className="w-full border-collapse text-left text-sm">
@@ -316,17 +338,17 @@ function Lifecycle() {
             <tr
               key={s.n}
               className={cn(
-                'border-b border-border/60 last:border-0',
-                s.pivot && 'bg-[#866FF2]/[0.06]',
+                'border-b border-border',
+                s.pivot && 'bg-[#866FF2]/[0.025]',
               )}
             >
-              <td className="w-12 px-4 py-3 align-top font-mono text-xs tabular-nums text-muted-foreground">
+              <td className="w-14 py-6 pr-4 align-top font-mono text-xs tabular-nums text-muted-foreground">
                 {String(s.n).padStart(2, '0')}
               </td>
-              <td className="w-[190px] px-2 py-3 align-top font-medium">
+              <td className="w-[27%] py-6 pr-8 align-top text-[15px] font-semibold">
                 {t(s.step)}
               </td>
-              <td className="px-4 py-3 align-top text-foreground/80">
+              <td className="py-6 align-top text-[15px] leading-7 text-foreground/72">
                 {t(s.what)}
               </td>
             </tr>
@@ -336,4 +358,3 @@ function Lifecycle() {
     </div>
   )
 }
-

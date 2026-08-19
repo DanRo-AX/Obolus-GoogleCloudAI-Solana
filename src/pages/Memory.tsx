@@ -723,11 +723,11 @@ export default function Memory() {
                     {t('append-only · accrued')}
                   </span>
                 </div>
-                <ol className="mt-3 overflow-hidden rounded-[6px] border border-border bg-card">
+                <ol className="mt-3 divide-y divide-border/70 border-y border-border/70">
                   {earnings.events.slice(0, 6).map((event) => (
                     <li
                       key={event.id}
-                      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border/70 px-3 py-2.5 last:border-0"
+                      className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 py-3"
                     >
                       <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
                         {t(event.source.replaceAll('_', ' '))}
@@ -800,7 +800,7 @@ export default function Memory() {
                   </Button>
                 </div>
               ) : (
-                <ol className="mt-3 flex flex-col divide-y divide-border rounded-[6px] border border-border bg-card">
+                <ol className="mt-3 flex flex-col divide-y divide-border/70 border-y border-border/70">
                   {memory.map((m, i) => {
                     const w = weightOf(m.createdAt)
                     const cat = CATEGORY_BY_ID[categoryFor(m.shelf, m.question)]
@@ -992,15 +992,18 @@ export default function Memory() {
               )}
             </div>
 
-            <div className="rounded-[6px] border border-border bg-foreground/[0.03] p-4">
-              <p className="text-sm leading-relaxed text-muted-foreground">
+            <section className="border-t border-border/70 pt-6">
+              <h3 className="text-[15px] font-medium text-foreground">
+                {t('Delete account and data')}
+              </h3>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
                 {t('Deleting refunds unused open-call escrow to your wallet, removes your profile and every document, and signs out every session. The financial audit rows stay, with your handle stripped.')}
               </p>
-              <div className="mt-3 flex items-center gap-2">
+              <div className="mt-4 flex items-center gap-2">
                 {deleteConfirm ? (
                   <>
                     <Button
-                      variant="mono"
+                      variant="destructive"
                       size="monoSm"
                       disabled={deleting}
                       onClick={() => {
@@ -1017,12 +1020,17 @@ export default function Memory() {
                     </Button>
                   </>
                 ) : (
-                  <Button variant="monoMuted" size="monoSm" onClick={() => setDeleteConfirm(true)}>
+                  <Button
+                    variant="ghost"
+                    size="monoSm"
+                    className="px-0 text-destructive hover:bg-transparent hover:text-destructive/75"
+                    onClick={() => setDeleteConfirm(true)}
+                  >
                     <Trash2 className="size-3" /> {t('Delete everything')}
                   </Button>
                 )}
               </div>
-            </div>
+            </section>
           </>
         ) : null}
 

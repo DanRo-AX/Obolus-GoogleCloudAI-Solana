@@ -17,7 +17,7 @@ const MUTED = '#6b7280'
 const ACCENT = '#0F766E' // settlement
 const BRANCH = '#866FF2' // the step-4 decision
 
-type NodeId = 'ask' | 'search' | 'rank' | 'branch' | 'call' | 'settle' | 'receipt' | 'memory' | 'shelves'
+type NodeId = 'ask' | 'search' | 'rank' | 'branch' | 'baseline' | 'call' | 'settle' | 'receipt' | 'memory' | 'shelves'
 
 /** Which nodes stay lit when one is hovered. */
 const RELATED: Record<NodeId, NodeId[]> = {
@@ -25,8 +25,9 @@ const RELATED: Record<NodeId, NodeId[]> = {
   search: ['ask', 'search', 'rank', 'shelves'],
   shelves: ['search', 'shelves'],
   rank: ['search', 'rank', 'branch'],
-  branch: ['rank', 'branch', 'call', 'settle'],
-  call: ['branch', 'call', 'settle'],
+  branch: ['rank', 'branch', 'baseline', 'call', 'settle'],
+  baseline: ['branch', 'baseline', 'call'],
+  call: ['branch', 'baseline', 'call', 'settle'],
   settle: ['branch', 'call', 'settle', 'receipt', 'memory'],
   receipt: ['settle', 'receipt'],
   memory: ['settle', 'memory', 'shelves'],
@@ -95,10 +96,10 @@ export function FlowDiagram({ className }: { className?: string }) {
       {sub ? (
         <text
           x={x + w - 14}
-          y={y + 43}
+          y={y + 21}
           textAnchor="end"
           fill={MUTED}
-          fontSize={10.5}
+          fontSize={9.5}
           fontFamily="var(--font-geist-mono)"
         >
           {sub}
@@ -267,31 +268,39 @@ export function FlowDiagram({ className }: { className?: string }) {
           </g>
 
           <Node
+            id="baseline"
+            x={720}
+            y={336}
+            step={t('MISS')}
+            title={t('Free general answer')}
+            sub={t('not human evidence')}
+          />
+          <Node
             id="call"
             x={720}
-            y={424}
+            y={440}
             step={`${t('STEP')} 5`}
-            title={t('Open call')}
+            title={t('Optional Open Call')}
             sub={t('₩ per answer')}
           />
           <Node
             id="settle"
             x={380}
-            y={528}
+            y={544}
             step={`${t('STEP')} 6`}
             title={t('Pay each DB via Pay.sh')}
           />
           <Node
             id="receipt"
             x={110}
-            y={632}
+            y={648}
             step={`${t('STEP')} 7`}
             title={t('Paid citations + receipt')}
           />
           <Node
             id="memory"
             x={720}
-            y={632}
+            y={648}
             step={`${t('STEP')} 7`}
             title={t('Memory accrues')}
           />
@@ -309,7 +318,7 @@ export function FlowDiagram({ className }: { className?: string }) {
           <Edge d="M500 200 L500 226" on={['search', 'rank']} />
           <Edge d="M500 284 L500 304" on={['rank', 'branch']} />
           <Edge
-            d="M500 398 L500 526"
+            d="M500 398 L500 542"
             on={['branch', 'settle']}
             color={BRANCH}
             label={t('HIT · answer exists')}
@@ -317,42 +326,49 @@ export function FlowDiagram({ className }: { className?: string }) {
             ly={468}
           />
           <Edge
-            d="M586 352 L840 352 L840 422"
-            on={['branch', 'call']}
+            d="M586 352 L718 352"
+            on={['branch', 'baseline']}
             color={BRANCH}
-            label={t('MISS · commission it')}
-            lx={620}
+            label={t('MISS · answer what is public')}
+            lx={600}
             ly={342}
           />
           <Edge
-            d="M840 484 L840 556 L622 556"
+            d="M840 396 L840 438"
+            on={['baseline', 'call']}
+            label={t('firsthand evidence needed · user chooses')}
+            lx={850}
+            ly={418}
+          />
+          <Edge
+            d="M840 500 L840 572 L622 572"
             on={['call', 'settle']}
             label={t('answers return')}
             lx={666}
-            ly={546}
+            ly={562}
           />
           <Edge
-            d="M440 588 L440 612 L230 612 L230 630"
+            d="M440 604 L440 628 L230 628 L230 646"
             on={['settle', 'receipt']}
             label={t('passages')}
             lx={286}
-            ly={604}
+            ly={620}
           />
           <Edge
-            d="M560 588 L560 612 L840 612 L840 630"
+            d="M560 604 L560 628 L840 628 L840 646"
             on={['settle', 'memory']}
             color={ACCENT}
             label={t('₩ to each author')}
             lx={620}
-            ly={604}
+            ly={620}
           />
           <Edge
-            d="M960 632 L980 632 L980 200 L962 200"
+            d="M960 648 L980 648 L980 200 L962 200"
             on={['memory', 'shelves']}
             dash
             label={t('thickens the shelf')}
             lx={848}
-            ly={676}
+            ly={692}
           />
         </svg>
       </div>

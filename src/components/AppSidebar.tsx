@@ -24,7 +24,7 @@ import { deterministicAvatar } from '@/lib/avatar'
 import { cn } from '@/lib/utils'
 import { useLang, useT } from '@/i18n'
 import { useUi } from '@/state/ui'
-import { shortKey, useWallet } from '@/state/wallet'
+import { useWallet } from '@/state/wallet'
 
 const MENU_BUTTON =
   'peer/menu-button flex w-full items-center gap-2 overflow-hidden text-left font-medium outline-hidden transition-[width,height,padding] focus-visible:ring-2 focus-visible:ring-sidebar-ring active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:shrink-0'
@@ -40,29 +40,27 @@ function ProfileChip({ onSignOut }: { onSignOut: () => Promise<void> }) {
   return (
     <div
       className={cn(
-        'border-t pt-2.5',
+        'border-t pt-2',
         suspended ? 'border-destructive/40' : 'border-border',
       )}
     >
-      {/* Avatar + handle + status caption, one tidy row instead of a bare
-          color dot next to bare text. */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2.5 rounded-lg px-2 py-2 transition-colors hover:bg-foreground/[0.045]">
         <Avatar
           config={profile.avatar ?? deterministicAvatar(profile.handle)}
-          size={28}
+          size={30}
           className="shrink-0"
         />
         <div className="min-w-0 flex-1">
-          <p className="truncate font-mono text-[11px] tracking-[1px] text-foreground">
+          <p className="truncate text-[13px] font-medium text-foreground">
             {profile.handle}
           </p>
-          <p className="truncate font-mono text-[9px] uppercase tracking-[0.8px] text-muted-foreground">
+          <p className="truncate text-[10px] text-muted-foreground">
             {suspended
               ? t('Suspended')
               : `${profile.speaksTo.length} ${t('shelves')}`}
             {' · '}
             <span className={cn(profile.strikes > 0 && 'text-destructive')}>
-              {t('strike')} {profile.strikes} {t('of')} {STRIKE_LIMIT}
+              {t('strike')} {profile.strikes}/{STRIKE_LIMIT}
             </span>
           </p>
         </div>
@@ -70,15 +68,10 @@ function ProfileChip({ onSignOut }: { onSignOut: () => Promise<void> }) {
           type="button"
           onClick={() => void onSignOut()}
           aria-label={t('Disconnect Phantom')}
-          className="shrink-0 cursor-pointer text-muted-foreground/60 transition-colors hover:text-foreground"
+          className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 transition-colors hover:bg-background hover:text-foreground"
         >
           <LogOut className="size-3.5" />
         </button>
-      </div>
-      <div className="mt-2 border-t border-border/70 pt-2 font-mono text-[9px] leading-relaxed text-muted-foreground">
-        <p className="mt-0.5 truncate uppercase tracking-[0.7px]">
-          {t('Wallet')} · {profile.wallet ? `${profile.wallet.slice(0, 4)}…${profile.wallet.slice(-4)} · ${profile.walletVerified ? t('verified') : t('unverified')}` : t('not connected')}
-        </p>
       </div>
     </div>
   )
@@ -101,21 +94,18 @@ function LiveStrip() {
   const held = earnings?.heldKrw ?? 0
 
   return (
-    <div className="flex flex-col divide-y divide-border/70 border-y border-border/70">
-      {/* Earnings is the number that brings somebody back — it gets the
-          stat treatment (small caption, big tabular figure) instead of
-          sharing a text row with the call count below it. */}
+    <div className="grid grid-cols-2 border-t border-border pt-2">
       <Link
         to="/memory"
-        className="flex flex-col gap-0.5 px-2.5 py-2.5 transition-colors hover:bg-foreground/[0.03]"
+        className="flex min-w-0 flex-col gap-1 rounded-lg px-2 py-2 transition-colors hover:bg-foreground/[0.045]"
       >
-        <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+        <span className="text-[10px] text-muted-foreground">
           {profile ? t('Earned') : t('Paid out')}
         </span>
-        <span className="font-host text-lg font-medium leading-none tabular-nums text-foreground">
+        <span className="truncate text-[14px] font-medium leading-none tabular-nums text-foreground">
           ₩{earned.toLocaleString()}
           {held ? (
-            <span className="ml-1 font-mono text-[10px] font-normal normal-case tracking-normal text-muted-foreground">
+            <span className="ml-1 text-[9px] font-normal text-muted-foreground">
               · ₩{held.toLocaleString()} {t('held')}
             </span>
           ) : null}
@@ -123,12 +113,12 @@ function LiveStrip() {
       </Link>
       <Link
         to="/dashboard"
-        className="flex items-baseline justify-between gap-2 px-2.5 py-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-foreground/[0.03] hover:text-foreground"
+        className="flex min-w-0 flex-col gap-1 rounded-lg px-2 py-2 text-muted-foreground transition-colors hover:bg-foreground/[0.045] hover:text-foreground"
       >
-        <span>{profile ? t('Fit you') : t('Open now')}</span>
+        <span className="text-[10px]">{profile ? t('Fit you') : t('Open now')}</span>
         <span
           className={cn(
-            'tabular-nums',
+            'text-[14px] font-medium leading-none tabular-nums',
             fits > 0 ? 'text-foreground' : 'text-muted-foreground/70',
           )}
         >
@@ -156,14 +146,14 @@ function LangSwitch() {
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label={`${t('Lang')} · ${current}`}
-        className="group/lang flex h-11 w-full cursor-pointer items-center justify-between gap-2 rounded-[4px] border border-border bg-transparent px-2.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground outline-hidden transition-colors hover:border-foreground/25 hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring data-[state=open]:border-foreground/25 data-[state=open]:text-foreground sm:h-8"
+        className="group/lang flex h-9 w-full cursor-pointer items-center justify-between gap-2 rounded-lg border-0 bg-transparent px-2 text-[11px] text-muted-foreground outline-hidden transition-colors hover:bg-foreground/[0.045] hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring data-[state=open]:bg-foreground/[0.045] data-[state=open]:text-foreground"
       >
         <span className="flex min-w-0 items-center gap-2">
           <Languages className="size-3.5 shrink-0 opacity-70" />
           <span className="truncate">{t('Lang')}</span>
         </span>
         <span className="flex shrink-0 items-center gap-1.5">
-          <span className="font-mono text-[11px] normal-case tracking-normal text-foreground">
+          <span className="text-[11px] text-foreground">
             {current}
           </span>
           <ChevronDown className="size-3.5 shrink-0 opacity-60 transition-transform duration-200 group-data-[state=open]/lang:rotate-180" />
@@ -200,7 +190,6 @@ export function AppSidebar() {
     setCollapsed,
     profile,
     account,
-    authWallet,
     signOut,
     balance,
   } = useUi()
@@ -362,14 +351,14 @@ export function AppSidebar() {
           </div>
 
           {/* Footer — auth CTAs, agents switch, theme toggle ------------- */}
-          <div data-slot="sidebar-footer" className="flex flex-col gap-2 p-2">
+          <div data-slot="sidebar-footer" className="flex flex-col gap-1 p-2">
             <ul
               data-slot="sidebar-menu"
               className="flex w-full min-w-0 flex-col gap-1"
             >
               <li
                 data-slot="sidebar-menu-item"
-                className="group/menu-item relative flex flex-col gap-2"
+                className="group/menu-item relative flex flex-col gap-1"
               >
                 <LiveStrip />
                 <LangSwitch />
@@ -377,13 +366,8 @@ export function AppSidebar() {
                   <ProfileChip onSignOut={disconnect} />
                 ) : account ? (
                   <div className="space-y-2 border-t border-border pt-2.5">
-                    <p className="truncate font-mono text-[10px] text-muted-foreground">
-                      {authWallet
-                        ? `${t('Wallet')} · ${shortKey(authWallet)}`
-                        : t('Wallet signed in')}
-                    </p>
-                    <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                      ₩{(balance?.availableKrw ?? 0).toLocaleString()} {t('sandbox for opens')}
+                    <p className="px-1 text-xs leading-5 text-muted-foreground">
+                      ₩{(balance?.availableKrw ?? 0).toLocaleString()} {t('available for evidence opens')}
                     </p>
                     <div className="flex gap-2">
                       <Button asChild variant="mono" size="monoSm" className="flex-1">

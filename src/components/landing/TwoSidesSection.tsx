@@ -3,7 +3,7 @@ import { ArrowRight } from 'lucide-react'
 import { CardSlider } from '@/components/landing/CardSlider'
 import { Button } from '@/components/ui/button'
 import { useT } from '@/i18n'
-import { cardGradient } from '@/lib/cardGradient'
+import { cardGradient, cardTexture } from '@/lib/cardGradient'
 
 /**
  * The market has two sides and they never meet, so the section is two loops
@@ -11,9 +11,9 @@ import { cardGradient } from '@/lib/cardGradient'
  *
  * Each loop is a swipeable rail of cards rather than a stacked list, so the
  * four beats read as steps you move through instead of a paragraph you skim.
- * Every card leads with a vivid survey-card gradient banner at full strength —
- * the same colour the dashboard cards carry — so the rail reads as a row of
- * real cards rather than a bulleted list.
+ * Every card uses the vivid survey-card gradient across its full surface — the
+ * same colour the dashboard cards carry — so the rail reads as a row of real
+ * artifacts rather than white cards with decorative headers.
  */
 export function TwoSidesSection() {
   const t = useT()
@@ -86,22 +86,26 @@ function Side({
         {steps.map((s, i) => (
           <article
             key={s.head}
-            className="flex snap-start basis-[86%] shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-background sm:basis-[62%] lg:basis-[calc(50%-0.375rem)]"
+            className="relative flex min-h-[230px] snap-start basis-[86%] shrink-0 flex-col overflow-hidden rounded-lg text-white ring-1 ring-inset ring-white/30 sm:basis-[62%] lg:basis-[calc(50%-0.375rem)]"
+            style={{ background: cardGradient(`${side}-step-${i}`, 'deep') }}
           >
-            {/* The vivid banner — full-strength survey-card gradient, the step
-                number sitting on it in a white chip that stays readable over
-                any hue the seed lands on. */}
             <div
-              className="relative h-16 shrink-0"
-              style={{ background: cardGradient(`${side}-step-${i}`, 'deep') }}
-            >
-              <span className="absolute bottom-2.5 left-3.5 rounded-md bg-white/90 px-1.5 py-0.5 font-mono text-[11px] font-medium tabular-nums text-foreground shadow-[0_1px_2px_rgba(20,20,25,0.18)] backdrop-blur-sm">
+              className="pointer-events-none absolute inset-0 opacity-80"
+              style={{
+                backgroundImage: cardTexture(`${side}-step-${i}`),
+                backgroundPosition: 'center',
+                backgroundSize: 'cover',
+              }}
+            />
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/5 via-black/20 to-black/45" />
+            <div className="relative z-10 flex flex-1 flex-col p-5 sm:p-6">
+              <span className="self-start rounded-md bg-white/90 px-1.5 py-0.5 font-mono text-[11px] font-medium tabular-nums text-foreground shadow-[0_1px_2px_rgba(20,20,25,0.18)] backdrop-blur-sm">
                 {String(i + 1).padStart(2, '0')}
               </span>
-            </div>
-            <div className="flex flex-1 flex-col gap-2.5 p-5 sm:p-6">
-              <span className="text-[15px] font-medium">{t(s.head)}</span>
-              <span className="text-pretty text-sm leading-relaxed text-muted-foreground">
+              <span className="mt-auto pt-8 text-[15px] font-medium text-white drop-shadow-[0_1px_8px_rgba(31,10,44,0.28)]">
+                {t(s.head)}
+              </span>
+              <span className="mt-2.5 text-pretty text-sm leading-relaxed text-white/80">
                 {t(s.body)}
               </span>
             </div>

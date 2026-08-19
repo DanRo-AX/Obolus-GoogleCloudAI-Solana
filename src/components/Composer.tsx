@@ -44,13 +44,14 @@ export function Composer({
   const t = useT()
   const dark = tone === 'dark'
 
-  // "Who answers" targeting: a controlled dropdown that opens downward. It is
-  // portaled to the body and positioned under its trigger so a parent with
-  // overflow-hidden (the hero canvas) never clips it.
+  // "Who answers" targeting: a controlled dropdown that opens above the
+  // composer. The composer normally sits at the bottom of a chat, so opening
+  // downward would put the useful controls outside the viewport. It is still
+  // portaled to the body so nested overflow containers cannot clip it.
   const [targetOpen, setTargetOpen] = useState(false)
   const [targetRect, setTargetRect] = useState<{
     left: number
-    top: number
+    bottom: number
     width: number
   } | null>(null)
   const targetBtnRef = useRef<HTMLButtonElement>(null)
@@ -61,7 +62,13 @@ export function Composer({
     const el = targetBtnRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    setTargetRect({ left: r.left, top: r.bottom + 8, width: 280 })
+    const width = Math.min(280, window.innerWidth - 24)
+    const left = Math.min(Math.max(12, r.left), window.innerWidth - width - 12)
+    setTargetRect({
+      left,
+      bottom: window.innerHeight - r.top + 8,
+      width,
+    })
   }
 
   const openTarget = () => {
@@ -97,12 +104,14 @@ export function Composer({
     // phase catches the app's nested scroll containers, not just the window.
     document.addEventListener('scroll', close, true)
     window.addEventListener('resize', close)
-    document.addEventListener('pointerdown', onPointerDown)
+    // Capture phase makes dismissal reliable even when the clicked component
+    // stops propagation (native selects and some composed controls do).
+    document.addEventListener('pointerdown', onPointerDown, true)
     document.addEventListener('keydown', onKeyDown)
     return () => {
       document.removeEventListener('scroll', close, true)
       window.removeEventListener('resize', close)
-      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('pointerdown', onPointerDown, true)
       document.removeEventListener('keydown', onKeyDown)
     }
   }, [targetOpen])
@@ -227,29 +236,38 @@ export function Composer({
             </button>
             {targetOpen && targetRect
               ? createPortal(
-                  <div
-                    ref={targetPanelRef}
-                    role="dialog"
-                    className="animate-modal-panel-in fixed z-50 grid gap-3 rounded-[8px] border border-white/10 bg-primary p-3 text-primary-foreground shadow-xl shadow-black/40"
-                    style={{
-                      left: targetRect.left,
-                      top: targetRect.top,
-                      width: targetRect.width,
-                    }}
-                  >
-                    <p className="text-xs leading-relaxed text-primary-foreground/55">
-                      {t('Optional. A document must match every band you pick.')}
-                    </p>
-                    <TargetSelect label="Age" value={ageBand} onChange={setAgeBand} options={AGE_BANDS} />
-                    <TargetSelect label="Region" value={region} onChange={setRegion} options={REGIONS} />
-                    <TargetSelect label="Household" value={household} onChange={setHousehold} options={HOUSEHOLDS} />
-                    <TargetSelect
-                      label="Field"
-                      value={field}
-                      onChange={(value) => setField(value as CategoryId | '')}
-                      options={CATEGORIES.map(({ id, label }) => ({ value: id, label }))}
+                  <>
+                    <button
+                      type="button"
+                      aria-label={t('Close filters')}
+                      className="fixed inset-0 z-40 cursor-default bg-transparent"
+                      onPointerDown={() => setTargetOpen(false)}
                     />
-                  </div>,
+                    <div
+                      ref={targetPanelRef}
+                      role="dialog"
+                      aria-label={t('Who answers')}
+                      className="animate-modal-panel-in fixed z-50 grid gap-3 rounded-xl border border-white/10 bg-[#171717] p-3 text-white shadow-[0_18px_50px_rgba(0,0,0,0.34)]"
+                      style={{
+                        left: targetRect.left,
+                        bottom: targetRect.bottom,
+                        width: targetRect.width,
+                      }}
+                    >
+                      <p className="text-xs leading-relaxed text-white/55">
+                        {t('Optional. A document must match every band you pick.')}
+                      </p>
+                      <TargetSelect label="Age" value={ageBand} onChange={setAgeBand} options={AGE_BANDS} />
+                      <TargetSelect label="Region" value={region} onChange={setRegion} options={REGIONS} />
+                      <TargetSelect label="Household" value={household} onChange={setHousehold} options={HOUSEHOLDS} />
+                      <TargetSelect
+                        label="Field"
+                        value={field}
+                        onChange={(value) => setField(value as CategoryId | '')}
+                        options={CATEGORIES.map(({ id, label }) => ({ value: id, label }))}
+                      />
+                    </div>
+                  </>,
                   document.body,
                 )
               : null}
@@ -300,21 +318,21 @@ function TargetSelect({
 }) {
   const t = useT()
   return (
-    <label className="grid gap-1 font-mono text-[11px] uppercase tracking-[1px] text-primary-foreground/55">
+    <label className="grid gap-1 text-[11px] text-white/55">
       {t(label)}
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-11 rounded-[3px] border border-white/15 bg-white/[0.04] px-2 text-sm normal-case tracking-normal text-primary-foreground sm:h-9 sm:text-xs"
+        className="h-11 rounded-lg border border-white/15 bg-white/[0.04] px-2 text-sm normal-case tracking-normal text-white outline-none transition-colors focus:border-white/35 sm:h-9 sm:text-xs"
       >
-        <option value="" className="bg-primary text-primary-foreground">
+        <option value="" className="bg-[#171717] text-white">
           {t('Any')}
         </option>
         {options.map((option) => (
           <option
             key={option.value}
             value={option.value}
-            className="bg-primary text-primary-foreground"
+            className="bg-[#171717] text-white"
           >
             {t(option.label)}
           </option>

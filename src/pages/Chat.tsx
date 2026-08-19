@@ -53,6 +53,7 @@ type Phase =
   | 'searching' // 2
   | 'ranking' // 3
   | 'confirm' // between 4 and 6, when the spend needs confirming
+  | 'baseline' // no paid human match → answer from public/general knowledge first
   | 'ask-order' // 4 missed → "want me to ask around?"
   | 'ask-count' // "how many people?"
   | 'ask-price' // "what do you want to pay per answer?"
@@ -71,10 +72,42 @@ type RankedShelf = {
 const KRW_PER_USDC = krwPerUsdc(import.meta.env.VITE_KRW_PER_USDC, import.meta.env.PROD)
 
 const STEPS = [
-  { n: 2, label: 'Search the shelves', blurb: 'People\u2019s documents, not the web' },
-  { n: 3, label: 'Rank the persona web', blurb: 'Relevance, authority, trust, freshness, diversity' },
-  { n: 4, label: 'Human coverage', blurb: 'AI bridges a miss; people fill it' },
+  { n: 2, label: 'Find relevant experience', blurb: 'Search for documents that match the question and audience' },
+  { n: 3, label: 'Compare the evidence', blurb: 'Check relevance, freshness and trust; remove duplicates' },
+  { n: 4, label: 'Choose the answer path', blurb: 'Use paid evidence, a free general answer, or offer human research' },
 ]
+
+const AGENT_LABELS: Record<string, string> = {
+  research_planner: 'Question analysis',
+  retrieval_agent: 'Evidence search',
+  coverage_agent: 'Answer-path decision',
+}
+
+const AGENT_STATUS_LABELS: Record<string, string> = {
+  completed: 'Complete',
+  fallback: 'Safe fallback',
+  awaiting_user_approval: 'Waiting for your choice',
+}
+
+const AGENT_TOOL_LABELS: Record<string, string> = {
+  search_human_evidence: 'Define the search target',
+  rank_evidence_bundle: 'Select independent evidence',
+  propose_evidence_purchase: 'Show the evidence quote',
+  propose_hybrid_research: 'Offer research for the missing part',
+  propose_open_call: 'Offer to ask matching people',
+  generate_general_baseline: 'Prepare a free general answer',
+  finish_without_purchase: 'Finish without spending',
+}
+
+const AGENT_TOOL_SUMMARIES: Record<string, string> = {
+  search_human_evidence: 'Turns the question into audience and evidence requirements without increasing the budget.',
+  rank_evidence_bundle: 'Ranks matching documents and removes repeated authors and overlapping passages.',
+  propose_evidence_purchase: 'Shows the exact documents and total price before any settlement begins.',
+  propose_hybrid_research: 'Uses what already exists and asks people only for the uncovered part.',
+  propose_open_call: 'Leaves the decision to start paid human research to the user.',
+  generate_general_baseline: 'Answers from public and general knowledge without opening private documents.',
+  finish_without_purchase: 'Stops safely without opening a document or moving funds.',
+}
 
 const COUNT_CHOICES = [3, 7, 12]
 const PRICE_CHOICES = [0, 300, 500, 800]
@@ -692,7 +725,7 @@ export default function Chat() {
           )}
 
           {!hasAnswer || paymentIncomplete ? (
-            <div className="flex flex-col gap-4 rounded-[6px] border border-border bg-card p-4">
+            <div className="flex flex-col gap-4 border-t border-border/70 pt-5">
               <TraceSteps phase={phase} hits={hits} agentRun={agentRun} />
 
               {phase === 'confirm' ? (
@@ -828,21 +861,53 @@ export default function Chat() {
                 </Branch>
               ) : null}
 
+              {phase === 'baseline' ? (
+                <Branch
+                  title={t('No matching human evidence was found.')}
+                  body={t('Obulus answers from public and general knowledge first. This answer is free and is not presented as firsthand human evidence. If lived experience is essential, you can choose to ask matching people.')}
+                >
+                  {aiBaselineStatus === 'loading' ? (
+                    <Banner tone="violet" className="w-full">
+                      <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[1px] text-[#5540BE]">
+                        <Loader2 className="size-3 animate-spin" />
+                        {t('Preparing a free general answer')}
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                        {t('No private human document is sent to the model, and no payment is made.')}
+                      </p>
+                    </Banner>
+                  ) : null}
+                  {aiBaseline ? <AiBaselineCard baseline={aiBaseline} /> : null}
+                  {aiBaselineStatus === 'unavailable' ? (
+                    <div className="w-full rounded-[4px] border border-border px-3 py-2 text-xs leading-5 text-muted-foreground">
+                      {t('The free general answer could not be prepared. Nothing was purchased or posted. You can ask another question, or choose human research when firsthand experience is necessary.')}
+                    </div>
+                  ) : null}
+                  <Button
+                    variant="monoMuted"
+                    size="mono"
+                    onClick={() => setPhase('ask-order')}
+                  >
+                    {t('I need firsthand experience')}
+                  </Button>
+                </Branch>
+              ) : null}
+
               {phase === 'ask-order' ? (
                 <Branch
                   title={
                     resolutionReason === 'insufficient_coverage'
-                      ? t('The shelves are thin here.')
+                      ? t('Some relevant experiences exist, but not enough for this question.')
                       : resolutionReason === 'budget_too_low'
-                        ? t('People have written this, above your price.')
-                        : t('Nothing on the shelves has lived this yet.')
+                        ? t('Relevant experiences exist, but they exceed the current budget.')
+                        : t('You can ask people who have actually experienced this.')
                   }
                   body={
                     resolutionReason === 'insufficient_coverage'
-                      ? t('Documents exist here, but too few to answer the way you asked. Post an open call for the rest?')
+                      ? t('Keep the existing evidence and recruit only the missing people. You choose the audience, number of answers and reward before anything is posted.')
                       : resolutionReason === 'budget_too_low'
-                        ? t('Documents exist here, but they cost more than your budget. Post an open call at a price you name?')
-                        : t('An open call goes to people who would know. You name what one answer is worth.')
+                        ? t('You can change the question or set a separate reward for new answers. Nothing is posted until you choose the terms.')
+                        : t('Set who should answer, how many responses you need and the reward per accepted answer. Obulus posts the request only after you confirm those terms.')
                   }
                 >
                   {aiBaselineStatus === 'loading' ? (
@@ -859,7 +924,7 @@ export default function Chat() {
                   {aiBaseline ? <AiBaselineCard baseline={aiBaseline} /> : null}
                   {aiBaselineStatus === 'unavailable' ? (
                     <div className="w-full rounded-[4px] border border-border px-3 py-2 text-xs leading-5 text-muted-foreground">
-                      {t('The general AI baseline is unavailable. The human call remains available and unchanged.')}
+                      {t('The free general answer could not be prepared. Human research remains an optional choice; nothing has been posted.')}
                     </div>
                   ) : null}
                   <Button
@@ -867,14 +932,14 @@ export default function Chat() {
                     size="mono"
                     onClick={() => setPhase('ask-count')}
                   >
-                    {t('Ask them')}
+                    {t('Set up human research')}
                   </Button>
                   <Button
                     variant="monoMuted"
                     size="mono"
                     onClick={() => setPhase('declined')}
                   >
-                    {t('No thanks')}
+                    {t('Not now')}
                   </Button>
                 </Branch>
               ) : null}
@@ -1323,34 +1388,35 @@ function TraceSteps({
         <div className="mt-2 rounded-[5px] border border-border bg-foreground/[0.025] p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="font-mono text-[10px] font-semibold uppercase tracking-[1px] text-foreground">
-              {t('Bounded research loop')}
+              {t('How Obulus handled this question')}
             </span>
             <span className="rounded-full border border-border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.7px] text-muted-foreground">
               {agentRun.mode === 'vertex_two_stage_with_deterministic_guards'
-                ? `Gemini · ${agentRun.providerCallCount} tool calls`
+                ? `${t('Gemini active')} · ${agentRun.providerCallCount}`
                 : agentRun.mode === 'partial_vertex_with_deterministic_fallback'
-                  ? 'Gemini · partial fallback'
-                  : t('Deterministic fallback')}
+                  ? t('Gemini with safe fallback')
+                  : t('Safe fallback applied')}
             </span>
           </div>
           <div className="mt-2 grid gap-2 sm:grid-cols-3">
             {agentRun.steps.map((step) => (
               <div key={`${agentRun.id}-${step.sequence}`} className="min-w-0">
                 <p className="font-mono text-[9px] uppercase tracking-[0.7px] text-muted-foreground">
-                  {step.agent.replaceAll('_', ' ')} · {step.status.replaceAll('_', ' ')}
+                  {t(AGENT_LABELS[step.agent] ?? 'Obulus agent')} ·{' '}
+                  {t(AGENT_STATUS_LABELS[step.status] ?? 'Complete')}
                 </p>
                 <p className="mt-0.5 text-xs font-medium text-foreground">
-                  {step.tool.replaceAll('_', ' ')}
+                  {t(AGENT_TOOL_LABELS[step.tool] ?? 'Review the result')}
                 </p>
                 <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
-                  {step.summary}
+                  {t(AGENT_TOOL_SUMMARIES[step.tool] ?? 'The server checked the next safe action.')}
                 </p>
               </div>
             ))}
           </div>
           {agentRun.requiresUserApproval ? (
             <p className="mt-2 border-t border-border pt-2 text-[11px] leading-4 text-muted-foreground">
-              {t('Gemini plans the search and proposes a next step after Rust ranks it; payment or a new Open Call still waits for your approval.')}
+              {t('Gemini interprets the question. Rust verifies relevance, consent, price and the allowed next action. Payment or human research starts only after you choose it.')}
             </p>
           ) : null}
         </div>

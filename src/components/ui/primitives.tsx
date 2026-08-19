@@ -246,10 +246,10 @@ function Chip({
     <button
       type="button"
       className={cn(
-        'h-11 cursor-pointer rounded-[4px] border px-3 font-mono text-[11px] uppercase tracking-[1px] transition-colors sm:h-8',
+        'h-11 cursor-pointer rounded-lg border border-transparent px-3 text-[12px] transition-colors sm:h-8',
         active
-          ? 'border-foreground/70 bg-foreground/[0.06] text-foreground'
-          : 'border-border text-muted-foreground hover:border-foreground/25 hover:text-foreground',
+          ? 'bg-foreground text-background'
+          : 'text-muted-foreground hover:bg-foreground/[0.055] hover:text-foreground',
         muted && 'opacity-60',
         className,
       )}
@@ -281,8 +281,8 @@ export function bannerToneStyle(tone: BannerTone): CSSProperties {
   const hex = BANNER_TONE_HEX[tone]
   const isNeutral = tone === 'neutral'
   return {
-    borderColor: `color-mix(in oklab, ${hex} ${isNeutral ? 14 : 26}%, var(--border))`,
-    background: `color-mix(in oklab, ${hex} ${isNeutral ? 4 : 5}%, var(--card))`,
+    borderColor: `color-mix(in oklab, ${hex} ${isNeutral ? 12 : 24}%, var(--border))`,
+    background: `color-mix(in oklab, ${hex} ${isNeutral ? 2 : 4}%, var(--background))`,
   }
 }
 
@@ -294,7 +294,7 @@ function Banner({
 }: React.ComponentProps<'div'> & { tone?: BannerTone }) {
   return (
     <div
-      className={cn('rounded-[6px] border p-4', className)}
+      className={cn('border-y border-x-0 p-4', className)}
       style={{ ...bannerToneStyle(tone), ...style }}
       {...props}
     />

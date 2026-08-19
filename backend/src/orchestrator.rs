@@ -386,7 +386,7 @@ fn next_action_body(response: &ResolveQuestionResponse) -> Value {
     }))
     .expect("coverage observation is serialisable");
     json!({
-        "systemInstruction": {"parts": [{"text": "You are Obulus's bounded research decider. Observe the aggregate retrieval result and call exactly one allowed next-action tool. Do not answer the question. You cannot set or change a price, budget, recipient, wallet, asset, network, document set, or payment. Prefer the smallest action that can make progress; finish without purchase when no economic action is justified. All payment-like proposals stop for explicit user approval and are revalidated by the server."}]},
+        "systemInstruction": {"parts": [{"text": "You are Obulus's bounded research decider. Observe the aggregate retrieval result and call exactly one allowed next-action tool. Do not answer the question. You cannot set or change a price, budget, recipient, wallet, asset, network, document set, or payment. A retrieval miss is not permission to create paid human research: when no human document was selected, prefer a free general baseline or finish without purchase. Propose an Open Call only to complete a partially covered human-evidence request. All payment-like proposals stop for explicit user approval and are revalidated by the server."}]},
         "contents": [{"role": "user", "parts": [{"text": format!("Server-owned retrieval observation JSON:\n{observation}")}]}],
         "tools": [{"functionDeclarations": [
             {"name": "propose_evidence_purchase", "description": "Propose opening the server-selected evidence bundle; never execute payment.", "parameters": {"type": "OBJECT", "properties": {}}},
@@ -503,7 +503,7 @@ fn next_action_allowed(response: &ResolveQuestionResponse, tool: AgentTool) -> b
         ),
         Decision::Miss => matches!(
             tool,
-            AgentTool::ProposeOpenCall | AgentTool::GenerateGeneralBaseline
+            AgentTool::GenerateGeneralBaseline | AgentTool::FinishWithoutPurchase
         ),
     }
 }
@@ -514,7 +514,7 @@ fn deterministic_next_action(response: &ResolveQuestionResponse) -> AgentTool {
         (Decision::Miss, DecisionReason::InsufficientCoverage, LiquidityState::HybridCoverage) => {
             AgentTool::ProposeHybridResearch
         }
-        (Decision::Miss, _, _) => AgentTool::ProposeOpenCall,
+        (Decision::Miss, _, _) => AgentTool::GenerateGeneralBaseline,
     }
 }
 
@@ -1140,6 +1140,28 @@ mod tests {
         assert_eq!(next.tool, AgentTool::ProposeEvidencePurchase);
         assert_eq!(next.step.status, AgentStepStatus::AwaitingUserApproval);
         assert!(!next.step.summary.to_lowercase().contains("private key"));
+    }
+
+    #[tokio::test]
+    async fn uncovered_fallback_answers_for_free_before_offering_human_research() {
+        let response = ResolveQuestionResponse {
+            query_id: "qry_miss".to_owned(),
+            payment_access_token: None,
+            decision: Decision::Miss,
+            reason: DecisionReason::NoRelevantDocuments,
+            liquidity_state: LiquidityState::AiLiquidityOnly,
+            ai_baseline_eligible: true,
+            requested_documents: 5,
+            candidate_count: 0,
+            matches: Vec::new(),
+            quote: None,
+            open_call: None,
+            agent_run: None,
+        };
+        let next = plan_next_market_action(&response, false).await;
+        assert_eq!(next.tool, AgentTool::GenerateGeneralBaseline);
+        assert_eq!(next.step.status, AgentStepStatus::Fallback);
+        assert_ne!(next.step.status, AgentStepStatus::AwaitingUserApproval);
     }
 
     #[test]

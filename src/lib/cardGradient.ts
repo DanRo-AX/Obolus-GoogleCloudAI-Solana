@@ -1,43 +1,32 @@
 /**
- * Deterministic multicolor gradient for a survey card's banner.
+ * Deterministic atmospheric colour field for a survey card's banner.
  *
  * The founder's variant-7 ("Airbnb 리스팅") pick wants the banner to read
- * like a real photo area — several hues meeting and blending, not a flat
- * two-stop tint. `cardGradient(seed)` layers two hashed radial gradients
- * over a base linear gradient, all mixed toward white with `color-mix` so
- * everything stays light-theme-airy no matter which hues land where. The
- * same seed always paints the same way (same order → same card, every
- * render), and different seeds land on visibly different hue triples and
- * layouts.
+ * like refracted light rather than a generic dashboard gradient. A curated
+ * colour family forms the base; a separate SVG texture draws one broad,
+ * asymmetric ribbon through it. The same seed always paints the same card.
  *
- * Curation, not randomness, keeps every result tasteful: PALETTE is a
- * hand-picked set of hues balanced for similar lightness/chroma, so no
- * combination goes muddy the way arbitrary HSL sampling can. Only the
- * *arrangement* (which hues, where, at what angle) is hashed from the seed.
- *
- * Distinct feels: PALETTE has 10 hues, POSITIONS has 10 hashed anchor
- * points, and ANGLES has 8 base-layer angles. Each gradient picks 3
- * distinct hues (ordered) and 2 independent positions plus one angle, for
- * 10·9·8 × 10·10 × 8 ≈ 576,000 raw combinations — comfortably clearing the
- * ~50-distinct-feels bar this was built to guarantee. GRADIENT_FEEL_FLOOR
- * below documents that floor explicitly for anyone verifying variety by
- * eye rather than by combinatorics.
+ * Choosing whole colour families instead of three unrelated random hues is
+ * important: coral never accidentally turns muddy green and blue never lands
+ * in a brown midpoint. Positions, direction and texture still yield far more
+ * than the documented 50 distinguishable results.
  */
 
 /** Documented floor on distinguishable gradient "feels" — see file header. */
 export const GRADIENT_FEEL_FLOOR = 50
 
-const PALETTE = [
-  '#5B4BE0', // violet
-  '#7C3FE4', // purple
-  '#B23CD6', // orchid
-  '#E23C86', // magenta
-  '#E8443C', // red
-  '#F2843C', // orange
-  '#2C7BE5', // blue
-  '#1C9FD6', // sky
-  '#12B5A6', // teal
-  '#1FB56B', // emerald
+const SCHEMES = [
+  { shadow: '#123a86', middle: '#2778cf', light: '#35e5df' },
+  { shadow: '#07594f', middle: '#1d9b89', light: '#8ee8d7' },
+  { shadow: '#762348', middle: '#ce3f70', light: '#f29bad' },
+  { shadow: '#7c3037', middle: '#df5b50', light: '#efad71' },
+  { shadow: '#302b75', middle: '#645dde', light: '#66d9c2' },
+  { shadow: '#0b475a', middle: '#1688ad', light: '#68e1dd' },
+  { shadow: '#542153', middle: '#a63c7b', light: '#eba0c3' },
+  { shadow: '#174340', middle: '#218d78', light: '#a8e5ca' },
+  { shadow: '#26316d', middle: '#536bd0', light: '#70d2d8' },
+  { shadow: '#442654', middle: '#8e4fb4', light: '#ef92bc' },
+  { shadow: '#123f55', middle: '#299eb0', light: '#b0eee4' },
 ] as const
 
 /** Hashed anchor points for the two radial layers, kept away from dead-center so hues visibly cross. */
@@ -100,109 +89,51 @@ export function cardGradient(
   const key = seed || 'obolus'
   const deep = intensity === 'deep'
 
-  const i1 = pick(key, 'hue1', PALETTE.length)
-  let i2 = pick(key, 'hue2', PALETTE.length)
-  if (i2 === i1) i2 = (i2 + 1) % PALETTE.length
-  let i3 = pick(key, 'hue3', PALETTE.length)
-  if (i3 === i1 || i3 === i2) i3 = (i3 + 2) % PALETTE.length
-
-  const c1 = PALETTE[i1]
-  const c2 = PALETTE[i2]
-  const c3 = PALETTE[i3]
+  const scheme = SCHEMES[pick(key, 'scheme', SCHEMES.length)]
 
   const [x1, y1] = POSITIONS[pick(key, 'pos1', POSITIONS.length)]
   const [x2, y2] = POSITIONS[pick(key, 'pos2', POSITIONS.length)]
-  // Third hue anchors the opposite-ish corner and runs darker, so the banner
-  // reads like a photo — two saturated hues meeting with one shaded corner —
-  // rather than a pale wash. White is kept to a small central highlight only.
   const [x3, y3] = POSITIONS[pick(key, 'pos3', POSITIONS.length)]
   const angle = ANGLES[pick(key, 'angle', ANGLES.length)]
 
-  // Stops, per intensity. `deep` keeps more of each hue and less white/black
-  // padding, and reaches further before fading to transparent.
   const s = deep
-    ? { white: 38, h1: 97, h2: 95, corner: 46, r1: 74, r2: 70, r3: 78, lin1: 92, lin2: 90 }
-    : { white: 55, h1: 88, h2: 86, corner: 30, r1: 66, r2: 62, r3: 70, lin1: 82, lin2: 80 }
+    ? { light: 94, middle: 95, shadow: 78, r1: 72, r2: 74, r3: 76 }
+    : { light: 66, middle: 72, shadow: 54, r1: 68, r2: 70, r3: 72 }
 
   return [
-    // central highlight — the bright meeting point, small and soft
-    `radial-gradient(120% 90% at 50% 42%, color-mix(in oklab, white ${s.white}%, transparent) 0%, transparent 45%)`,
-    `radial-gradient(circle at ${x1}% ${y1}%, color-mix(in oklab, ${c1} ${s.h1}%, white) 0%, transparent ${s.r1}%)`,
-    `radial-gradient(circle at ${x2}% ${y2}%, color-mix(in oklab, ${c2} ${s.h2}%, white) 0%, transparent ${s.r2}%)`,
-    `radial-gradient(circle at ${x3}% ${y3}%, color-mix(in oklab, ${c3} ${s.corner}%, black) 0%, transparent ${s.r3}%)`,
-    `linear-gradient(${angle}deg, color-mix(in oklab, ${c1} ${s.lin1}%, black), color-mix(in oklab, ${c2} ${s.lin2}%, white))`,
+    `radial-gradient(ellipse at ${x1}% ${y1}%, color-mix(in oklab, ${scheme.light} ${s.light}%, white) 0%, transparent ${s.r1}%)`,
+    `radial-gradient(ellipse at ${x2}% ${y2}%, color-mix(in oklab, ${scheme.middle} ${s.middle}%, white) 0%, transparent ${s.r2}%)`,
+    `radial-gradient(ellipse at ${x3}% ${y3}%, color-mix(in oklab, ${scheme.shadow} ${s.shadow}%, black) 0%, transparent ${s.r3}%)`,
+    `linear-gradient(${angle}deg, ${scheme.shadow}, ${scheme.middle} 52%, ${scheme.light})`,
   ].join(', ')
 }
 
 /**
- * POSITION-BASED "flow" banner — the dashboard survey grid's mode.
+ * An irregular, deterministic art layer for the visual half of a card.
  *
- * `cardGradient(seed)` gives every question a FIXED colour hashed from its
- * text. One card looks fine, but a full grid of independent hashes clashes —
- * random neighbouring hues the founder called "정신 없다". `flowGradient(index)`
- * throws the hash away: hue is driven purely by the card's position in the
- * currently displayed list, so neighbours always share a nearby tone and the
- * grid reads as one calm cohesive sweep instead of a jumble.
- *
- *   hue(index) = FLOW_BASE_HUE − index · FLOW_HUE_STEP
- *
- * The banners stay as RICH and smooth as the landing's `deep` cards — this is
- * not a pale wash. The trick is oklch: chroma and lightness are pinned to one
- * vivid, perceptually-even band, so every card is equally saturated and equally
- * bright and ONLY the hue travels down the grid. A small per-card step (13°)
- * keeps adjacent cards analogous; walking down, the tone drifts slowly from a
- * rich indigo-violet through blue and teal toward green — a smooth spectral
- * ribbon (sky → water → foliage), never a rainbow of clashing hues. Because the
- * sweep is a function of display order, it stays cohesive under any sort
- * (new / popular / pay / fit): re-sorting re-indexes the list and the gradient
- * simply re-flows in the new order.
- *
- * Each card is still a real gradient banner — a soft top-left highlight and a
- * deeper anchoring bottom-right corner over a diagonal — matching the landing's
- * depth, just harmonised with its neighbours rather than fighting them. The
- * within-card wash shifts by one full card-step, so the bottom tone of a card
- * meets the top tone of the next and the grid connects seam-to-seam.
- *
- * This is intentionally separate from `cardGradient` so every landing-page
- * caller — which relies on the vivid `deep` hashed look — is untouched.
+ * The colour field above deliberately stays consistent across the product.
+ * The texture should not: one call gets a broad light ribbon, another a pair
+ * of crossing currents, another soft contour rings. The variant and its
+ * horizontal reflection are derived from the same stable seed as the colour,
+ * so reloading never shuffles the marketplace while neighbouring cards still
+ * avoid looking like one repeated template.
  */
+export function cardTexture(seed: string): string {
+  const key = seed || 'obulus'
+  const variant = pick(key, 'texture', 5)
+  const reflected = pick(key, 'texture-reflect', 2) === 1
+  const rotate = [-9, 5, -4, 10][pick(key, 'texture-rotate', 4)]
 
-/** Top of the grid: a rich indigo-violet (oklch hue), near the landing violet. */
-const FLOW_BASE_HUE = 274
-/** Degrees of hue per card. Small, so any two adjacent cards stay analogous. */
-const FLOW_HUE_STEP = 13
+  const drawings = [
+    `<path d="M-120 540 C110 80 330 510 735-90" stroke-width="168"/><path d="M155 550 C300 285 455 315 710 20" stroke-width="62" opacity=".32"/>`,
+    `<path d="M-140 25 C160 5 245 390 750 325" stroke-width="178"/><path d="M-80 470 C175 235 420 470 735 195" stroke-width="66" opacity=".3"/>`,
+    `<path d="M-130 420 C100 350 145 30 745 110" stroke-width="188"/><path d="M145 550 C245 265 505 245 655-110" stroke-width="66" opacity=".3"/>`,
+    `<path d="M365 570 C210 350 505 190 330-120" stroke-width="176"/><path d="M350 440 C535 240 625 270 750 35" stroke-width="64" opacity=".3"/>`,
+    `<path d="M-130 360 C90 55 350 405 750 95" stroke-width="170"/><path d="M-100 525 C175 300 420 520 735 290" stroke-width="60" opacity=".28"/>`,
+  ] as const
 
-/** Wrap any hue into the [0, 360) range CSS expects. */
-function normHue(h: number): number {
-  return ((h % 360) + 360) % 360
-}
+  const transform = `${reflected ? 'translate(600 0) scale(-1 1)' : ''} rotate(${rotate} 300 225)`.trim()
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 450" preserveAspectRatio="xMidYMid slice"><defs><filter id="flow" x="-45%" y="-45%" width="190%" height="190%"><feTurbulence type="fractalNoise" baseFrequency=".003 .008" numOctaves="2" seed="${pick(key, 'texture-noise', 97) + 1}" result="noise"/><feDisplacementMap in="SourceGraphic" in2="noise" scale="13" xChannelSelector="R" yChannelSelector="B"/><feGaussianBlur stdDeviation="22"/></filter><filter id="grain"><feTurbulence type="fractalNoise" baseFrequency=".72" numOctaves="3" seed="${pick(key, 'grain', 97) + 1}"/><feColorMatrix values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 .08 0"/></filter></defs><g transform="${transform}" fill="none" stroke="#f5ffff" stroke-linecap="round" opacity=".72" filter="url(#flow)">${drawings[variant]}</g><rect width="100%" height="100%" filter="url(#grain)" opacity=".12" style="mix-blend-mode:soft-light"/></svg>`
 
-/**
- * Build the rich, position-driven banner for card `index` (0-based) in the
- * current display order. Same index → same banner; neighbouring indices →
- * neighbouring tones. oklch keeps every card equally vivid and bright, so the
- * whole column reads as one smooth, saturated sweep.
- */
-export function flowGradient(index: number): string {
-  const i = Number.isFinite(index) && index > 0 ? Math.floor(index) : 0
-  // Dominant hue for this card, plus companions shifted along the same
-  // direction the grid flows, so the wash inside one card connects to the next.
-  const h = normHue(FLOW_BASE_HUE - i * FLOW_HUE_STEP)
-  const hMid = normHue(FLOW_BASE_HUE - (i + 0.5) * FLOW_HUE_STEP)
-  const hFoot = normHue(FLOW_BASE_HUE - (i + 1) * FLOW_HUE_STEP)
-
-  // One vivid oklch band, shared by every card: even chroma + lightness so only
-  // hue travels down the grid. Rich like the landing's `deep`, not a pale tint.
-  const glow = `oklch(0.78 0.11 ${h})` // soft top-left highlight
-  const top = `oklch(0.66 0.165 ${h})`
-  const mid = `oklch(0.60 0.18 ${hMid})`
-  const foot = `oklch(0.5 0.17 ${hFoot})` // deeper anchoring corner, for depth
-
-  return [
-    // top-left highlight — the bright meeting point, keeps it from reading flat
-    `radial-gradient(120% 105% at 22% 14%, color-mix(in oklab, ${glow} 85%, transparent) 0%, transparent 60%)`,
-    // deeper bottom-right corner, mirroring the landing `deep` shaded anchor
-    `radial-gradient(120% 110% at 88% 100%, color-mix(in oklab, ${foot} 92%, black) 0%, transparent 66%)`,
-    `linear-gradient(146deg, ${top} 0%, ${mid} 55%, ${foot} 100%)`,
-  ].join(', ')
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
 }

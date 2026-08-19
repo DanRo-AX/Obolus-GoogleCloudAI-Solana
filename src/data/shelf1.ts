@@ -45,8 +45,8 @@ export const LIFECYCLE = [
   { n: 1, step: 'Ask', what: 'A question goes into the chat box.', pivot: false },
   { n: 2, step: 'Search the shelves', what: 'People’s documents, not the web.', pivot: false },
   { n: 3, step: 'Rank the shelves', what: 'Relevance, trust, freshness, PageRank, author diversity. The closest few, never the whole shelf.', pivot: false },
-  { n: 4, step: 'Hit or miss', what: 'A hit ends as search. A miss gets a free AI baseline, keeps the human gap open, and posts an open call.', pivot: true },
-  { n: 5, step: 'Open call', what: 'A price per answer, posted to the open calls board.', pivot: false },
+  { n: 4, step: 'Hit or miss', what: 'A hit opens paid evidence. A miss returns a free general answer first and explains what human evidence is still missing.', pivot: true },
+  { n: 5, step: 'Open call', what: 'Only when firsthand experience is needed, the user can choose the audience, response count and reward.', pivot: false },
   { n: 6, step: 'x402 settlement', what: 'The asker pays only for documents opened. Each author’s USDC lands the same moment.', pivot: false },
   { n: 7, step: 'Accrue', what: 'The answer becomes a document on the author’s shelf and joins their memory. Next time it auto-matches.', pivot: false },
 ]
@@ -98,7 +98,7 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'note',
-        label: 'Why not embed the whole shelf',
+        label: '',
         text: 'Google indexes everything and still fetches only what it shows you. Same reasoning here. The Rust ranker weighs lexical and deterministic hash relevance, freshness, trust, and a query-specific personalized PageRank over independently verified evidence links, then drops duplicate authors and repeated passages — all before anything is paid for. Only the selected documents open, each with a transparent 90/10 owner and protocol split.',
       },
     ],
@@ -146,7 +146,7 @@ export const SECTIONS: Section[] = [
   {
     n: '03',
     eyebrow: 'The branch',
-    title: 'If the shelves come up empty, AI answers for now and SHELF posts an open call',
+    title: 'If the shelves come up empty, Obulus answers what it can and lets you choose whether to ask people',
     blocks: [
       {
         kind: 'p',
@@ -161,10 +161,10 @@ export const SECTIONS: Section[] = [
         caption: 'The miss path, as SHELF says it',
         lines: [
           '“Here is the general baseline. It is AI, it is free, and it is not evidence.”',
-          '“Nothing on the shelves has lived this part yet. Ask people?”',
-          '“How many people?”',
-          '“What do you want to pay per answer?”',
-          '→ call posted · answers return to this chat',
+          '“No matching human evidence was found. Nothing has been purchased or posted.”',
+          '“If firsthand experience is essential, choose Ask people.”',
+          '› user chooses audience · answer count · reward',
+          '→ call posted only after confirmation · answers return here',
         ],
       },
       {
@@ -173,8 +173,8 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'note',
-        label: 'The inverted case',
-        text: 'Sometimes enough matching documents already exist. Then no call is posted — SHELF goes straight to “this can be answered now, here is the price.” Search the shelves first, post a call only when they come up empty.',
+        label: '',
+        text: 'Sometimes enough matching documents already exist. Then no call is posted — SHELF goes straight to “this can be answered now, here is the price.” Search the shelves first. Offer an Open Call only when the shelves are empty, firsthand experience is essential, and the user chooses to proceed.',
       },
     ],
   },
@@ -205,10 +205,6 @@ export const SECTIONS: Section[] = [
       {
         kind: 'p',
         text: 'Settlement runs on Solana Devnet in USDC and reads in ₩, because that is what people on the shelves think in. Phantom proves the wallet and tops up prepaid credit when it runs low; a non-exportable KMS service key pays each DB through Pay.sh. The asker sees one line — how many documents opened, what it came to. An open that fails goes back to prepaid credit instead of becoming an author’s earnings.',
-      },
-      {
-        kind: 'quote',
-        text: 'Knowledge like this only ever sold in bulk.',
       },
       {
         kind: 'p',

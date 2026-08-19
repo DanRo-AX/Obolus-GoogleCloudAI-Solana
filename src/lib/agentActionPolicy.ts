@@ -1,7 +1,7 @@
 import type { Resolution } from '@/lib/api'
 
 export type ResearchBranch = {
-  phase: 'confirm' | 'ask-order' | 'declined'
+  phase: 'confirm' | 'baseline' | 'ask-order' | 'declined'
   generateBaseline: boolean
 }
 
@@ -30,14 +30,18 @@ export function branchForAgentAction(
   }
 
   if (nextAction === 'generate_general_baseline') {
-    return { phase: 'ask-order', generateBaseline: aiBaselineEligible }
+    return { phase: 'baseline', generateBaseline: aiBaselineEligible }
+  }
+
+  if (!nextAction && aiBaselineEligible) {
+    return { phase: 'baseline', generateBaseline: true }
   }
 
   return {
     phase: 'ask-order',
-    // A targeted Open Call and a free public answer are complementary. The
-    // former buys missing firsthand experience; the latter answers everything
-    // that public sources can already establish without opening private data.
+    // An Open Call is shown here only when the validated agent explicitly
+    // proposes one. A plain retrieval miss must not silently become paid human
+    // research; that path is handled by the baseline branch above.
     generateBaseline: aiBaselineEligible,
   }
 }
