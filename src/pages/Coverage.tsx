@@ -140,16 +140,6 @@ export default function Coverage() {
               ))}
             </div>
           </div>
-
-          {/* Bottom note — a clean white card with a lead icon rather than a flat
-              gray box, consistent with the field rows above. */}
-          <div className="mt-6 flex max-w-2xl items-start gap-3 rounded-md border border-border/70 bg-background p-5 shadow-[0_1px_2px_rgba(20,20,25,0.06),0_2px_6px_-2px_rgba(20,20,25,0.1)]">
-            <ShieldCheck className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-            <p className="text-sm leading-relaxed text-muted-foreground">
-              <span className="font-medium text-foreground">{t('These numbers are exactly what is here.')}</span>{' '}
-              {t('Every figure comes from questions that are really open. A stand-in answer a model wrote does not count — it fills no slot and earns nothing. An empty row means nobody has answered yet, for real.')}
-            </p>
-          </div>
         </section>
       </div>
     </div>
