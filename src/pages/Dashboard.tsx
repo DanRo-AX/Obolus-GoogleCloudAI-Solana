@@ -33,7 +33,7 @@ import {
 import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from '@/data/categories'
 import { AGE_BANDS, HOUSEHOLDS, REGIONS, STRIKE_LIMIT } from '@/data/onboarding'
 import { useLang } from '@/i18n'
-import { cardGradient } from '@/lib/cardGradient'
+import { flowGradient } from '@/lib/cardGradient'
 import { Avatar } from '@/components/Avatar'
 import { deterministicAvatar } from '@/lib/avatar'
 import {
@@ -79,10 +79,10 @@ function fitScore(o: Order) {
  * if a dark surface is added later.
  *
  * The open-calls card banner below no longer uses this — it paints with
- * `cardGradient` (src/lib/cardGradient.ts) instead, a keyword-hashed
- * multicolor gradient per variant 7 ("Airbnb 리스팅"). This helper stays for
- * the "Build human supply" callout's leading avatar, which still wants a
- * single-accent tint.
+ * `flowGradient` (src/lib/cardGradient.ts) instead, a rich gradient whose hue
+ * flows by the card's position in the grid so neighbours connect into one calm
+ * sweep. This helper stays for the "Build human supply" callout's leading
+ * avatar, which still wants a single-accent tint.
  */
 function categoryBannerStyle(accent?: string): CSSProperties {
   if (!accent) return { background: 'var(--muted)' }
@@ -680,13 +680,14 @@ export default function Dashboard() {
           </div>
         ) : (
           // Marketplace card grid — variant 7 ("Airbnb 리스팅"): a big top
-          // "photo" region (here, a keyword-hashed multicolor gradient,
-          // since there is no real photo) plus a bottom text block, not a
+          // "photo" region (here, a rich position-flow gradient via
+          // flowGradient(index), so adjacent cards' tones connect into one
+          // calm sweep instead of clashing) plus a bottom text block, not a
           // dense hairline list. A circular avatar-style slot overlaps the
           // banner's bottom-left edge; the category glyph itself moved down
           // into the meta row so the banner stays photo-like and text-free.
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {list.map((order) => {
+            {list.map((order, index) => {
               const done = order.answered >= order.target
               const cancelled = order.status === 'cancelled'
               const cat = CATEGORY_BY_ID[order.category]
@@ -721,7 +722,7 @@ export default function Dashboard() {
                 >
                   <div
                     className="relative h-[110px] shrink-0 overflow-hidden"
-                    style={{ background: cardGradient(`${order.shelf}::${order.question}`) }}
+                    style={{ background: flowGradient(index) }}
                   >
                     {/* The asker's avatar (deterministic from the shelf name, so the
                         same contributor always shows the same face), sitting inside
