@@ -39,6 +39,7 @@
  * Obolus and SHELF stay in Latin script, always.
  */
 export const KO: Record<string, string> = {
+  'Lang': '언어',
   'Illustration': '예시',
   'example': '예시',
   'Money here moves between two people. We are the thing that introduced them, not the thing holding it.': '돈은 두 사람 사이에서만 움직입니다. 우리는 소개만 합니다. 돈은 만지지 않습니다.',
