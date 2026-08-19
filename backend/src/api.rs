@@ -22,7 +22,8 @@ use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_kn
 
 use crate::{
     domain::{
-        AccountControls, AdminOperationsSnapshot, AgentAuthResponse, AgentRun, AgentStep,
+        AccountControls, AdminOperationsSnapshot, AdminTablePage, AgentAuthResponse, AgentRun,
+        AgentStep,
         AgentStepStatus, AgentTool, AiLiquidityMetrics, AuthResponse, BalanceSummary,
         BeginResearchPaymentRequest, BindPayShChallengesRequest, ChainSettlementReceipt,
         ChatAnswer, ClaimPaymentAttemptRequest, CompletePayoutClaimRequest, ContributorManifest,
@@ -58,8 +59,8 @@ use crate::{
     rollback_audit::{ModelCallAuditIntent, RollbackAudit, RollbackAuditIntent},
     search::Resolver,
     store::{
-        AiArtifactMetadata, AiGenerationClaim, PayShDeliveryRequest, PaymentQuotePolicy, Store,
-        StoreError,
+        AdminTable, AiArtifactMetadata, AiGenerationClaim, PayShDeliveryRequest,
+        PaymentQuotePolicy, Store, StoreError,
     },
 };
 
@@ -475,6 +476,24 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(ai_liquidity_metrics),
         )
         .route("/api/v1/admin/operations", get(admin_operations))
+        .route("/api/v1/admin/tables/users", get(admin_table_users))
+        .route("/api/v1/admin/tables/balances", get(admin_table_balances))
+        .route(
+            "/api/v1/admin/tables/open-calls",
+            get(admin_table_open_calls),
+        )
+        .route(
+            "/api/v1/admin/tables/settlements",
+            get(admin_table_settlements),
+        )
+        .route(
+            "/api/v1/admin/tables/prepaid-accounts",
+            get(admin_table_prepaid_accounts),
+        )
+        .route(
+            "/api/v1/admin/tables/dispute-events",
+            get(admin_table_dispute_events),
+        )
         .route("/api/v1/admin/disputes/{id}/review", post(review_dispute))
         .route(
             "/api/v1/admin/document-feedback",
@@ -1083,9 +1102,14 @@ async fn me(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<AuthResponse>, ApiError> {
-    let user = authenticated(&state, &headers)?;
+    let mut user = authenticated(&state, &headers)?;
     let balance = state.store.balance(&user.id)?;
     let wallet = state.store.identity_wallet(&user.id)?;
+    // Report the effective role: an allowlisted wallet is admin even without a
+    // persisted role write, so the client's admin surfaces light up.
+    if user.role != "admin" && state.store.is_admin(&user.id)? {
+        user.role = "admin".to_owned();
+    }
     Ok(Json(AuthResponse {
         user,
         balance,
@@ -1882,6 +1906,84 @@ async fn admin_operations(
 ) -> Result<Json<AdminOperationsSnapshot>, ApiError> {
     let user = authenticated(&state, &headers)?;
     Ok(Json(state.store.admin_operations_snapshot(&user.id)?))
+}
+
+/// Pagination for the admin table viewers. `limit` defaults to
+/// [`ADMIN_TABLE_DEFAULT_PAGE`] and is hard-capped server-side at 100;
+/// `offset` defaults to 0.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AdminTablePageQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+const ADMIN_TABLE_DEFAULT_PAGE: usize = 50;
+
+/// Serve one paginated, admin-gated, redacted page of a curated table. Shared
+/// by every `/api/v1/admin/tables/*` route so the gate, the pagination
+/// defaults, and the redacted projection live in exactly one place.
+async fn admin_table_page(
+    state: &Arc<AppState>,
+    headers: &HeaderMap,
+    table: AdminTable,
+    query: AdminTablePageQuery,
+) -> Result<Json<AdminTablePage>, ApiError> {
+    let user = authenticated_admin(state, headers)?;
+    Ok(Json(state.store.admin_table_page(
+        &user.id,
+        table,
+        query.limit.unwrap_or(ADMIN_TABLE_DEFAULT_PAGE),
+        query.offset.unwrap_or(0),
+    )?))
+}
+
+async fn admin_table_users(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<AdminTablePageQuery>,
+) -> Result<Json<AdminTablePage>, ApiError> {
+    admin_table_page(&state, &headers, AdminTable::Users, query).await
+}
+
+async fn admin_table_balances(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<AdminTablePageQuery>,
+) -> Result<Json<AdminTablePage>, ApiError> {
+    admin_table_page(&state, &headers, AdminTable::Balances, query).await
+}
+
+async fn admin_table_open_calls(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<AdminTablePageQuery>,
+) -> Result<Json<AdminTablePage>, ApiError> {
+    admin_table_page(&state, &headers, AdminTable::OpenCalls, query).await
+}
+
+async fn admin_table_settlements(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<AdminTablePageQuery>,
+) -> Result<Json<AdminTablePage>, ApiError> {
+    admin_table_page(&state, &headers, AdminTable::Settlements, query).await
+}
+
+async fn admin_table_prepaid_accounts(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<AdminTablePageQuery>,
+) -> Result<Json<AdminTablePage>, ApiError> {
+    admin_table_page(&state, &headers, AdminTable::PrepaidAccounts, query).await
+}
+
+async fn admin_table_dispute_events(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<AdminTablePageQuery>,
+) -> Result<Json<AdminTablePage>, ApiError> {
+    admin_table_page(&state, &headers, AdminTable::DisputeEvents, query).await
 }
 
 async fn chat_answers(
@@ -3161,9 +3263,15 @@ fn hash_password(password: &str) -> Result<String, ApiError> {
 
 fn session_response(
     state: &AppState,
-    user: UserAccount,
+    mut user: UserAccount,
     status: StatusCode,
 ) -> Result<(StatusCode, HeaderMap, Json<AuthResponse>), ApiError> {
+    // Reflect the effective (allowlist-aware) role in the sign-in response so
+    // an allowlisted wallet reaches its admin surfaces immediately, matching
+    // what a later GET /api/v1/auth/me would report.
+    if user.role != "admin" && state.store.is_admin(&user.id)? {
+        user.role = "admin".to_owned();
+    }
     let (token, balance, wallet, _) = issue_session(state, &user)?;
     let mut cookie = format!(
         "{SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}",
@@ -3229,6 +3337,18 @@ fn authenticated(state: &AppState, headers: &HeaderMap) -> Result<UserAccount, A
     let token =
         session_token(headers).ok_or_else(|| ApiError::unauthorized("sign in to continue"))?;
     Ok(state.store.authenticate_session(&token_hash(&token))?)
+}
+
+/// Authenticate the caller and require administrator access. Returns 403 for
+/// any signed-in non-admin (and 401 for an unauthenticated caller, via
+/// [`authenticated`]). Admin status is the allowlist-aware
+/// [`Store::is_admin`] — the persisted role OR an allowlisted wallet binding.
+fn authenticated_admin(state: &AppState, headers: &HeaderMap) -> Result<UserAccount, ApiError> {
+    let user = authenticated(state, headers)?;
+    if !state.store.is_admin(&user.id)? {
+        return Err(ApiError::forbidden("administrator access is required"));
+    }
+    Ok(user)
 }
 
 fn optional_authenticated(
@@ -3673,6 +3793,106 @@ mod tests {
             .next()
             .unwrap()
             .to_owned()
+    }
+
+    async fn user_id_from_me(app: &axum::Router, cookie: &str) -> String {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/auth/me")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        body["user"]["id"].as_str().unwrap().to_owned()
+    }
+
+    #[tokio::test]
+    async fn admin_table_endpoint_forbids_non_admins() {
+        let app = demo_app();
+        let cookie = register(&app, "not-admin@example.com").await;
+        let response = app
+            .oneshot(
+                Request::get("/api/v1/admin/tables/users")
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn admin_table_endpoint_serves_admins_without_secrets() {
+        let store = Store::in_memory().unwrap();
+        let app = router(Arc::new(
+            AppState::new(store.clone()).with_email_password_auth_enabled(true),
+        ));
+        let cookie = register(&app, "table-admin@example.com").await;
+        let id = user_id_from_me(&app, &cookie).await;
+        // Promote through the shared store handle the app is running on.
+        store.set_user_role(&id, "admin").unwrap();
+
+        let response = app
+            .oneshot(
+                Request::get("/api/v1/admin/tables/users?limit=5")
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["table"], "users");
+        assert!(!body["rows"].as_array().unwrap().is_empty());
+        assert!(
+            body["columns"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|column| column != "password_hash")
+        );
+        // The redacted column must not appear anywhere in the payload.
+        let raw = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(!raw.contains("password_hash"));
+    }
+
+    #[tokio::test]
+    async fn me_reports_admin_for_an_allowlisted_wallet() {
+        let store = Store::in_memory().unwrap();
+        let app = router(Arc::new(
+            AppState::new(store.clone()).with_email_password_auth_enabled(true),
+        ));
+        let cookie = register(&app, "wallet-admin@example.com").await;
+        let id = user_id_from_me(&app, &cookie).await;
+        // Bind a baked-in admin wallet; the persisted role stays 'user'.
+        store
+            .bind_wallet_identity(&id, "G74HqEPzpUd9nLhXpkWViQsWxK3PVnqzHHe6Q7mY8AAY")
+            .unwrap();
+
+        let response = app
+            .oneshot(
+                Request::get("/api/v1/auth/me")
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(body["user"]["role"], "admin");
     }
 
     #[tokio::test]
