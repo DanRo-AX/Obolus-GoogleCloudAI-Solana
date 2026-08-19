@@ -3,14 +3,14 @@ import InteractiveNebulaShader from '@/components/ui/liquid-shader'
 import { useT } from '@/i18n'
 
 /**
- * Full-bleed hero with the product's animated liquid field contained inside the
- * panel. The shader remains decorative and never intercepts composer input.
+ * Full-bleed hero. The shader remains decorative and never intercepts composer
+ * input.
  */
 export function Hero() {
   const t = useT()
   return (
-    <section className="mt-6 h-[70svh] p-4 pb-0 sm:mt-8 sm:p-6 sm:pb-0">
-      <div className="relative flex h-full w-full flex-col items-center justify-center gap-6 overflow-hidden rounded-lg border border-transparent px-4">
+    <section className="h-[70svh] overflow-hidden">
+      <div className="relative flex h-full w-full flex-col items-center justify-center gap-6 px-4 sm:px-6">
         <InteractiveNebulaShader
           position="absolute"
           className="pointer-events-none"
