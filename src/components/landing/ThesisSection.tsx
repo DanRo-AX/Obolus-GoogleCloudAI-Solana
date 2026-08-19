@@ -1,91 +1,71 @@
 import { useT } from '@/i18n'
 import { cardGradient } from '@/lib/cardGradient'
 
-/** Soft header wash so a wash is strongest at the top of a card and fades out. */
-const WASH_MASK = 'linear-gradient(to bottom, black 0%, transparent 60%)'
-
 /**
  * The opening argument, made by showing rather than claiming.
  *
- * Two answers to the same question sit side by side: what a general model says,
- * and what four people who actually live there say. The gap between the columns
- * is the entire product, so the layout gives it the whole width and nothing else
- * competes for attention.
+ * The thesis is stated once, centred, as the page's second big moment after the
+ * hero — then the gap it describes is shown directly: what a general model says
+ * on the dull, generic side, and what four people who actually live there say on
+ * a vivid card whose colour does the arguing. No section eyebrow, no top stripe;
+ * the colour is the only thing spent, and it is spent at full strength.
  */
 export function ThesisSection() {
   const t = useT()
   return (
     <section className="border-t border-border px-4 py-20 sm:px-8 sm:py-28">
       <div className="mx-auto max-w-[92rem]">
-        <p className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-          {t('Why nobody wrote it down')}
-        </p>
+        {/* The thesis, centred — the page's one deliberate break from the
+            left-aligned column, so the eye lands here before the comparison. */}
+        <div className="mx-auto max-w-3xl text-center">
+          <h2 className="text-balance font-display text-[30px] leading-[1.14] sm:text-[46px]">
+            {t('Firsthand knowledge only sold in bulk. Here it sells one answer at a time.')}
+          </h2>
+          <p className="mx-auto mt-6 max-w-2xl text-pretty text-[17px] leading-8 text-foreground/80">
+            {t(
+              'A panel of three hundred, a year-long subscription, one thick report — that used to be the smallest thing you could buy. Here the unit is a single document, a single open, a single answer. You pay only for the evidence you need, and the person who lived it is paid for it.',
+            )}
+          </p>
+        </div>
 
-        <h2 className="mt-5 max-w-[38rem] text-balance font-display text-[30px] leading-[1.12] sm:max-w-[46rem] sm:text-[44px]">
-          {t('Sold by the cigarette, not by the pack.')}
-        </h2>
-
-        <p className="mt-6 max-w-2xl text-pretty text-[17px] leading-8 text-foreground/90">
-          {t(
-            'What people know from living it has only ever sold whole — a panel study, a yearly pass, three hundred lives pressed into one report. Here the unit is one document, one open, one answer.',
-          )}
-        </p>
-
-        {/* the gap, shown ------------------------------------------------ */}
-        <div className="mt-14 grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border lg:grid-cols-2">
-          <div className="relative overflow-hidden bg-background">
-            {/* A faint wash: the generic answer gets the palest tint — present,
-                but the pale one on purpose. */}
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 opacity-[0.16]"
-              style={{
-                background: cardGradient('general model baseline', 'deep'),
-                WebkitMaskImage: WASH_MASK,
-                maskImage: WASH_MASK,
-              }}
-            />
-            <div className="relative z-10 flex h-full flex-col gap-5 p-7 sm:p-9">
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-                  {t('A general model')}
-                </span>
-                <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-                  {t('Free')}
-                </span>
-              </div>
-              <p className="text-pretty text-[17px] leading-relaxed text-muted-foreground">
-                {t(
-                  '“Locals tend to eat later than tourists. Neighbourhood bistros are usually a good bet, and reservations are generally recommended.”',
-                )}
-              </p>
-              <p className="mt-auto pt-4 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
-                {t('True, useless, and you could have guessed it')}
-              </p>
+        {/* The gap, shown: a dull generic answer beside a vivid human one. */}
+        <div className="mt-16 grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
+          {/* The general model — flat, grey, free. Deliberately no colour. */}
+          <div className="flex flex-col rounded-lg border border-border bg-muted-2/30">
+            <div className="flex items-baseline justify-between gap-3 px-6 pt-6 sm:px-8 sm:pt-8">
+              <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
+                {t('A general model')}
+              </span>
+              <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
+                {t('Free')}
+              </span>
             </div>
+            <p className="px-6 pt-5 text-pretty text-[17px] leading-relaxed text-muted-foreground sm:px-8">
+              {t(
+                '“Locals tend to eat later than tourists. Neighbourhood bistros are usually a good bet, and reservations are generally recommended.”',
+              )}
+            </p>
+            <p className="mt-auto px-6 pb-6 pt-6 font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground sm:px-8 sm:pb-8">
+              {t('Accurate, generic, and easy to guess')}
+            </p>
           </div>
 
-          <div className="relative overflow-hidden bg-background">
-            {/* The human answer is the one that should feel alive — a slightly
-                stronger, differently-hued wash from the survey-card palette. */}
+          {/* Four people who live there — a real, vivid gradient card, the
+              survey-card banner at full strength so it reads as the answer that
+              is alive. */}
+          <div className="flex flex-col overflow-hidden rounded-lg border border-border bg-background">
             <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 opacity-[0.34]"
-              style={{
-                background: cardGradient('firsthand paris locals', 'deep'),
-                WebkitMaskImage: WASH_MASK,
-                maskImage: WASH_MASK,
-              }}
-            />
-            <div className="relative z-10 flex h-full flex-col gap-5 p-7 sm:p-9">
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-foreground">
-                  {t('Four people who live there')} · {t('example')}
-                </span>
-                <span className="font-mono text-[10px] uppercase tracking-[1px] tabular-nums text-foreground">
-                  ₩38
-                </span>
-              </div>
+              className="relative h-24 shrink-0 sm:h-28"
+              style={{ background: cardGradient('firsthand paris locals', 'deep') }}
+            >
+              <span className="absolute right-4 top-4 rounded-full bg-white/90 px-2.5 py-1 font-mono text-[11px] font-medium tabular-nums text-foreground shadow-[0_1px_3px_rgba(20,20,25,0.16)] backdrop-blur-sm">
+                ₩38
+              </span>
+            </div>
+            <div className="flex flex-1 flex-col gap-4 p-6 sm:p-8">
+              <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-foreground">
+                {t('Four people who live there')} · {t('example')}
+              </span>
               <ul className="flex flex-col gap-3.5">
                 {QUOTES.map((q) => (
                   <li key={q.handle} className="flex flex-col gap-1">
@@ -98,7 +78,7 @@ export function ThesisSection() {
                   </li>
                 ))}
               </ul>
-              <p className="mt-auto pt-4 font-mono text-[11px] uppercase tracking-[1px] text-[#0F766E]">
+              <p className="mt-auto pt-2 font-mono text-[11px] uppercase tracking-[1px] text-[#0F766E]">
                 {t('Four authors paid · USDC on Solana')}
               </p>
             </div>

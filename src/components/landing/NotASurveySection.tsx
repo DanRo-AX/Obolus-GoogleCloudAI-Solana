@@ -46,11 +46,7 @@ export function NotASurveySection() {
   return (
     <section className="border-t border-border bg-muted-2/40 px-4 py-20 sm:px-8 sm:py-28">
       <div className="mx-auto max-w-[92rem]">
-        <p className="font-mono text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
-          {t('A survey panel, side by side')}
-        </p>
-
-        <h2 className="mt-5 max-w-3xl text-balance font-display text-[32px] leading-[1.1] sm:text-[44px]">
+        <h2 className="max-w-3xl text-balance font-display text-[32px] leading-[1.1] sm:text-[44px]">
           {t('A survey panel does the opposite of this, line by line.')}
         </h2>
 

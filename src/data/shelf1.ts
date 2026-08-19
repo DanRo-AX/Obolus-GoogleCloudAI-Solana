@@ -208,7 +208,7 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'quote',
-        text: 'Sold by the cigarette, not by the pack.',
+        text: 'Knowledge like this only ever sold in bulk.',
       },
       {
         kind: 'p',
