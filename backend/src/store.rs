@@ -17319,9 +17319,16 @@ fn backfill_prepaid_wallet_owners(connection: &Connection) -> Result<(), StoreEr
         )
         .optional()?;
     if let Some(wallet) = ownerless_balance {
-        return Err(StoreError::Conflict(format!(
-            "prepaid wallet {wallet} has ownerless value; stop payment writes and reconcile"
-        )));
+        // A prepaid balance can exist before the wallet authenticates a prepaid
+        // session (e.g. an x402 top-up made before onboarding). That is a
+        // legitimate pending state, not corruption, so booting must not fail.
+        // The owner link is created automatically once the wallet next
+        // authenticates (the INSERT ... FROM prepaid_wallet_sessions above).
+        // The genuine-corruption guard (mismatched_owner) stays fatal.
+        tracing::warn!(
+            wallet = %wallet,
+            "prepaid wallet has an ownerless balance; booting anyway and awaiting session-based reconciliation"
+        );
     }
     Ok(())
 }
