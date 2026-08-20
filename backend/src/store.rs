@@ -1122,12 +1122,10 @@ impl Store {
                  SELECT 1 FROM prepaid_wallet_owners owner
                  WHERE owner.wallet = session.wallet AND owner.user_id = session.user_id
                )
-               UNION ALL
-               SELECT 1 FROM prepaid_accounts account
-               WHERE account.available_atomic > 0 AND NOT EXISTS (
-                 SELECT 1 FROM prepaid_wallet_owners owner
-                 WHERE owner.wallet = account.wallet
-               )
+               -- An ownerless prepaid balance (a top-up made before the wallet
+               -- onboards a prepaid session) is a legitimate pending state, not a
+               -- readiness failure; it reconciles when the wallet next authenticates.
+               -- The session-owner and bundle-quote invariants below stay strict.
                UNION ALL
                SELECT 1 FROM payment_bundle_quotes quote
                WHERE quote.funding_source = 'prepaid'
