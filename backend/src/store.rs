@@ -30,8 +30,7 @@ use crate::{
         PaymentQuote, PayoutClaim, PayoutClaimBacklog, PrepaidBalance, PrepaidWalletSession,
         PrepareDirectPayShPaymentRequest, PrepareResearchPaymentRequest, PublicDocument,
         PublicEvidenceRecord, RecordChainSettlementRequest, RecordPrepaidDepositRequest,
-        RecoveredPaidDocument,
-        ReleaseResearchPaymentRequest, ResearchJobPlan, ResearchJobStatus,
+        RecoveredPaidDocument, ReleaseResearchPaymentRequest, ResearchJobPlan, ResearchJobStatus,
         ResearchPaymentReconciliation, ResolveQuestionResponse, ReviewDisputeRequest,
         ReviewDocumentFeedbackRequest, SearchFilters, Settlement, SettlementOperationsMetrics,
         ShelfStarter, ShelfStarterDraft, SiwxPayload, SubmitAnswerResponse,
@@ -345,9 +344,7 @@ impl AdminTable {
                 "escrow_remaining_krw",
                 "created_at",
             ],
-            Self::Settlements => {
-                &["id", "query_id", "payer", "total_krw", "mode", "created_at"]
-            }
+            Self::Settlements => &["id", "query_id", "payer", "total_krw", "mode", "created_at"],
             Self::PrepaidAccounts => &[
                 "wallet",
                 "pay_to",
@@ -8885,7 +8882,14 @@ impl Store {
                 "UPDATE prepaid_accounts
                  SET available_atomic = available_atomic + ?1, updated_at = ?2
                  WHERE wallet = ?3 AND pay_to = ?4 AND network = ?5 AND asset = ?6",
-                params![as_i64(refund_atomic)?, as_i64(now)?, wallet, pay_to, network, asset],
+                params![
+                    as_i64(refund_atomic)?,
+                    as_i64(now)?,
+                    wallet,
+                    pay_to,
+                    network,
+                    asset
+                ],
             )?;
             let balance = prepaid_available(&transaction, &wallet, &pay_to, &network, &asset)?;
             transaction.execute(
@@ -15273,15 +15277,18 @@ fn refund_open_call_prepaid(
     let wallet = call.payer_wallet.as_deref().ok_or_else(|| {
         StoreError::Conflict("prepaid-funded call has no funding wallet".to_owned())
     })?;
-    let pay_to = call.escrow_wallet.as_deref().ok_or_else(|| {
-        StoreError::Conflict("prepaid-funded call has no recipient".to_owned())
-    })?;
-    let asset = call.escrow_asset.as_deref().ok_or_else(|| {
-        StoreError::Conflict("prepaid-funded call has no asset".to_owned())
-    })?;
-    let network = call.escrow_network.as_deref().ok_or_else(|| {
-        StoreError::Conflict("prepaid-funded call has no network".to_owned())
-    })?;
+    let pay_to = call
+        .escrow_wallet
+        .as_deref()
+        .ok_or_else(|| StoreError::Conflict("prepaid-funded call has no recipient".to_owned()))?;
+    let asset = call
+        .escrow_asset
+        .as_deref()
+        .ok_or_else(|| StoreError::Conflict("prepaid-funded call has no asset".to_owned()))?;
+    let network = call
+        .escrow_network
+        .as_deref()
+        .ok_or_else(|| StoreError::Conflict("prepaid-funded call has no network".to_owned()))?;
     ensure_prepaid_account(connection, wallet, pay_to, network, asset, now)?;
     let amount = as_i64(refund_atomic)?;
     connection.execute(
@@ -19816,8 +19823,8 @@ mod tests {
         AI_GENERATION_BUDGET_WINDOW_MS, AdminTable, AiArtifactMetadata, AiGenerationClaim,
         BASE64_STANDARD, BUNDLE_FUNDING_AGENT_DIRECT, DEFAULT_ADMIN_WALLETS, LOGIN_FAILURE_LIMIT,
         MAX_AVATAR_JSON_BYTES, MAX_PREPAID_TOP_UP_ATOMIC, PayShDeliveryRequest, PaymentQuotePolicy,
-        Store, StoreError, WALLET_CHALLENGE_LIMIT, as_i64, as_u64, hex_digest, krw_to_atomic_pinned,
-        new_id, now_ms, siwx_message,
+        Store, StoreError, WALLET_CHALLENGE_LIMIT, as_i64, as_u64, hex_digest,
+        krw_to_atomic_pinned, new_id, now_ms, siwx_message,
     };
 
     #[test]
@@ -19977,7 +19984,12 @@ mod tests {
     // A single shared bundle receiver keeps the deposit, the funding debit and
     // the balance reads on the same prepaid-account key.
     fn open_call_receiver() -> String {
-        bs58::encode(SigningKey::from_bytes(&[200; 32]).verifying_key().as_bytes()).into_string()
+        bs58::encode(
+            SigningKey::from_bytes(&[200; 32])
+                .verifying_key()
+                .as_bytes(),
+        )
+        .into_string()
     }
 
     fn open_call_test_policy() -> PaymentQuotePolicy {
@@ -20000,13 +20012,17 @@ mod tests {
         let seed: [u8; 32] = hasher.finalize().into();
         let wallet =
             bs58::encode(SigningKey::from_bytes(&seed).verifying_key().as_bytes()).into_string();
-        let session_token = seed.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let session_token = seed
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         let policy = open_call_test_policy();
         // Bind the wallet and open a prepaid session so the wallet has a canonical
         // owner (the store's readiness invariant requires it). Idempotent per
         // owner: repeat calls no-op once the owner is established.
         let _ = store.bind_wallet_identity(owner, &wallet);
-        let _ = store.issue_prepaid_wallet_session(owner, &wallet, &session_token, 300_000, &policy);
+        let _ =
+            store.issue_prepaid_wallet_session(owner, &wallet, &session_token, 300_000, &policy);
         store
             .record_prepaid_deposit(
                 &crate::domain::RecordPrepaidDepositRequest {
@@ -20148,8 +20164,12 @@ mod tests {
     fn record_prepaid_deposit_credits_standalone_and_is_idempotent() {
         let store = Store::in_memory().unwrap();
         let policy = open_call_test_policy();
-        let payer =
-            bs58::encode(SigningKey::from_bytes(&[151; 32]).verifying_key().as_bytes()).into_string();
+        let payer = bs58::encode(
+            SigningKey::from_bytes(&[151; 32])
+                .verifying_key()
+                .as_bytes(),
+        )
+        .into_string();
         let deposit = crate::domain::RecordPrepaidDepositRequest {
             transaction_signature: "prepaid-topup-signature-1".to_owned(),
             payer: payer.clone(),
@@ -20181,7 +20201,10 @@ mod tests {
         more.transaction_signature = "prepaid-topup-signature-2".to_owned();
         more.amount_atomic = "2000000".to_owned();
         assert_eq!(
-            store.record_prepaid_deposit(&more, &policy).unwrap().available_atomic,
+            store
+                .record_prepaid_deposit(&more, &policy)
+                .unwrap()
+                .available_atomic,
             "7000000"
         );
         // Over the per-top-up cap: a clean validation error, nothing credited.
@@ -20189,7 +20212,9 @@ mod tests {
         oversized.transaction_signature = "prepaid-topup-signature-3".to_owned();
         oversized.amount_atomic = (MAX_PREPAID_TOP_UP_ATOMIC + 1).to_string();
         assert!(matches!(
-            store.record_prepaid_deposit(&oversized, &policy).unwrap_err(),
+            store
+                .record_prepaid_deposit(&oversized, &policy)
+                .unwrap_err(),
             StoreError::Validation(_)
         ));
         // A signature already used by another settlement route is rejected.
@@ -20207,7 +20232,9 @@ mod tests {
         let mut cross_route = deposit.clone();
         cross_route.transaction_signature = "cross-route-sig".to_owned();
         assert!(matches!(
-            store.record_prepaid_deposit(&cross_route, &policy).unwrap_err(),
+            store
+                .record_prepaid_deposit(&cross_route, &policy)
+                .unwrap_err(),
             StoreError::Conflict(_)
         ));
     }
@@ -20347,11 +20374,9 @@ mod tests {
             .admin_table_page("table-admin", AdminTable::Settlements, 50, 0)
             .unwrap();
         assert!(
-            !settlements
-                .columns
-                .iter()
-                .any(|column| column == "transaction_signature"
-                    || column == "document_handles_json")
+            !settlements.columns.iter().any(
+                |column| column == "transaction_signature" || column == "document_handles_json"
+            )
         );
     }
 
@@ -25252,7 +25277,10 @@ mod tests {
             .unwrap();
         // Funding debited real prepaid USDC, never the internal KRW pot.
         assert_eq!(
-            store.prepaid_balance("target-buyer", &policy).unwrap().available_atomic,
+            store
+                .prepaid_balance("target-buyer", &policy)
+                .unwrap()
+                .available_atomic,
             (MAX_PREPAID_TOP_UP_ATOMIC - 2 * unit_atomic).to_string()
         );
 
@@ -25298,7 +25326,10 @@ mod tests {
         store.cancel_open_call("target-buyer", &call.id).unwrap();
         // Cancelling refunds the one unspent escrow slot back to prepaid.
         assert_eq!(
-            store.prepaid_balance("target-buyer", &policy).unwrap().available_atomic,
+            store
+                .prepaid_balance("target-buyer", &policy)
+                .unwrap()
+                .available_atomic,
             (MAX_PREPAID_TOP_UP_ATOMIC - unit_atomic).to_string()
         );
         let refunded = store.balance("target-buyer").unwrap();

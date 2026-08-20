@@ -23,8 +23,7 @@ use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_kn
 use crate::{
     domain::{
         AccountControls, AdminOperationsSnapshot, AdminTablePage, AgentAuthResponse, AgentRun,
-        AgentStep,
-        AgentStepStatus, AgentTool, AiLiquidityMetrics, AuthResponse, BalanceSummary,
+        AgentStep, AgentStepStatus, AgentTool, AiLiquidityMetrics, AuthResponse, BalanceSummary,
         BeginResearchPaymentRequest, BindPayShChallengesRequest, ChainSettlementReceipt,
         ChatAnswer, ClaimPaymentAttemptRequest, CompletePayoutClaimRequest, ContributorManifest,
         ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
@@ -41,8 +40,7 @@ use crate::{
         PrepaidWalletSession, PrepareDirectPayShPaymentRequest, PreparePayoutClaimRequest,
         PrepareResearchPaymentRequest, PublicDocument, PublicEvidenceRecord,
         RecordChainSettlementRequest, RecordPrepaidDepositRequest, RecoveredPaidDocument,
-        RegisterRequest,
-        ReleaseResearchPaymentRequest, ResearchJobPlan, ResearchJobStatus,
+        RegisterRequest, ReleaseResearchPaymentRequest, ResearchJobPlan, ResearchJobStatus,
         ResearchPaymentReconciliation, ResetPasswordRequest, ResolveError, ResolveQuestionRequest,
         ResolveQuestionResponse, ReviewDisputeRequest, ReviewDocumentFeedbackRequest,
         SettleResearchPaymentRequest, SettlementPreviewRequest, ShelfStarter, SiwxPayload,
