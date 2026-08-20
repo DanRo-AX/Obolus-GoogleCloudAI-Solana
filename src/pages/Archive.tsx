@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Badge, Chip } from '@/components/ui/primitives'
 import { SettlementInvoiceDialog } from '@/components/SettlementInvoiceDialog'
 import { useT } from '@/i18n'
+import { formatUsdcFromKrw } from '@/lib/usdc'
 import type { SettlementPreviewEnvelope } from '@/lib/api'
 import { useUi, type Chat } from '@/state/ui'
 
@@ -124,7 +125,7 @@ export function ArchivePanel() {
         <dl className="grid grid-cols-3 gap-7 text-right">
           <ArchiveTotal label={t('Questions')} value={chats.length.toString()} />
           <ArchiveTotal label={t('Paid documents')} value={totals.docs.toString()} />
-          <ArchiveTotal label={t('Total spent')} value={`₩${totals.spent.toLocaleString()}`} />
+          <ArchiveTotal label={t('Total spent')} value={`${formatUsdcFromKrw(totals.spent)} USDC`} />
         </dl>
       </div>
 
@@ -204,7 +205,7 @@ function ThreadCard({ row }: { row: Row }) {
           <p className="text-[15px] font-medium leading-6">{chat.title}</p>
           <p className="mt-1 text-xs text-muted-foreground">
             {docs.length
-              ? `${docs.length}${t(' opened')} · ₩${spent.toLocaleString()} · ${receipts.length ? t('On-chain receipt available') : t('Legacy payment record')}`
+              ? `${docs.length}${t(' opened')} · ${formatUsdcFromKrw(spent)} USDC · ${receipts.length ? t('On-chain receipt available') : t('Legacy payment record')}`
               : t('No evidence was purchased for this question.')}
           </p>
         </div>
@@ -255,7 +256,7 @@ function ThreadCard({ row }: { row: Row }) {
                     {d.shelf}
                   </Badge>
                   <span className="ml-auto font-mono text-xs tabular-nums">
-                    ₩{d.price.toLocaleString()}
+                    {formatUsdcFromKrw(d.price)} USDC
                   </span>
                 </div>
               ))}

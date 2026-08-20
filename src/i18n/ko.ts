@@ -1353,4 +1353,19 @@ export const KO: Record<string, string> = {
   '“If firsthand experience is essential, choose Ask people.”': '“실제 경험이 꼭 필요하면 사람에게 물어보기를 선택하세요.”',
   '› user chooses audience · answer count · reward': '› 사용자가 대상 · 답변 수 · 보상 선택',
   '→ call posted only after confirmation · answers return here': '→ 확인한 뒤에만 모집 게시 · 답변은 이 대화로 도착',
+  'Call credit': '열람 크레딧',
+  'claim it and USDC lands in the wallet recorded at each open. Not part of your prepaid balance.':
+    '청구하면 각 열람 시점에 기록된 지갑으로 USDC가 들어와요. 선불 잔액과는 별개예요.',
+  'Answer one open call and it lands here as a document. Every open after that pays you a little USDC, and we never touch it.':
+    '사람 조사에 한 번 답하면 문서로 여기 쌓여요. 이후 누군가 열 때마다 소액의 USDC가 들어오고, 우리는 건드리지 않아요.',
+  'Top up your balance?': '충전하시겠어요?',
+  'Your prepaid USDC is running low. Add funds so opens and Pay.sh settlements never stall.':
+    '선불 USDC가 얼마 남지 않았어요. 열람과 Pay.sh 정산이 멈추지 않도록 충전해 두세요.',
+  'Top up prepaid USDC': '선불 USDC 충전',
+  'Prepaid balance': '선불 잔액',
+  'Top up': '충전하기',
+  'Topping up…': '충전 중…',
+  'Coming soon': '준비 중',
+  'Standalone top-up is being wired up. For now, your prepaid USDC refills automatically the first time you open a document, and again whenever it runs low.':
+    '단독 충전 기능은 준비 중이에요. 지금은 문서를 처음 열 때, 그리고 잔액이 부족할 때마다 선불 USDC가 자동으로 충전돼요.',
 }

@@ -13,6 +13,7 @@ import {
   createWalletAuthChallenge,
   getOpenCallFundingQuote,
   getPaymentBundleQuote,
+  getPrepaidBalance,
   listOpenCalls,
   prepareOpenCallFundingQuote,
   type CreateOpenCallInput,
@@ -20,7 +21,11 @@ import {
   type SettlementPreviewEnvelope,
 } from '@/lib/api'
 import { getPhantom } from '@/state/wallet'
-import { exactQuotePaymentPolicy, exactResearchBundleQuote } from '@/lib/exactPaymentPolicy'
+import {
+  exactQuotePaymentPolicy,
+  exactResearchBundleQuote,
+  exactTopUpQuote,
+} from '@/lib/exactPaymentPolicy'
 import { prepaidTopUpAtomic } from '@/lib/browserPaymentConfig'
 import { withSufficientSvmComputeBudget } from '@/lib/svmComputeBudget'
 
@@ -77,6 +82,100 @@ export class PaymentError extends Error {
 export function explorerUrl(sig: string, network = 'devnet') {
   const cluster = network.includes('mainnet') ? '' : '?cluster=devnet'
   return `https://explorer.solana.com/tx/${sig}${cluster}`
+}
+
+/**
+ * Standalone prepaid top-up.
+ *
+ * Prepares a whole-USDC top-up on the public payment-gateway endpoint, pays it
+ * with Phantom over the same x402 exact scheme the pay-flow uses, and returns
+ * the refreshed prepaid balance. The gateway credits the balance through the
+ * internal deposit route only after it independently confirms the finalized
+ * on-chain transfer to the bundle receiver, so the browser never touches the
+ * internal route and cannot self-credit.
+ */
+export async function topUpPrepaid(amountUsdc: number): Promise<{ availableAtomic: string }> {
+  if (!BACKEND_ENABLED || !X402_ENABLED) {
+    throw new PaymentError('Standalone top-up requires the backend and x402 gateway.')
+  }
+  if (!Number.isInteger(amountUsdc) || amountUsdc < 1 || amountUsdc > 1_000) {
+    throw new PaymentError('Choose a whole USDC amount between 1 and 1000.')
+  }
+  const provider = getPhantom()
+  if (!provider?.publicKey) {
+    throw new PaymentError('Connect a Solana browser wallet before topping up.')
+  }
+
+  let prepared: Response
+  try {
+    prepared = await fetch(`${X402_GATEWAY_BASE}/api/v1/prepaid/top-ups`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amountUsdc }),
+    })
+  } catch {
+    throw new PaymentError('Top-up service is temporarily unavailable.')
+  }
+  if (!prepared.ok) {
+    const payload = (await prepared.json().catch(() => null)) as
+      | { error?: { message?: string } }
+      | null
+    throw new PaymentError(
+      payload?.error?.message ?? `Could not prepare the top-up (${prepared.status}).`,
+    )
+  }
+  const body = (await prepared.json()) as { quote?: unknown }
+  const quote = exactTopUpQuote(body.quote)
+
+  try {
+    const [{ x402Client }, { wrapFetchWithPayment }, svm, { phantomSvmSigner }] =
+      await Promise.all([
+        import('@x402/core/client'),
+        import('@x402/fetch'),
+        import('@x402/svm/exact/client'),
+        import('@/lib/phantomSigner'),
+      ])
+    const client = new x402Client()
+    client.registerPolicy(exactQuotePaymentPolicy('topup', quote))
+    const signer = withSufficientSvmComputeBudget(phantomSvmSigner(provider))
+    svm.registerExactSvmScheme(client, { signer, networks: [DEVNET_NETWORK] })
+    client.register(
+      DEVNET_NETWORK,
+      new svm.ExactSvmScheme(signer, { rpcUrl: `${X402_GATEWAY_BASE}/rpc` }),
+    )
+    const paidFetch = wrapFetchWithPayment(window.fetch.bind(window), client)
+    const response = await paidFetchWithRpcBackoff(
+      paidFetch,
+      `${X402_GATEWAY_BASE}${quote.resourcePath}`,
+    )
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: { message?: string } }
+        | null
+      throw new Error(payload?.error?.message ?? `x402 gateway returned ${response.status}.`)
+    }
+    // The gateway applies the credit in its post-settlement hook before the paid
+    // response resolves; read the durable balance back from the Rust ledger.
+    const balance = await getPrepaidBalance()
+    return { availableAtomic: balance.availableAtomic }
+  } catch (error) {
+    if (error instanceof PaymentError) throw error
+    const message = error instanceof Error ? error.message : String(error)
+    if (/reject|declin|cancel/i.test(message)) {
+      throw new PaymentError('Payment approval was cancelled in the wallet.', 'cancelled')
+    }
+    if (isNetworkFailure(message)) {
+      throw new PaymentError(
+        'Top-up service is temporarily unavailable. Retry; anything already paid credits your balance without paying twice.',
+      )
+    }
+    if (isPayloadRpcRateLimit(message)) {
+      throw new PaymentError(
+        'Solana Devnet is rate-limiting payment creation. Wait 15 seconds and retry this same top-up.',
+      )
+    }
+    throw new PaymentError(`x402 top-up failed: ${message}`)
+  }
 }
 
 export async function openDocuments(req: OpenRequest): Promise<OpenResult> {

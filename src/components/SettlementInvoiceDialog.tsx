@@ -143,8 +143,7 @@ export function SettlementInvoiceDialog({
                     <Summary label={t('Documents')} value={invoice.invoice.lineItems.length.toString()} />
                     <Summary
                       label={t('Total')}
-                      value={`₩${invoice.invoice.totalPriceKrw.toLocaleString()}`}
-                      detail={`${atomicUsdc(invoice.invoice.totalAmountAtomic)} ${displayAsset}`}
+                      value={`${atomicUsdc(invoice.invoice.totalAmountAtomic)} ${displayAsset}`}
                     />
                     <Summary
                       label={t('Evidence owners')}
@@ -174,8 +173,7 @@ export function SettlementInvoiceDialog({
                             <p className="mt-1 text-sm font-medium">{item.documentHandle}</p>
                           </div>
                           <div className="text-right">
-                            <p className="text-sm font-medium">₩{item.priceKrw.toLocaleString()}</p>
-                            <p className="font-mono text-[10px] text-black/45">
+                            <p className="text-sm font-medium">
                               {atomicUsdc(item.amountAtomic)} {displayAsset}
                             </p>
                           </div>

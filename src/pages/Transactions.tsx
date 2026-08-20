@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Badge, Banner, Chip } from '@/components/ui/primitives'
 import { useT } from '@/i18n'
 import type { EarningEvent } from '@/lib/api'
+import { formatUsdc, formatUsdcFromKrw } from '@/lib/usdc'
 import { cn } from '@/lib/utils'
 import { useUi, type Chat } from '@/state/ui'
 import { DEVNET_USDC, shortKey } from '@/state/wallet'
@@ -32,8 +33,6 @@ import { DEVNET_USDC, shortKey } from '@/state/wallet'
  * through the same row so "who paid whom" reads as one ledger instead of
  * two separate pages the same money is scattered across.
  */
-
-const USDC_DECIMALS = 1_000_000
 
 type Direction = 'received' | 'sent'
 
@@ -74,7 +73,7 @@ function receivedRows(
     direction: 'received',
     createdAt: event.createdAt,
     amountKrw: event.amountKrw,
-    amountAtomic: event.payoutAmountAtomic,
+    amountAtomic: event.payoutAmountAtomic ?? event.amountAtomic,
     // No network is stored per earning event — every settlement in this app
     // is Solana Devnet, the same assumption Archive.tsx and Memory.tsx make
     // when they hard-code `cluster=devnet` on the identical explorer link.
@@ -125,12 +124,6 @@ function sentRows(chats: Chat[]): LedgerRow[] {
     }
   }
   return rows
-}
-
-function formatUsdc(atomic: string): string | null {
-  const n = Number(atomic)
-  if (!Number.isFinite(n)) return null
-  return (n / USDC_DECIMALS).toFixed(6)
 }
 
 function statusChip(
@@ -276,13 +269,13 @@ export function TransactionsPanel() {
           <span className="flex items-center gap-1.5">
             <ArrowDownLeft className="size-3.5 text-[#0F766E]" />
             <span className="tabular-nums text-foreground">
-              ₩{totals.received.toLocaleString()}
+              {formatUsdcFromKrw(totals.received)} USDC
             </span>
             {t(' received')}
           </span>
           <span className="flex items-center gap-1.5">
             <ArrowUpRight className="size-3.5" />
-            <span className="tabular-nums text-foreground">₩{totals.sent.toLocaleString()}</span>
+            <span className="tabular-nums text-foreground">{formatUsdcFromKrw(totals.sent)} USDC</span>
             {t(' sent')}
           </span>
           <Button
@@ -471,11 +464,9 @@ function TransactionRow({
               received ? 'text-[#0F766E]' : 'text-foreground',
             )}
           >
-            {received ? '+' : '-'}₩{row.amountKrw.toLocaleString()}
+            {received ? '+' : '-'}
+            {usdc ?? formatUsdcFromKrw(row.amountKrw)} USDC
           </p>
-          {usdc ? (
-            <p className="font-mono text-[10px] tabular-nums text-muted-foreground">{usdc} USDC</p>
-          ) : null}
         </div>
 
         <ChevronDown
@@ -561,8 +552,7 @@ function TransactionDetail({ row }: { row: LedgerRow }) {
         </DetailField>
         <DetailField label={t('Amount')}>
           <span className="font-mono text-sm tabular-nums">
-            ₩{row.amountKrw.toLocaleString()}
-            {usdc ? ` · ${usdc} USDC` : ''}
+            {usdc ?? formatUsdcFromKrw(row.amountKrw)} USDC
           </span>
         </DetailField>
         <DetailField label={t('Status')}>
@@ -605,7 +595,7 @@ function TransactionDetail({ row }: { row: LedgerRow }) {
                 </span>
                 <Badge className="truncate px-1.5 py-0 uppercase tracking-[1px]">{d.shelf}</Badge>
                 <span className="ml-auto font-mono text-xs tabular-nums">
-                  ₩{d.price.toLocaleString()}
+                  {formatUsdcFromKrw(d.price)} USDC
                 </span>
               </div>
             ))}

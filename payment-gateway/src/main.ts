@@ -64,6 +64,14 @@ import {
   bundleFundingMode,
   type BundleFundingMode,
 } from "./bundle-funding-mode.js";
+import {
+  TopUpQuoteStore,
+  TopUpRequestError,
+  parseTopUpAmountUsdc,
+  topUpDepositFromSettlement,
+  type PrepaidDepositRequest,
+  type TopUpQuote,
+} from "./prepaid-top-up.js";
 import { isAllowedBrowserRpcRequest } from "./browser-rpc-policy.js";
 
 const DEVNET_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as Network;
@@ -167,6 +175,20 @@ const payShFrontToken = env("OPENSHELF_PAY_FRONT_TOKEN", "openshelf-local-pay-fr
 const payShOperatorWallet = process.env.OPENSHELF_PAY_OPERATOR_WALLET?.trim();
 const payShFeePayerKey = process.env.OPENSHELF_PAY_GCP_KMS_PUBKEY?.trim();
 const testFailpoint = process.env.OPENSHELF_TEST_FAILPOINT?.trim();
+// Public standalone prepaid top-up. The gateway challenges for an exact USDC
+// transfer to OPENSHELF_BUNDLE_RECEIVER (the same receiver the backend credits)
+// and, once independently confirmed on-chain, posts it to the internal deposit
+// route. Both the receiver and the asset read the same env the Rust backend
+// reads so the challenge cannot drift from what the ledger will accept.
+const DEFAULT_DEVNET_USDC = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+const bundleReceiver = process.env.OPENSHELF_BUNDLE_RECEIVER?.trim() ?? "";
+const topUpAsset = env("X402_ASSET", env("OPENSHELF_X402_ASSET", DEFAULT_DEVNET_USDC));
+const topUpQuoteTtlMs = integerEnv("PREPAID_TOP_UP_TTL_MS", 5 * 60_000, 60_000, 15 * 60_000);
+if (managedEnvironment && !bundleReceiver) {
+  console.warn(
+    "standalone prepaid top-up is disabled: set OPENSHELF_BUNDLE_RECEIVER to enable it",
+  );
+}
 
 if (
   managedEnvironment &&
@@ -1068,6 +1090,257 @@ resourceServer.onAfterSettle(async (context) => {
   }
 });
 
+// --- Public standalone prepaid top-up ---------------------------------------
+// A dedicated x402 resource server keeps the standalone top-up fully isolated
+// from the document/bundle/open-call money path: it reuses the exact same
+// scheme, facilitator, exact-semantics check, and independent-finality settle,
+// but never touches the backend payment-attempt ledger. Credit is applied only
+// after finality, through the idempotent internal deposit route.
+type GatewayPrepaidBalance = {
+  wallet: string;
+  payTo: string;
+  network: string;
+  asset: string;
+  availableAtomic: string;
+};
+
+const topUpQuotes = new TopUpQuoteStore();
+const topUpReplayGuard = new SettlementReplayGuard();
+const topUpVerifiedAttempts = new VerifiedPaymentAttemptTracker<TopUpQuote>();
+const topUpAttemptPayers = new Map<string, string>();
+const pendingTopUpDeposits = new Map<string, PrepaidDepositRequest>();
+
+function topUpIdentityFromPath(path: string): Extract<RouteIdentity, { kind: "topup" }> {
+  const pathname = path.startsWith("http") ? new URL(path).pathname : path.split("?")[0];
+  const match = pathname.match(/^\/api\/v1\/paid-top-ups\/([^/]+)$/);
+  if (!match) throw new Error("invalid prepaid top-up resource path");
+  const quoteId = decodeURIComponent(match[1]);
+  if (!quoteId) throw new Error("prepaid top-up quote id is required");
+  return { kind: "topup", quoteId, key: `topup ${quoteId}` };
+}
+
+function topUpIdentityFromContext(
+  context: HTTPRequestContext,
+): Extract<RouteIdentity, { kind: "topup" }> {
+  return topUpIdentityFromPath(context.path);
+}
+
+function topUpIdentityFromPaymentHook(context: {
+  transportContext?: unknown;
+  paymentPayload: { resource?: { url?: string } };
+}): Extract<RouteIdentity, { kind: "topup" }> {
+  const requestPath = (
+    context.transportContext as { request?: { path?: string } } | undefined
+  )?.request?.path;
+  return topUpIdentityFromPath(requestPath ?? context.paymentPayload.resource?.url ?? "");
+}
+
+function getTopUpQuoteForIdentity(identity: { key: string; quoteId: string }): TopUpQuote {
+  topUpReplayGuard.assertNotSettled(identity.key);
+  const quote = topUpQuotes.get(identity.quoteId);
+  if (!quote) {
+    throw new PaymentQuoteError(
+      409,
+      "payment_not_payable",
+      "This top-up is no longer payable. Start a new top-up.",
+    );
+  }
+  assertPaymentQuotePayable(quote);
+  return quote;
+}
+
+async function creditPrepaidTopUp(deposit: PrepaidDepositRequest): Promise<void> {
+  try {
+    await internalJson<GatewayPrepaidBalance>("/api/v1/prepaid/deposits", {
+      method: "POST",
+      body: JSON.stringify(deposit),
+    });
+    pendingTopUpDeposits.delete(deposit.transactionSignature);
+  } catch (error) {
+    // The transfer is already finalized on-chain. A 4xx is a permanent ledger
+    // rejection (policy/amount) that a retry cannot fix; anything else is
+    // transient and safe to retry because the deposit route dedupes on the
+    // transaction signature.
+    if (error instanceof RustApiError && error.status >= 400 && error.status < 500) {
+      pendingTopUpDeposits.delete(deposit.transactionSignature);
+      throw error;
+    }
+    pendingTopUpDeposits.set(deposit.transactionSignature, deposit);
+    throw error;
+  }
+}
+
+async function retryPendingTopUpDeposits(): Promise<void> {
+  for (const [signature, deposit] of pendingTopUpDeposits) {
+    try {
+      await internalJson<GatewayPrepaidBalance>("/api/v1/prepaid/deposits", {
+        method: "POST",
+        body: JSON.stringify(deposit),
+      });
+      pendingTopUpDeposits.delete(signature);
+    } catch (error) {
+      if (error instanceof RustApiError && error.status >= 400 && error.status < 500) {
+        pendingTopUpDeposits.delete(signature);
+        console.error("prepaid top-up deposit permanently rejected on retry", safeError(error));
+      }
+      // Otherwise keep it queued for the next tick.
+    }
+  }
+}
+
+const topUpResourceServer = new x402ResourceServer(facilitator);
+topUpResourceServer.register(network, createStableExactSvmServerScheme());
+
+topUpResourceServer.onAfterVerify(async (context) => {
+  if (!context.result.payer) {
+    return {
+      abort: true,
+      reason: "payer_missing",
+      message: "The verified payment did not identify its payer.",
+    };
+  }
+  if (context.result.payer === context.requirements.payTo) {
+    return {
+      abort: true,
+      reason: "self_payment_not_allowed",
+      message: "payer and top-up recipient must be different wallets",
+    };
+  }
+  let attemptId: string | undefined;
+  try {
+    attemptId = paymentAttemptId(context.paymentPayload);
+    const identity = topUpIdentityFromPaymentHook(context);
+    const quote = getTopUpQuoteForIdentity(identity);
+    const signedTransactionBase64 = String(context.paymentPayload.payload.transaction ?? "");
+    const evidence: ReconciliationAttempt = {
+      settlementKind: "topup",
+      quoteId: quote.id,
+      attemptId,
+      reconcileAfter: Date.now(),
+      createdAt: Date.now(),
+      payTo: quote.payTo,
+      network: quote.network,
+      asset: quote.asset,
+      amountAtomic: quote.amountAtomic,
+      payer: context.result.payer,
+      signedTransactionBase64,
+      recentBlockhash: recentBlockhashFromTransaction(signedTransactionBase64),
+    };
+    if (!await hasExactPreparedPaymentSemantics(
+      evidence,
+      Buffer.from(signedTransactionBase64, "base64"),
+    )) {
+      throw new PaymentQuoteError(
+        409,
+        "payment_not_payable",
+        "The verified transaction does not contain the exact quoted top-up.",
+      );
+    }
+    topUpVerifiedAttempts.remember(attemptId, identity, quote);
+    topUpAttemptPayers.set(attemptId, context.result.payer);
+  } catch (error) {
+    console.error("prepaid top-up payment attempt could not be verified", safeError(error));
+    return {
+      abort: true,
+      reason: error instanceof PaymentQuoteError ? error.code : "payment_attempt_unavailable",
+      message: error instanceof PaymentQuoteError
+        ? error.message
+        : "This top-up cannot begin settlement right now. Retry without signing again.",
+    };
+  }
+});
+
+topUpResourceServer.onVerifyFailure(async (context) => {
+  console.error("prepaid top-up verification failed", safeError(context.error));
+});
+
+topUpResourceServer.onSettleFailure(async (context) => {
+  console.error("prepaid top-up settlement failed", safeError(context.error));
+  console.error("prepaid top-up attempt retained for reconciliation");
+});
+
+topUpResourceServer.onVerifiedPaymentCanceled(async (context) => {
+  const attemptId = paymentAttemptId(context.paymentPayload);
+  topUpVerifiedAttempts.forget(attemptId);
+  topUpAttemptPayers.delete(attemptId);
+});
+
+topUpResourceServer.onBeforeSettle(async (context) => {
+  return settleWithIndependentFinality({
+    settle: () => boundedFacilitatorSettlement({
+      url: facilitatorUrl,
+      paymentPayload: structuredClone(context.paymentPayload) as PaymentPayload,
+      paymentRequirements: structuredClone(context.requirements) as PaymentRequirements,
+      timeoutMs: facilitatorSettlementTimeoutMs,
+    }),
+    loadAttempt: async () => {
+      const attemptId = paymentAttemptId(context.paymentPayload);
+      const remembered = topUpVerifiedAttempts.forAttempt(attemptId);
+      const payer = topUpAttemptPayers.get(attemptId);
+      if (!remembered || !payer) {
+        throw new Error("verified top-up attempt is unavailable");
+      }
+      const quote = remembered.quote;
+      const signedTransactionBase64 = String(context.paymentPayload.payload.transaction ?? "");
+      return {
+        settlementKind: "topup",
+        quoteId: quote.id,
+        attemptId,
+        reconcileAfter: Date.now(),
+        createdAt: Date.now(),
+        payTo: quote.payTo,
+        network: quote.network,
+        asset: quote.asset,
+        amountAtomic: quote.amountAtomic,
+        payer,
+        signedTransactionBase64,
+        recentBlockhash: recentBlockhashFromTransaction(signedTransactionBase64),
+      } satisfies ReconciliationAttempt;
+    },
+    requirements: context.requirements,
+    rpcs: chainReconciliationRpcUrls.map((endpoint) =>
+      boundedSolanaRpc(endpoint, settlementFinalityRpcTimeoutMs)
+    ),
+    expectedNetwork: network,
+    timeoutMs: settlementFinalityTimeoutMs,
+    pollIntervalMs: settlementFinalityPollIntervalMs,
+    nowMs: () => performance.now(),
+  });
+});
+
+topUpResourceServer.onAfterSettle(async (context) => {
+  if (!context.result.success || !context.result.payer) {
+    console.error("unsuccessful prepaid top-up retained for reconciliation");
+    return;
+  }
+  const attemptId = paymentAttemptId(context.paymentPayload);
+  const attempt = topUpVerifiedAttempts.forAttempt(attemptId);
+  if (!attempt || attempt.identity.kind !== "topup") {
+    console.error(
+      "prepaid top-up settled without verified attempt state; manual reconciliation required",
+    );
+    return;
+  }
+  const identity = attempt.identity;
+  const quote = attempt.quote;
+  // Fence this quote before the credit call so a retry can never settle it a
+  // second time. The on-chain transfer is already final.
+  topUpReplayGuard.markSettled(identity.key, quote.expiresAt);
+  try {
+    const deposit = topUpDepositFromSettlement(quote, context.result);
+    await creditPrepaidTopUp(deposit);
+  } catch (error) {
+    console.error(
+      "prepaid top-up settled on-chain; deposit credit deferred for retry",
+      safeError(error),
+    );
+  } finally {
+    topUpVerifiedAttempts.forget(attemptId);
+    topUpAttemptPayers.delete(attemptId);
+    topUpQuotes.delete(quote.id);
+  }
+});
+
 const app = express();
 app.disable("x-powered-by");
 app.use(express.json({ limit: "32kb" }));
@@ -1325,6 +1598,48 @@ app.post("/api/v1/payment-bundles", async (request, response, next) => {
   }
 });
 
+// Preparing a standalone top-up is free and needs no research context: the
+// browser asks for a whole-USDC amount, and the gateway returns an exact x402
+// resource to pay with Phantom. The credit lands on the prepaid balance once
+// the transfer to OPENSHELF_BUNDLE_RECEIVER is independently finalized.
+app.post("/api/v1/prepaid/top-ups", (request, response) => {
+  try {
+    if (!bundleReceiver) {
+      response.status(503).json({
+        error: {
+          code: "top_up_unavailable",
+          message: "Standalone prepaid top-up is not configured on this gateway.",
+        },
+      });
+      return;
+    }
+    const body = request.body as { amountUsdc?: unknown };
+    const amountUsdc = parseTopUpAmountUsdc(body?.amountUsdc);
+    const quote = topUpQuotes.create({
+      amountUsdc,
+      payTo: bundleReceiver,
+      network,
+      asset: topUpAsset,
+      ttlMs: topUpQuoteTtlMs,
+    });
+    response.status(201).json({
+      quote,
+      resourceUrl: `${request.protocol}://${request.get("host")}${quote.resourcePath}`,
+    });
+  } catch (error) {
+    if (error instanceof TopUpRequestError) {
+      response.status(error.status).json({
+        error: { code: error.code, message: error.message },
+      });
+      return;
+    }
+    console.error("could not prepare prepaid top-up", safeError(error));
+    response.status(502).json({
+      error: { code: "gateway_error", message: "Could not prepare the top-up." },
+    });
+  }
+});
+
 app.use(
   paymentMiddleware(
     {
@@ -1492,6 +1807,81 @@ app.use(
     { appName: "OPENSHELF", testnet: network === DEVNET_NETWORK },
   ),
 );
+
+app.use(
+  paymentMiddleware(
+    {
+      "GET /api/v1/paid-top-ups/*": {
+        accepts: {
+          scheme: "exact",
+          network,
+          payTo: async (context) =>
+            getTopUpQuoteForIdentity(topUpIdentityFromContext(context)).payTo,
+          price: async (context) => {
+            const identity = topUpIdentityFromContext(context);
+            const quote = getTopUpQuoteForIdentity(identity);
+            return {
+              asset: quote.asset,
+              amount: quote.amountAtomic,
+              extra: { memo: paymentMemo(identity, quote.id) },
+            };
+          },
+          maxTimeoutSeconds: 60,
+        },
+        description: "Top up an OPENSHELF prepaid USDC balance",
+        mimeType: "application/json",
+        serviceName: "OPENSHELF",
+        unpaidResponseBody: async (context) => {
+          const quote = getTopUpQuoteForIdentity(topUpIdentityFromContext(context));
+          return {
+            contentType: "application/json",
+            body: {
+              error: { code: "payment_required", message: "USDC payment is required" },
+              quote,
+            },
+          };
+        },
+        settlementFailedResponseBody: (_context, result) => ({
+          contentType: "application/json",
+          body: {
+            error: {
+              code: "settlement_failed",
+              message: result.errorMessage ?? result.errorReason,
+            },
+          },
+        }),
+      },
+    },
+    topUpResourceServer,
+    { appName: "OPENSHELF", testnet: network === DEVNET_NETWORK },
+  ),
+);
+
+app.get("/api/v1/paid-top-ups/:id", async (request, response, next) => {
+  try {
+    const identity = topUpIdentityFromPath(`/api/v1/paid-top-ups/${request.params.id}`);
+    const attempt = topUpVerifiedAttempts.forIdentity(identity.key);
+    if (!attempt) {
+      throw new PaymentQuoteError(
+        409,
+        "payment_not_payable",
+        "This top-up has no verified payment in progress. Start a new top-up.",
+      );
+    }
+    // The x402 middleware runs onAfterSettle (which credits the prepaid balance
+    // through the internal deposit route) after this handler and before the
+    // response flushes. The browser refreshes its balance from the Rust ledger
+    // once this resolves.
+    response.json({
+      status: "settling",
+      quoteId: attempt.quote.id,
+      amountAtomic: attempt.quote.amountAtomic,
+      network: attempt.quote.network,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.get("/api/v1/paid-documents/:queryId/:handle", async (request, response, next) => {
   try {
@@ -1662,10 +2052,14 @@ setInterval(
   chainReconciliationIntervalMs,
 ).unref();
 setTimeout(() => void reconcileDueChainAttempts(), 1_000).unref();
+setInterval(() => void retryPendingTopUpDeposits(), 5_000).unref();
 setInterval(() => {
   pruneRpcRateWindows();
   settlementReplayGuard.prune();
   verifiedPaymentAttempts.prune();
+  topUpReplayGuard.prune();
+  topUpVerifiedAttempts.prune();
+  topUpQuotes.prune();
 }, 60_000).unref();
 app.listen(port, "0.0.0.0", () => {
   console.log(`OPENSHELF x402 gateway listening on http://0.0.0.0:${port}`);

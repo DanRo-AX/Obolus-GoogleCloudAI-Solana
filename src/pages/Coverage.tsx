@@ -8,6 +8,7 @@ import { GlassDemandCard } from '@/components/ui/glass-blog-card-shadcnui'
 import coverageHeroWordmark from '@/assets/product/coverage-hero-wordmark.png'
 import { CATEGORIES } from '@/data/categories'
 import { useT } from '@/i18n'
+import { formatUsdcFromKrw } from '@/lib/usdc'
 import { useUi } from '@/state/ui'
 
 export default function Coverage() {
@@ -95,7 +96,7 @@ export default function Coverage() {
             <div className="flex flex-wrap gap-x-5 gap-y-1 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
               <span><strong className="text-foreground">{totals.calls}</strong> {t('Open questions')}</span>
               <span><strong className="text-foreground">{totals.remaining}</strong> {t('Answers wanted')}</span>
-              <span><strong className="text-foreground">₩{totals.budget.toLocaleString()}</strong> {t('On the table')}</span>
+              <span><strong className="text-foreground">{formatUsdcFromKrw(totals.budget)} USDC</strong> {t('On the table')}</span>
             </div>
           </div>
 
@@ -104,7 +105,7 @@ export default function Coverage() {
               <Link
                 key={row.id}
                 to={`/dashboard?category=${row.id}`}
-                aria-label={`${t(row.label)} · ${t('On the table')} ${row.budget ? `₩${row.budget.toLocaleString()}` : '—'}`}
+                aria-label={`${t(row.label)} · ${t('On the table')} ${row.budget ? `${formatUsdcFromKrw(row.budget)} USDC` : '—'}`}
                 className="block h-full rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2"
               >
                 <GlassDemandCard
@@ -115,7 +116,7 @@ export default function Coverage() {
                   coverFilter={`hue-rotate(${index * 9}deg) saturate(${row.calls ? 1.06 : 0.82}) brightness(${row.calls ? 1.08 : 0.9})`}
                   active={row.calls > 0}
                   status={row.calls ? `${row.calls} ${t('Open questions')}` : t('No open calls yet')}
-                  amount={row.budget ? `₩${row.budget.toLocaleString()}` : '—'}
+                  amount={row.budget ? `${formatUsdcFromKrw(row.budget)} USDC` : '—'}
                   actionLabel={t('View field')}
                   contributorHandles={row.contributorHandles}
                   contributorLabel={t('recorded contributors')}

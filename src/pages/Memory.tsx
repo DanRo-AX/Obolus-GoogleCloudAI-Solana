@@ -6,6 +6,7 @@ import {
   Flame,
   Loader2,
   Lock,
+  Plus,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -41,8 +42,14 @@ import {
   YEAR_BANDS,
 } from '@/data/onboarding'
 import { useT } from '@/i18n'
-import { exportAccount, setMemoryLocked, withdrawPrepaidBalance } from '@/lib/api'
+import {
+  exportAccount,
+  getPrepaidBalance,
+  setMemoryLocked,
+  withdrawPrepaidBalance,
+} from '@/lib/api'
 import { deterministicAvatar, type AvatarConfig } from '@/lib/avatar'
+import { formatUsdc, formatUsdcFromKrw, formatUsdcShort } from '@/lib/usdc'
 import { cn } from '@/lib/utils'
 import { ArchivePanel } from '@/pages/Archive'
 import { TransactionsPanel } from '@/pages/Transactions'
@@ -61,6 +68,11 @@ import { getPhantom, shortKey, useDevnetUsdcBalance, useWallet } from '@/state/w
  * still reachable on its own at /transactions). Folding them here means one
  * my-page instead of four sidebar entries for the same account.
  */
+/** Whole-USDC top-up steps offered by the 충전하기 control (min 1 USDC). */
+const TOP_UP_STEPS_USDC = [1, 5, 10, 25] as const
+/** Below this prepaid balance we surge the "충전하시겠어요?" prompt (1 USDC). */
+const LOW_BALANCE_ATOMIC = 1_000_000
+
 export default function Memory() {
   const {
     memory,
@@ -90,6 +102,8 @@ export default function Memory() {
   const [lockingId, setLockingId] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
   const [memoryActionError, setMemoryActionError] = useState<string | null>(null)
+  /** USDC prepaid pot (`prepaid_accounts.available_atomic`), null while unknown. */
+  const [prepaidAtomic, setPrepaidAtomic] = useState<string | null>(null)
 
   const toggleMemoryLock = async (memoryId: string, locked: boolean) => {
     setLockingId(memoryId)
@@ -303,6 +317,18 @@ export default function Memory() {
     if (!authReady || !account) return
     void refreshLedger().catch(() => undefined)
   }, [account, authReady, refreshLedger])
+
+  /**
+   * The USDC prepaid pot is read on its own — `GET /api/v1/prepaid/balance`
+   * only resolves once a Phantom wallet is linked, so a failure here just
+   * leaves the balance unknown (the top-up control still renders).
+   */
+  useEffect(() => {
+    if (!authReady || !account) return
+    void getPrepaidBalance()
+      .then((b) => setPrepaidAtomic(b.availableAtomic))
+      .catch(() => setPrepaidAtomic(null))
+  }, [account, authReady])
 
   const shelves = useMemo(() => {
     const map = new Map<string, number>()
@@ -572,7 +598,7 @@ export default function Memory() {
           <div className="mt-8 space-y-10">
             <section className="grid items-center gap-10 border-b border-border/70 pb-10 lg:grid-cols-[minmax(340px,520px)_1fr] lg:gap-16">
               <AuroraCreditCard
-                amount={`₩${total.toLocaleString()}`}
+                amount={`${earnings?.accruedAtomic ? formatUsdcShort(earnings.accruedAtomic) : formatUsdcFromKrw(total)} USDC`}
                 label={t('Earned to date')}
                 handle={profile?.handle ?? account.id}
                 wallet={profile?.wallet ? shortKey(profile.wallet) : t('payout wallet not set')}
@@ -614,12 +640,12 @@ export default function Memory() {
                     icon={<Coins className="size-3.5" />}
                     label={t('Settlements')}
                     value={`${earnings?.eventCount ?? settled.length}`}
-                    sub={earnings?.heldKrw ? `₩${earnings.heldKrw.toLocaleString()}${t(' held 14 days')}` : t('No payout is held')}
+                    sub={earnings?.heldAtomic && earnings.heldAtomic !== '0' ? `${formatUsdc(earnings.heldAtomic)} USDC${t(' held 14 days')}` : t('No payout is held')}
                   />
                   <Stat
                     icon={<Sparkles className="size-3.5" />}
                     label={t('Auto-match')}
-                    value={`₩${autoEarned.toLocaleString()}`}
+                    value={`${formatUsdcFromKrw(autoEarned)} USDC`}
                     sub={`${total ? Math.round((autoEarned / total) * 100) : 0}%${t(' of your earnings')}`}
                   />
                   <Stat
@@ -633,11 +659,11 @@ export default function Memory() {
                 {balance || profile ? (
                   <div className="divide-y divide-border/60">
                   {balance ? (
-                    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 py-4 text-xs text-muted-foreground">
-                      <span>{t('Off-chain call credit')} <strong className="text-foreground">₩{balance.availableKrw.toLocaleString()}</strong></span>
-                      <span>{t('Reserved')} <strong className="text-foreground">₩{balance.reservedKrw.toLocaleString()}</strong></span>
-                      <span>{t('Held 14 days')} <strong className="text-foreground">₩{balance.heldKrw.toLocaleString()}</strong></span>
-                      {balance.availableKrw > 0 && profile?.walletVerified ? (
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                      <span>{t('Call credit')} <strong className="text-foreground">{formatUsdc(balance.availableAtomic)} USDC</strong></span>
+                      <span>{t('Reserved')} <strong className="text-foreground">{formatUsdc(balance.reservedAtomic)} USDC</strong></span>
+                      <span>{t('Held 14 days')} <strong className="text-foreground">{formatUsdc(balance.heldAtomic)} USDC</strong></span>
+                      {Number(balance.availableAtomic) > 0 && profile?.walletVerified ? (
                         <Button
                           variant="monoMuted"
                           size="monoSm"
@@ -716,10 +742,13 @@ export default function Memory() {
 
             {earnings?.claimableKrw ? (
               <Banner tone="teal" className="px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                {t('Claimable escrow')} <strong className="text-foreground">₩{earnings.claimableKrw.toLocaleString()}</strong>
-                {' · '}{t('claim it and USDC lands in the wallet recorded at each open. Not part of the sandbox balance.')}
+                {t('Claimable escrow')} <strong className="text-foreground">{formatUsdc(earnings.claimableAtomic)} USDC</strong>
+                {' · '}{t('claim it and USDC lands in the wallet recorded at each open. Not part of your prepaid balance.')}
               </Banner>
             ) : null}
+
+            <PrepaidTopUp prepaidAtomic={prepaidAtomic} onToppedUp={setPrepaidAtomic} />
+
 
             {walletError ? (
               <p className="text-sm text-destructive">{walletError}</p>
@@ -833,7 +862,7 @@ export default function Memory() {
                         )
                       ) : null}
                       <span className="ml-auto font-mono text-xs tabular-nums text-[#0F766E]">
-                        +₩{event.amountKrw.toLocaleString()}
+                        +{formatUsdc(event.payoutAmountAtomic ?? event.amountAtomic)} USDC
                       </span>
                     </li>
                   ))}
@@ -852,7 +881,7 @@ export default function Memory() {
                     {t('Nothing on your shelf yet')}
                   </h2>
                   <p className="max-w-[320px] text-sm leading-relaxed text-muted-foreground">
-                    {t('Answer one open call and it lands here as a document. Every open after that pays you ₩5 to ₩20, and we never touch it.')}
+                    {t('Answer one open call and it lands here as a document. Every open after that pays you a little USDC, and we never touch it.')}
                   </p>
                   <Button asChild variant="mono" size="mono" className="mt-2">
                     <Link to="/dashboard">{t('Browse open calls')}</Link>
@@ -915,7 +944,7 @@ export default function Memory() {
                                   : 'text-[#0F766E]',
                               )}
                             >
-                              +₩{m.earned.toLocaleString()}
+                              +{formatUsdcFromKrw(m.earned)} USDC
                             </span>
                             {m.status !== 'voided' &&
                             m.memoryType !== 'reflection' &&
@@ -1122,6 +1151,91 @@ function MemoryTab({
     >
       {children}
     </button>
+  )
+}
+
+/**
+ * 충전하기 — top up the USDC prepaid pot in whole-USDC steps. The button drives
+ * the public standalone rail: prepare a top-up on the payment gateway, sign the
+ * exact USDC transfer to BUNDLE_RECEIVER with Phantom, and the gateway credits
+ * the prepaid balance through the internal deposit route only after it confirms
+ * the transfer on-chain. The low-balance prompt keys off the prepaid balance.
+ */
+function PrepaidTopUp({
+  prepaidAtomic,
+  onToppedUp,
+}: {
+  prepaidAtomic: string | null
+  onToppedUp: (availableAtomic: string) => void
+}) {
+  const t = useT()
+  const [amount, setAmount] = useState<number>(5)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const known = prepaidAtomic != null
+  const low = known && Number(prepaidAtomic) < LOW_BALANCE_ATOMIC
+  const balanceLabel = known ? `${formatUsdcShort(prepaidAtomic) ?? '0.00'} USDC` : '—'
+
+  const submit = async () => {
+    if (busy || amount < 1) return
+    setBusy(true)
+    setError(null)
+    try {
+      const { topUpPrepaid } = await import('@/lib/x402')
+      const { availableAtomic } = await topUpPrepaid(amount)
+      onToppedUp(availableAtomic)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="overflow-hidden rounded-[6px] border border-border/70 bg-card">
+      {low ? (
+        <div className="flex flex-wrap items-center gap-2 border-b border-border/60 bg-amber-500/[0.06] px-4 py-2.5">
+          <span className="font-mono text-[10px] uppercase tracking-[1px] text-amber-700">
+            {t('Top up your balance?')}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {t('Your prepaid USDC is running low. Add funds so opens and Pay.sh settlements never stall.')}
+          </span>
+        </div>
+      ) : null}
+      <div className="flex flex-col gap-3 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+            <Wallet className="size-3.5" />
+            {t('Top up prepaid USDC')}
+          </span>
+          <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+            {t('Prepaid balance')} <strong className="text-foreground">{balanceLabel}</strong>
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {TOP_UP_STEPS_USDC.map((step) => (
+            <Chip key={step} active={amount === step} onClick={() => setAmount(step)}>
+              {step} USDC
+            </Chip>
+          ))}
+          <Button
+            variant="mono"
+            size="monoSm"
+            className="ml-auto"
+            disabled={busy || amount < 1}
+            aria-label={t('Top up')}
+            onClick={submit}
+          >
+            <Plus className="size-3" />
+            {busy ? t('Topping up…') : `${t('Top up')} · ${amount} USDC`}
+          </Button>
+        </div>
+        {error ? (
+          <p className="text-xs leading-relaxed text-destructive">{error}</p>
+        ) : null}
+      </div>
+    </div>
   )
 }
 

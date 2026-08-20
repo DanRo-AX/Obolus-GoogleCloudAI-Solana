@@ -136,13 +136,61 @@ export function exactResearchBundleQuote(options: {
   return canonical as unknown as ExactResearchBundleQuote
 }
 
+export type ExactTopUpQuote = ExactBrowserQuote & {
+  expiresAt: number
+  status: string
+  resourcePath: string
+}
+
+/**
+ * Validate the gateway's standalone top-up quote before it is used to pin a
+ * wallet approval. A standalone top-up has no research context, so unlike the
+ * bundle quote there is no canonical Rust quote to cross-check; the gateway is
+ * the source of truth for the amount and receiver, and the browser only accepts
+ * a well-formed, unexpired, exact-payable quote whose resource path matches its
+ * id (so the paid GET cannot be redirected to another resource).
+ */
+export function exactTopUpQuote(gatewayQuote: unknown): ExactTopUpQuote {
+  const quote = gatewayQuote as Record<string, unknown> | null
+  if (
+    !quote
+    || typeof quote.id !== 'string'
+    || !quote.id
+    || typeof quote.payTo !== 'string'
+    || !quote.payTo
+    || typeof quote.network !== 'string'
+    || !quote.network
+    || typeof quote.asset !== 'string'
+    || !quote.asset
+    || typeof quote.amountAtomic !== 'string'
+    || !/^[1-9][0-9]*$/.test(quote.amountAtomic)
+    || typeof quote.resourcePath !== 'string'
+    || quote.resourcePath !== `/api/v1/paid-top-ups/${quote.id}`
+    || quote.status !== 'quoted'
+    || !Number.isSafeInteger(quote.expiresAt)
+    || (quote.expiresAt as number) <= Date.now()
+  ) {
+    throw new Error('The prepaid top-up quote is malformed.')
+  }
+  return {
+    id: quote.id,
+    network: quote.network,
+    asset: quote.asset,
+    amountAtomic: quote.amountAtomic,
+    payTo: quote.payTo,
+    expiresAt: quote.expiresAt as number,
+    status: quote.status,
+    resourcePath: quote.resourcePath,
+  }
+}
+
 /**
  * Pin the wallet approval to the quote already committed by the Rust ledger.
  * A compromised gateway response must not be able to raise the amount, swap
  * the mint, redirect the recipient, or detach recovery from the quote memo.
  */
 export function exactQuotePaymentPolicy(
-  kind: 'bundle' | 'open_call',
+  kind: 'bundle' | 'open_call' | 'topup',
   quote: ExactBrowserQuote,
 ): (_version: number, requirements: BrowserPaymentRequirement[]) => BrowserPaymentRequirement[] {
   if (

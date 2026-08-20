@@ -195,13 +195,22 @@ impl Resolver {
         let open_call = (decision == Decision::Miss).then(|| {
             let suggested_unit_price_krw = suggested_price(&matches);
             let answers_needed = request.requested_documents.saturating_sub(matches.len());
+            let suggested_budget_krw = suggested_unit_price_krw * answers_needed as u64;
             OpenCallDraft {
                 question: question.clone(),
                 target_answers: request.requested_documents,
                 existing_matches: matches.len(),
                 answers_needed,
                 suggested_unit_price_krw,
-                suggested_budget_krw: suggested_unit_price_krw * answers_needed as u64,
+                suggested_budget_krw,
+                suggested_unit_price_atomic: crate::store::krw_to_atomic_pinned(
+                    suggested_unit_price_krw,
+                )
+                .unwrap_or(0)
+                .to_string(),
+                suggested_budget_atomic: crate::store::krw_to_atomic_pinned(suggested_budget_krw)
+                    .unwrap_or(0)
+                    .to_string(),
             }
         });
 
