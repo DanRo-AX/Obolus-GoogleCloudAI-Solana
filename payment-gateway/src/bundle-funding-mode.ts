@@ -28,7 +28,16 @@ export function bundleFundingMode(input: {
       "Choose either a prepaid wallet session or the agent-direct protocol, not both.",
     );
   }
-  if (walletSession) return { kind: "prepaid", walletSession };
+  if (walletSession) {
+    if (input.topUpAtomic !== undefined) {
+      throw new BundleFundingModeError(
+        400,
+        "automatic_top_up_forbidden",
+        "Document opens spend existing prepaid USDC only. Top up explicitly before retrying.",
+      );
+    }
+    return { kind: "prepaid", walletSession };
+  }
   if (!agentProtocol) {
     throw new BundleFundingModeError(
       401,

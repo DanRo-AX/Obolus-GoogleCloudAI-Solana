@@ -34,7 +34,11 @@ test("the real gateway process routes an explicit agent bundle without a browser
       response.end('{"status":"ready"}');
       return;
     }
-    if (request.url === "/internal/v1/agent-payment-bundles" && request.method === "POST") {
+    if (
+      (request.url === "/internal/v1/agent-payment-bundles" ||
+        request.url === "/internal/v1/payment-bundles") &&
+      request.method === "POST"
+    ) {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       internalRequest = {
@@ -138,6 +142,31 @@ test("the real gateway process routes an explicit agent bundle without a browser
       queryId: "query_process_contract",
       handles: ["HUMAN_A", "HUMAN_B"],
       expectedInvoiceHash: "b".repeat(64),
+    },
+  });
+
+  internalRequest = null;
+  const prepaidFromCookie = await fetch(`${gatewayOrigin}/api/v1/payment-bundles`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-openshelf-query-token": "query-secret",
+      cookie: "unrelated=value; openshelf_prepaid_session=cookie-wallet-session",
+    },
+    body: JSON.stringify({
+      queryId: "query_process_contract",
+      handles: ["HUMAN_A", "HUMAN_B"],
+    }),
+  });
+  assert.equal(prepaidFromCookie.status, 201, await prepaidFromCookie.text());
+  assert.deepEqual(internalRequest, {
+    path: "/internal/v1/payment-bundles",
+    queryToken: "query-secret",
+    walletSession: "cookie-wallet-session",
+    protocol: "exact-chain-v1",
+    body: {
+      queryId: "query_process_contract",
+      handles: ["HUMAN_A", "HUMAN_B"],
     },
   });
 

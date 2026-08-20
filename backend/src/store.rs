@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     path::Path,
     sync::{Arc, Mutex, MutexGuard},
     time::Duration,
@@ -2832,6 +2832,33 @@ impl Store {
             citations.push(citation);
         }
         Ok((question, citations))
+    }
+
+    /// Resolve the contributor identity that owns each paid document. This is
+    /// intentionally metadata-only and is called only after `opened_evidence`
+    /// has proved settlement. It lets the model keep one contributor database
+    /// as one bounded persona even when several records share a topic.
+    pub fn persona_databases_for_documents(
+        &self,
+        handles: &[String],
+    ) -> Result<BTreeMap<String, String>, StoreError> {
+        let connection = self.connection()?;
+        let mut personas = BTreeMap::new();
+        for handle in handles {
+            let persona = connection
+                .query_row(
+                    "SELECT COALESCE(NULLIF(TRIM(p.handle), ''), d.handle)
+                     FROM documents d
+                     LEFT JOIN profiles p ON p.user_id = d.author_id
+                     WHERE d.handle = ?1",
+                    [handle.trim()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .unwrap_or_else(|| handle.clone());
+            personas.insert(handle.clone(), persona);
+        }
+        Ok(personas)
     }
 
     pub fn record_contributions(
@@ -11985,6 +12012,33 @@ impl Store {
             .parse::<u64>()
             .map_err(|_| StoreError::Validation("invalid invoice amount".to_owned()))?;
         let bundle_hash = invoice_preview.invoice.document_bundle_root.clone();
+        // A browser request without `topUpAtomic` is prepaid-only. It can
+        // reserve credit that was explicitly deposited from My Database, but
+        // opening a document must never create a new Phantom transfer request.
+        let prepaid_only_available = if funding_source == BUNDLE_FUNDING_PREPAID
+            && request.top_up_atomic.is_none()
+        {
+            let payer_wallet = payer_wallet.as_deref().ok_or_else(|| {
+                StoreError::Unauthorized(
+                    "prepaid wallet session is required for this funding mode".to_owned(),
+                )
+            })?;
+            let available = prepaid_available(
+                &transaction,
+                payer_wallet,
+                pay_to,
+                policy.network.trim(),
+                policy.asset.trim(),
+            )?;
+            if available < amount_atomic {
+                return Err(StoreError::Conflict(format!(
+                    "prepaid USDC balance is insufficient: {available} atomic available, {amount_atomic} required; top up from My Database and retry"
+                )));
+            }
+            Some(available)
+        } else {
+            None
+        };
         let existing = transaction
             .query_row(
                 "SELECT id, expires_at,
@@ -12026,8 +12080,35 @@ impl Store {
                 },
             )
             .optional()?;
-        let (id, expires_at, status) = if let Some(existing) = existing {
-            existing
+        let (id, expires_at, status) = if let Some((id, expires_at, status)) = existing {
+            // Older browsers could leave a quote waiting for an automatic
+            // refill. Once the explicit prepaid balance is sufficient, reuse
+            // that id as a prepaid reservation instead of requesting payment.
+            if prepaid_only_available.is_some() && status == "quoted" {
+                transaction.execute(
+                    "UPDATE payment_bundle_quotes
+                     SET status = 'funded', deposit_atomic = 0,
+                         minimum_deposit_atomic = 0, settled_at = ?1
+                     WHERE id = ?2 AND status = 'quoted'",
+                    params![as_i64(now)?, id],
+                )?;
+                let payer_wallet = payer_wallet.as_deref().ok_or_else(|| {
+                    StoreError::Conflict("funded prepaid bundle has no payer wallet".to_owned())
+                })?;
+                reserve_prepaid_budget(
+                    &transaction,
+                    payer_wallet,
+                    pay_to,
+                    policy.network.trim(),
+                    policy.asset.trim(),
+                    &id,
+                    amount_atomic,
+                    now,
+                )?;
+                (id, expires_at, "funded".to_owned())
+            } else {
+                (id, expires_at, status)
+            }
         } else {
             let conflicting_funding = transaction
                 .query_row(
@@ -12086,6 +12167,8 @@ impl Store {
                 == BUNDLE_FUNDING_AGENT_DIRECT
             {
                 (amount_atomic, amount_atomic, false)
+            } else if prepaid_only_available.is_some() {
+                (0, 0, true)
             } else {
                 let payer_wallet = payer_wallet.as_deref().ok_or_else(|| {
                     StoreError::Unauthorized(
@@ -23769,6 +23852,28 @@ mod tests {
             )
             .unwrap();
         let wallet_session_hash = super::hex_digest(wallet_session.as_bytes());
+        let prepaid_only = CreatePaymentBundleRequest {
+            query_id: resolved.query_id.clone(),
+            handles: handles.clone(),
+            top_up_atomic: None,
+            expected_invoice_hash: None,
+        };
+        assert!(matches!(
+            store.create_payment_bundle(
+                &prepaid_only,
+                &payment_token_hash,
+                &wallet_session_hash,
+                &policy,
+            ),
+            Err(StoreError::Conflict(_))
+        ));
+        assert_eq!(
+            store
+                .prepaid_balance("prepaid-buyer", &policy)
+                .unwrap()
+                .available_atomic,
+            "0"
+        );
         assert!(matches!(
             store.create_payment_bundle(&create, &"d".repeat(64), &wallet_session_hash, &policy),
             Err(StoreError::Unauthorized(_))

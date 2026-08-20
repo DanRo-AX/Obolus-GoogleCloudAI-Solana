@@ -784,8 +784,8 @@ export default function Dashboard() {
                   ) : null}
 
                   <div className="mt-2 flex min-h-7 flex-wrap items-center gap-x-3 gap-y-2 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                    {order.escrowMode === 'x402_solana_escrow' && !cancelled ? (
-                      <span className="text-[#0F766E]">{t('Devnet USDC escrow')}</span>
+                    {(order.escrowMode === 'prepaid' || order.escrowMode === 'x402_solana_escrow') && !cancelled ? (
+                      <span className="text-[#0F766E]">{t('Prepaid USDC reserved')}</span>
                     ) : null}
                     {cancelled ? (
                       <span className="ml-auto text-muted-foreground">

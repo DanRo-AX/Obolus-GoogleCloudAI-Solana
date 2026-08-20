@@ -330,9 +330,12 @@ curl -i 'http://127.0.0.1:1402/api/v1/paid-documents/QUERY_ID/HANDLE' \
 
 The `PAYMENT-REQUIRED` header contains x402 v2, Solana Devnet CAIP-2, Circle's
 Devnet USDC mint, the exact atomic amount, recipient, and facilitator fee payer.
-The Vite app performs the paid retry through Phantom. The facilitator pays the
-transaction fee; the buyer wallet needs Devnet USDC, and may need Devnet SOL for
-normal wallet setup. One document produces one transfer and one receipt.
+The Vite app opens ordinary documents only from the buyer's existing prepaid
+USDC. Phantom is used by the separate, explicit top-up or withdrawal action; a
+document request never turns an insufficient balance into a wallet transfer.
+The facilitator sponsors transaction fees and the Cloud Run worker settles the
+selected document through Pay.sh. One document produces one transfer and one
+receipt.
 
 `backend/paywall.yml` is a static Pay.sh localnet compatibility example. The
 Devnet application path remains `payment-gateway/src/main.ts`, because recipients

@@ -141,6 +141,10 @@ export const KO: Record<string, string> = {
   'AI bridges a miss; people fill it': '빈틈은 AI가 잇고, 사람이 채웁니다',
   'AI general baseline': 'AI 일반 기준선',
   'Obulus public answer': 'Obulus 공개 정보 답변',
+  'Obulus general answer': 'Obulus 일반 답변',
+  'Grounded persona answer': '개인 DB 페르소나 답변',
+  'paid record': '유료 근거',
+  'paid records': '유료 근거',
   'Free · public sources · not human evidence': '무료 · 공개 출처 · 인간 경험 아님',
   'Public sources': '공개 출처',
   'Answer from public sources first': '공개 정보로 먼저 답변',
@@ -477,7 +481,8 @@ export const KO: Record<string, string> = {
   'firsthand evidence is essential': '실제 경험이 꼭 필요할 때만',
   'USER KEY BOUNDARY': '사용자 키 경계',
   'Bounded funding authority': '한도가 정해진 결제 권한',
-  'Phantom signs only when prepaid credit is low': '선불 잔액이 부족할 때만 Phantom 서명',
+  'Phantom signs only when prepaid credit is low': '내 데이터베이스에서 직접 충전·출금할 때만 Phantom 서명',
+  'Phantom signs only explicit top-ups and withdrawals': '사용자가 직접 시작한 충전·출금에만 Phantom 서명',
   'the server never receives the user private key': '중앙 서버는 사용자 개인키를 받지 않음',
   'HTTP 402 · PAY.SH · CLOUD KMS': 'HTTP 402 · PAY.SH · CLOUD KMS',
   'Verify and settle each document': '선택 문서별 검증과 정산',
@@ -658,7 +663,7 @@ export const KO: Record<string, string> = {
   'One question, end to end': '질문 1건, 처음부터 끝까지',
   'One screen, one question, a few warm-ups first. No forty-question form, no panel to sit on.': '화면 1개, 질문 1개, 앞에 몸 푸는 질문 몇 개. 40문항 설문지 없음, 앉아 있는 패널 없음.',
   'One thing you would have skipped.': '안 해도 됐던 것 하나.',
-  'One-time wallet proof · refill only when low · no delegate permission or browser helper key. Verify Devnet USDC mint': '지갑 증명 1회 · 모자랄 때만 충전 · 위임 권한 없음, 브라우저 보조키 없음. Devnet USDC 민트 확인',
+  'One-time wallet proof · refill only when low · no delegate permission or browser helper key. Verify Devnet USDC mint': '지갑 증명 1회 · 충전은 사용자가 직접 실행 · 위임 권한 없음, 브라우저 보조키 없음. Devnet USDC 민트 확인',
   'Open call': '설문 참여',
   'Open calls': '설문 참여',
   'Open calls in your fields show up first. An asker sees your handle and these bands, nothing else — the passage only after they pay to open it.': '내 분야 설문이 먼저 떠요. 질문자에게는 활동명과 구간만 보여요. 구절은 값을 내고 열어야 보여요.',
@@ -1086,7 +1091,7 @@ export const KO: Record<string, string> = {
   '90% to evidence owners, 10% to the protocol': '근거 소유자 90%, 프로토콜 10%',
   'No SOL required from the buyer': '구매자는 SOL이 필요 없어요',
   'The x402 facilitator sponsors the Devnet network fee. The buyer signs the USDC authorization, not a separate gas transaction.': 'x402 facilitator가 Devnet 네트워크 수수료를 대신 내요. 구매자는 가스 거래 말고 USDC 승인만 서명해요.',
-  'Gas-sponsored Devnet payment · no SOL required · refill only when low · no token delegate. Verify Devnet USDC mint': '가스 지원 Devnet 결제 · SOL 불필요 · 잔액 부족 시에만 충전 · 토큰 위임 없음 · Devnet USDC 민트 확인',
+  'Gas-sponsored Devnet payment · no SOL required · refill only when low · no token delegate. Verify Devnet USDC mint': '가스 지원 Devnet 결제 · SOL 불필요 · 충전은 사용자가 직접 실행 · 토큰 위임 없음 · Devnet USDC 민트 확인',
   'Included in the displayed total': '표시 총액에 포함',
   'Evidence owners': '근거 소유자',
   'Protocol fee': '프로토콜 수수료',
@@ -1236,12 +1241,13 @@ export const KO: Record<string, string> = {
   'Your prepaid USDC is running low. Add funds so opens and Pay.sh settlements never stall.':
     '선불 USDC가 얼마 남지 않았어요. 열람과 Pay.sh 정산이 멈추지 않도록 충전해 두세요.',
   'Top up prepaid USDC': '선불 USDC 충전',
-  'Prepaid balance': '선불 잔액',
+  'Prepaid balance': '내 잔액',
+  'Prepaid USDC reserved': '선불 USDC 예약',
   'Top up': '충전하기',
   'Topping up…': '충전 중…',
   'Coming soon': '준비 중',
   'Standalone top-up is being wired up. For now, your prepaid USDC refills automatically the first time you open a document, and again whenever it runs low.':
-    '단독 충전 기능은 준비 중이에요. 지금은 문서를 처음 열 때, 그리고 잔액이 부족할 때마다 선불 USDC가 자동으로 충전돼요.',
+    '충전은 내 데이터베이스에서만 직접 실행합니다. 문서 열람은 이미 충전된 잔액만 사용하며 Phantom에서 자동 출금하지 않습니다.',
   'Unanswered topics': '미답변 주제',
   'My database': '내 데이터베이스',
   'Obolus searches firsthand human databases instead of averaging the web. Open only the evidence you need in USDC; 90% settles to its owner.':
@@ -1270,7 +1276,15 @@ export const KO: Record<string, string> = {
   'is reserved from your prepaid balance': '가 선불 잔액에서 예약됩니다',
   'Obolus is opening the documents…': 'Obolus가 문서를 여는 중…',
   'The question is reserved against your prepaid balance. Obolus checks each 402 price and recipient, pays the author, and returns only the passages it paid for. Phantom appears only if the balance needs a refill. You can close this tab — the job keeps running.':
-    '질문 예산을 선불 잔액에서 예약했습니다. Obolus가 각 402 가격과 수취인을 확인하고 저자에게 정산한 뒤, 결제가 끝난 구절만 전달합니다. 잔액을 충전할 때만 Phantom이 나타납니다. 탭을 닫아도 작업은 계속됩니다.',
+    '질문 예산을 기존 선불 잔액에서 예약했습니다. Obolus가 각 402 가격과 수취인을 확인하고 저자에게 정산한 뒤, 결제가 끝난 구절만 전달합니다. 이 과정은 Phantom 송금을 요청하지 않으며 탭을 닫아도 계속됩니다.',
+  'That amount is reserved only from your existing prepaid USDC balance. If it is insufficient, top up from My Database and retry; opening documents never pulls funds from Phantom.':
+    '기존 선불 USDC 잔액에서만 금액을 예약합니다. 부족하면 내 데이터베이스에서 직접 충전한 뒤 다시 시도하세요. 문서를 여는 과정에서 Phantom 자금을 가져가지 않습니다.',
+  'Gas-sponsored Devnet settlement · no SOL required · prepaid balance only · no token delegate. Verify Devnet USDC mint':
+    '가스 지원 Devnet 정산 · SOL 불필요 · 선불 잔액만 사용 · 토큰 위임 없음 · Devnet USDC 민트 확인',
+  'The question is reserved against your existing prepaid balance. Obolus checks each 402 price and recipient, pays the author, and returns only the passages it paid for. No wallet transfer is requested while documents open. You can close this tab — the job keeps running.':
+    '기존 선불 잔액에서 질문 예산을 예약했습니다. Obolus가 각 402 가격과 수취인을 확인하고 저자에게 정산한 뒤, 결제가 끝난 구절만 전달합니다. 문서를 여는 동안 지갑 송금을 요청하지 않으며, 탭을 닫아도 작업은 계속됩니다.',
+  'Your Obolus prepaid USDC balance is insufficient. Top up from My Database, then retry; this document open will not charge Phantom.':
+    'Obolus 선불 USDC 잔액이 부족합니다. 내 데이터베이스에서 충전한 뒤 다시 시도하세요. 이 문서 열람은 Phantom에서 출금하지 않습니다.',
   'Obolus could not reach the human databases.': 'Obolus가 사람 데이터베이스에 연결하지 못했습니다.',
   'Free public-model orientation · private human passages stay closed · never enters human ranking':
     '무료 공개 모델 참고 답변 · 비공개 인간 구절은 열리지 않음 · 인간 근거 순위에는 포함되지 않음',

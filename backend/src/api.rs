@@ -1733,10 +1733,14 @@ async fn synthesize_answer(
         &request.handles,
         &token_hash(access_token),
     )?;
+    let persona_databases = state
+        .store
+        .persona_databases_for_documents(&request.handles)?;
     let canonical_request = SynthesizeAnswerRequest {
         query_id: request.query_id.clone(),
         question,
         citations,
+        persona_databases,
     };
     let provider_fence =
         orchestrator::generation_fence_namespace(orchestrator::PAID_SYNTHESIS_POLICY_VERSION);
@@ -1889,11 +1893,6 @@ async fn create_open_call(
     headers: HeaderMap,
     Json(request): Json<CreateOpenCallRequest>,
 ) -> Result<(StatusCode, Json<OpenCall>), ApiError> {
-    if !state.allow_demo_open && request.unit_price > 0 {
-        return Err(ApiError::forbidden(
-            "paid open-call funding is disabled on this endpoint; fund the call through the x402 gateway",
-        ));
-    }
     let user = authenticated(&state, &headers)?;
     let call = state
         .store
@@ -3540,12 +3539,9 @@ fn session_token(headers: &HeaderMap) -> Option<String> {
 }
 
 /// Mirrors session_token's header-or-cookie precedence for the prepaid
-/// wallet session. The explicit header stays supported first because the
-/// payment-gateway service (a separate origin from Rust in local dev, and
-/// outside this fix's Rust + frontend scope) forwards the browser's raw
-/// header value rather than a cookie; the HttpOnly cookie set by
-/// create_prepaid_session is checked as a same-origin fallback for direct
-/// browser-to-Rust calls. See GitHub issue #46.
+/// wallet session. The explicit header stays supported for local cross-origin
+/// gateway development and machine clients. In production the same-origin
+/// proxy forwards the HttpOnly cookie to both the gateway and this Rust API.
 fn prepaid_session_token(headers: &HeaderMap) -> Option<String> {
     if let Some(token) = headers
         .get(PREPAID_SESSION_HEADER)
@@ -5745,7 +5741,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(open_call.status(), StatusCode::FORBIDDEN);
+        // A paid open call is a normal product route even when the old demo
+        // bypass is disabled. It reaches the prepaid ledger and fails with a
+        // funding conflict until the signed-in account explicitly tops up.
+        assert_eq!(open_call.status(), StatusCode::CONFLICT);
 
         let free_call = app
             .oneshot(

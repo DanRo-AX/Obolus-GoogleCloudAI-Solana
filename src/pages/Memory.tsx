@@ -763,7 +763,13 @@ export default function Memory() {
               </Banner>
             ) : null}
 
-            <PrepaidTopUp prepaidAtomic={prepaidAtomic} onToppedUp={setPrepaidAtomic} />
+            <PrepaidTopUp
+              prepaidAtomic={prepaidAtomic}
+              onToppedUp={(availableAtomic) => {
+                setPrepaidAtomic(availableAtomic)
+                void refreshLedger().catch(() => undefined)
+              }}
+            />
 
 
             {walletError ? (

@@ -62,7 +62,9 @@ export function exactResearchBundleQuote(options: {
 }): ExactResearchBundleQuote {
   const gateway = options.gatewayQuote as Record<string, unknown> | null
   const canonical = options.canonicalQuote as Record<string, unknown> | null
-  const preferredTopUp = canonicalAtomic(options.preferredTopUpAtomic, true)
+  // Zero means this browser open explicitly refuses a wallet refill. A legacy
+  // backend quote can still be validated before the caller rejects payment.
+  const preferredTopUp = canonicalAtomic(options.preferredTopUpAtomic, false)
   if (!gateway || !canonical || !preferredTopUp) {
     throw new Error('The research payment quote is malformed.')
   }
