@@ -11462,18 +11462,24 @@ impl Store {
         if owner != user_id {
             // A stale owner row must never lock a wallet's OWN login account out of
             // it. `wallet_identities.wallet` is a 1:1 primary key: the account that
-            // holds it is the one that proved control by signing in *with* the
-            // wallet, and it is the wallet's canonical home. When the caller is that
-            // identity account, the current owner is therefore only a weaker
-            // payout-profile claim, and the prepaid reconcile (#80) surfaced how a
-            // stale such row locks the login account out: #80 zeroed unbacked
-            // balances but left `prepaid_wallet_owners` untouched, so the wallet's
-            // login account now 409s on every top-up even though the ledger holds
-            // nothing. Re-home the wallet to its identity account, but ONLY when
-            // there is no value to protect (available balance 0). This never lets a
-            // mere payout-profile account (no wallet identity) take a wallet from
-            // another account — that boundary (one custodial ledger per wallet)
-            // stays intact — and a funded wallet always keeps the hard conflict.
+            // holds it proved control by signing in *with* the wallet (a fresh
+            // challenge signed by the wallet's private key), so it is the wallet's
+            // canonical home. A divergent `prepaid_wallet_owners` row is a stale,
+            // weaker claim — an earlier account or a payout-profile. The prepaid
+            // reconcile (#80) surfaced this: it zeroed unbacked balances but left
+            // `prepaid_wallet_owners` untouched, so a wallet's login account 409s on
+            // every top-up. Re-home the wallet to its identity account.
+            //
+            // This holds even when the ledger is FUNDED: the identity holder controls
+            // the private key those on-chain deposits were signed with, so handing
+            // them the custodial ledger opens no theft surface a key-holder does not
+            // already have on-chain (they can move the funds directly on Solana). The
+            // earlier `available == 0` gate was too narrow — it locked identity
+            // holders out of their OWN funded ledgers (live 충전 409: wallet HZykq…
+            // held 3 USDC while its owner row pointed at a no-claim account). The
+            // preserved boundary: a mere payout-profile account (no wallet identity)
+            // still cannot take a wallet from another account, so one custodial ledger
+            // per wallet stays intact.
             let caller_holds_identity = transaction
                 .query_row(
                     "SELECT 1 FROM wallet_identities WHERE user_id = ?1 AND wallet = ?2",
@@ -11482,22 +11488,14 @@ impl Store {
                 )
                 .optional()?
                 .is_some();
-            let available_atomic = prepaid_available(
-                &transaction,
-                wallet,
-                pay_to,
-                policy.network.trim(),
-                policy.asset.trim(),
-            )?;
-            if !caller_holds_identity || available_atomic != 0 {
+            if !caller_holds_identity {
                 return Err(StoreError::Conflict(
                     "this wallet already owns prepaid value for another account".to_owned(),
                 ));
             }
-            // Drop the displaced account's session rows for this wallet (all
-            // spend-nothing on a zero balance) so the boot readiness invariant
-            // (`backfill_prepaid_wallet_owners`) never sees the wallet as owned by
-            // multiple users after the re-home.
+            // Drop the displaced account's session rows for this wallet so the boot
+            // readiness invariant (`backfill_prepaid_wallet_owners`) never sees the
+            // wallet as owned by multiple users after the re-home.
             transaction.execute(
                 "DELETE FROM prepaid_wallet_sessions WHERE wallet = ?1 AND user_id <> ?2",
                 params![wallet, user_id],
@@ -22333,11 +22331,13 @@ mod tests {
         store.migrate().unwrap();
     }
 
-    /// The re-home is gated on there being nothing to protect: a wallet that
-    /// still holds real on-chain-backed prepaid value keeps the hard conflict so
-    /// value is never silently moved across accounts.
+    /// The identity holder is the wallet's canonical owner even when the ledger is
+    /// FUNDED. A stale `prepaid_wallet_owners` row (an earlier account) pointing
+    /// elsewhere must not lock the proven signer out of their own deposited value —
+    /// this is the live 충전 409 on a wallet that held real USDC. Re-home to the
+    /// signer and preserve the balance.
     #[test]
-    fn funded_prepaid_wallet_never_rehomes_across_accounts() {
+    fn identity_holder_reclaims_a_funded_wallet_from_a_stale_owner() {
         let store = Store::in_memory().unwrap();
         let stale_owner = "funded-stale-owner";
         let returning = "funded-returning";
@@ -22350,7 +22350,9 @@ mod tests {
             .into_string();
         let policy = prepaid_test_policy(receiver.clone());
 
+        // The returning signer controls the wallet (a 1:1 wallet identity) ...
         store.bind_wallet_identity(returning, &wallet).unwrap();
+        // ... but an earlier account owns the funded ledger.
         {
             let connection = store.connection().unwrap();
             connection
@@ -22371,9 +22373,79 @@ mod tests {
                 .unwrap();
         }
 
+        let session = store
+            .issue_prepaid_wallet_session(returning, &wallet, &"f".repeat(64), 300_000, &policy)
+            .unwrap();
+        assert_eq!(
+            session.available_atomic, "5000000",
+            "the deposited balance is preserved through the re-home"
+        );
+
+        let connection = store.connection().unwrap();
+        let owner: String = connection
+            .query_row(
+                "SELECT user_id FROM prepaid_wallet_owners WHERE wallet = ?1",
+                [&wallet],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(owner, returning, "ownership re-homed to the proven signer");
+        drop(connection);
+        store.migrate().unwrap();
+    }
+
+    /// The re-home is gated on holding the wallet's 1:1 identity. An account with
+    /// only a verified payout profile (no wallet identity) still cannot seize a
+    /// funded wallet from its owner — one custodial ledger per wallet stays intact.
+    #[test]
+    fn a_verified_profile_without_identity_cannot_take_a_funded_wallet() {
+        let store = Store::in_memory().unwrap();
+        let owner = "canonical-funded-owner";
+        let intruder = "verified-profile-intruder";
+        ensure_user(&store, owner);
+        onboard(&store, intruder);
+
+        let wallet = bs58::encode(SigningKey::from_bytes(&[97; 32]).verifying_key().as_bytes())
+            .into_string();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[98; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = prepaid_test_policy(receiver.clone());
+
+        // The wallet's 1:1 identity + owner both belong to `owner`; the ledger is funded.
+        store.bind_wallet_identity(owner, &wallet).unwrap();
+        {
+            let connection = store.connection().unwrap();
+            connection
+                .execute(
+                    "INSERT INTO prepaid_wallet_owners (wallet, user_id, created_at)
+                     VALUES (?1, ?2, 1)",
+                    params![wallet, owner],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO prepaid_accounts
+                     (wallet, pay_to, network, asset, available_atomic,
+                      total_deposited_atomic, updated_at, created_at)
+                     VALUES (?1, ?2, ?3, ?4, 5000000, 5000000, 1, 1)",
+                    params![wallet, receiver, policy.network, policy.asset],
+                )
+                .unwrap();
+            // The intruder holds only a verified payout profile for the wallet — no
+            // wallet identity — enough to pass the spend-eligibility check but not to
+            // claim the ledger.
+            connection
+                .execute(
+                    "UPDATE profiles SET wallet = ?2, wallet_verified_at = 1
+                     WHERE user_id = ?1",
+                    params![intruder, wallet],
+                )
+                .unwrap();
+        }
+
         assert!(matches!(
             store.issue_prepaid_wallet_session(
-                returning,
+                intruder,
                 &wallet,
                 &"f".repeat(64),
                 300_000,
