@@ -49,7 +49,7 @@ import {
   withdrawPrepaidBalance,
 } from '@/lib/api'
 import { deterministicAvatar, type AvatarConfig } from '@/lib/avatar'
-import { formatUsdc, formatUsdcFromKrw, formatUsdcShort } from '@/lib/usdc'
+import { formatUsdc, formatUsdcFromKrw, formatUsdcShort, parseUsdcAtomic } from '@/lib/usdc'
 import { cn } from '@/lib/utils'
 import { ArchivePanel } from '@/pages/Archive'
 import { TransactionsPanel } from '@/pages/Transactions'
@@ -303,6 +303,22 @@ export default function Memory() {
   const settled = memory.filter((m) => m.status !== 'voided')
   const total =
     earnings?.accruedKrw ?? settled.reduce((sum, entry) => sum + entry.earned, 0)
+  /**
+   * Headline balance card figure: prepaid available balance + accrued
+   * earnings, combined as exact atomic USDC (both are independent 6-decimal
+   * ledgers, so add them as bigints rather than floats). `null` only when
+   * neither atomic field has loaded yet, so the legacy KRW-derived `total`
+   * fallback below still covers the case where atomic data is entirely
+   * absent.
+   */
+  const headlineAtomicUsdc =
+    balance?.availableAtomic != null || earnings?.accruedAtomic != null
+      ? formatUsdcShort(
+          (
+            parseUsdcAtomic(balance?.availableAtomic) + parseUsdcAtomic(earnings?.accruedAtomic)
+          ).toString(),
+        )
+      : null
   const answeredViaAutoMatch = settled
     .filter((m) => m.via === 'Auto-match')
     .reduce((s, m) => s + m.earned, 0)
@@ -598,7 +614,7 @@ export default function Memory() {
           <div className="mt-8 space-y-10">
             <section className="grid items-center gap-10 border-b border-border/70 pb-10 lg:grid-cols-[minmax(340px,520px)_1fr] lg:gap-16">
               <AuroraCreditCard
-                amount={`${earnings?.accruedAtomic ? formatUsdcShort(earnings.accruedAtomic) : formatUsdcFromKrw(total)} USDC`}
+                amount={`${headlineAtomicUsdc ?? formatUsdcFromKrw(total)} USDC`}
                 label={t('Earned to date')}
                 handle={profile?.handle ?? account.id}
                 wallet={profile?.wallet ? shortKey(profile.wallet) : t('payout wallet not set')}
