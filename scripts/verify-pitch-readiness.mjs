@@ -4,7 +4,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const deckPath = join(root, 'docs', 'obulus-pitch-deck.html')
+const deckPath = join(root, 'docs', 'obulus-pitch-deck-white.html')
 const runbookPath = join(root, 'docs', 'FINAL-PITCH-RUNBOOK.ko.md')
 const infraPath = join(root, 'artifacts', 'finalist-evidence', 'infrastructure.json')
 const autonomyPath = join(root, 'artifacts', 'finalist-evidence', 'autonomy.json')
@@ -20,31 +20,38 @@ function check(id, passed, detail) {
   checks.push({ id, passed: Boolean(passed), detail })
 }
 
-const slidePattern = /<section class="slide-shell" data-title="([^"]+)"([^>]*)>/g
-const slides = [...deck.matchAll(slidePattern)].map((match) => ({
-  title: match[1],
-  final: /\bdata-final\b/.test(match[2]),
-}))
+const slidePattern = /<section class="shell" data-title="([^"]+)"([^>]*)>/g
+const slides = [...deck.matchAll(slidePattern)].map((match) => ({ title: match[1] }))
 const titles = slides.map((slide) => slide.title)
-const finalTitles = slides.filter((slide) => slide.final).map((slide) => slide.title)
-const expectedFinalTitles = [
+const mainTitles = titles.slice(0, 7)
+const expectedTitles = [
   '표지',
-  'AI가 모르는 인간 데이터',
-  '제품 해결책',
-  'Gemini와 Google Cloud',
-  '유료 URL과 결제',
+  '문제와 타깃',
+  '제품 루프',
+  '결제와 청구서',
+  '메모리와 PageRank',
   '전체 아키텍처',
-  '목표 고객과 진입 시장',
-  '증거와 비전',
+  '진입 시장과 비전',
+  'Appendix · 개인 DB 페르소나',
+  'Appendix · 결제 권한과 보안',
+  'Appendix · Coverage policy',
+  'Appendix · 검색 수식',
+  'Appendix · 메모리 추상화',
+  'Appendix · 스팸과 담합',
+  'Appendix · GCP 운영 증거',
+  'Appendix · 개인정보와 중앙서버',
+  'Appendix · 콜드 스타트',
+  'Appendix · 실제 배포 아키텍처',
 ]
 
-check('deck.slide-count', slides.length === 20, `expected 20, found ${slides.length}`)
+check('deck.slide-count', slides.length === 17, `expected 17, found ${slides.length}`)
 check('deck.unique-titles', new Set(titles).size === titles.length, `${new Set(titles).size}/${titles.length} unique`)
 check(
-  'deck.final-route',
-  JSON.stringify(finalTitles) === JSON.stringify(expectedFinalTitles),
-  `found ${finalTitles.join(' -> ')}`,
+  'deck.canonical-route',
+  JSON.stringify(titles) === JSON.stringify(expectedTitles),
+  `found ${titles.join(' -> ')}`,
 )
+check('deck.main-route', mainTitles.length === 7, `found ${mainTitles.length} main slides`)
 
 const staleClaims = [
   '기준 시점 90개 테스트',
@@ -58,37 +65,29 @@ for (const phrase of staleClaims) {
   check(`deck.no-stale:${phrase}`, !deck.includes(phrase), phrase)
 }
 
-for (const phrase of [
-  '총 435개 테스트',
-  'summary.ready',
-  'id="infraProofStatus"',
-  'id="autonomyProofStatus"',
-  'id="devnetProofStatus"',
-  'id="liveProofStatus"',
+for (const [claim, marker] of [
+  ['problem', '$142B'],
+  ['human-evidence', '공개 웹에 없는 인간 근거'],
+  ['product-loop', '없는 질문만 Open Call로 공고'],
+  ['prepaid-only', 'Phantom에서 매번 출금하지 않고'],
+  ['gasless-receipt', '가스비는 Facilitator가 내고 기록은 청구서로 남습니다'],
+  ['pagerank', 'Obolus의 Page Rank 알고리즘'],
+  ['persona', '에이전트 페르소나가 대답합니다'],
+  ['gemini-boundary', '개인키·수취인·가격·transaction bytes에는 접근하지 못합니다'],
+  ['rust-boundary', '동의 범위·예산·중복·수취인·mint·금액·PageRank 입력·finality'],
+  ['gcp-proof', '77 / 77 checks passed'],
+  ['solana-proof', '2 RPC finalized'],
+  ['cold-start', '콜드 스타트 Problem'],
 ]) {
-  check(`deck.required-proof:${phrase}`, deck.includes(phrase), phrase)
+  check(`deck.required:${claim}`, deck.includes(marker), marker)
 }
 
-for (const [diagram, marker] of [
-  ['D0', '질문부터 인간 근거 검색과 결제까지의 Obolus 미니 파이프라인'],
-  ['D1', '기업의 반복 조사 비용이 발생하는 현재 파이프라인'],
-  ['D2', '기존 근거의 커버리지에 따라 구매, 부분 조사, 공개 모집으로 분기하는 Obolus 제품 루프'],
-  ['D3', 'Vertex 함수 호출 두 번과 Rust 결정론적 도구 실행으로 구성된 에이전트 제어 루프'],
-  ['D4', 'Obolus x402와 Pay.sh 결제 시퀀스'],
-  ['D5+D6', 'data-includes-diagrams="D5 D6"'],
-  ['D7', 'Obolus 전체 기술 아키텍처와 Personalized PageRank, 신뢰 경계'],
-  ['D8', '제품, 기술, 자동화, 운영 증거를 연결한 발표 검증 지도'],
-  ['D9', '기업, 기관, 개인별 Obolus 도입 시나리오'],
-]) {
-  check(`deck.diagram:${diagram}`, deck.includes(marker), marker)
-}
-
-for (const token of ['id="modeBtn"', "event.key === '6'", "event.key.toLowerCase() === 'b'", "new URLSearchParams(window.location.search).get('mode')"]) {
+for (const token of ['id="prev"', 'id="next"', 'window.print()', "['ArrowRight','PageDown',' ']"]) {
   check(`deck.presenter-control:${token}`, deck.includes(token), token)
 }
 
 const assetRefs = new Set(
-  [...deck.matchAll(/(?:src=|url\()["']?((?:pitch-deck-assets|assets)\/[^"')\s]+)/g)].map((match) => match[1]),
+  [...deck.matchAll(/(?:src=|url\()["']?((?:pitch-final-assets|pitch-deck-assets|assets)\/[^"')\s]+)/g)].map((match) => match[1]),
 )
 for (const assetRef of assetRefs) {
   check(`deck.asset:${assetRef}`, existsSync(join(dirname(deckPath), assetRef)), assetRef)
@@ -103,19 +102,21 @@ try {
       timeout: 10_000,
     }),
   )
-  check('deck.marketplace-tool-count', marketplaceTools.length === 24, `runtime exposes ${marketplaceTools.length}`)
-  check('deck.marketplace-tool-copy', deck.includes('24개 마켓플레이스 도구') && deck.includes('24 MARKETPLACE ACTIONS'), 'deck says 24')
+  check('runtime.marketplace-tool-count', marketplaceTools.length === 24, `runtime exposes ${marketplaceTools.length}`)
 } catch (error) {
-  check('deck.marketplace-tool-count', false, error instanceof Error ? error.message : String(error))
+  check('runtime.marketplace-tool-count', false, error instanceof Error ? error.message : String(error))
 }
 
 for (const phrase of [
-  '0:00–0:20',
-  '1:08–2:38',
+  '0:00–0:22',
+  '1:32–3:02',
   '5분 45초',
-  '12초 넘게',
-  '세 evidence JSON이 최신 schema와 revision 상관관계를 통과',
-  '검색·허가·결제 가능하게 만듭니다',
+  '12초 중단 규칙',
+  '일반 Gemini 답변',
+  'Grounded persona answer',
+  'AI 기술 자율성 30%',
+  'GCP 확장성 15%',
+  'Solana 결제 15%',
 ]) {
   check(`runbook.required:${phrase}`, runbook.includes(phrase), phrase)
 }
@@ -165,7 +166,7 @@ if (requireLive) {
     probe('/x402/readyz', 'application/json'),
   ])
   check('published.app', app.ready, app.detail)
-  check('published.deck', deck.ready && deck.text?.includes('총 435개 테스트'), deck.detail)
+  check('published.deck', deck.ready && deck.text?.includes('공개 웹에 없는 인간 근거'), deck.detail)
   check('published.api-proxy', api.ready && Array.isArray(api.body), api.detail)
   check('published.gateway-ready', gateway.ready && gateway.body?.status === 'ready', gateway.detail)
 }
@@ -176,7 +177,7 @@ const report = {
   liveReady,
   requireLive,
   slides: slides.length,
-  finalSlides: finalTitles.length,
+  finalSlides: mainTitles.length,
   assets: assetRefs.size,
   marketplaceTools: marketplaceTools.length,
   liveEvidence: liveEvidence.map(({ value: _value, ...item }) => item),

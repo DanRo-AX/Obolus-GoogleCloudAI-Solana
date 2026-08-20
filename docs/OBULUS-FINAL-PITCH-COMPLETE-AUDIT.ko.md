@@ -1,15 +1,15 @@
 # Obulus 결선 발표 완전 감사·5분 대본·시연·Q&A 통합 문서
 
-> 기준일: 2026-08-20 KST<br>
+> 기준일: 2026-08-21 KST<br>
 > 감사 대상: `/Users/yuchanlee/Downloads/Obolus___인간_경험을_위한_유료_검색_인프라_20260819202854.pdf`<br>
 > 목적: 처음 보는 심사위원이 5분 안에 문제·제품·AI 자율성·GCP·Solana 결제·비즈니스 가치를 이해하고, 이어지는 시연에서 실제 구현을 믿게 만드는 단일 기준 문서<br>
 > 원칙: **현재 구현, 해커톤 데모 정책, 상용화 로드맵을 절대 섞지 않는다.**
 > 다이어그램 정본: [`OBULUS-PITCH-DIAGRAM-BRIEF.ko.md`](OBULUS-PITCH-DIAGRAM-BRIEF.ko.md) — D0~D9의 노드·화살표·범례·Mermaid 원본<br>
 > 발표용 다이어그램 문안·그리기 명세: [`OBULUS-PITCH-DIAGRAM-SPEC.ko.md`](OBULUS-PITCH-DIAGRAM-SPEC.ko.md) — 본편 13개와 Appendix 7개의 화면 문구, 연결 관계, 발표 멘트, 금지 표현<br>
-> 화이트 HTML 발표본: [`obulus-pitch-deck-white.html`](obulus-pitch-deck-white.html) — 16:9 본편 13장 + Appendix 7장, 키보드 이동·PDF 인쇄 지원<br>
+> 화이트 HTML 발표본: [`obulus-pitch-deck-white.html`](obulus-pitch-deck-white.html) — 현재 정본은 16:9 본편 7장 + Appendix 10장, 키보드 이동·PDF 인쇄 지원<br>
 > 시각 품질 평가표: [`OBULUS-PITCH-DESIGN-SCORECARD.ko.md`](OBULUS-PITCH-DESIGN-SCORECARD.ko.md) — 스토리·다이어그램·진실성·가독성 100점 기준<br>
 > 페이지별 비주얼·4K 캡처 정본: [`OBULUS-PITCH-VISUAL-SHOTLIST.ko.md`](OBULUS-PITCH-VISUAL-SHOTLIST.ko.md) — 본편 8장·어펜딕스 12장의 사진/다이어그램 배치, 기존 원본, 재촬영 합격 조건<br>
-> 무대 시간 정본: [`FINAL-PITCH-RUNBOOK.ko.md`](FINAL-PITCH-RUNBOOK.ko.md) — 표지 포함 8장 + 90초 라이브 데모
+> 무대 시간 정본: [`FINAL-PITCH-RUNBOOK.ko.md`](FINAL-PITCH-RUNBOOK.ko.md) — 본편 7장 + 90초 라이브 데모. 이 문서 안의 과거 8장·20장 설계 기록보다 런북을 우선한다.
 
 ---
 
