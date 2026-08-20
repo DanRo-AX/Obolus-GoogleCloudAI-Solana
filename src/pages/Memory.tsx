@@ -615,7 +615,7 @@ export default function Memory() {
             <section className="grid items-center gap-10 border-b border-border/70 pb-10 lg:grid-cols-[minmax(340px,520px)_1fr] lg:gap-16">
               <AuroraCreditCard
                 amount={`${headlineAtomicUsdc ?? formatUsdcFromKrw(total)} USDC`}
-                label={t('Earned to date')}
+                label={t('Total USDC held')}
                 handle={profile?.handle ?? account.id}
                 wallet={profile?.wallet ? shortKey(profile.wallet) : t('payout wallet not set')}
                 verified={Boolean(profile?.walletVerified)}
