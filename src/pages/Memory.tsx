@@ -69,16 +69,6 @@ import { getPhantom, shortKey, useWallet } from '@/state/wallet'
 const TOP_UP_STEPS_USDC = [1, 5, 10, 25] as const
 /** Below this prepaid balance we surge the "충전하시겠어요?" prompt (1 USDC). */
 const LOW_BALANCE_ATOMIC = 1_000_000
-/**
- * A standalone, browser-triggered prepaid deposit needs a PUBLIC orchestration
- * endpoint (Phantom signs a USDC transfer to BUNDLE_RECEIVER → gateway verifies
- * → server credits). None exists yet: the backend `POST /api/v1/prepaid/deposits`
- * is `require_internal`, and the only public top-up path is a rider on the
- * gateway's `POST /api/v1/payment-bundles`, which demands a research context
- * (`queryId` + document `handles` + query token). Until such an endpoint ships,
- * the control renders in full but the submit stays gated behind this flag.
- */
-const STANDALONE_TOPUP_ENABLED = import.meta.env.VITE_PREPAID_TOPUP_STANDALONE === 'true'
 
 export default function Memory() {
   const {
@@ -698,7 +688,7 @@ export default function Memory() {
               </Banner>
             ) : null}
 
-            <PrepaidTopUp prepaidAtomic={prepaidAtomic} />
+            <PrepaidTopUp prepaidAtomic={prepaidAtomic} onToppedUp={setPrepaidAtomic} />
 
 
             {walletError ? (
@@ -1082,18 +1072,41 @@ export default function Memory() {
 }
 
 /**
- * 충전하기 — top up the USDC prepaid pot in whole-USDC steps. The real deposit
- * rail (Phantom signs a USDC transfer to BUNDLE_RECEIVER → gateway verifies →
- * server credits) has no PUBLIC standalone endpoint yet, so the submit is gated
- * behind {@link STANDALONE_TOPUP_ENABLED} and carries a "준비 중" note instead of
- * a broken button. The low-balance prompt keys off the prepaid balance.
+ * 충전하기 — top up the USDC prepaid pot in whole-USDC steps. The button drives
+ * the public standalone rail: prepare a top-up on the payment gateway, sign the
+ * exact USDC transfer to BUNDLE_RECEIVER with Phantom, and the gateway credits
+ * the prepaid balance through the internal deposit route only after it confirms
+ * the transfer on-chain. The low-balance prompt keys off the prepaid balance.
  */
-function PrepaidTopUp({ prepaidAtomic }: { prepaidAtomic: string | null }) {
+function PrepaidTopUp({
+  prepaidAtomic,
+  onToppedUp,
+}: {
+  prepaidAtomic: string | null
+  onToppedUp: (availableAtomic: string) => void
+}) {
   const t = useT()
   const [amount, setAmount] = useState<number>(5)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const known = prepaidAtomic != null
   const low = known && Number(prepaidAtomic) < LOW_BALANCE_ATOMIC
   const balanceLabel = known ? `${formatUsdcShort(prepaidAtomic) ?? '0.00'} USDC` : '—'
+
+  const submit = async () => {
+    if (busy || amount < 1) return
+    setBusy(true)
+    setError(null)
+    try {
+      const { topUpPrepaid } = await import('@/lib/x402')
+      const { availableAtomic } = await topUpPrepaid(amount)
+      onToppedUp(availableAtomic)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <div className="overflow-hidden rounded-[6px] border border-border/70 bg-card">
@@ -1127,20 +1140,16 @@ function PrepaidTopUp({ prepaidAtomic }: { prepaidAtomic: string | null }) {
             variant="mono"
             size="monoSm"
             className="ml-auto"
-            disabled={!STANDALONE_TOPUP_ENABLED || amount < 1}
+            disabled={busy || amount < 1}
             aria-label={t('Top up')}
+            onClick={submit}
           >
             <Plus className="size-3" />
-            {t('Top up')} · {amount} USDC
+            {busy ? t('Topping up…') : `${t('Top up')} · ${amount} USDC`}
           </Button>
         </div>
-        {!STANDALONE_TOPUP_ENABLED ? (
-          <p className="flex flex-wrap items-center gap-2 text-xs leading-relaxed text-muted-foreground">
-            <span className="rounded-[2px] bg-foreground/[0.06] px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[1px]">
-              {t('Coming soon')}
-            </span>
-            {t('Standalone top-up is being wired up. For now, your prepaid USDC refills automatically the first time you open a document, and again whenever it runs low.')}
-          </p>
+        {error ? (
+          <p className="text-xs leading-relaxed text-destructive">{error}</p>
         ) : null}
       </div>
     </div>

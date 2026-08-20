@@ -22,7 +22,7 @@ const SIGNATURE_PAGE_SIZE = 1_000;
 const RECOVERY_CLOCK_SKEW_MS = 60_000;
 
 export type ReconciliationAttempt = {
-  settlementKind: "document" | "bundle" | "open_call";
+  settlementKind: "document" | "bundle" | "open_call" | "topup";
   quoteId: string;
   attemptId: string;
   reconcileAfter: number;
@@ -639,6 +639,7 @@ function reconciliationIdentity(
     return { kind: "document", selector: "quote", quoteId, key: quoteId };
   }
   if (settlementKind === "bundle") return { kind: "bundle", quoteId, key: quoteId };
+  if (settlementKind === "topup") return { kind: "topup", quoteId, key: quoteId };
   return { kind: "open_call", quoteId, key: quoteId };
 }
 
@@ -648,7 +649,7 @@ function validateAttempt(
   maxSignaturePages: number,
 ): void {
   const now = Date.now();
-  if (!(["document", "bundle", "open_call"] as const).includes(attempt.settlementKind)) {
+  if (!(["document", "bundle", "open_call", "topup"] as const).includes(attempt.settlementKind)) {
     throw new Error("reconciliation settlement kind is invalid");
   }
   if (

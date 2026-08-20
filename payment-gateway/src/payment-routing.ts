@@ -15,7 +15,8 @@ export type PaymentRouteIdentity =
       key: string;
     }
   | { kind: "bundle"; quoteId: string; key: string }
-  | { kind: "open_call"; quoteId: string; key: string };
+  | { kind: "open_call"; quoteId: string; key: string }
+  | { kind: "topup"; quoteId: string; key: string };
 
 export type PaymentQuoteState = {
   expiresAt: number;

@@ -2,7 +2,12 @@ import { CloudTasksClient } from "@google-cloud/tasks";
 import { secureServiceOrigin } from "./url-policy.js";
 
 export type DurableSettlement = {
-  settlementKind: "document" | "bundle" | "open_call";
+  // "topup" is admitted for type-parity with ReconciliationAttempt: the shared
+  // chain-reconciler helpers construct DurableSettlement literals from an
+  // attempt's kind. Standalone top-ups never enter this durable outbox — they
+  // credit through the idempotent internal deposit route — so no topup task is
+  // ever enqueued here.
+  settlementKind: "document" | "bundle" | "open_call" | "topup";
   quoteId: string;
   attemptId: string;
   transactionSignature: string;

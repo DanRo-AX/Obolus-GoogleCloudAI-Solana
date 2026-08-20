@@ -1214,6 +1214,7 @@ export const KO: Record<string, string> = {
   'Top up prepaid USDC': '선불 USDC 충전',
   'Prepaid balance': '선불 잔액',
   'Top up': '충전하기',
+  'Topping up…': '충전 중…',
   'Coming soon': '준비 중',
   'Standalone top-up is being wired up. For now, your prepaid USDC refills automatically the first time you open a document, and again whenever it runs low.':
     '단독 충전 기능은 준비 중이에요. 지금은 문서를 처음 열 때, 그리고 잔액이 부족할 때마다 선불 USDC가 자동으로 충전돼요.',
