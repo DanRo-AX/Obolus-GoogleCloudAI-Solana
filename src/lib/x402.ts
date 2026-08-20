@@ -105,6 +105,30 @@ export async function topUpPrepaid(amountUsdc: number): Promise<{ availableAtomi
   if (!provider?.publicKey) {
     throw new PaymentError('Connect a Solana browser wallet before topping up.')
   }
+  const connectedPayer = provider.publicKey.toString()
+
+  // The prepaid ledger is keyed off a signed-in wallet session (see
+  // ensurePrepaidWalletSession / openOverX402): the balance read at the end of
+  // this flow 401s with a raw store error ("sign in with a Phantom wallet
+  // before reading prepaid balance") if Phantom is merely *connected* but has
+  // never signed the one-time prepaid session challenge. Establish (or reuse)
+  // that session up front so the whole top-up either proceeds cleanly or fails
+  // with a friendly prompt before any payment is attempted.
+  try {
+    await ensurePrepaidWalletSession(provider, connectedPayer)
+  } catch (error) {
+    if (error instanceof PaymentError) throw error
+    const message = error instanceof Error ? error.message : String(error)
+    if (/reject|declin|cancel/i.test(message)) {
+      throw new PaymentError(
+        'Wallet sign-in was cancelled. Approve the one-time sign-in request in Phantom, then retry the top-up.',
+        'cancelled',
+      )
+    }
+    throw new PaymentError(
+      'Sign in with your Phantom wallet before topping up — approve the one-time request in Phantom, then retry.',
+    )
+  }
 
   let prepared: Response
   try {

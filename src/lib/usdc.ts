@@ -42,3 +42,20 @@ export function krwToUsdcAtomic(krw: number): string {
 export function formatUsdcFromKrw(krw: number): string {
   return formatUsdcShort(krwToUsdcAtomic(krw)) ?? '0.00'
 }
+
+/**
+ * Parses a `*_atomic` USDC ledger value (6-decimal, serialized as a JSON
+ * string) to a `bigint` so independent atomic figures can be combined without
+ * floating-point error. Missing, non-numeric, or otherwise malformed input is
+ * treated as zero rather than thrown — callers combining several optional
+ * ledgers (e.g. prepaid balance + accrued earnings) should not have one
+ * absent field blow up the sum.
+ */
+export function parseUsdcAtomic(value: string | number | bigint | null | undefined): bigint {
+  if (value == null) return 0n
+  if (typeof value === 'bigint') return value
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? BigInt(Math.trunc(value)) : 0n
+  }
+  return /^-?(0|[1-9][0-9]*)$/.test(value) ? BigInt(value) : 0n
+}

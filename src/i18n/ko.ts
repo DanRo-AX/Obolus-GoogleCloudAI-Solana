@@ -374,6 +374,7 @@ export const KO: Record<string, string> = {
   'Earned': '수익',
   'Earned to date': '누적 수익',
   'Earned today': '오늘 수익',
+  'Total USDC held': '총 보유 USDC',
   'Earned via auto-match': '자동 매칭 수익',
   'Earning, saving, investing. What you actually did, not the theory.': '벌고, 모으고, 굴린 일. 이론 말고 실제로 한 일.',
   'Earnings ledger': '수익 원장',
