@@ -308,11 +308,10 @@ export default function Memory() {
    * the prepaid pot (`prepaid_accounts.available_atomic`, funded by on-chain
    * top-ups) plus accrued, claimable earnings. Both are independent 6-decimal
    * atomic ledgers, so add them as bigints rather than floats. We deliberately
-   * do NOT read the internal KRW_SANDBOX ledger (`balance.availableAtomic`):
-   * it is not real USDC (it carried the phantom signup credit), and it already
-   * folds accrued earnings in, which would double-count them here. `null` only
-   * when neither atomic field has loaded yet, so the legacy KRW-derived `total`
-   * fallback below still covers the case where atomic data is entirely absent.
+   * do NOT read the legacy promotional ledger (`balance.availableAtomic`): it
+   * once carried unbacked signup credit and already folds accrued earnings in,
+   * which would double-count them here. When neither atomic field has loaded,
+   * the UI stays unknown instead of estimating a coin balance from legacy KRW.
    */
   const headlineAtomicUsdc =
     prepaidAtomic != null || earnings?.accruedAtomic != null
@@ -615,7 +614,7 @@ export default function Memory() {
           <div className="mt-8 space-y-10">
             <section className="grid items-center gap-10 border-b border-border/70 pb-10 lg:grid-cols-[minmax(340px,520px)_1fr] lg:gap-16">
               <AuroraCreditCard
-                amount={`${headlineAtomicUsdc ?? formatUsdcFromKrw(total)} USDC`}
+                amount={`${headlineAtomicUsdc ?? '—'} USDC`}
                 label={t('Total USDC held')}
                 handle={profile?.handle ?? account.id}
                 wallet={profile?.wallet ? shortKey(profile.wallet) : t('payout wallet not set')}
