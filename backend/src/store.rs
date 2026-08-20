@@ -2566,6 +2566,7 @@ impl Store {
         backfill_bundle_payout_claims(connection)?;
         backfill_content_hashes(connection)?;
         backfill_usdc_atomic_columns(connection)?;
+        reconcile_prepaid_real_coins(connection)?;
         seed_public_evidence(connection)?;
         transaction.commit()?;
         Ok(())
@@ -20466,10 +20467,19 @@ fn backfill_usdc_atomic_columns(connection: &Connection) -> Result<(), StoreErro
     let rate = KRW_PER_USDC_PINNED;
     let half = rate / 2;
     // (atomic_col, krw_col, table) simple one-to-one conversions.
+    //
+    // The internal `balances` ledger (available/reserved/held) is deliberately
+    // NOT converted here. Converting a legacy KRW *signup credit* into spendable
+    // USDC atomic is exactly what minted the unbacked "Total USDC held" figure
+    // (e.g. 100000 KRW -> 74.074074 USDC) that never corresponded to a real
+    // on-chain coin. Pure-web3 no longer grants signup credit, so these atomic
+    // columns only ever grow from real accrual at runtime; the one-time
+    // `reconcile_prepaid_real_coins` pass zeroes the historical backfill. Keeping
+    // the conversion out of boot is what stops the credit from re-appearing after
+    // it is reconciled away (the guarded `WHERE atomic = 0 AND krw > 0` would
+    // otherwise re-mint it on the next deploy). The columns themselves are still
+    // added above so runtime accrual/reservation writes have a target.
     for (table, atomic_col, krw_col) in [
-        ("balances", "available_atomic", "available_krw"),
-        ("balances", "reserved_atomic", "reserved_krw"),
-        ("balances", "held_atomic", "held_krw"),
         ("open_calls", "unit_price_atomic", "unit_price_krw"),
         ("funding_events", "amount_atomic", "amount_krw"),
         ("earning_events", "amount_atomic", "amount_krw"),
@@ -20513,6 +20523,162 @@ fn backfill_usdc_atomic_columns(connection: &Connection) -> Result<(), StoreErro
          WHERE escrow_remaining_atomic IS NULL AND status = 'open'
            AND unit_price_atomic > 0 AND target >= answered",
         params![],
+    )?;
+    Ok(())
+}
+
+/// A genuine Solana transaction signature is a base58-encoded 64-byte Ed25519
+/// signature. Synthetic prepaid-deposit reference ids used by e2e/recording
+/// harnesses (`e2e-…`, `live-rec-…`) contain characters outside the base58
+/// alphabet (e.g. `-`) and never decode to exactly 64 bytes, so this cleanly
+/// separates a real on-chain-settled deposit from an internal/test top-up
+/// without needing a live RPC round-trip during boot.
+fn is_real_onchain_signature(reference_id: &str) -> bool {
+    bs58::decode(reference_id.trim())
+        .into_vec()
+        .map(|bytes| bytes.len() == 64)
+        .unwrap_or(false)
+}
+
+/// One-time, run-once-guarded reconciliation that makes prepaid balances reflect
+/// ONLY real on-chain USDC. Two independent sources of unbacked credit are
+/// removed:
+///
+///  1. The legacy KRW **signup credit** that the USDC re-denomination (#71)
+///     backfilled into `balances.available_atomic` — the value behind the
+///     user-facing "Total USDC held" headline (100000 KRW -> 74.074074 USDC).
+///     It never corresponded to a real coin. Only rows whose atomic is EXACTLY
+///     the half-up conversion of their surviving KRW promo are zeroed, so a row
+///     that later accrued a real earning (which moves KRW and atomic together to
+///     a value that no longer matches the pure conversion) is never touched. The
+///     legacy `available_krw` column is preserved for reversibility/audit.
+///
+///  2. Unbacked prepaid **deposits** — `prepaid_accounts.available_atomic` /
+///     `total_deposited_atomic` are recomputed from `prepaid_ledger`, counting a
+///     `kind='deposit'` row only when its `reference_id` is a genuine on-chain
+///     signature (see [`is_real_onchain_signature`]). Synthetic e2e/recording
+///     top-ups are dropped. Every non-deposit ledger delta (reservations,
+///     releases, refunds, withdrawals) is preserved as-is, and available is
+///     floored at 0 so removing a fake deposit that had already been partially
+///     reserved can never produce a negative balance.
+///
+/// Idempotent: the recompute is pure over the ledger, and a marker row makes the
+/// whole pass a strict no-op on any subsequent boot/redeploy.
+fn reconcile_prepaid_real_coins(connection: &Connection) -> Result<(), StoreError> {
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS reconcile_markers (
+            name TEXT PRIMARY KEY,
+            applied_at INTEGER NOT NULL
+        )",
+        params![],
+    )?;
+    let already_applied = connection
+        .query_row(
+            "SELECT 1 FROM reconcile_markers WHERE name = 'prepaid_real_coins_v1'",
+            params![],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if already_applied {
+        return Ok(());
+    }
+    let now = now_ms();
+
+    // (1) Zero the legacy KRW signup-credit backfill in the internal ledger.
+    let balances_zeroed = connection.execute(
+        "UPDATE balances
+         SET available_atomic = 0, updated_at = ?1
+         WHERE available_krw > 0
+           AND available_atomic = (available_krw * 1000000 + 675) / 1350",
+        params![as_i64(now)?],
+    )?;
+    tracing::info!(
+        rows = balances_zeroed,
+        "reconcile: zeroed legacy KRW-backfilled internal balance credit"
+    );
+
+    // (2) Recompute prepaid_accounts from real on-chain-backed ledger deposits.
+    let mut backed_deposit: HashMap<(String, String, String, String), i128> = HashMap::new();
+    let mut non_deposit: HashMap<(String, String, String, String), i128> = HashMap::new();
+    {
+        let mut statement = connection.prepare(
+            "SELECT wallet, pay_to, network, asset, kind, reference_id, delta_atomic
+             FROM prepaid_ledger",
+        )?;
+        let rows = statement.query_map(params![], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
+        })?;
+        for row in rows {
+            let (wallet, pay_to, network, asset, kind, reference_id, delta) = row?;
+            let key = (wallet, pay_to, network, asset);
+            if kind == "deposit" {
+                if is_real_onchain_signature(&reference_id) {
+                    *backed_deposit.entry(key).or_insert(0) += i128::from(delta);
+                }
+                // A synthetic (non-on-chain) deposit is dropped entirely.
+            } else {
+                *non_deposit.entry(key).or_insert(0) += i128::from(delta);
+            }
+        }
+    }
+
+    let account_keys: Vec<(String, String, String, String)> = {
+        let mut statement =
+            connection.prepare("SELECT wallet, pay_to, network, asset FROM prepaid_accounts")?;
+        let rows = statement.query_map(params![], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+
+    let mut prepaid_updated: u64 = 0;
+    for key in account_keys {
+        let backed = *backed_deposit.get(&key).unwrap_or(&0);
+        let others = *non_deposit.get(&key).unwrap_or(&0);
+        let new_total_deposited = backed.max(0);
+        let new_available = (backed + others).max(0);
+        // Both quantities are sums of i64 atomic deltas over a small ledger; the
+        // clamp is defensive only.
+        let new_total_deposited = i64::try_from(new_total_deposited).unwrap_or(i64::MAX);
+        let new_available = i64::try_from(new_available).unwrap_or(i64::MAX);
+        connection.execute(
+            "UPDATE prepaid_accounts
+             SET available_atomic = ?1, total_deposited_atomic = ?2, updated_at = ?3
+             WHERE wallet = ?4 AND pay_to = ?5 AND network = ?6 AND asset = ?7",
+            params![
+                new_available,
+                new_total_deposited,
+                as_i64(now)?,
+                key.0,
+                key.1,
+                key.2,
+                key.3
+            ],
+        )?;
+        prepaid_updated += 1;
+    }
+    tracing::info!(
+        rows = prepaid_updated,
+        "reconcile: recomputed prepaid_accounts from real on-chain deposits only"
+    );
+
+    connection.execute(
+        "INSERT INTO reconcile_markers (name, applied_at) VALUES ('prepaid_real_coins_v1', ?1)",
+        params![as_i64(now)?],
     )?;
     Ok(())
 }
@@ -20791,7 +20957,13 @@ mod tests {
     }
 
     #[test]
-    fn usdc_backfill_converts_krw_columns_half_up_and_is_idempotent() {
+    fn boot_never_converts_internal_balance_krw_into_spendable_atomic() {
+        // The internal `balances` KRW ledger is a legacy signup-credit promo, not
+        // a real coin. Converting it to USDC atomic on boot is what minted the
+        // unbacked "Total USDC held" figure, so `backfill_usdc_atomic_columns`
+        // must leave these atomic columns at 0 while preserving the KRW columns
+        // for audit/reversibility. The reconcile pass (covered separately) then
+        // zeroes any historical backfill.
         let store = Store::in_memory().unwrap();
         ensure_user(&store, "backfill-user");
         // Simulate legacy pre-migration rows: KRW set, atomic still zero.
@@ -20806,7 +20978,7 @@ mod tests {
                 ["backfill-user"],
             )
             .unwrap();
-        // Re-running migrate() runs the guarded backfill.
+        // Re-running migrate() must NOT convert the internal balance ledger.
         store.migrate().unwrap();
         let read = |store: &Store| -> (u64, u64, u64, u64) {
             store
@@ -20828,17 +21000,126 @@ mod tests {
                 .unwrap()
         };
         let (available_atomic, reserved_atomic, held_atomic, available_krw) = read(&store);
-        // Half-up: (krw * 1_000_000 + 675) / 1350. For 1 KRW this is 741, whereas
-        // plain truncation would give 740 — proving the rounding is half-up.
-        assert_eq!(available_atomic, 741);
-        assert_ne!(available_atomic, 1_000_000u64 / 1350); // 740, truncation
-        assert_eq!(reserved_atomic, 1_000_000); // 1350 KRW == exactly 1.0 USDC
-        assert_eq!(held_atomic, 1481); // 2 KRW -> (2_000_000 + 675)/1350
+        // No spendable USDC atomic is minted from the legacy KRW promo.
+        assert_eq!(available_atomic, 0);
+        assert_eq!(reserved_atomic, 0);
+        assert_eq!(held_atomic, 0);
         // Zero data loss: the KRW column is never mutated.
         assert_eq!(available_krw, 1);
-        // Idempotent: a second migrate() converts nothing further.
+        // Idempotent across a redeploy.
         store.migrate().unwrap();
-        assert_eq!(read(&store).0, 741);
+        assert_eq!(read(&store).0, 0);
+    }
+
+    #[test]
+    fn reconcile_zeroes_legacy_krw_credit_and_unbacked_prepaid_deposits() {
+        let store = Store::in_memory().unwrap();
+        ensure_user(&store, "recon-user");
+        let connection = store.connection().unwrap();
+
+        // (1) A legacy account exactly as USDC migration #71 left it:
+        // 100000 KRW signup credit backfilled to 74_074_074 atomic.
+        connection
+            .execute(
+                "UPDATE balances
+                 SET available_krw = 100000, available_atomic = 74074074
+                 WHERE user_id = ?1",
+                ["recon-user"],
+            )
+            .unwrap();
+
+        // (2) One prepaid account funded by a mix of a real on-chain deposit and
+        // an unbacked e2e top-up, then partially reserved.
+        let wallet = "ReconWalletPubkeyPlaceholder1111111111111111";
+        let pay_to = "ReconReceiverPubkeyPlaceholder11111111111111";
+        let network = "solana:devnet";
+        let asset = "usdc";
+        // A genuine base58 64-byte signature (backed) and a synthetic id (unbacked).
+        let real_sig = bs58::encode([7u8; 64]).into_string();
+        assert!(super::is_real_onchain_signature(&real_sig));
+        assert!(!super::is_real_onchain_signature("e2e-topup-1"));
+        connection
+            .execute(
+                "INSERT INTO prepaid_accounts
+                 (wallet, pay_to, network, asset, available_atomic,
+                  total_deposited_atomic, updated_at, created_at)
+                 VALUES (?1, ?2, ?3, ?4, 53000000, 53000000, 1, 1)",
+                params![wallet, pay_to, network, asset],
+            )
+            .unwrap();
+        for (kind, reference, delta, balance_after) in [
+            ("deposit", real_sig.as_str(), 3_000_000_i64, 3_000_000_i64),
+            ("deposit", "e2e-topup-1", 50_000_000, 53_000_000),
+            ("research_reservation", "job-1", -1_000_000, 52_000_000),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO prepaid_ledger
+                     (id, wallet, pay_to, network, asset, kind, reference_id,
+                      delta_atomic, balance_after_atomic, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1)",
+                    params![
+                        new_id("prepaid-ledger"),
+                        wallet,
+                        pay_to,
+                        network,
+                        asset,
+                        kind,
+                        reference,
+                        delta,
+                        balance_after
+                    ],
+                )
+                .unwrap();
+        }
+        // The in-memory store already ran migrate() (and thus the reconcile) once
+        // over empty tables at creation, marking it applied. Clear the marker so
+        // the next migrate() reconciles this freshly-seeded legacy data — exactly
+        // the prod scenario where the pre-reconcile binary left the data in place
+        // and the new binary runs the pass for the first time.
+        connection
+            .execute("DELETE FROM reconcile_markers", params![])
+            .unwrap();
+        drop(connection);
+
+        store.migrate().unwrap();
+
+        let connection = store.connection().unwrap();
+        // Legacy KRW credit zeroed; KRW preserved.
+        let (available_atomic, available_krw): (i64, i64) = connection
+            .query_row(
+                "SELECT available_atomic, available_krw FROM balances WHERE user_id = ?1",
+                ["recon-user"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(available_atomic, 0);
+        assert_eq!(available_krw, 100000);
+        // Prepaid: only the real 3.0 USDC deposit backs the account, minus the
+        // 1.0 USDC reservation -> 2.0 USDC available, 3.0 USDC total deposited.
+        let (avail, deposited): (i64, i64) = connection
+            .query_row(
+                "SELECT available_atomic, total_deposited_atomic FROM prepaid_accounts
+                 WHERE wallet = ?1",
+                [wallet],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(avail, 2_000_000);
+        assert_eq!(deposited, 3_000_000);
+        drop(connection);
+
+        // Idempotent: a redeploy is a strict no-op even if the ledger changes.
+        store.migrate().unwrap();
+        let connection = store.connection().unwrap();
+        let avail_again: i64 = connection
+            .query_row(
+                "SELECT available_atomic FROM prepaid_accounts WHERE wallet = ?1",
+                [wallet],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(avail_again, 2_000_000);
     }
 
     #[test]

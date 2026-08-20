@@ -2518,10 +2518,33 @@ async fn record_prepaid_deposit(
     Json(request): Json<RecordPrepaidDepositRequest>,
 ) -> Result<(HeaderMap, Json<PrepaidBalance>), ApiError> {
     require_internal(&state, &headers)?;
+    // Only a genuine on-chain settlement may credit a prepaid balance. The
+    // gateway is meant to verify the Phantom-signed transfer on-chain before
+    // posting here, but nothing structurally stopped an internal caller from
+    // crediting an unbacked balance with a synthetic reference id (the
+    // `e2e-…`/`live-rec-…` top-ups that had to be reconciled away). Requiring the
+    // reference to be a real base58 64-byte Solana signature closes that path:
+    // it is the same shape `getTransaction`/`getSignatureStatuses` accept, and a
+    // synthetic test id can never satisfy it.
+    if !is_onchain_signature(&request.transaction_signature) {
+        return Err(ApiError::validation(
+            "transactionSignature must be a real on-chain Solana transaction signature",
+        ));
+    }
     let balance = state
         .store
         .record_prepaid_deposit(&request, &state.payment_policy)?;
     Ok((private_no_store_headers(), Json(balance)))
+}
+
+/// A real Solana transaction signature is a base58-encoded 64-byte Ed25519
+/// signature. Used to keep synthetic/internal top-up ids from crediting a
+/// prepaid balance as if they were on-chain-settled deposits.
+fn is_onchain_signature(signature: &str) -> bool {
+    bs58::decode(signature.trim())
+        .into_vec()
+        .map(|bytes| bytes.len() == 64)
+        .unwrap_or(false)
 }
 
 async fn payment_bundle_quote_for_payer(
