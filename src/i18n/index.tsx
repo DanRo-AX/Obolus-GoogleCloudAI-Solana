@@ -29,7 +29,7 @@ const STORAGE_KEY = 'obolus:lang:v1'
 /**
  * Phrases that must never be split across a line.
  *
- * A price range is read as one token — "₩5 to ₩20" wrapping after "to" makes
+ * A price range is read as one token — "0.50 to 2.00 USDC" wrapping after "to" makes
  * the reader parse two numbers before realising they were a range. Applied
  * after lookup, not to the source strings, so the English keys the Korean
  * dictionary is keyed on stay plain ASCII spaces.
@@ -37,8 +37,7 @@ const STORAGE_KEY = 'obolus:lang:v1'
 const NBSP = '\u00A0'
 function tighten(s: string) {
   return s
-    .replace(/(₩[\d,]+)\s+to\s+(₩[\d,]+)/g, `$1${NBSP}to${NBSP}$2`)
-    .replace(/(₩[\d,]+)\s*~\s*(₩[\d,]+)/g, `$1~$2`)
+    .replace(/([\d,.]+)\s+to\s+([\d,.]+)\s+USDC/g, `$1${NBSP}to${NBSP}$2${NBSP}USDC`)
 }
 
 type LangValue = {

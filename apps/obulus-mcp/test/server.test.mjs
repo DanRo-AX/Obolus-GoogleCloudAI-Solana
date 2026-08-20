@@ -81,6 +81,38 @@ test('searches official public evidence without authentication', async (t) => {
   assert.deepEqual(result, [{ id: 'official-1', source: 'public' }])
 })
 
+test('gives every Gemini MCP tool call a distinct trace instance', async (t) => {
+  const instances = []
+  const fixture = await fixtureServer(async (request, response) => {
+    assert.equal(request.headers['x-obulus-client'], 'gemini-mcp')
+    instances.push(request.headers['x-obulus-instance'])
+    json(response, [{ id: 'official-1', source: 'public' }])
+  })
+  t.after(fixture.close)
+  const options = {
+    config: {
+      ...fixture.config,
+      client: 'gemini-mcp',
+      instance: 'gemini-cli',
+    },
+    state,
+  }
+  const request = {
+    jsonrpc: '2.0',
+    id: 7,
+    method: 'tools/call',
+    params: {
+      name: 'search_public_evidence',
+      arguments: { query: 'Paris', limit: 5 },
+    },
+  }
+  await handleMcpRequest(request, options)
+  await handleMcpRequest({ ...request, id: 8 }, options)
+  assert.match(instances[0], /^gemini-cli-[a-f0-9]{12}$/)
+  assert.match(instances[1], /^gemini-cli-[a-f0-9]{12}$/)
+  assert.notEqual(instances[0], instances[1])
+})
+
 test('connects a Pay.sh wallet with free SIWX and stores only the Obulus session', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'obulus-mcp-wallet-'))
   t.after(() => rm(directory, { recursive: true, force: true }))

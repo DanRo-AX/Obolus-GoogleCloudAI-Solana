@@ -133,8 +133,8 @@ const ASKING = [
     body: 'Five people who lived it beat the average of everything.',
   },
   {
-    head: 'You pay per open, in won',
-    body: '₩5 to ₩25 to open one, fee included. No subscription, no minimum.',
+    head: 'You pay per open, in USDC',
+    body: 'The exact USDC price and complete 90/10 split are shown before approval. No subscription.',
   },
 ]
 
@@ -145,7 +145,7 @@ const ANSWERING = [
   },
   {
     head: 'It stays yours and keeps earning',
-    body: 'Your answer lands on your shelf and can be quoted again.',
+    body: 'Your answer joins your personal database and can be quoted again.',
   },
   {
     head: 'Money arrives without asking',

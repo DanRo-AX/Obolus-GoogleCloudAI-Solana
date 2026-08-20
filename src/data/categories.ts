@@ -132,8 +132,8 @@ export const CATEGORY_BY_ID = Object.fromEntries(
 /**
  * Legacy and free-text fallback.
  *
- * Calls placed before the taxonomy existed only carry a shelf name, and calls
- * posted from a chat carry whatever the shelf was called. Rather than migrate
+ * Calls placed before the taxonomy existed only carry a legacy category label,
+ * and calls posted from a chat carry that stored label. Rather than migrate
  * storage, every read routes through here.
  */
 const KEYWORDS: Array<[CategoryId, string[]]> = [

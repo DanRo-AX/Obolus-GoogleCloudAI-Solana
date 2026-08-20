@@ -84,9 +84,27 @@ async fn system_activity(
         "",
         64,
     );
+    let gemini_mcp = source == "gemini-mcp";
+    if gemini_mcp && classified.is_some() {
+        for (stage, action) in [
+            ("orchestration", "mcp_tool_call"),
+            ("gateway", "request_accepted"),
+        ] {
+            if let Err(error) = state.record_system_event(&source, &instance, stage, action, 202, 0)
+            {
+                tracing::warn!(%error, "could not persist Gemini MCP ingress activity");
+            }
+        }
+    }
     let started = Instant::now();
     let response = next.run(request).await;
     if let Some((stage, action, _)) = classified {
+        // `/questions/resolve` emits real resolver checkpoints from inside the
+        // Rust search core for Gemini MCP calls. Do not add a second coarse
+        // completion event that would make the observatory look synthetic.
+        if gemini_mcp && action == "resolve_question" {
+            return response;
+        }
         let elapsed = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
         if let Err(error) = state.record_system_event(
             &source,

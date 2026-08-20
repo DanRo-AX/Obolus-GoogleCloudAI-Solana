@@ -73,7 +73,7 @@ const MAX_AVATAR_JSON_BYTES: usize = 400_000;
 const PAYOUT_HOLD_MS: u64 = 14 * 24 * 60 * 60 * 1_000;
 const ANSWER_RESERVATION_TTL_MS: u64 = 10 * 60 * 1_000;
 const AGENT_MATCH_THRESHOLD: f32 = 0.82;
-/// The pinned KRW→USDC rate for the internal (off-chain earnings) ledger and
+/// The pinned legacy-unit→USDC rate for historical earnings rows and
 /// the one-time historical backfill. It mirrors `api.rs`'s `PAY_SH_KRW_PER_USDC`
 /// and the production `OPENSHELF_KRW_PER_USDC` guard. Pure-web3 re-denomination:
 /// the legacy `*_krw` columns stay as nullable legacy, and every runtime amount
@@ -698,7 +698,7 @@ impl Store {
         transaction.execute(
             "INSERT INTO email_outbox
              (id, notification_id, recipient, subject, body, status, attempts, created_at)
-             VALUES (?1, ?2, ?3, 'Reset your OPENSHELF password', ?4, 'pending', 0, ?5)",
+             VALUES (?1, ?2, ?3, 'Reset your Obolus password', ?4, 'pending', 0, ?5)",
             params![
                 new_id("email"),
                 notification_id,
@@ -1342,7 +1342,7 @@ impl Store {
                 [user_id],
                 |row| {
                     Ok(BalanceSummary {
-                        currency: "KRW_SANDBOX",
+                        currency: "USDC",
                         available_krw: as_u64(row.get(0)?)?,
                         reserved_krw: as_u64(row.get(1)?)?,
                         held_krw: as_u64(row.get(2)?)?,
@@ -3394,7 +3394,7 @@ impl Store {
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
         let profile = load_profile(&transaction, user_id)?.ok_or_else(|| {
-            StoreError::Conflict("complete onboarding before building your shelf".to_owned())
+            StoreError::Conflict("complete onboarding before building your database".to_owned())
         })?;
         let generated_at = now_ms();
         let expires_at = generated_at.saturating_add(ttl_ms.max(60_000));
@@ -3410,7 +3410,7 @@ impl Store {
                 || draft.prompt.chars().count() > 400
             {
                 return Err(StoreError::Validation(
-                    "AI shelf starter is outside the contributor profile".to_owned(),
+                    "AI database starter is outside the contributor profile".to_owned(),
                 ));
             }
             transaction.execute(
@@ -3451,7 +3451,7 @@ impl Store {
         }
         if !(5..=10_000).contains(&price_krw) {
             return Err(StoreError::Validation(
-                "future open price must be between ₩5 and ₩10,000".to_owned(),
+                "future open price is outside the supported USDC quote range".to_owned(),
             ));
         }
         let mut connection = self.connection()?;
@@ -3467,7 +3467,7 @@ impl Store {
             ));
         }
         let profile = load_profile(&transaction, user_id)?.ok_or_else(|| {
-            StoreError::Conflict("complete onboarding before building your shelf".to_owned())
+            StoreError::Conflict("complete onboarding before building your database".to_owned())
         })?;
         let now = now_ms();
         let starter = transaction
@@ -3478,7 +3478,7 @@ impl Store {
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
             .optional()?
-            .ok_or(StoreError::NotFound("active shelf starter"))?;
+            .ok_or(StoreError::NotFound("active database starter"))?;
         let mut issues = quality::assess(&starter.0, answer);
         let mut prior = transaction.prepare(
             "SELECT answer FROM memory_entries WHERE user_id = ?1 AND status = 'settled' LIMIT 100",
@@ -3546,7 +3546,7 @@ impl Store {
              (id, user_id, document_id, question, answer, shelf, earned_krw, created_at,
               via, status, flags_json, interview_json, memory_type, importance,
               reliability_score, content_hash)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, 'Shelf starter', 'settled',
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, 'Database starter', 'settled',
                      '[]', '[]', 'observation', ?8, ?9, ?10)",
             params![
                 memory_id,
@@ -3587,7 +3587,7 @@ impl Store {
                 earned: 0,
                 earned_atomic: "0".to_owned(),
                 created_at: now,
-                via: "Shelf starter".to_owned(),
+                via: "Database starter".to_owned(),
                 status: "settled".to_owned(),
                 flags: Vec::new(),
                 rating: None,
@@ -4012,8 +4012,15 @@ impl Store {
                     escrow_asset, escrow_network, escrow_total_atomic,
                     escrow_remaining_atomic, funding_transaction_signature, payer_wallet
              FROM open_calls
-             WHERE status IN ('open', 'filled')
-                OR (status = 'cancelled' AND owner_id = ?1)
+             WHERE (
+                    status IN ('open', 'filled')
+                    OR (status = 'cancelled' AND owner_id = ?1)
+                   )
+               AND unit_price_atomic > 0
+               AND (
+                    escrow_mode IN ('prepaid', 'x402_solana_escrow')
+                    OR owner_id = 'seed-buyer'
+                   )
              ORDER BY created_at DESC",
         )?;
         let stored_calls = statement
@@ -4065,8 +4072,8 @@ impl Store {
             .ok_or_else(|| StoreError::Validation("open-call budget is too large".to_owned()))?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
-        // A funded call (positive unit price) reserves USDC from the owner's
-        // prepaid balance. A zero-price call carries no escrow.
+        // Every open call is funded from the owner's prepaid USDC balance.
+        // Zero-price/off-chain calls are no longer a product path.
         let (escrow_mode, escrow_wallet, escrow_asset, escrow_network, payer_wallet): (
             &str,
             Option<String>,
@@ -4145,7 +4152,9 @@ impl Store {
                 Some(wallet),
             )
         } else {
-            ("sandbox", None, None, None, None)
+            return Err(StoreError::Validation(
+                "unitPrice must fund at least one USDC atomic unit".to_owned(),
+            ));
         };
         transaction.execute(
             "INSERT INTO open_calls
@@ -4226,7 +4235,7 @@ impl Store {
             .filter(|wallet| valid_solana_address(wallet.trim()))
             .ok_or_else(|| {
                 StoreError::Validation(
-                    "a valid OPENSHELF_BUNDLE_RECEIVER is required for funded open calls"
+                    "the service settlement wallet is not configured for funded open calls"
                         .to_owned(),
                 )
             })?
@@ -8788,11 +8797,11 @@ impl Store {
             },
         )?;
 
-        // The observatory deliberately excludes generic request/auth traffic.
-        // Polling this endpoint must not create a wall of self-referential HTTP
-        // logs; only business-significant workflow stages are visualized.
-        let visible_event_filter =
-            "stage IN ('orchestration','generation','retrieval','coverage','memory','settlement')";
+        // The shared observatory is intentionally a Gemini CLI MCP trace, not a
+        // generic application access log. The MCP server appends a fresh suffix
+        // to `gemini-cli-` for every tools/call, so stale static labels and
+        // browser/cloud-worker activity cannot make the canvas appear live.
+        let visible_event_filter = "source = 'gemini-mcp' AND instance LIKE 'gemini-cli-%' AND stage IN ('orchestration','gateway','policy','index','authority','generation','retrieval','result','coverage','memory','settlement')";
         let event_count_since = |since: u64| -> Result<u64, StoreError> {
             Ok(connection.query_row(
                 &format!(
@@ -14589,7 +14598,7 @@ fn call_recommendation(
     }
     if same_shelf {
         score += 0.08;
-        reasons.push("You already have memory on this shelf".to_owned());
+        reasons.push("You already have a document in this database".to_owned());
     }
     if best_similarity >= 0.25 {
         score += best_similarity.min(1.0) * 0.2;
@@ -14812,9 +14821,9 @@ fn settle_agent_match(
         "auto_matched",
         "Your memory answered a new call",
         &format!(
-            "A {:.0}% match reused your original answer and earned ₩{}.",
+            "A {:.0}% match reused your original answer and earned {} USDC.",
             source.similarity * 100.0,
-            call.unit_price
+            format_legacy_price_as_usdc(call.unit_price)
         ),
         Some(&call.id),
     )?;
@@ -14894,7 +14903,7 @@ fn insert_notification(
                 new_id("email"),
                 id,
                 email,
-                format!("OPENSHELF · {title}"),
+                format!("Obolus · {title}"),
                 body,
                 as_i64(created_at)?,
             ],
@@ -14907,7 +14916,11 @@ fn create_call_notifications(
     transaction: &Transaction<'_>,
     call: &StoredCall,
 ) -> Result<(), StoreError> {
-    if call.status != "open" || call.answered >= call.target {
+    if call.status != "open"
+        || call.answered >= call.target
+        || call.escrow_total_atomic.unwrap_or(0) == 0
+        || !matches!(call.escrow_mode.as_str(), "prepaid" | "x402_solana_escrow")
+    {
         return Ok(());
     }
     let mut statement = transaction.prepare(
@@ -14941,7 +14954,11 @@ fn create_call_notifications(
             &user_id,
             "call_available",
             "A paid question fits you",
-            &format!("₩{} per answer · {}", call.unit_price, call.question),
+            &format!(
+                "{} USDC per answer · {}",
+                format_legacy_price_as_usdc(call.unit_price),
+                call.question
+            ),
             Some(&call.id),
         )?;
     }
@@ -14976,7 +14993,12 @@ fn materialize_call_notifications(
                 escrow_remaining_krw, status, escrow_mode, escrow_wallet,
                 escrow_asset, escrow_network, escrow_total_atomic,
                 escrow_remaining_atomic, funding_transaction_signature, payer_wallet
-         FROM open_calls WHERE status = 'open' AND answered < target AND owner_id <> ?1",
+         FROM open_calls
+         WHERE status = 'open'
+           AND answered < target
+           AND owner_id <> ?1
+           AND unit_price_atomic > 0
+           AND escrow_mode IN ('prepaid', 'x402_solana_escrow')",
     )?;
     let calls = statement
         .query_map([user_id], stored_call_from_row)?
@@ -15000,7 +15022,11 @@ fn materialize_call_notifications(
                 user_id,
                 "call_available",
                 "A paid question fits you",
-                &format!("₩{} per answer · {}", call.unit_price, call.question),
+                &format!(
+                    "{} USDC per answer · {}",
+                    format_legacy_price_as_usdc(call.unit_price),
+                    call.question
+                ),
                 Some(&call.id),
             )?;
         }
@@ -18771,14 +18797,19 @@ fn validate_open_call(request: &CreateOpenCallRequest) -> Result<(), StoreError>
             "target must be between 1 and 100".to_owned(),
         ));
     }
+    if request.unit_price == 0 {
+        return Err(StoreError::Validation(
+            "unitPrice must be greater than zero".to_owned(),
+        ));
+    }
     if request.unit_price > 10_000_000 {
         return Err(StoreError::Validation(
-            "unitPrice must be at most 10000000 KRW".to_owned(),
+            "unitPrice exceeds the supported USDC quote range".to_owned(),
         ));
     }
     if request.shelf.trim().is_empty() || request.shelf.trim().chars().count() > 120 {
         return Err(StoreError::Validation(
-            "shelf must be between 1 and 120 characters".to_owned(),
+            "database label must be between 1 and 120 characters".to_owned(),
         ));
     }
     if !CATEGORY_IDS.contains(&request.category.trim()) {
@@ -19528,11 +19559,28 @@ fn krw_to_usdc_atomic(amount_krw: u64, krw_per_usdc: u64) -> Result<u64, StoreEr
         .map_err(|_| StoreError::Validation("payment amount is too large".to_owned()))
 }
 
+/// Render a legacy compatibility price as the USDC amount actually settled.
+/// The database column name is retained for migrations and old clients only;
+/// user-facing notifications must never expose the retired sandbox unit.
+fn format_legacy_price_as_usdc(amount: u64) -> String {
+    let atomic = krw_to_atomic_pinned(amount).unwrap_or_default();
+    let whole = atomic / 1_000_000;
+    let fraction = atomic % 1_000_000;
+    if fraction == 0 {
+        return whole.to_string();
+    }
+    let mut rendered = format!("{whole}.{fraction:06}");
+    while rendered.ends_with('0') {
+        rendered.pop();
+    }
+    rendered
+}
+
 /// Runtime KRW→USDC-atomic conversion at the pinned internal rate. `div_ceil`
 /// (Product Decision (d)) so live quoting stays consistent with
 /// `krw_to_usdc_atomic`; the one-time migration backfill uses half-up rounding
-/// instead. A zero-KRW amount converts to zero atomic (a free open call has no
-/// escrow), unlike `krw_to_usdc_atomic` which floors quotes at 1.
+/// instead. A zero compatibility amount converts to zero atomic for historical
+/// rows, unlike `krw_to_usdc_atomic` which floors live quotes at 1.
 pub(crate) fn krw_to_atomic_pinned(amount_krw: u64) -> Result<u64, StoreError> {
     if amount_krw == 0 {
         return Ok(0);
@@ -28555,11 +28603,31 @@ mod tests {
         store
             .record_system_event(
                 "gemini-mcp",
+                "gemini-cli-run12345",
+                "retrieval",
+                "candidates_selected",
+                200,
+                37,
+            )
+            .unwrap();
+        store
+            .record_system_event(
+                "cloud-worker",
+                "scheduled-worker",
+                "settlement",
+                "x402_settlement",
+                200,
+                11,
+            )
+            .unwrap();
+        store
+            .record_system_event(
+                "gemini-mcp",
                 "gemini-cli",
                 "retrieval",
                 "resolve_question",
                 200,
-                37,
+                12,
             )
             .unwrap();
 
@@ -28588,6 +28656,16 @@ mod tests {
                 .sources
                 .iter()
                 .any(|source| source.source == "gemini-mcp")
+        );
+        assert_eq!(snapshot.realtime.sources.len(), 1);
+        assert_eq!(snapshot.realtime.recent_events.len(), 1);
+        assert_eq!(
+            snapshot.realtime.recent_events[0].instance,
+            "gemini-cli-run12345"
+        );
+        assert_eq!(
+            snapshot.realtime.recent_events[0].action,
+            "candidates_selected"
         );
 
         let serialized = serde_json::to_string(&snapshot).unwrap();
@@ -28732,7 +28810,7 @@ mod tests {
         let submitted = store
             .submit_shelf_starter_answer("starter-contributor", &travel.id, strong_answer(), 300)
             .unwrap();
-        assert_eq!(submitted.memory.via, "Shelf starter");
+        assert_eq!(submitted.memory.via, "Database starter");
         assert_eq!(submitted.memory.earned, 0);
         assert_eq!(store.documents().unwrap().len(), documents_before + 1);
         assert!(

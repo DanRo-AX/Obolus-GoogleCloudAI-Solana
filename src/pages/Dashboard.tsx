@@ -199,7 +199,7 @@ export default function Dashboard() {
         setStarterError(t('Vertex AI interview prompts are unavailable. No buyer demand or paid call was created.'))
       }
     } catch (error) {
-      setStarterError(error instanceof Error ? error.message : t('Could not create shelf starters.'))
+      setStarterError(error instanceof Error ? error.message : t('Could not create database starters.'))
     } finally {
       setStartersLoading(false)
     }
@@ -208,7 +208,7 @@ export default function Dashboard() {
   async function publishStarter(starter: ShelfStarter) {
     const answer = starterAnswers[starter.id]?.trim() ?? ''
     if (!answer) {
-      setStarterError(t('Write a firsthand answer before publishing it to your shelf.'))
+      setStarterError(t('Write a firsthand answer before publishing it to your personal database.'))
       return
     }
     setSubmittingStarter(starter.id)
@@ -406,7 +406,7 @@ export default function Dashboard() {
               <div className="px-4 py-3 lg:flex-1">
                 <AlertPreference
                   icon={Bot}
-                  label={t('Reuse from my shelf')}
+                  label={t('Reuse from my database')}
                   detail={t('Reuses an answer you already wrote, only when a call matches it 82% or more.')}
                   checked={agents}
                   onChange={setAgents}
@@ -451,7 +451,7 @@ export default function Dashboard() {
               >
                 {startersLoading ? (
                   <><Loader2 className="size-3 animate-spin" /> {t('Interviewing…')}</>
-                ) : starters.length ? t('3 prompts ready') : t('Create 3 shelf starters')}
+                ) : starters.length ? t('3 prompts ready') : t('Create 3 database starters')}
               </Button>
             </div>
 
@@ -490,7 +490,7 @@ export default function Dashboard() {
                             [starter.id]: price,
                           }))}
                         >
-                          ₩{price} {t('future open')}
+                          {formatUsdcFromKrw(price)} USDC {t('future open')}
                         </button>
                       ))}
                     </div>
@@ -623,7 +623,7 @@ export default function Dashboard() {
               <span className="font-medium text-destructive">
                 {t('Account suspended —')} {STRIKE_LIMIT} {t('strikes.')}
               </span>{' '}
-              {t('You cannot pick up calls, and SHELF has stopped quoting your documents. USDC that already settled stays in your wallet.')}
+              {t('You cannot pick up calls, and Obolus has stopped quoting your documents. USDC that already settled stays in your wallet.')}
             </p>
             <Button asChild variant="monoMuted" size="monoSm" className="ml-auto">
               <Link to="/memory">{t('Review the strikes')}</Link>
@@ -663,12 +663,12 @@ export default function Dashboard() {
             </h2>
             <p className="max-w-[340px] text-sm leading-relaxed text-muted-foreground">
               {tab === 'open'
-                ? t('No call matches these filters. Widen the category, or look at where the shelves are thin.')
-                : t('Ask something in chat, and if the shelves come up empty you can post a call right there.')}
+                ? t('No call matches these filters. Widen the category, or look at unanswered topics.')
+                : t('Ask something in chat. If no human record fits, you can post a call right there.')}
             </p>
             <Button asChild variant="mono" size="mono" className="mt-2">
               <Link to={tab === 'open' ? '/coverage' : '/'}>
-                {tab === 'open' ? t('See thin shelves') : t('Ask something')}
+                {tab === 'open' ? t('See unanswered topics') : t('Ask something')}
               </Link>
             </Button>
           </div>
@@ -759,9 +759,7 @@ export default function Dashboard() {
                   <div className="mt-5 flex items-center justify-between gap-3 border-t border-black/10 pt-3.5">
                     <div className="flex items-baseline gap-1">
                       <span className="text-[15px] font-semibold tabular-nums text-foreground">
-                        {order.unitPrice === 0
-                          ? '0 USDC'
-                          : `${formatUsdcFromKrw(order.unitPrice)} USDC`}
+                        {formatUsdcFromKrw(order.unitPrice)} USDC
                       </span>
                       <span className="text-[11px] text-muted-foreground">
                         {t('Per answer')}
@@ -1010,7 +1008,7 @@ function QuestionPreviewModal({
         <p className="mt-3 border-t border-border/60 pt-3 font-mono text-xs text-muted-foreground">
           {t('Per answer')}{' '}
           <span className="text-foreground">
-            {order.unitPrice === 0 ? '0 USDC' : `${formatUsdcFromKrw(order.unitPrice)} USDC`}
+            {formatUsdcFromKrw(order.unitPrice)} USDC
           </span>
         </p>
 

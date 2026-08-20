@@ -196,7 +196,7 @@ export function sessionTokenFrom(response) {
     const match = cookie.match(/(?:^|;\s*)openshelf_session=([^;]+)/)
     if (match?.[1]) return match[1]
   }
-  throw new Error('OPENSHELF did not return an agent-compatible session cookie')
+  throw new Error('Obolus did not return an agent-compatible session cookie')
 }
 
 export async function jsonRequest(url, init = {}, options = {}) {
@@ -261,7 +261,10 @@ export async function apiRequest(path, init = {}, options = {}) {
 
 export async function gatewayRequest(path, init = {}, options = {}) {
   const config = options.config || runtimeConfig()
-  return jsonRequest(`${config.gatewayOrigin}${path}`, init)
+  const headers = new Headers(init.headers || {})
+  headers.set('x-obulus-client', config.client || 'agent-mcp')
+  headers.set('x-obulus-instance', config.instance || 'default')
+  return jsonRequest(`${config.gatewayOrigin}${path}`, { ...init, headers })
 }
 
 export function jsonBody(value) {
@@ -282,7 +285,7 @@ export function requireQuery(state, queryId) {
 export function assertDevnetQuote(quote) {
   if (!quote || quote.network !== DEVNET_NETWORK || quote.asset !== DEVNET_USDC) {
     throw new AgentError(
-      'Refusing payment: OPENSHELF returned a non-Devnet network or unknown asset.',
+      'Refusing payment: Obolus returned a non-Devnet network or unknown asset.',
       'unsafe_payment_quote',
     )
   }

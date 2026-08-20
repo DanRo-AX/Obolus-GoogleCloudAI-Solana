@@ -15,7 +15,7 @@ export type Warmup =
   | { id: string; kind: 'scale'; prompt: string; hint?: string; low: string; high: string }
   | { id: string; kind: 'short'; prompt: string; hint?: string; placeholder: string }
 
-/** Warm-ups are chosen by shelf, so a new open call inherits the right set. */
+/** Warm-ups are chosen by stored category label, so a new open call inherits the right set. */
 export const WARMUPS: Record<string, Warmup[]> = {
   '성수동에서 먹고 삽니다': [
     {

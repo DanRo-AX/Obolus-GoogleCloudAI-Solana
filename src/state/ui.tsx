@@ -103,11 +103,11 @@ export type Chat = {
   filters?: TargetFilters
   ownerId?: string
   paymentSession?: PaymentSession
-  /** Ephemeral zero-price context; never a citation, memory, or shelf asset. */
+  /** Ephemeral public-model context; never a citation, memory, or database asset. */
   aiBaseline?: AiBaseline
 }
 
-/** An open call. Posted on the spot when the shelves come up empty. */
+/** An open call. Posted when the existing human databases lack coverage. */
 export type Order = {
   id: string
   question: string
@@ -191,7 +191,7 @@ export type MemoryEntry = {
   shelf: string
   earned: number
   createdAt: number
-  via: 'Open call' | 'Auto-match' | 'Shelf starter' | 'Correction' | 'Reflection'
+  via: 'Open call' | 'Auto-match' | 'Database starter' | 'Correction' | 'Reflection'
   /** Voided entries keep the attempted answer but earn zero until disputed. */
   status: 'settled' | 'voided'
   disputeStatus?: 'pending' | 'approved' | 'rejected'
@@ -619,10 +619,12 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           category,
           filters: order.filters,
         }
-        // Zero-price calls have no token transfer to settle. Paid calls use one
-        // exact Devnet escrow approval for the whole target, then fan out via
-        // durable payout claims as answers arrive.
-        const created = X402_ENABLED && order.unitPrice > 0
+        if (order.unitPrice <= 0) {
+          throw new Error('Open calls require a positive prepaid USDC budget.')
+        }
+        // One bounded Devnet USDC reservation funds the whole target. Accepted
+        // answers fan out as durable, auditable payout claims.
+        const created = X402_ENABLED
           ? await fundOpenCall(input)
           : await createOpenCall(input)
         setOrders((prev) => [created, ...prev.filter((item) => item.id !== created.id)])

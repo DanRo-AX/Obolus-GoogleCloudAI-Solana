@@ -112,7 +112,7 @@ export function MobileSidebar() {
             <div className="flex gap-2">
               <Button asChild variant="mono" size="mono" className="flex-1">
                 <Link to={profile ? '/memory' : '/onboarding'}>
-                  {profile?.handle ?? t('Set up your shelf')}
+                  {profile?.handle ?? t('Set up your database')}
                 </Link>
               </Button>
               <Button

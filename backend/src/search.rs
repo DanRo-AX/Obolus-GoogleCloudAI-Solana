@@ -11,7 +11,20 @@ use crate::domain::{
 
 const EMBEDDING_DIMENSIONS: usize = 768;
 const MIN_RELEVANCE: f32 = 0.22;
-const DEFAULT_OPEN_CALL_PRICE_KRW: u64 = 500;
+// The public API keeps the historical integer field name for wire compatibility.
+// 675 legacy units is exactly 0.50 USDC at the pinned 1,350 conversion schedule.
+const DEFAULT_OPEN_CALL_PRICE_UNITS: u64 = 675;
+
+/// Privacy-safe checkpoints emitted by the deterministic resolver. They are
+/// deliberately structural: no query text, document handle, wallet, or paid
+/// passage is ever copied into operational telemetry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResolveTraceStage {
+    QueryIndexed,
+    AuthorityRanked,
+    CandidatesSelected,
+    CoverageDecided,
+}
 
 #[derive(Debug)]
 struct IndexedDocument {
@@ -69,6 +82,17 @@ impl Resolver {
         &self,
         request: ResolveQuestionRequest,
     ) -> Result<ResolveQuestionResponse, ResolveError> {
+        self.resolve_with_observer(request, |_| {})
+    }
+
+    pub fn resolve_with_observer<F>(
+        &self,
+        request: ResolveQuestionRequest,
+        mut observe: F,
+    ) -> Result<ResolveQuestionResponse, ResolveError>
+    where
+        F: FnMut(ResolveTraceStage),
+    {
         validate(&request)?;
 
         let question = request.question.trim().to_owned();
@@ -101,7 +125,9 @@ impl Resolver {
                 .cloned()
                 .collect();
         }
+        observe(ResolveTraceStage::QueryIndexed);
         let authority = self.authority_scores(&query_embedding, &query_terms);
+        observe(ResolveTraceStage::AuthorityRanked);
         let mut candidates = self
             .documents
             .iter()
@@ -140,6 +166,7 @@ impl Resolver {
         // first expensive result.
         let selected =
             select_candidate_indices(&candidates, request.requested_documents, request.budget_krw);
+        observe(ResolveTraceStage::CandidatesSelected);
         let mut spent = 0_u64;
         let budget_blocked =
             request.budget_krw.is_some() && !candidates.is_empty() && selected.is_empty();
@@ -188,7 +215,9 @@ impl Resolver {
         };
 
         let quote = (!matches.is_empty()).then_some(Quote {
-            currency: "KRW",
+            // Numeric compatibility fields retain their historical names, but
+            // the product and settlement unit is USDC.
+            currency: "USDC",
             document_count: matches.len(),
             total_price_krw: spent,
         });
@@ -213,6 +242,8 @@ impl Resolver {
                     .to_string(),
             }
         });
+
+        observe(ResolveTraceStage::CoverageDecided);
 
         Ok(ResolveQuestionResponse {
             query_id: query_id(&question),
@@ -548,7 +579,7 @@ fn score<'a>(
 
 fn suggested_price(matches: &[MatchedDocument]) -> u64 {
     if matches.is_empty() {
-        return DEFAULT_OPEN_CALL_PRICE_KRW;
+        return DEFAULT_OPEN_CALL_PRICE_UNITS;
     }
     let mut prices = matches
         .iter()
@@ -824,7 +855,7 @@ mod tests {
             .expect("a miss should suggest an open call");
         assert_eq!(draft.target_answers, 5);
         assert_eq!(draft.answers_needed, 5);
-        assert_eq!(draft.suggested_budget_krw, 2_500);
+        assert_eq!(draft.suggested_budget_krw, 3_375);
     }
 
     #[test]

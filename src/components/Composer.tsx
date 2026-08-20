@@ -208,7 +208,7 @@ export function Composer({
             dark ? 'text-white/55' : 'text-muted-foreground',
           )}
         >
-          SHELF
+          OBOLUS
         </span>
       </div>
 
@@ -350,7 +350,7 @@ export function Composer({
           )}
         >
           {t(
-            'If human coverage is thin, this question alone may be sent to Gemini on Vertex AI for a free general baseline. Private shelf passages are never sent.',
+            'If human coverage is thin, this question alone may be sent to Gemini on Vertex AI for a free general baseline. Private database passages are never sent.',
           )}
         </p>
       </div>

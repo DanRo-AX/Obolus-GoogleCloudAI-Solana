@@ -79,7 +79,7 @@ function ProfileChip({ onSignOut }: { onSignOut: () => Promise<void> }) {
           <p className="truncate text-[10px] text-muted-foreground">
             {suspended
               ? t('Suspended')
-              : `${profile.speaksTo.length} ${t('shelves')}`}
+              : `${profile.speaksTo.length} ${t('topics')}`}
             {' · '}
             <span className={cn(profile.strikes > 0 && 'text-destructive')}>
               {t('strike')} {profile.strikes}/{STRIKE_LIMIT}
@@ -100,7 +100,7 @@ function ProfileChip({ onSignOut }: { onSignOut: () => Promise<void> }) {
 }
 
 /**
- * The two numbers that bring somebody back: what the shelf has earned, and how
+ * The two numbers that bring somebody back: what the personal database has earned, and how
  * many open calls are sitting in the fields they claimed. Both are links —
  * a figure you cannot act on is decoration.
  */
@@ -360,7 +360,7 @@ export function AppSidebar() {
                     </p>
                     <div className="flex gap-2">
                       <Button asChild variant="mono" size="monoSm" className="flex-1">
-                        <Link to="/onboarding">{t('Set up your shelf')}</Link>
+                        <Link to="/onboarding">{t('Set up your database')}</Link>
                       </Button>
                       <Button
                         variant="monoMuted"

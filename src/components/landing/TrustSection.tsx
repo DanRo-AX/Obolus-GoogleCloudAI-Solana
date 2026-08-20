@@ -75,7 +75,7 @@ export function TrustSection() {
         <div className="mt-14 flex flex-wrap items-center gap-x-10 gap-y-4 border-t border-border pt-8">
           <p className="max-w-xl text-pretty text-[15px] leading-7">
             <span className="font-medium">
-              {t('Delete your shelf and it burns.')}
+              {t('Delete your personal database and its documents are removed.')}
             </span>{' '}
             <span className="text-muted-foreground">
               {t(

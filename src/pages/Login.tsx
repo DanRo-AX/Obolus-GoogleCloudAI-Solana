@@ -319,8 +319,8 @@ export default function Login() {
             <ProductStep
               icon={Database}
               number="02"
-              title={t('Search the shelves')}
-              detail={t('SHELF opens a handful, not the index')}
+              title={t('Search human databases')}
+              detail={t('Obolus opens only the evidence you choose')}
             />
             <ArrowDown aria-hidden className="ml-6 size-4 text-white/30" />
             <ProductStep
@@ -343,7 +343,7 @@ export default function Login() {
               {t('Paid in')} <span className="text-white/80">USDC</span>
             </span>
             <span>
-              {t('Per open')} <span className="text-white/80">₩5–₩25</span>
+              {t('Open Call reward')} <span className="text-white/80">0.50–2.00 USDC</span>
             </span>
           </div>
         </div>

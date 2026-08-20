@@ -112,7 +112,7 @@ export async function handleMcpRequest(request) {
 }
 
 const serverInstructions =
-  'Human evidence marketplace on Solana Devnet. OpenShelf tools prepare exact payments; use the separate Pay MCP curl tool only after showing the amount and receiving user approval. AI baselines are free orientation, never human evidence. Never invent a contributor answer.'
+  'Human evidence marketplace on Solana Devnet. Obolus tools prepare exact USDC payments; use the separate Pay MCP curl tool only after showing the amount and receiving user approval. AI baselines are free orientation, never human evidence. Never invent a contributor answer.'
 
 function normalizeStructured(value) {
   if (value && typeof value === 'object' && !Array.isArray(value)) return value
@@ -127,7 +127,7 @@ function safeError(error) {
   return {
     error: {
       code: error?.code || 'agent_error',
-      message: error?.message || 'OpenShelf agent request failed',
+      message: error?.message || 'Obolus agent request failed',
       status: error?.status || 500,
     },
   }
@@ -407,7 +407,7 @@ async function readSecret(prompt) {
 }
 
 function printHelp() {
-  process.stdout.write(`OpenShelf Antigravity runtime\n\n`)
+  process.stdout.write(`Obolus Antigravity runtime\n\n`)
   process.stdout.write(`  server.mjs auth login --email you@example.com\n`)
   process.stdout.write(`  server.mjs auth register --email you@example.com --age-confirmed\n`)
   process.stdout.write(`  server.mjs auth status\n`)

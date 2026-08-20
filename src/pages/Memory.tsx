@@ -133,7 +133,7 @@ export default function Memory() {
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `openshelf-export-${new Date().toISOString().slice(0, 10)}.json`
+      link.download = `obolus-export-${new Date().toISOString().slice(0, 10)}.json`
       link.click()
       URL.revokeObjectURL(url)
     } catch (error) {
@@ -391,7 +391,7 @@ export default function Memory() {
             ) : null}
             <div className="min-w-0">
               <h1 className="font-sans text-xl font-semibold tracking-[-0.02em]">
-                {t('My shelf')}
+                {t('My database')}
               </h1>
               <p className="mt-1 max-w-xl text-sm leading-6 text-muted-foreground">
                 {t('Manage the answers you own, their reuse, and every settlement.')}
@@ -669,7 +669,7 @@ export default function Memory() {
                     icon={<Flame className="size-3.5" />}
                     label={t('Documents')}
                     value={`${settled.length}`}
-                    sub={`${t('across')} ${shelves.length}${t(' shelves')}`}
+                    sub={`${t('across')} ${shelves.length}${t(' topics')}`}
                   />
                 </div>
 
@@ -778,7 +778,7 @@ export default function Memory() {
                     {voided.length}
                     {voided.length > 1 ? t(' answers voided.') : t(' answer voided.')}
                   </span>{' '}
-                  {t('They stay on your shelf so you can see what tripped. SHELF will not quote them, and they earn nothing.')}
+                  {t('They stay in your personal database so you can review what tripped. Obolus will not quote them, and they earn nothing.')}
                 </p>
               </Banner>
             ) : null}
@@ -798,12 +798,12 @@ export default function Memory() {
                 <span className="text-sm leading-relaxed text-muted-foreground">
                   {(profile?.strikes ?? 0) >= AUTO_MATCH_STRIKE_LIMIT
                     ? `${t('Strike')} ${AUTO_MATCH_STRIKE_LIMIT}${t(' of ')}${STRIKE_LIMIT}${t(' — auto-match is off. New payouts are held 14 days. Win the dispute and the strike lifts.')}`
-                    : t('Leave it on and SHELF quotes your documents the moment one fits a question — no open call, no waiting. USDC lands in your wallet each time someone opens one, with nothing new written.')}
+                    : t('Leave it on and Obolus quotes your documents the moment one fits a question — no open call, no waiting. USDC lands in your wallet each time someone opens one, with nothing new written.')}
                 </span>
               </div>
             </div>
 
-            {/* Shelf spread ------------------------------------------------ */}
+            {/* Topic spread ------------------------------------------------ */}
             {shelves.length ? (
               <div className="flex flex-wrap gap-1.5">
                 {shelves.map(([name, n]) => (
@@ -890,12 +890,12 @@ export default function Memory() {
             {/* Memory stream ----------------------------------------------- */}
             <div>
               <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-                {t('On your shelf')}
+                {t('In your personal database')}
               </p>
               {memory.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-3 py-[18vh] text-center">
                   <h2 className="font-sans text-lg font-medium">
-                    {t('Nothing on your shelf yet')}
+                    {t('Nothing in your personal database yet')}
                   </h2>
                   <p className="max-w-[320px] text-sm leading-relaxed text-muted-foreground">
                     {t('Answer one open call and it lands here as a document. Every open after that pays you a little USDC, and we never touch it.')}
@@ -971,7 +971,7 @@ export default function Memory() {
                                 disabled={lockingId === m.id}
                                 onClick={() => void toggleMemoryLock(m.id, !m.locked)}
                                 className="inline-flex size-6 cursor-pointer items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground disabled:cursor-wait"
-                                title={m.locked ? t('Unlock it so SHELF can quote it') : t('Lock it so SHELF stops quoting it')}
+                                title={m.locked ? t('Unlock it so Obolus can quote it') : t('Lock it so Obolus stops quoting it')}
                                 aria-label={m.locked ? t('Unlock document') : t('Lock document')}
                               >
                                 {lockingId === m.id ? (

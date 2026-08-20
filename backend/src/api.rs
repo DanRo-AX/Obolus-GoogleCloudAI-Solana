@@ -2,6 +2,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+use std::time::Instant;
 
 use argon2::{
     Argon2,
@@ -58,7 +59,7 @@ use crate::{
     },
     orchestrator,
     rollback_audit::{ModelCallAuditIntent, RollbackAudit, RollbackAuditIntent},
-    search::Resolver,
+    search::{ResolveTraceStage, Resolver},
     store::{
         AdminTable, AiArtifactMetadata, AiGenerationClaim, PayShDeliveryRequest,
         PaymentQuotePolicy, Store, StoreError,
@@ -1233,7 +1234,29 @@ async fn resolve_question(
     }
     let resolver =
         Resolver::new(state.store.documents()?).with_evidence_edges(state.store.evidence_edges()?);
-    let mut response = resolver.resolve(planned.request.clone())?;
+    let trace_instance = gemini_mcp_instance(&headers);
+    let mut trace_checkpoint = Instant::now();
+    let mut response = resolver.resolve_with_observer(planned.request.clone(), |checkpoint| {
+        let Some(instance) = trace_instance.as_deref() else {
+            return;
+        };
+        let (stage, action) = match checkpoint {
+            ResolveTraceStage::QueryIndexed => ("index", "query_indexed"),
+            ResolveTraceStage::AuthorityRanked => ("authority", "pagerank_computed"),
+            ResolveTraceStage::CandidatesSelected => ("retrieval", "candidates_selected"),
+            ResolveTraceStage::CoverageDecided => ("result", "coverage_decided"),
+        };
+        let latency_ms = trace_checkpoint
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+        trace_checkpoint = Instant::now();
+        if let Err(error) =
+            state.record_system_event("gemini-mcp", instance, stage, action, 200, latency_ms)
+        {
+            tracing::warn!(%error, stage, action, "could not persist Gemini MCP resolver checkpoint");
+        }
+    })?;
     let query_id = response.query_id.clone();
     let action_provider_fence =
         orchestrator::generation_fence_namespace(orchestrator::AGENT_ACTION_POLICY_VERSION);
@@ -1359,6 +1382,21 @@ async fn resolve_question(
     )?;
     response.payment_access_token = Some(payment_access_token);
     Ok(Json(response))
+}
+
+/// Only the installed Gemini CLI MCP gets fine-grained execution telemetry.
+/// Requiring its per-tool-call instance suffix prevents a browser or an older
+/// static client label from making the observatory appear live.
+fn gemini_mcp_instance(headers: &HeaderMap) -> Option<String> {
+    let client = headers.get("x-obulus-client")?.to_str().ok()?.trim();
+    let instance = headers.get("x-obulus-instance")?.to_str().ok()?.trim();
+    (client == "gemini-mcp"
+        && instance.starts_with("gemini-cli-")
+        && instance.len() <= 64
+        && instance
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')))
+    .then(|| instance.to_owned())
 }
 
 async fn authorize_model_call(
@@ -1580,7 +1618,7 @@ async fn generate_shelf_starters(
         }));
     }
     let profile = state.store.get_profile(&user.id)?.ok_or_else(|| {
-        StoreError::Conflict("complete onboarding before building your shelf".to_owned())
+        StoreError::Conflict("complete onboarding before building your database".to_owned())
     })?;
     let mut categories = profile.speaks_to.clone();
     categories.sort_unstable();
@@ -3878,7 +3916,10 @@ mod tests {
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
-    use crate::{db::Connection, demo_app, params, rollback_audit::RollbackAudit, store::Store};
+    use crate::{
+        db::Connection, demo_app, domain::RecordPrepaidDepositRequest, params,
+        rollback_audit::RollbackAudit, store::Store,
+    };
 
     use super::{
         AppState, BASE64_STANDARD, QUERY_TOKEN_HEADER, router, validate_email_configuration,
@@ -5726,7 +5767,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(free_call.status(), StatusCode::CREATED);
+        // Disabling the demo bypass must not leave a second, zero-price
+        // application-ledger path behind. Every open call now requires funded
+        // prepaid USDC.
+        assert_eq!(free_call.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[tokio::test]
@@ -5822,8 +5866,51 @@ mod tests {
 
     #[tokio::test]
     async fn survey_submission_registers_private_context_and_one_searchable_answer() {
-        let app = demo_app();
+        let store = Store::in_memory().unwrap();
+        let buyer_wallet = bs58::encode(
+            SigningKey::from_bytes(&[73_u8; 32])
+                .verifying_key()
+                .to_bytes(),
+        )
+        .into_string();
+        let bundle_receiver = bs58::encode(
+            SigningKey::from_bytes(&[74_u8; 32])
+                .verifying_key()
+                .to_bytes(),
+        )
+        .into_string();
+        let mut state = AppState::new(store.clone()).with_email_password_auth_enabled(true);
+        state.payment_policy.bundle_recipient = Some(bundle_receiver.clone());
+        state.payment_policy.fallback_recipient = Some(bundle_receiver.clone());
+        let payment_policy = state.payment_policy.clone();
+        let app = router(Arc::new(state));
         let buyer_cookie = register(&app, "survey-buyer@example.com").await;
+        let buyer_id = user_id_from_me(&app, &buyer_cookie).await;
+        store
+            .bind_wallet_identity(&buyer_id, &buyer_wallet)
+            .unwrap();
+        store
+            .issue_prepaid_wallet_session(
+                &buyer_id,
+                &buyer_wallet,
+                &"ab".repeat(32),
+                300_000,
+                &payment_policy,
+            )
+            .unwrap();
+        store
+            .record_prepaid_deposit(
+                &RecordPrepaidDepositRequest {
+                    transaction_signature: "7".repeat(64),
+                    payer: buyer_wallet,
+                    pay_to: bundle_receiver,
+                    network: payment_policy.network.clone(),
+                    asset: payment_policy.asset.clone(),
+                    amount_atomic: "5000000".to_owned(),
+                },
+                &payment_policy,
+            )
+            .unwrap();
         let response = app
             .clone()
             .oneshot(
@@ -5832,10 +5919,8 @@ mod tests {
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
                         json!({
-                            // Pure web3: a free call needs no prepaid funding; the
-                            // paid-funding path is covered by the prepaid tests.
                             "question": "Which winter boots work for field research in Svalbard?",
-                            "unitPrice": 0,
+                            "unitPrice": 1350,
                             "target": 1,
                             "chatId": "chat-survey-registration",
                             "shelf": "Svalbard field researchers",

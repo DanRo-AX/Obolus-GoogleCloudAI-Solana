@@ -57,7 +57,7 @@ export type Resolution = {
   candidateCount: number
   matches: ResolvedMatch[]
   quote?: {
-    currency: 'KRW'
+    currency: 'USDC'
     documentCount: number
     totalPriceKrw: number
   }
@@ -172,7 +172,7 @@ export type Account = {
 }
 
 export type BalanceSummary = {
-  currency: 'KRW_SANDBOX'
+  currency: 'USDC'
   availableKrw: number
   reservedKrw: number
   heldKrw: number

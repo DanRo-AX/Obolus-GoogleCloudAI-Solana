@@ -1,4 +1,4 @@
-# OPENSHELF backend
+# Obolus backend
 
 The Rust service owns the complete question lifecycle:
 
@@ -6,7 +6,7 @@ The Rust service owns the complete question lifecycle:
 question -> search/rank private MDs -> HIT -> quote safe metadata
                                   \-> MISS -> create an open call
 account -> HttpOnly session -> profile / private memory / balance
-open call -> zero-price sandbox or one exact Devnet escrow funding transaction
+open call -> one exact prepaid Devnet USDC escrow funding transaction
           -> recommend + notify matching contributors -> hold a 10-minute answer slot
           -> accepted answer -> deterministic contributor payout claim
           -> cancellation/account deletion -> exact unused payer refund claim
@@ -150,8 +150,8 @@ override above is only for a local published-port container.
 | `GET` | `/api/v1/public-evidence` | Search source-, license-, date-, record-ID-, and hash-bound open institutional records; never human coverage |
 | `POST` | `/api/v1/questions/{id}/ai-baseline` | Generate/cache a free public answer with official records and Google Search grounding, without opening private human passages (query token required) |
 | `POST` | `/api/v1/answers/synthesize` | Synthesize only server-proven opened passages (query token required) |
-| `GET/POST` | `/api/v1/shelf-starters` | List or explicitly generate AI interview prompts; never fake buyers or bounties |
-| `POST` | `/api/v1/shelf-starters/{id}/answer` | Turn a quality-checked human answer—not the AI prompt—into a priced document |
+| `GET/POST` | `/api/v1/shelf-starters` | List or explicitly generate personal-database interview prompts; never fake buyers or bounties (legacy route name retained for compatibility) |
+| `POST` | `/api/v1/shelf-starters/{id}/answer` | Turn a quality-checked human answer—not the AI prompt—into a priced personal-database document (legacy route name retained for compatibility) |
 | `GET` | `/api/v1/questions/{id}/payment-progress` | Reconcile settled/quoted/unpaid handles for a payer |
 | `GET` | `/api/v1/questions/{id}/paid-documents/{handle}` | Recover a previously settled passage without paying again |
 | `POST` | `/api/v1/questions/{id}/paid-documents/{handle}/feedback` | Record paid-buyer feedback or a report |
@@ -211,7 +211,7 @@ API processes do not share a timestamp/counter collision domain.
 The SIWX path uses Pay's canonical Solana sign-in message, checks domain, URI,
 chain, nonce, issued/expiry time, request ID, Ed25519 signature, and one-time
 consumption before applying the same wallet-uniqueness rule. It links a wallet
-to an already authenticated OpenShelf user; it does not infer identity from a
+to an already authenticated Obolus user; it does not infer identity from a
 Google account or email address.
 
 Answer submissions may include `interviewResponses` from the optional warm-up
@@ -237,9 +237,9 @@ while the page stays open.
 
 Answer, cancellation, and dispute approval serialize on the same open-call row.
 An approved dispute can fill only an open call with remaining capacity and
-escrow. Sandbox calls release reserved KRW; funded calls instead decrement the
-exact remaining atomic escrow and create one contributor payout claim. A
-cancelled call can never be reopened by a late administrator decision.
+escrow. Every current Open Call decrements its exact remaining atomic USDC
+escrow and creates one contributor payout claim. A cancelled call can never be
+reopened by a late administrator decision.
 
 The memory agent never generates a human experience. When explicitly enabled,
 it can reuse the contributor's exact previously paid answer only when the old
@@ -257,12 +257,14 @@ rejects first-person or direct recommendation language. The result lives in
 `ai_baselines`, expires, costs zero, and has no path into documents, authority,
 memory, matching, or settlement.
 
-Shelf starters cover the inverse cold start. Gemini on Vertex AI receives only the
+Personal-database starters cover the inverse cold start. Gemini on Vertex AI receives only the
 contributor's broad field and opted-in categories and returns prompts, not
 answers. They live in `shelf_starters` with `buyerWaiting=false` and
 `guaranteedRewardKrw=0`. A human may answer one and choose a future per-open
 price; normal specificity, identifier, duplicate, profile, and suspension
-checks run before Rust creates a document with `via = Shelf starter`.
+checks run before Rust creates a personal-database document. The table name and
+stored `via` value remain legacy compatibility identifiers and are never shown
+as product terminology.
 
 Register and keep the cookie in a local cookie jar:
 
@@ -301,13 +303,11 @@ SHA-256 token hash is stored. Progress and recovery additionally require the
 settling payer public key, so a UI retry can recover settled handles and pay only
 the remaining ones.
 
-The signup balance and open-call escrow are deliberately marked
-`KRW_SANDBOX`; they verify money invariants without pretending to hold fiat or
-tokens. The direct `/api/flash-research` response is deliberately marked
-`network: "demo"`: it exercises privacy, quoting, idempotency, and the earnings
-ledger without pretending that a chain transaction occurred. Every accrual is
-also written as its own event with source, document, settlement, recipient-wallet
-snapshot, payout status, and availability time.
+`KRW_SANDBOX` remains only as a legacy database enum for reading old local test
+fixtures. Current Open Calls require prepaid Devnet USDC, and current balances
+are reported from atomic USDC fields. Every accrual is written as its own event
+with source, document, settlement, recipient-wallet snapshot, payout status,
+and availability time.
 
 ## Exercise the real 402 payment boundary
 

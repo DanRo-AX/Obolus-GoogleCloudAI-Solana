@@ -1,4 +1,4 @@
-# Official Pay.sh sandbox gateway for the agent-facing OPENSHELF API.
+# Official Pay.sh sandbox gateway for the agent-facing Obolus API.
 #
 # The free resolve/prepare calls expose only payment-safe metadata. Each paid
 # path opens exactly one quoted human document. Pay.sh resolves OWNER_WALLET
@@ -8,7 +8,7 @@
 # is released.
 name: openshelf
 subdomain: openshelf
-title: "OPENSHELF Human Data API"
+title: "Obolus Human Data API"
 description: "Search first-person human memory, then pay only for the individual documents an agent opens."
 category: data
 version: v2
@@ -33,7 +33,7 @@ recipients:
 endpoints:
   - method: GET
     path: "healthz"
-    description: "Check whether the OPENSHELF human-data backend is healthy."
+    description: "Check whether the Obolus human-data backend is healthy."
 
   - method: POST
     path: "api/v1/questions/resolve"
@@ -50,7 +50,7 @@ endpoints:
   - method: GET
     path: "api/v2/pay-sh/documents/5/{query_id}/{handle}"
     resource: "human-document-krw-5"
-    description: "Open one quoted five-won human document after an exact MPP charge."
+    description: "Open one query-bound human document after the exact USDC quote is paid."
     metering:
       schemes: ["mpp-charge"]
       dimensions:
@@ -62,12 +62,12 @@ endpoints:
       splits:
         - recipient: owner
           amount: 0.003703
-          memo: "OPENSHELF human document owner"
+          memo: "Obolus human document owner"
 
   - method: GET
     path: "api/v2/pay-sh/documents/10/{query_id}/{handle}"
     resource: "human-document-krw-10"
-    description: "Open one quoted ten-won human document after an exact MPP charge."
+    description: "Open one query-bound human document after the exact USDC quote is paid."
     metering:
       schemes: ["mpp-charge"]
       dimensions:
@@ -79,12 +79,12 @@ endpoints:
       splits:
         - recipient: owner
           amount: 0.007407
-          memo: "OPENSHELF human document owner"
+          memo: "Obolus human document owner"
 
   - method: GET
     path: "api/v2/pay-sh/documents/100/{query_id}/{handle}"
     resource: "human-document-krw-100"
-    description: "Open one quoted one-hundred-won human document after an exact MPP charge."
+    description: "Open one query-bound human document after the exact USDC quote is paid."
     metering:
       schemes: ["mpp-charge"]
       dimensions:
@@ -96,12 +96,12 @@ endpoints:
       splits:
         - recipient: owner
           amount: 0.074074
-          memo: "OPENSHELF human document owner"
+          memo: "Obolus human document owner"
 
   - method: GET
     path: "api/v2/pay-sh/documents/15/{query_id}/{handle}"
     resource: "human-document-krw-15"
-    description: "Open one quoted fifteen-won human document after an exact MPP charge."
+    description: "Open one query-bound human document after the exact USDC quote is paid."
     metering:
       schemes: ["mpp-charge"]
       dimensions:
@@ -113,12 +113,12 @@ endpoints:
       splits:
         - recipient: owner
           amount: 0.011111
-          memo: "OPENSHELF human document owner"
+          memo: "Obolus human document owner"
 
   - method: GET
     path: "api/v2/pay-sh/documents/25/{query_id}/{handle}"
     resource: "human-document-krw-25"
-    description: "Open one quoted twenty-five-won human document after an exact MPP charge."
+    description: "Open one query-bound human document after the exact USDC quote is paid."
     metering:
       schemes: ["mpp-charge"]
       dimensions:
@@ -130,12 +130,12 @@ endpoints:
       splits:
         - recipient: owner
           amount: 0.018518
-          memo: "OPENSHELF human document owner"
+          memo: "Obolus human document owner"
 
   - method: GET
     path: "api/v2/pay-sh/documents/300/{query_id}/{handle}"
     resource: "human-document-krw-300"
-    description: "Open one quoted three-hundred-won human document after an exact MPP charge."
+    description: "Open one query-bound human document after the exact USDC quote is paid."
     metering:
       schemes: ["mpp-charge"]
       dimensions:
@@ -147,12 +147,12 @@ endpoints:
       splits:
         - recipient: owner
           amount: 0.222222
-          memo: "OPENSHELF human document owner"
+          memo: "Obolus human document owner"
 
   - method: GET
     path: "api/v2/pay-sh/documents/500/{query_id}/{handle}"
     resource: "human-document-krw-500"
-    description: "Open one quoted five-hundred-won human document after an exact MPP charge."
+    description: "Open one query-bound human document after the exact USDC quote is paid."
     metering:
       schemes: ["mpp-charge"]
       dimensions:
@@ -164,12 +164,12 @@ endpoints:
       splits:
         - recipient: owner
           amount: 0.370370
-          memo: "OPENSHELF human document owner"
+          memo: "Obolus human document owner"
 
   - method: GET
     path: "api/v2/pay-sh/documents/700/{query_id}/{handle}"
     resource: "human-document-krw-700"
-    description: "Open one quoted seven-hundred-won human document after an exact MPP charge."
+    description: "Open one query-bound human document after the exact USDC quote is paid."
     metering:
       schemes: ["mpp-charge"]
       dimensions:
@@ -181,12 +181,12 @@ endpoints:
       splits:
         - recipient: owner
           amount: 0.518518
-          memo: "OPENSHELF human document owner"
+          memo: "Obolus human document owner"
 
   - method: GET
     path: "api/v2/pay-sh/documents/800/{query_id}/{handle}"
     resource: "human-document-krw-800"
-    description: "Open one quoted eight-hundred-won human document after an exact MPP charge."
+    description: "Open one query-bound human document after the exact USDC quote is paid."
     metering:
       schemes: ["mpp-charge"]
       dimensions:
@@ -198,12 +198,12 @@ endpoints:
       splits:
         - recipient: owner
           amount: 0.592592
-          memo: "OPENSHELF human document owner"
+          memo: "Obolus human document owner"
 
   - method: GET
     path: "api/v2/pay-sh/documents/1000/{query_id}/{handle}"
     resource: "human-document-krw-1000"
-    description: "Open one quoted one-thousand-won human document after an exact MPP charge."
+    description: "Open one query-bound human document after the exact USDC quote is paid."
     metering:
       schemes: ["mpp-charge"]
       dimensions:
@@ -215,4 +215,4 @@ endpoints:
       splits:
         - recipient: owner
           amount: 0.740740
-          memo: "OPENSHELF human document owner"
+          memo: "Obolus human document owner"

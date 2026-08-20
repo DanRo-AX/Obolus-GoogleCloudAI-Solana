@@ -31,8 +31,8 @@ import {
   type Resolution,
   type SettlementPreviewEnvelope,
 } from '@/lib/api'
-import { krwPerUsdc } from '@/lib/browserPaymentConfig'
 import { DATA_OWNER_BPS, PROTOCOL_FEE_BPS } from '@/lib/pricingPolicy'
+import { formatUsdcFromKrw } from '@/lib/usdc'
 import { cn } from '@/lib/utils'
 import { explorerUrl, openDocuments, PaymentError } from '@/lib/x402'
 import { DEVNET_USDC, shortKey, useWallet } from '@/state/wallet'
@@ -44,7 +44,7 @@ import { useUi, type Citation, type PaymentContext } from '@/state/ui'
  *   1 ask  2 search  3 rank  4 hit/miss  5 open call  6 x402  7 accrue
  *
  * Step 4 is the whole service. A human hit ends as paid search; a miss may add
- * zero-price general AI liquidity while keeping the human gap open for a call.
+ * a free public-model orientation while keeping the human gap open for a paid call.
  * Phantom approves a reusable prepaid balance refill only when funds are low. The server agent then pays the
  * selected DBs independently through Pay.sh and returns only paid evidence.
  */
@@ -68,8 +68,6 @@ type RankedShelf = {
   name: string
   accent: string
 }
-
-const KRW_PER_USDC = krwPerUsdc(import.meta.env.VITE_KRW_PER_USDC, import.meta.env.PROD)
 
 const STEPS = [
   { n: 2, label: 'Find relevant experience', blurb: 'Search for documents that match the question and audience' },
@@ -110,7 +108,10 @@ const AGENT_TOOL_SUMMARIES: Record<string, string> = {
 }
 
 const COUNT_CHOICES = [3, 7, 12]
-const PRICE_CHOICES = [0, 300, 500, 800]
+// The API retains legacy integer price fields for backward compatibility. The
+// product shows only their pinned USDC equivalents. These defaults correspond
+// to 0.50, 1.00 and 2.00 USDC at the server's migration rate.
+const PRICE_CHOICES = [675, 1350, 2700]
 const SHELF_ACCENTS = ['#C8552B', '#2F6F8F', '#3E7C59', '#7A5C9E', '#9A6B2F']
 
 function shelfAccent(id: string): string {
@@ -229,12 +230,7 @@ export default function Chat() {
   }, [paymentSession?.accessToken, paymentSession?.queryId, pending, t])
 
   const total = pending.reduce((sum, c) => sum + c.price, 0)
-  const estimatedUsdc =
-    pending.reduce(
-      (sum, citation) =>
-        sum + Math.ceil((citation.price * 1_000_000) / KRW_PER_USDC),
-      0,
-    ) / 1_000_000
+  const totalUsdc = formatUsdcFromKrw(total)
   const countChoices = useMemo(
     () =>
       [...new Set([openCallDraft?.answersNeeded, ...COUNT_CHOICES])].filter(
@@ -244,8 +240,11 @@ export default function Chat() {
   )
   const priceChoices = useMemo(
     () =>
-      [...new Set([openCallDraft?.suggestedUnitPriceKrw, ...PRICE_CHOICES])].filter(
-        (value): value is number => typeof value === 'number' && value >= 0,
+      [...new Set([
+        Math.max(openCallDraft?.suggestedUnitPriceKrw ?? PRICE_CHOICES[0], PRICE_CHOICES[0]),
+        ...PRICE_CHOICES,
+      ])].filter(
+        (value): value is number => typeof value === 'number' && value > 0,
       ).sort((left, right) => left - right),
     [openCallDraft?.suggestedUnitPriceKrw],
   )
@@ -336,7 +335,7 @@ export default function Chat() {
         const remaining = citations.filter(
           (citation) => !openedHandles.has(citation.handle),
         )
-        let answer = `${t('Opened')} ${result.citations.length} ${t('documents from the')} ${shelfName} ${t('shelf. Each passage below is quoted as written.')}${result.settlement.partial ? ` ${t('Payment stopped before the rest, so those stayed closed and cost nothing.')}` : ''}`
+        let answer = `${t('Opened')} ${result.citations.length} ${t('documents from the')} ${shelfName} ${t('database. Each passage below is quoted as written.')}${result.settlement.partial ? ` ${t('Payment stopped before the rest, so those stayed closed and cost nothing.')}` : ''}`
         if (result.citations.length > 0) {
           try {
             const synthesis = await synthesizeAnswer(
@@ -535,10 +534,7 @@ export default function Chat() {
         appendAssistant(chatId, {
           id: messageId,
           role: 'assistant',
-          content:
-            existingOrder.escrowMode === 'x402_solana_escrow'
-              ? 'An answer to your open call arrived. Your reserved escrow holds its Devnet USDC share as a payout claim for the author.'
-              : 'An answer to your open call arrived at ₩0, through the off-chain call ledger.',
+          content: 'An answer to your open call arrived. Your reserved prepaid balance holds its Devnet USDC share as an auditable payout claim for the author.',
           citations: [
             {
               handle: answer.handle,
@@ -551,14 +547,8 @@ export default function Chat() {
           settlement: {
             count: 1,
             total: answer.price,
-            network:
-              existingOrder.escrowMode === 'x402_solana_escrow'
-                ? (existingOrder.escrowNetwork ?? 'devnet')
-                : 'sandbox-escrow',
-            mode:
-              existingOrder.escrowMode === 'x402_solana_escrow'
-                ? 'open_call_escrow'
-                : undefined,
+            network: existingOrder.escrowNetwork ?? 'devnet',
+            mode: 'open_call_escrow',
           },
         })
       }
@@ -634,7 +624,7 @@ export default function Chat() {
                             {c.handle} · {c.shelf}
                           </span>
                           <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                            ₩{c.price.toLocaleString()}
+                            {formatUsdcFromKrw(c.price)} USDC
                           </span>
                         </div>
                         <p className="mt-2 text-[15px] leading-relaxed text-foreground/90">
@@ -664,24 +654,20 @@ export default function Chat() {
                       <span>
                         {m.settlement.count} {t('opens')} ·{' '}
                         <span className="tabular-nums text-foreground">
-                          ₩{m.settlement.total.toLocaleString()}
+                          {formatUsdcFromKrw(m.settlement.total)} USDC
                         </span>
                       </span>
                       <span className="text-muted-foreground/60">
-                      {m.settlement.network === 'demo'
-                        ? t('off-chain application ledger · token settlement disabled')
-                        : m.settlement.network === 'sandbox-escrow'
-                          ? t('zero-price call · no token transfer')
-                        : m.settlement.network === 'offline'
+                      {m.settlement.network === 'offline'
                           ? t('offline preview · no payment sent')
                         : m.settlement.mode === 'open_call_escrow'
                           ? t('Devnet escrow · payout claim created for the author')
                         : m.settlement.mode === 'bundle_escrow'
                           ? t('legacy x402 bundle · each author’s share is claimable')
                         : m.settlement.mode === 'pay_sh_direct'
-                          ? t('local Pay.sh · paid only the documents SHELF opened')
+                          ? t('local Pay.sh · paid only the documents Obolus opened')
                         : m.settlement.mode === 'pay_sh_orchestrated'
-                          ? t('prepaid balance · SHELF paid each author through Pay.sh')
+                          ? t('prepaid balance · Obolus paid each author through Pay.sh')
                           : t('settled through x402 · unopened documents cost nothing')}
                       </span>
                       {(m.settlement.txSigs?.length
@@ -732,7 +718,7 @@ export default function Chat() {
               {phase === 'confirm' ? (
                 <Branch
                   title={`${pending.length} ${t('documents already answer this.')}`}
-                  body={`${t('No open call needed. Opening all')} ${pending.length} ${t('costs')} ₩${total.toLocaleString()}${t(', which settles as')} ${estimatedUsdc.toFixed(6)} ${t('USDC on Solana.')} ${paymentUsesLegacyPaySh ? t('This old local Pay.sh session cannot continue. Ask again to start a new one.') : t('That amount is reserved from your prepaid USDC balance. Phantom appears only for the first refill, or when the balance runs low; SHELF then pays each author through Pay.sh.')}`}
+                  body={`${t('No open call needed. Opening all')} ${pending.length} ${t('costs')} ${totalUsdc} ${t('USDC on Solana.')} ${paymentUsesLegacyPaySh ? t('This old local Pay.sh session cannot continue. Ask again to start a new one.') : t('That amount is reserved from your prepaid USDC balance. Phantom appears only for the first refill, or when the balance runs low; Obolus then pays each author through Pay.sh.')}`}
                 >
                   <div className="w-full rounded-[4px] bg-foreground/[0.04] px-3 py-2 font-mono text-[10px] uppercase leading-relaxed tracking-[0.8px] text-muted-foreground">
                     {t('Gas-sponsored Devnet payment · no SOL required · refill only when low · no token delegate. Verify Devnet USDC mint')}{' '}
@@ -977,13 +963,13 @@ export default function Chat() {
               {phase === 'ask-price' ? (
                 <Branch
                   title={t('What do you want to pay per answer?')}
-                  body={t('₩0 still gets answers, slower. You pay what you name here once per answer you accept.')}
+                  body={t('Choose a positive USDC reward for each accepted answer. The full target is reserved before the call opens.')}
                 >
                   {priceChoices.map((p) => (
                     <Button
                       key={p}
                       variant={
-                        p === (openCallDraft?.suggestedUnitPriceKrw ?? 300)
+                        p === Math.max(openCallDraft?.suggestedUnitPriceKrw ?? PRICE_CHOICES[0], PRICE_CHOICES[0])
                           ? 'mono'
                           : 'monoMuted'
                       }
@@ -1019,7 +1005,7 @@ export default function Chat() {
                         )
                       }}
                     >
-                      {p === 0 ? '₩0' : `₩${p.toLocaleString()}`}
+                      {formatUsdcFromKrw(p)} USDC
                     </Button>
                   ))}
                 </Branch>
@@ -1028,7 +1014,7 @@ export default function Chat() {
               {phase === 'ordered' && placedOrder ? (
                 <Branch
                   title={t('Call posted.')}
-                  body={`${placedOrder.target} ${t('answers ·')} ₩${placedOrder.unitPrice.toLocaleString()} ${t('each.')} ₩${placedOrder.escrowRemainingKrw?.toLocaleString() ?? (placedOrder.target * placedOrder.unitPrice).toLocaleString()} ${t('is')} ${placedOrder.escrowMode === 'x402_solana_escrow' ? t('held in Devnet USDC escrow on one Phantom approval') : t('tracked as zero-price, off-chain call credit')}. ${t('Each answer you accept pays its author from that, and whatever is left comes back.')}`}
+                  body={`${placedOrder.target} ${t('answers ·')} ${formatUsdcFromKrw(placedOrder.unitPrice)} USDC ${t('each.')} ${formatUsdcFromKrw(placedOrder.escrowRemainingKrw ?? (placedOrder.target * placedOrder.unitPrice))} USDC ${t('is reserved from your prepaid balance')}. ${t('Each answer you accept pays its author from that, and whatever is left comes back.')}`}
                 >
                   <Button
                     variant="mono"
@@ -1051,14 +1037,14 @@ export default function Chat() {
 
               {phase === 'settling' ? (
                 <Branch
-                  title={t('SHELF is opening the documents…')}
-                  body={t('The question is reserved against your prepaid balance. SHELF checks each 402 price and recipient, pays the author, and returns only the passages it paid for. Phantom appears only if the balance needs a refill. You can close this tab — the job keeps running.')}
+                  title={t('Obolus is opening the documents…')}
+                  body={t('The question is reserved against your prepaid balance. Obolus checks each 402 price and recipient, pays the author, and returns only the passages it paid for. Phantom appears only if the balance needs a refill. You can close this tab — the job keeps running.')}
                 />
               ) : null}
 
               {phase === 'failed' ? (
                 <Branch
-                  title={queryId ? t('The payment did not go through.') : t('SHELF could not reach the shelves.')}
+                  title={queryId ? t('The payment did not go through.') : t('Obolus could not reach the human databases.')}
                   body={t(
                     payError ??
                       'The documents stayed closed. Retry picks up the same job and the same reservation, so nothing is paid twice.',
@@ -1193,7 +1179,7 @@ function AiBaselineCard({ baseline }: { baseline: AiBaseline }) {
         </div>
       ) : null}
       <p className="mt-3 font-mono text-[9px] uppercase leading-4 tracking-[0.7px] text-muted-foreground">
-        {t('₩0 · verified public records and Google Search grounding only · private human passages stay closed · never enters human ranking')}
+        {t('Free public-model orientation · private human passages stay closed · never enters human ranking')}
       </p>
     </section>
   )
@@ -1206,7 +1192,7 @@ function AgentLabel() {
         <img className="size-3.5 invert" src="/OBOLUS-MARK-SM.svg" alt="" />
       </span>
       <span className="font-mono text-xs font-medium uppercase tracking-[1px] text-muted-foreground">
-        SHELF
+        OBOLUS
       </span>
     </div>
   )

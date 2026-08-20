@@ -136,7 +136,7 @@ export function ArchivePanel() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder={t('Search questions and shelves')}
+            placeholder={t('Search questions and databases')}
             className="h-9 w-full rounded-[2px] border border-border bg-transparent pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-foreground/40"
           />
         </div>
@@ -205,7 +205,7 @@ function ThreadCard({ row }: { row: Row }) {
           <p className="text-[15px] font-medium leading-6">{chat.title}</p>
           <p className="mt-1 text-xs text-muted-foreground">
             {docs.length
-              ? `${docs.length}${t(' opened')} · ${formatUsdcFromKrw(spent)} USDC · ${receipts.length ? t('On-chain receipt available') : t('Legacy payment record')}`
+              ? `${docs.length}${t(' opened')} · ${formatUsdcFromKrw(spent)} USDC · ${receipts.length ? t('On-chain receipt available') : t('Payment record available')}`
               : t('No evidence was purchased for this question.')}
           </p>
         </div>

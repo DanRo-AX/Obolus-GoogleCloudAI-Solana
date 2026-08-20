@@ -50,12 +50,19 @@ const HOUSEHOLDS = ['alone', 'partner', 'kids', 'parents', 'shared']
 const YEARS = ['under-1', '1-3', '3-7', '7-plus']
 const DOCUMENT_PRICE_BANDS = [5, 10, 15, 25, 100, 300, 500, 700, 800, 1000]
 
+// Installed clients may still send the pre-Obolus names. Accept them at the
+// boundary without advertising them to new Gemini sessions.
+const LEGACY_TOOL_ALIASES = {
+  shelf_starters: 'memory_starters',
+  answer_shelf_starter: 'answer_memory_starter',
+}
+
 const filtersSchema = {
   type: 'object',
   description: 'Optional human targeting filters. Omit unknown fields.',
   properties: {
     category: string('Human-document category.', { enum: CATEGORIES }),
-    maxUnitPriceKrw: integer('Maximum KRW price for one existing document.', { minimum: 1 }),
+    maxUnitPriceKrw: integer('Internal compatibility ceiling for one existing document. Present only the exact USDC quote returned by Obolus.', { minimum: 1 }),
     ageBand: string('Contributor age band.', { enum: AGE_BANDS }),
     region: string('Contributor region band.', { enum: REGIONS }),
     household: string('Contributor household band.', { enum: HOUSEHOLDS }),
@@ -78,7 +85,7 @@ export const tools = [
       {
         question: string('The question to ask Obulus. Public facts can be answered for free; firsthand human evidence remains a separate paid lane.', { minLength: 2, maxLength: 1000 }),
         requestedDocuments: integer('Maximum human documents to rank.', { minimum: 1, maximum: 20 }),
-        budgetKrw: integer('Optional total budget ceiling in KRW.', { minimum: 1 }),
+        budgetKrw: integer('Optional compatibility budget ceiling. Present only the exact USDC amount returned by Obolus.', { minimum: 1 }),
         filters: filtersSchema,
       },
       ['question'],
@@ -133,11 +140,11 @@ export const tools = [
     inputSchema: objectSchema(
       {
         question: string('Question contributors will answer.', { minLength: 8, maxLength: 1000 }),
-        unitPriceKrw: integer('Reward for each accepted human answer.', { minimum: 1 }),
+        unitPriceKrw: integer('Compatibility reward unit for each accepted human answer. Obolus returns and settles the exact amount in USDC.', { minimum: 1 }),
         target: integer('Number of human answers requested.', { minimum: 1, maximum: 100 }),
         chatId: string('Stable local chat id used to retrieve incoming answers.'),
-        shelf: string('Human cohort or shelf label.', { minLength: 2, maxLength: 120 }),
-        category: string('OpenShelf category id.', { enum: CATEGORIES }),
+        shelf: string('Human cohort or personal-database label. This property name is retained only for API compatibility.', { minLength: 2, maxLength: 120 }),
+        category: string('Obolus category id.', { enum: CATEGORIES }),
         filters: filtersSchema,
       },
       ['question', 'unitPriceKrw', 'target', 'shelf', 'category'],
@@ -257,19 +264,19 @@ export const tools = [
     ),
   },
   {
-    name: 'shelf_starters',
+    name: 'memory_starters',
     description: 'List or generate free AI interview prompts that help a contributor seed human memories.',
     inputSchema: objectSchema({ action: string('list or generate.', { enum: ['list', 'generate'] }) }, ['action']),
   },
   {
-    name: 'answer_shelf_starter',
+    name: 'answer_memory_starter',
     description:
       'Turn a contributor-authored answer to an AI starter prompt into a sellable human memory. The answer must come from the contributor.',
     inputSchema: objectSchema(
       {
-        starterId: string('Shelf starter id.'),
+        starterId: string('Personal-database starter id.'),
         answer: string('Contributor-authored lived experience.', { minLength: 10, maxLength: 10000 }),
-        priceKrw: integer('Future document opening price.', {
+        priceKrw: integer('Compatibility price band for a future document. Present the resulting quote only in USDC.', {
           enum: DOCUMENT_PRICE_BANDS,
         }),
       },
@@ -314,7 +321,7 @@ export const tools = [
     inputSchema: objectSchema(
       {
         action: string('balance, export, or delete.', { enum: ['balance', 'export', 'delete'] }),
-        confirmation: string('For delete only, must exactly equal DELETE MY OPENSHELF ACCOUNT.'),
+        confirmation: string('For delete only, must exactly equal DELETE MY OBOLUS ACCOUNT.'),
       },
       ['action'],
     ),
@@ -327,12 +334,13 @@ export const tools = [
 ]
 
 export async function callTool(name, args = {}, options = {}) {
-  const tool = tools.find((candidate) => candidate.name === name)
+  const normalizedName = LEGACY_TOOL_ALIASES[name] || name
+  const tool = tools.find((candidate) => candidate.name === normalizedName)
   if (!tool) throw new AgentError(`Unknown tool: ${name}`, 'tool_not_found', 404)
   validateSchema(args, tool.inputSchema, 'arguments')
   const config = options.config || runtimeConfig()
   const state = options.state || (await readState(config))
-  switch (name) {
+  switch (normalizedName) {
     case 'account_status':
       return (await apiRequest('/api/v1/auth/me', {}, { config, state })).body
     case 'ask_people': {
@@ -561,7 +569,7 @@ export async function callTool(name, args = {}, options = {}) {
           { config, state },
         )
       ).body
-    case 'shelf_starters':
+    case 'memory_starters':
       return (
         await apiRequest(
           '/api/v1/shelf-starters',
@@ -569,7 +577,7 @@ export async function callTool(name, args = {}, options = {}) {
           { config, state },
         )
       ).body
-    case 'answer_shelf_starter':
+    case 'answer_memory_starter':
       return (
         await apiRequest(
           `/api/v1/shelf-starters/${encodeURIComponent(args.starterId)}/answer`,
@@ -794,9 +802,9 @@ async function accountData(args, state, config) {
   if (args.action === 'export') {
     return (await apiRequest('/api/v1/account/export', {}, { config, state })).body
   }
-  if (args.confirmation !== 'DELETE MY OPENSHELF ACCOUNT') {
+  if (args.confirmation !== 'DELETE MY OBOLUS ACCOUNT') {
     throw new AgentError(
-      'Permanent deletion requires confirmation exactly equal to DELETE MY OPENSHELF ACCOUNT.',
+      'Permanent deletion requires confirmation exactly equal to DELETE MY OBOLUS ACCOUNT.',
       'confirmation_required',
     )
   }

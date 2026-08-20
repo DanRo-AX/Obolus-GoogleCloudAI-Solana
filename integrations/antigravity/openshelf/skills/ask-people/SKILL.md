@@ -1,9 +1,9 @@
 ---
 name: ask-people
-description: Ask people through OpenShelf, buy exact human evidence with Pay.sh, or fund missing human answers.
+description: Ask people through Obolus, buy exact human evidence with Pay.sh, or fund missing human answers.
 ---
 
-# Ask people through OpenShelf
+# Ask people through Obolus
 
 Use this workflow when the user wants current, lived, attributable human knowledge rather than a generic web or model answer.
 
@@ -14,7 +14,7 @@ If Antigravity CLI 1.1.10 returns `unknown_tool` for its advertised `call_mcp_to
 1. Call the `ask_people` tool on the `openshelf` MCP server with the concrete question, requested human count, budget, and only the targeting filters the user actually specified.
 2. Explain the returned human coverage and prices. If a free AI baseline is useful while waiting, call `openshelf/generate_ai_baseline` and label every part as general AI orientation, never human evidence.
 3. On a hit, let the user choose the exact matched documents. Call `openshelf/prepare_evidence_payment` once for the chosen set.
-4. If preparation returns `recovery_required`, call `openshelf/evidence_payment_status` with the same query and job id. Never ask for approval or call Pay again for that job. Otherwise show the returned exact KRW/USDC amount, document count, Devnet network, and purpose. After explicit approval, call the `curl` tool on the `pay` MCP server with the returned `paymentUrl` and method `GET`. If the same Antigravity dispatcher bug blocks Pay MCP, run `pay curl PAYMENT_URL` only after that approval; the URL must be the unchanged value returned by OpenShelf. Pay.sh will request local wallet authorization and retry the x402 request. Never use Pay sandbox for the public Devnet URL.
+4. If preparation returns `recovery_required`, call `openshelf/evidence_payment_status` with the same query and job id. Never ask for approval or call Pay again for that job. Otherwise show the returned exact USDC amount, document count, Devnet network, and purpose. After explicit approval, call the `curl` tool on the `pay` MCP server with the returned `paymentUrl` and method `GET`. If the same Antigravity dispatcher bug blocks Pay MCP, run `pay curl PAYMENT_URL` only after that approval; the URL must be the unchanged value returned by Obolus. Pay.sh will request local wallet authorization and retry the x402 request. Never use Pay sandbox for the public Devnet URL.
 5. Poll `openshelf/evidence_payment_status` with the original query id and returned job id until it is terminal. Use its paid citation handles with `openshelf/synthesize_human_answer`. Present citations, consensus, and disagreements instead of smoothing away conflict.
 6. On a miss or partial gap, agree on reward per answer, answer count, cohort, and total budget. Call `openshelf/prepare_open_call`, show the exact aggregate escrow amount, then use `pay/curl` only after approval.
 7. Poll `openshelf/open_call_status` with the quote id until it contains an `openCallId`; later poll by `chatId` for incoming human answers. Cancel only when the user asks, relying on unused-slot refund rules.

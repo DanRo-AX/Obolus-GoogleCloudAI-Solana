@@ -1,5 +1,5 @@
 /**
- * The SHELF page, as structure rather than a wall of HTML.
+ * The Obolus argument page, as structure rather than a wall of HTML.
  *
  * Sections are numbered 00–06 and carry a mono eyebrow, which is the same
  * document language the project's own briefs use. Keeping it as data means the
@@ -26,10 +26,10 @@ export type Section = {
 }
 
 export const HERO = {
-  eyebrow: 'The argument · SHELF',
+  eyebrow: 'The argument · Obolus',
   title: 'An agent that searches people instead of the web',
   standfirst:
-    'Every crawler in production today reads for free. SHELF prices each firsthand document at ₩5 to ₩25; 90% of every qualified open settles to its owner and 10% funds the protocol.',
+    'Every crawler in production today reads for free. Obolus gives each firsthand document an exact USDC price; 90% of every qualified open settles to its owner and 10% funds the protocol.',
   meta: [
     { label: 'Published', value: 'July 31, 2026' },
     { label: 'By', value: 'The Obolus team' },
@@ -38,17 +38,17 @@ export const HERO = {
   ],
 }
 
-export const DEFINITION = 'SHELF searches the shelves, opens only the evidence a question needs, and splits each ₩5 to ₩25 open 90% to its owner and 10% to the protocol.'
+export const DEFINITION = 'Obolus searches personal human databases, opens only the evidence a question needs, and splits each USDC open 90% to its owner and 10% to the protocol.'
 
 /** The 7 steps, rendered as a table. Step 4 is the branch the product turns on. */
 export const LIFECYCLE = [
   { n: 1, step: 'Ask', what: 'A question goes into the chat box.', pivot: false },
-  { n: 2, step: 'Search the shelves', what: 'People’s documents, not the web.', pivot: false },
-  { n: 3, step: 'Rank the shelves', what: 'Relevance, trust, freshness, PageRank, author diversity. The closest few, never the whole shelf.', pivot: false },
+  { n: 2, step: 'Search human databases', what: 'People’s documents, not the web.', pivot: false },
+  { n: 3, step: 'Rank the databases', what: 'Relevance, trust, freshness, PageRank, and author diversity. The closest few, never the whole database.', pivot: false },
   { n: 4, step: 'Hit or miss', what: 'A hit opens paid evidence. A miss returns a free general answer first and explains what human evidence is still missing.', pivot: true },
   { n: 5, step: 'Open call', what: 'Only when firsthand experience is needed, the user can choose the audience, response count and reward.', pivot: false },
   { n: 6, step: 'x402 settlement', what: 'The asker pays only for documents opened. Each author’s USDC lands the same moment.', pivot: false },
-  { n: 7, step: 'Accrue', what: 'The answer becomes a document on the author’s shelf and joins their memory. Next time it auto-matches.', pivot: false },
+  { n: 7, step: 'Accrue', what: 'The answer becomes a document in the author’s personal database. Next time it can match automatically.', pivot: false },
 ]
 
 export const SECTIONS: Section[] = [
@@ -82,7 +82,7 @@ export const SECTIONS: Section[] = [
     blocks: [
       {
         kind: 'p',
-        text: 'We did not invent a retrieval architecture. We copied the internet: one person writes one memory-backed document about what they lived, and it behaves like a URL — an owner, public discovery metadata, a content hash, a version, a price, and a body that opens only once it is paid for. SHELF ranks the closest few and opens a handful, never the index.',
+        text: 'We adapted the useful shape of the internet: one person writes one memory-backed document about what they lived, and it behaves like a protected URL — an owner, public discovery metadata, a content hash, a version, an exact USDC price, and a body that opens only after settlement. Obolus ranks the closest independent records and opens a handful, never the full index.',
       },
       {
         kind: 'p',
@@ -128,7 +128,7 @@ export const SECTIONS: Section[] = [
           ],
         },
         right: {
-          label: 'SHELF',
+          label: 'Obolus',
           title: 'Seven people who live there',
           lines: [
             'PARIS_11 · 6 years — “Go at 19:30 and you walk in. 20:30 and you wait 40 minutes.”',
@@ -139,14 +139,14 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'p',
-        text: 'So SHELF does not rewrite documents. Not the grammar, not the phrasing. A line like “left at 11:40, ₩8,500, fifteen minutes standing” is awkward and is exactly the part that sells.',
+        text: 'Obolus does not rewrite firsthand documents. Not the grammar, not the phrasing. A concrete line such as “left at 11:40 and waited fifteen minutes standing” is awkward and is exactly the detail a generic summary loses.',
       },
     ],
   },
   {
     n: '03',
     eyebrow: 'The branch',
-    title: 'If the shelves come up empty, Obulus answers what it can and lets you choose whether to ask people',
+    title: 'If human coverage comes up empty, Obolus answers what it can and lets you choose whether to ask people',
     blocks: [
       {
         kind: 'p',
@@ -158,7 +158,7 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'code',
-        caption: 'The miss path, as SHELF says it',
+        caption: 'The missing-coverage path',
         lines: [
           '“Here is the general baseline. It is AI, it is free, and it is not evidence.”',
           '“No matching human evidence was found. Nothing has been purchased or posted.”',
@@ -169,12 +169,12 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'p',
-        text: 'Twelve people at ₩500 each is a ₩6,000 call. It lands on the open calls board, people who fit pick it up, and the asker watches it fill. One side is searching; the other is answering a question they happen to know.',
+        text: 'Twelve people at 0.50 USDC each is a 6.00 USDC call. It lands on the open-calls board, qualified people can answer it, and the asker watches independent coverage fill.',
       },
       {
         kind: 'note',
         label: '',
-        text: 'Sometimes enough matching documents already exist. Then no call is posted — SHELF goes straight to “this can be answered now, here is the price.” Search the shelves first. Offer an Open Call only when the shelves are empty, firsthand experience is essential, and the user chooses to proceed.',
+        text: 'Sometimes enough matching documents already exist. Then no call is posted — Obolus shows the evidence set and exact USDC quote. Search personal databases first. Offer an open call only when coverage is missing, firsthand experience is essential, and the user chooses to proceed.',
       },
     ],
   },
@@ -185,7 +185,7 @@ export const SECTIONS: Section[] = [
     blocks: [
       {
         kind: 'p',
-        text: 'Per-open pricing only works when a ₩5 payment needs no manual gas step. Phantom authorizes a bounded USDC deposit only when prepaid credit runs low; the x402 facilitator sponsors the network fee and a KMS-protected agent settles each selected DB through Pay.sh.',
+        text: 'Per-open pricing works only when a small USDC payment needs no manual gas step. Phantom authorizes a bounded USDC refill only when prepaid credit runs low; the x402 facilitator sponsors the network fee and a KMS-protected agent settles each selected database through Pay.sh.',
       },
       {
         kind: 'p',
@@ -204,7 +204,7 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'p',
-        text: 'Settlement runs on Solana Devnet in USDC and reads in ₩, because that is what people on the shelves think in. Phantom proves the wallet and tops up prepaid credit when it runs low; a non-exportable KMS service key pays each DB through Pay.sh. The asker sees one line — how many documents opened, what it came to. An open that fails goes back to prepaid credit instead of becoming an author’s earnings.',
+        text: 'Settlement runs on Solana Devnet in USDC. Phantom proves the wallet and refills prepaid credit only when it runs low; a non-exportable KMS service key pays each selected database through Pay.sh. The asker sees how many documents opened and the exact USDC total. A failed open returns to prepaid credit instead of becoming author earnings.',
       },
       {
         kind: 'p',
@@ -233,7 +233,7 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'p',
-        text: 'That last point is the recruitment argument. Somebody who wrote it down once receives 90% of the ₩5 to ₩25 open price each time SHELF qualifies and opens it again.',
+        text: 'That is the contributor incentive. Somebody who recorded an experience once receives 90% of its displayed USDC price each time Obolus qualifies and opens it again.',
       },
     ],
   },

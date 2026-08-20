@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import { randomUUID } from 'node:crypto'
 import { createInterface } from 'node:readline/promises'
 
+import { runtimeConfig } from './config.mjs'
 import { callTool, tools } from './tools.mjs'
 
 export const SERVER_NAME = 'obulus-full'
@@ -63,10 +65,19 @@ export async function handleMcpRequest(request, options = {}) {
       return { jsonrpc: '2.0', id, result: { tools } }
     }
     if (request.method === 'tools/call') {
+      const baseConfig = options.config || runtimeConfig()
+      const instancePrefix = (baseConfig.instance || 'default').slice(0, 50)
+      const invocationOptions = {
+        ...options,
+        config: {
+          ...baseConfig,
+          instance: `${instancePrefix}-${randomUUID().replaceAll('-', '').slice(0, 12)}`,
+        },
+      }
       const result = await callTool(
         request.params?.name,
         request.params?.arguments || {},
-        options,
+        invocationOptions,
       )
       const structuredContent = normalizeStructured(result)
       return {

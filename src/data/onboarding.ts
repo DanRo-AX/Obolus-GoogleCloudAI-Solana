@@ -2,7 +2,7 @@
  * What a person hands over before they can answer, and what happens if they
  * answer badly.
  *
- * The first half exists because a buyer paying ₩800 for a passage needs to know
+ * The first half exists because a buyer opening a USDC-priced passage needs to know
  * the person who wrote it was actually in the situation. None of it is
  * financial and none of it identifies anyone — a buyer sees the handle and the
  * bands, never a name.

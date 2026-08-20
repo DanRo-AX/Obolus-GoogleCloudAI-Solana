@@ -8,7 +8,7 @@ import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 
 /**
- * The SHELF page, laid out as our own document rather than a wall of prose:
+ * The argument page, laid out as our own document rather than a wall of prose:
  * numbered sections with mono eyebrows, a section rail that tracks scroll, the
  * flow diagram where the branch is explained, and the open problems left as
  * status cards instead of being buried in a paragraph.
@@ -166,7 +166,7 @@ export default function Shelf1() {
             <div className="border-t border-border pt-10">
               <p className="text-[15px] leading-8 text-muted-foreground">
                 {t(
-                  'The shelves are being filled now. Ask something. If nothing on them fits, post an open call and name what one answer is worth.',
+                  'Human databases are being built now. Ask something. If no record fits, post an open call and set the USDC reward for one accepted answer.',
                 )}
               </p>
               <div className="mt-6 max-w-xl">
@@ -174,7 +174,7 @@ export default function Shelf1() {
               </div>
               <div className="mt-6 flex flex-wrap gap-2">
                 <Button asChild variant="mono" size="mono">
-                  <Link to="/coverage">{t('See the thin shelves')}</Link>
+                  <Link to="/coverage">{t('See unanswered topics')}</Link>
                 </Button>
               </div>
             </div>

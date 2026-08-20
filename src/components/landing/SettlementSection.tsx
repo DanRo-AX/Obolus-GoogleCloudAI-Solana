@@ -16,16 +16,12 @@ export function SettlementSection() {
           </p>
 
           <h2 className="mt-5 text-balance font-display text-[32px] leading-[1.1] sm:text-[44px]">
-            {t('Nobody approves every ₩10 payment.')}
+            {t('One bounded USDC balance handles document-level payments.')}
           </h2>
 
           <p className="mt-6 max-w-xl text-pretty text-[15px] leading-7 text-muted-foreground">
             {t(
-              'So nobody is asked to. HTTP has a status code for this: the server answers',
-            )}{' '}
-            <strong className="font-medium text-foreground">402</strong>{' '}
-            {t(
-              'with a price. The agent verifies the recipient and amount, pays from bounded prepaid credit, and opens only the settled document.',
+              'When an agent needs a private document, the server returns HTTP 402 with its exact USDC price. The agent verifies the recipient and amount, pays from bounded prepaid credit, and opens only the settled document.',
             )}
           </p>
 
@@ -76,7 +72,7 @@ const POINTS = [
   },
   {
     head: '90% to evidence owners, 10% to the protocol',
-    body: 'The displayed won price is the complete price. The protocol share funds payment, recovery, quality and network operations; settlement moves in USDC on Solana.',
+    body: 'The displayed USDC price is complete. The protocol share funds payment, recovery, quality and network operations; settlement moves on Solana.',
   },
   {
     head: 'No SOL required from the buyer',

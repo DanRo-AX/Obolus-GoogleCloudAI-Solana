@@ -23,6 +23,7 @@ import {
   reserveOpenCall,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { formatUsdcFromKrw } from '@/lib/usdc'
 import { useUi } from '@/state/ui'
 import { AuthUnavailable } from '@/components/AuthUnavailable'
 
@@ -181,9 +182,9 @@ export default function Survey() {
             {t('Strike issued — the answer was voided')}
           </h1>
           <p className="text-[15px] leading-7 text-muted-foreground">
-            {t('The')} ₩{order.unitPrice.toLocaleString()}
+            {t('The')} {formatUsdcFromKrw(order.unitPrice)} USDC
             {t(
-              ' was reversed and the slot stayed open. It sits on your shelf marked voided —',
+              ' was reversed and the slot stayed open. It remains in your personal database marked voided —',
             )}{' '}
             {STRIKE_LIMIT}
             {t(
@@ -216,21 +217,21 @@ export default function Survey() {
             <Check className="size-5 text-[#0F766E]" />
           </span>
           <h1 className="font-display text-2xl font-medium">
-            ₩{order.unitPrice.toLocaleString()}
+            {formatUsdcFromKrw(order.unitPrice)} USDC
             {held ? t(' accrued · held 14 days') : t(' is yours')}
           </h1>
           <p className="text-[15px] leading-7 text-muted-foreground">
             {held
               ? t(
-                  'The answer is on your shelf. At strike 2 of 3 auto-match pauses, so this payout is held 14 days before it moves.',
+                  'The answer is in your personal database. At strike 2 of 3 auto-match pauses, so this payout is held 14 days before it moves.',
                 )
               : t(
-                  'It sits on your shelf now. SHELF can quote it without you writing anything again — each open lands USDC in your wallet.',
+                  'It is in your personal database now. Obolus can quote it without you writing anything again — each open lands USDC in your wallet.',
                 )}
           </p>
           <div className="mt-2 flex gap-2">
             <Button variant="mono" size="mono" onClick={() => navigate('/memory')}>
-              {t('See my shelf')}
+              {t('See my database')}
             </Button>
             <Button
               variant="monoMuted"
@@ -332,7 +333,7 @@ export default function Survey() {
               </ul>
               <p className="mt-3 text-[13px] leading-relaxed text-foreground/85">
                 {t('Send it as it stands and the answer is voided, the')}{' '}
-                ₩{order.unitPrice.toLocaleString()}
+                {formatUsdcFromKrw(order.unitPrice)} USDC
                 {t(' reversed, and it counts as one of your')} {STRIKE_LIMIT}
                 {t(' strikes. Editing it clears this.')}
               </p>
@@ -368,7 +369,7 @@ export default function Survey() {
                   t('Send it anyway')
                 ) : (
                   <>
-                    {t('Send and take')} ₩{order.unitPrice.toLocaleString()}
+                    {t('Send and take')} {formatUsdcFromKrw(order.unitPrice)} USDC
                   </>
                 )}
               </Button>
@@ -509,7 +510,7 @@ function MainQuestion({
           {t(MAIN_GUIDANCE.eyebrow)}
         </span>
         <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-          {t(order.shelf)} · ₩{order.unitPrice.toLocaleString()}
+          {t(order.shelf)} · {formatUsdcFromKrw(order.unitPrice)} USDC
         </span>
       </div>
 

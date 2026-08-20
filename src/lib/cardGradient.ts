@@ -74,7 +74,7 @@ export type GradientIntensity = 'soft' | 'deep'
 
 /**
  * Build a deterministic, layered CSS `background` for a card banner.
- * `seed` should be the order's question+shelf text (or any other string
+ * `seed` should be the order's question+category text (or any other string
  * that is stable for the life of the card) — the same seed always returns
  * the same gradient, and different seeds are very likely to differ.
  *

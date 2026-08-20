@@ -207,7 +207,7 @@ export function SettlementInvoiceDialog({
                           {hasProgramProof
                             ? t('The invoice hash, query hash, document root, document hashes, versions, recipients, and exact amounts can be reconstructed from the Solana settlement account.')
                             : hasChainProof
-                              ? t('The invoice hash was locked in the Obulus audit ledger before Pay.sh sent the exact USDC transfers. Explorer links prove the transfers; the private passages remain off-chain.')
+                              ? t('The invoice hash was locked in the Obolus audit ledger before Pay.sh sent the exact USDC transfers. Explorer links prove the transfers; private passages are never written to the public chain.')
                               : t('No on-chain claim is made yet. The invoice hash locks the exact documents, recipients, and amounts before the payment worker can proceed.')}
                         </p>
                       </div>

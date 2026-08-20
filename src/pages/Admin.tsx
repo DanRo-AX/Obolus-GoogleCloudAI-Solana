@@ -38,11 +38,11 @@ const POLL_MS = 2_500
 type MemoryNode = AdminDataPipelineSnapshot['memoryNodes'][number]
 type SystemEvent = AdminDataPipelineSnapshot['realtime']['recentEvents'][number]
 type RunState = 'idle' | 'active' | 'complete'
-type PipelinePlayback = { event: SystemEvent; step: number; route: string[] }
+type PipelinePlayback = { event: SystemEvent; nodeIds: string[] }
 type TerminalLine = {
   id: string
   occurredAt: number
-  kind: 'event' | 'trace' | 'success' | 'error'
+  kind: 'event' | 'error'
   source: string
   message: string
   detail: string
@@ -126,33 +126,27 @@ function MemoryWorkflow({ snapshot }: { snapshot: AdminDataPipelineSnapshot }) {
   const [eventQueue, setEventQueue] = useState<SystemEvent[]>([])
   const [playback, setPlayback] = useState<PipelinePlayback | null>(null)
   const [terminalLines, setTerminalLines] = useState<TerminalLine[]>([])
+  const [completedNodeIds, setCompletedNodeIds] = useState<Set<string>>(new Set())
   const knownEventsRef = useRef<Set<string>>(new Set())
   const initializedRef = useRef(false)
-  const loggedStepRef = useRef('')
+  const activeRunRef = useRef('')
 
-  const activeNodeId = playback?.route[playback.step] ?? null
-  const completedNodeIds = useMemo(
-    () => new Set(playback ? playback.route.slice(0, playback.step) : []),
-    [playback],
-  )
+  const activeNodeIds = useMemo(() => new Set(playback?.nodeIds ?? []), [playback])
 
   const graph = useMemo(() => {
-    const route = playback?.route ?? []
-    const routeIndex = new Map(route.map((id, index) => [id, index]))
     const tracedNodes = baseGraph.nodes.map((node) => ({
       ...node,
       data: {
         ...node.data,
-        runState: node.id === activeNodeId ? 'active' : completedNodeIds.has(node.id) ? 'complete' : 'idle',
+        runState: activeNodeIds.has(node.id) ? 'active' : completedNodeIds.has(node.id) ? 'complete' : 'idle',
       } as WorkflowNodeData,
     }))
     const tracedEdges = baseGraph.edges.map((edge) => {
-      const sourceIndex = routeIndex.get(edge.source)
-      const targetIndex = routeIndex.get(edge.target)
-      const isRouteEdge = sourceIndex !== undefined && targetIndex === sourceIndex + 1
-      const reached = isRouteEdge && targetIndex <= (playback?.step ?? -1)
-      const flowing = reached && targetIndex === playback?.step
-      if (!playback || !isRouteEdge) return playback ? { ...edge, animated: false, style: { ...edge.style, opacity: 0.28 } } : edge
+      const sourceReached = completedNodeIds.has(edge.source) || activeNodeIds.has(edge.source)
+      const targetReached = completedNodeIds.has(edge.target) || activeNodeIds.has(edge.target)
+      const reached = sourceReached && targetReached
+      const flowing = completedNodeIds.has(edge.source) && activeNodeIds.has(edge.target)
+      if (!playback && completedNodeIds.size === 0) return edge
       return {
         ...edge,
         animated: flowing,
@@ -167,17 +161,17 @@ function MemoryWorkflow({ snapshot }: { snapshot: AdminDataPipelineSnapshot }) {
       }
     })
     return { nodes: tracedNodes, edges: tracedEdges }
-  }, [activeNodeId, baseGraph, completedNodeIds, playback])
+  }, [activeNodeIds, baseGraph, completedNodeIds, playback])
 
   useEffect(() => {
     const events = snapshot.realtime.recentEvents
     if (!initializedRef.current) {
       initializedRef.current = true
       knownEventsRef.current = new Set(events.map((event) => event.id))
-      setTerminalLines(events.slice(0, 18).reverse().map(eventTerminalLine))
+      setTerminalLines(sortEventsForPlayback(events.slice(0, 18)).map(eventTerminalLine))
       return
     }
-    const unseen = events.filter((event) => !knownEventsRef.current.has(event.id)).reverse()
+    const unseen = sortEventsForPlayback(events.filter((event) => !knownEventsRef.current.has(event.id)))
     if (!unseen.length) return
     for (const event of unseen) knownEventsRef.current.add(event.id)
     setEventQueue((current) => [...current, ...unseen])
@@ -188,38 +182,30 @@ function MemoryWorkflow({ snapshot }: { snapshot: AdminDataPipelineSnapshot }) {
     if (playback || !eventQueue.length) return
     const [event, ...remaining] = eventQueue
     setEventQueue(remaining)
-    loggedStepRef.current = ''
-    setPlayback({ event, step: 0, route: routeForEvent(event) })
+    if (activeRunRef.current !== event.instance) {
+      activeRunRef.current = event.instance
+      setCompletedNodeIds(new Set())
+    }
+    setPlayback({ event, nodeIds: nodeIdsForEvent(event) })
   }, [eventQueue, playback])
 
   useEffect(() => {
     if (!playback) return
-    const nodeId = playback.route[playback.step]
-    const stepKey = `${playback.event.id}:${playback.step}`
-    if (loggedStepRef.current !== stepKey) {
-      loggedStepRef.current = stepKey
-      const isFinal = playback.step === playback.route.length - 1
-      setTerminalLines((current) => trimTerminal([
-        ...current,
-        {
-          id: stepKey,
-          occurredAt: Date.now(),
-          kind: isFinal ? 'success' : 'trace',
-          source: playback.event.source,
-          message: isFinal ? `completed → ${nodeTitle(nodeId)}` : `executing → ${nodeTitle(nodeId)}`,
-          detail: `${playback.event.stage}/${playback.event.action} · ${playback.step + 1}/${playback.route.length}`,
-        },
-      ]))
-    }
     const timer = window.setTimeout(() => {
-      if (playback.step < playback.route.length - 1) {
-        setPlayback((current) => current ? { ...current, step: current.step + 1 } : null)
-      } else {
-        setPlayback(null)
-      }
-    }, playback.step < playback.route.length - 1 ? 620 : 1_050)
+      setCompletedNodeIds((current) => new Set([...current, ...playback.nodeIds]))
+      setPlayback(null)
+    }, 760)
     return () => window.clearTimeout(timer)
   }, [playback])
+
+  useEffect(() => {
+    if (playback || eventQueue.length || completedNodeIds.size === 0) return
+    const timer = window.setTimeout(() => {
+      activeRunRef.current = ''
+      setCompletedNodeIds(new Set())
+    }, 1_400)
+    return () => window.clearTimeout(timer)
+  }, [completedNodeIds, eventQueue.length, playback])
 
   useEffect(() => {
     setNodes((current) => {
@@ -350,32 +336,43 @@ function WorkflowCard({ data }: NodeProps<WorkflowNode>) {
   )
 }
 
-const PIPELINE_NODE_TITLES: Record<string, string> = {
-  intake: 'Web · MCP · Agent 요청',
-  gateway: 'Cloud Run gateway',
-  policy: 'Rust policy core',
-  memory: 'L0 Memory Stream',
-  gemini: 'Gemini reflection',
-  reflection: 'L0 → L3 추상화 스택',
-  index: 'Evidence index',
-  retrieval: 'Hybrid candidate search',
-  pagerank: 'Personalized PageRank',
-  result: '조회 · 추천 결과',
+function nodeIdsForEvent(event: SystemEvent) {
+  switch (event.stage) {
+    case 'orchestration': return ['intake']
+    case 'gateway': return ['gateway']
+    case 'policy': return ['policy']
+    case 'index': return ['index']
+    case 'authority': return ['pagerank']
+    case 'retrieval': return ['retrieval']
+    case 'result':
+    case 'coverage': return ['result']
+    case 'settlement': return ['result']
+    case 'memory': return ['memory']
+    case 'generation': return event.action.includes('reflection') ? ['reflection'] : ['gemini']
+    default: return []
+  }
 }
 
-function routeForEvent(event: SystemEvent) {
-  const prefix = ['intake', 'gateway', 'policy']
-  if (event.stage === 'memory') {
-    return [...prefix, 'memory', 'reflection', 'index', 'retrieval', 'pagerank', 'result']
-  }
-  if (event.stage === 'generation') {
-    return [...prefix, 'gemini', 'reflection', 'index', 'retrieval', 'pagerank', 'result']
-  }
-  return [...prefix, 'reflection', 'index', 'retrieval', 'pagerank', 'result']
+const EVENT_STAGE_ORDER: Record<string, number> = {
+  orchestration: 0,
+  gateway: 1,
+  policy: 2,
+  memory: 3,
+  generation: 4,
+  index: 5,
+  authority: 6,
+  retrieval: 7,
+  coverage: 8,
+  settlement: 8,
+  result: 9,
 }
 
-function nodeTitle(id: string) {
-  return PIPELINE_NODE_TITLES[id] ?? id
+function sortEventsForPlayback(events: SystemEvent[]) {
+  return [...events].sort((left, right) =>
+    left.occurredAt - right.occurredAt
+    || (EVENT_STAGE_ORDER[left.stage] ?? 50) - (EVENT_STAGE_ORDER[right.stage] ?? 50)
+    || left.id.localeCompare(right.id),
+  )
 }
 
 function eventTerminalLine(event: SystemEvent): TerminalLine {
@@ -424,16 +421,16 @@ function PipelineTerminal({
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3 font-mono text-[10px] leading-[1.7] [scrollbar-color:#30363d_transparent]">
         {!lines.length ? (
           <div className="flex h-full items-center text-[#5d6670]">
-            <span className="mr-2 text-[#35c69e]">$</span>MCP 또는 앱의 실제 실행 이벤트를 기다리는 중…
+            <span className="mr-2 text-[#35c69e]">$</span>Gemini MCP의 실제 도구 호출을 기다리는 중…
           </div>
         ) : lines.map((line) => (
           <div key={line.id} className="grid grid-cols-[64px_90px_minmax(0,1fr)_auto] items-baseline gap-3 border-b border-white/[.035] py-1 last:border-0">
             <time className="text-[#58616b]">{formatClock(line.occurredAt)}</time>
             <span className={cn(
               'truncate font-semibold',
-              line.kind === 'error' ? 'text-[#ff7b72]' : line.kind === 'success' ? 'text-[#5de0bb]' : line.kind === 'trace' ? 'text-[#79b8ff]' : 'text-[#c3cad1]',
+              line.kind === 'error' ? 'text-[#ff7b72]' : 'text-[#c3cad1]',
             )}>[{line.kind}]</span>
-            <span className={cn('truncate', line.kind === 'success' ? 'text-white' : 'text-[#c1c8cf]')}>
+            <span className="truncate text-[#c1c8cf]">
               <b className="mr-2 font-medium text-[#7f8a95]">{line.source}</b>{line.message}
             </span>
             <span className="max-w-[280px] truncate text-right text-[#66717b]">{line.detail}</span>
@@ -451,7 +448,7 @@ function buildWorkflowGraph(snapshot: AdminDataPipelineSnapshot): { nodes: Workf
   }
   const recent = snapshot.memoryNodes.slice(0, 4)
   const trace = buildAbstractionTrace(snapshot)
-  const active = (stage: string) => eventsByStage.has(stage)
+  const active = (stage: string) => (eventsByStage.get(stage)?.occurredAt ?? 0) >= snapshot.generatedAt - POLL_MS * 2
   const liveOrReady = (stage: string, ready: boolean): WorkflowNodeData['status'] => active(stage) ? 'live' : ready ? 'ready' : 'waiting'
   const latestEvent = snapshot.realtime.recentEvents[0]
   const ranks = snapshot.authorityNodes.slice(0, 3)
@@ -459,10 +456,10 @@ function buildWorkflowGraph(snapshot: AdminDataPipelineSnapshot): { nodes: Workf
 
   const nodes: WorkflowNode[] = [
     workflowNode('intake', { x: 0, y: 160 }, 170, {
-      eyebrow: 'request trigger', title: 'Web · MCP · Agent 요청', icon: <FileInput />,
-      description: latestEvent ? `${latestEvent.source}에서 ${latestEvent.action} 요청이 들어왔습니다.` : '질문·답변·MCP 명령을 기다립니다.',
+      eyebrow: 'request trigger', title: 'Gemini MCP 요청', icon: <FileInput />,
+      description: latestEvent ? `${latestEvent.instance}에서 ${latestEvent.action} 요청이 들어왔습니다.` : 'Gemini CLI의 Obolus 도구 호출을 기다립니다.',
       status: liveOrReady('orchestration', snapshot.realtime.recentEvents.length > 0), metric: `${snapshot.realtime.eventsLastFiveMinutes}/5m`,
-      explanation: '웹 앱, Gemini/Claude MCP, 로컬 에이전트에서 들어오는 모든 요청의 시작점입니다. API가 기록한 실제 워크플로 이벤트만 live 상태로 표시합니다.',
+      explanation: 'Gemini CLI에 연결된 Obolus MCP의 실제 tools/call만 표시합니다. 브라우저 요청과 백그라운드 워커 이벤트는 이 화면에서 제외됩니다.',
       actualInput: snapshot.realtime.sources.length ? snapshot.realtime.sources.slice(0, 4).map((source) => `${source.source}: 최근 1시간 ${source.count}건`) : ['현재 기록된 외부 요청 없음'],
       actualOutput: [latestEvent ? `${latestEvent.stage}/${latestEvent.action} 실행` : '새 실행 대기', `5분간 의미 있는 이벤트 ${snapshot.realtime.eventsLastFiveMinutes}건`], event: latestEvent,
       inputPort: false,
@@ -470,7 +467,7 @@ function buildWorkflowGraph(snapshot: AdminDataPipelineSnapshot): { nodes: Workf
     workflowNode('gateway', { x: 210, y: 160 }, 170, {
       eyebrow: 'gcp ingress', title: 'Cloud Run gateway', icon: <Cloud />,
       description: `${snapshot.deployment.project || 'local'} · ${snapshot.deployment.location || 'local'}에서 인증과 라우팅을 처리합니다.`,
-      status: liveOrReady('orchestration', Boolean(snapshot.deployment.service)), metric: snapshot.deployment.revision ? shortId(snapshot.deployment.revision) : snapshot.deployment.environment,
+      status: liveOrReady('gateway', Boolean(snapshot.deployment.service)), metric: snapshot.deployment.revision ? shortId(snapshot.deployment.revision) : snapshot.deployment.environment,
       explanation: 'Cloud Run 진입점이 세션 인증, 요청 스키마, 내부 서비스 라우팅을 처리합니다. 화면의 서비스·리전·리비전 값은 현재 백엔드 배포 정보에서 직접 읽습니다.',
       actualInput: ['인증된 Web/MCP 요청', `현재 환경: ${snapshot.deployment.environment}`],
       actualOutput: [`서비스: ${snapshot.deployment.service || 'local backend'}`, `리전: ${snapshot.deployment.location || 'local'}`], event: eventsByStage.get('orchestration'),
@@ -478,10 +475,10 @@ function buildWorkflowGraph(snapshot: AdminDataPipelineSnapshot): { nodes: Workf
     workflowNode('policy', { x: 420, y: 160 }, 170, {
       eyebrow: 'deterministic core', title: 'Rust policy core', icon: <ServerCog />,
       description: '권한·동의·가격·중복·상태 전이를 결정론적으로 검증합니다.',
-      status: liveOrReady('coverage', true), metric: 'policy',
+      status: liveOrReady('policy', true), metric: 'policy',
       explanation: 'Gemini가 계획을 세워도 데이터 공개, 결제, 상태 전이의 최종 허용 여부는 Rust 코어가 결정합니다. 생성 모델이 정책을 우회할 수 없도록 결정론 경계를 둡니다.',
       actualInput: [`문서 ${snapshot.search.documents}개`, `근거 관계 ${snapshot.search.evidenceEdges}개`],
-      actualOutput: [`검색 실행 ${snapshot.search.queries}회`, `Agent step ${snapshot.search.agentSteps}회`], event: eventsByStage.get('coverage'),
+      actualOutput: [`검색 실행 ${snapshot.search.queries}회`, `Agent step ${snapshot.search.agentSteps}회`], event: eventsByStage.get('policy'),
     }),
     workflowNode('memory', { x: 620, y: 450 }, 132, {
       eyebrow: 'append-only memory', title: 'L0 Memory Stream', icon: <Database />,
@@ -510,13 +507,13 @@ function buildWorkflowGraph(snapshot: AdminDataPipelineSnapshot): { nodes: Workf
     workflowNode('index', { x: 930, y: 160 }, 112, {
       eyebrow: 'source-linked index', title: 'Evidence index', icon: <GitBranch />,
       description: '원문·추상화 포인터를 같은 문서 ID로 색인합니다.',
-      status: snapshot.search.documents > 0 ? 'ready' : 'waiting', metric: `${snapshot.search.documents} docs`,
+      status: liveOrReady('index', snapshot.search.documents > 0), metric: `${snapshot.search.documents} docs`,
       explanation: '텍스트 후보 검색과 신뢰 그래프 계산이 같은 문서 ID를 공유합니다. 추상화 문서가 검색돼도 memory_edges를 따라 L0 원문까지 내려갈 수 있습니다.',
       actualInput: [`memory edge ${snapshot.memoryEdges.length}개`, `추상화 ${snapshot.memory.derivedEntries}개`],
-      actualOutput: [`문서 ${snapshot.search.documents}개`, `evidence edge ${snapshot.search.evidenceEdges}개`],
+      actualOutput: [`문서 ${snapshot.search.documents}개`, `evidence edge ${snapshot.search.evidenceEdges}개`], event: eventsByStage.get('index'),
       variant: 'tool',
     }),
-    workflowNode('retrieval', { x: 1080, y: 160 }, 180, {
+    workflowNode('retrieval', { x: 1288, y: 160 }, 180, {
       eyebrow: 'rust retrieval', title: 'Hybrid candidate search', icon: <Search />,
       description: '어휘·해시·벡터 후보를 좁히고 중복 저자와 반복 구절을 제거합니다.',
       status: liveOrReady('retrieval', snapshot.search.queries > 0), metric: latestQuery,
@@ -524,14 +521,14 @@ function buildWorkflowGraph(snapshot: AdminDataPipelineSnapshot): { nodes: Workf
       actualInput: [`누적 질문 ${snapshot.search.queries}개`, `query ref ${latestQuery}`],
       actualOutput: [`최근 후보 ${snapshot.authorityContext.matchedDocuments}개`, `누적 match ${snapshot.search.queryMatches}개`], event: eventsByStage.get('retrieval'),
     }),
-    workflowNode('pagerank', { x: 1288, y: 160 }, 150, {
+    workflowNode('pagerank', { x: 1080, y: 160 }, 150, {
       eyebrow: 'query authority', title: 'Personalized PageRank', icon: <Network />,
       description: '질문별 teleport seed에서 신뢰 경로를 전파해 권위를 재계산합니다.',
-      status: snapshot.search.queries > 0 ? 'live' : snapshot.authorityNodes.length > 0 ? 'ready' : 'waiting', metric: `${snapshot.search.pageRankIterations} iter`,
+      status: liveOrReady('authority', snapshot.authorityNodes.length > 0), metric: `${snapshot.search.pageRankIterations} iter`,
       preview: <RankPreview snapshot={snapshot} />,
       explanation: `후보 관련도를 teleport seed로 두고 damping ${Math.round(snapshot.search.pageRankDampingBps / 100)}%로 검증된 evidence edge에 권위를 전파합니다. 광고·자기추천·복제 관계는 전파에서 제외됩니다.`,
       actualInput: [`teleport seed ${snapshot.authorityNodes.filter((node) => node.teleportWeight > 0).length}개`, `권위 전파 edge ${snapshot.authorityEdges.filter((edge) => edge.propagatesAuthority).length}개`],
-      actualOutput: ranks.length ? ranks.map((node, index) => `${index + 1}. ${node.handle} · ${(node.authority * 100).toFixed(2)}%`) : ['순위 계산 대기'], event: eventsByStage.get('retrieval'),
+      actualOutput: ranks.length ? ranks.map((node, index) => `${index + 1}. ${node.handle} · ${(node.authority * 100).toFixed(2)}%`) : ['순위 계산 대기'], event: eventsByStage.get('authority'),
       variant: 'tool',
       formula: `PPR_q(d) = (1 − ${(snapshot.search.pageRankDampingBps / 10_000).toFixed(2)}) × seed_q(d) + ${(snapshot.search.pageRankDampingBps / 10_000).toFixed(2)} × Σ[PPR_q(u) × trust(u→d) / out(u)]`,
     }),
@@ -542,8 +539,8 @@ function buildWorkflowGraph(snapshot: AdminDataPipelineSnapshot): { nodes: Workf
       preview: <RankedPreview nodes={ranks} />,
       explanation: '상위 권위 문서에서도 같은 저자와 중복 passage를 제거하고 예산 안의 최소 독립 근거만 엽니다. 이 순위는 전역 인기 순위가 아니라 현재 질문에 대해서만 유효합니다.',
       actualInput: [`PageRank 상위 ${snapshot.authorityNodes.length}개`, `matched candidate ${snapshot.authorityContext.matchedDocuments}개`],
-      actualOutput: ranks.length ? ranks.map((node) => `${node.shelf}/${node.category} · ${node.handle}`) : ['검색 결과 대기'],
-      outputPort: false,
+      actualOutput: ranks.length ? ranks.map((node) => `${node.category} · ${node.handle}`) : ['검색 결과 대기'],
+      event: eventsByStage.get('result') ?? eventsByStage.get('coverage'), outputPort: false,
     }),
     workflowNode('gemini', { x: 875, y: 480 }, 120, {
       eyebrow: 'vertex ai tool', title: 'Gemini reflection', icon: <Sparkles />,
@@ -564,17 +561,18 @@ function buildWorkflowGraph(snapshot: AdminDataPipelineSnapshot): { nodes: Workf
     ...options,
   })
 
-  const flowActive = snapshot.realtime.recentEvents.length > 0
+  const flowActive = active('orchestration')
   const edges: Edge[] = [
     edge('intake-gateway', 'intake', 'gateway', { animated: flowActive }),
-    edge('gateway-policy', 'gateway', 'policy', { animated: active('orchestration') }),
+    edge('gateway-policy', 'gateway', 'policy', { animated: active('policy') }),
+    edge('policy-index', 'policy', 'index', { animated: active('index') }),
     edge('policy-reflection', 'policy', 'reflection', { animated: active('memory') || active('generation') }),
     edge('policy-memory', 'policy', 'memory', { animated: active('memory') }),
     edge('policy-gemini', 'policy', 'gemini', { animated: active('generation') }),
     edge('reflection-index', 'reflection', 'index', { animated: snapshot.memory.totalEntries > 0 }),
-    edge('index-retrieval', 'index', 'retrieval', { animated: active('retrieval') }),
-    edge('retrieval-pagerank', 'retrieval', 'pagerank', { animated: active('retrieval') }),
-    edge('pagerank-result', 'pagerank', 'result', { animated: snapshot.search.queries > 0 }),
+    edge('index-pagerank', 'index', 'pagerank', { animated: active('authority') }),
+    edge('pagerank-retrieval', 'pagerank', 'retrieval', { animated: active('retrieval') }),
+    edge('retrieval-result', 'retrieval', 'result', { animated: active('result') || active('coverage') }),
     edge('memory-reflection', 'memory', 'reflection', { sourceHandle: 't', targetHandle: 'b1', type: 'smoothstep', animated: active('memory'), style: { stroke: '#8d7ac2', strokeWidth: 1.2, strokeDasharray: '5 5' }, markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#8d7ac2' } }),
     edge('gemini-reflection', 'gemini', 'reflection', { sourceHandle: 't', targetHandle: 'b2', type: 'smoothstep', style: { stroke: '#8d7ac2', strokeWidth: 1.2, strokeDasharray: '5 5' }, markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#8d7ac2' } }),
   ]
@@ -698,7 +696,7 @@ function RankPreview({ snapshot }: { snapshot: AdminDataPipelineSnapshot }) {
             <path d="M2 10 14 16 26 10 14 4Z" fill={node.teleportWeight > 0 ? '#8a76c5' : '#3ea68a'} opacity=".8" />
             <path d="M2 6 14 12 26 6 14 0Z" fill={index === 0 ? '#16866d' : node.teleportWeight > 0 ? '#765fb7' : '#258f75'} />
             <text x="14" y="29" textAnchor="middle" fontSize="5.5" fill="#52606b" fontWeight="600">{(node.authority * 100).toFixed(1)}%</text>
-            <text x="14" y="36" textAnchor="middle" fontSize="4.5" fill="#8b959e">{node.shelf.slice(0, 8)}</text>
+            <text x="14" y="36" textAnchor="middle" fontSize="4.5" fill="#8b959e">{node.category.slice(0, 8)}</text>
           </g>
         </g>
       ))}
