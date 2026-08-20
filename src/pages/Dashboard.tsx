@@ -45,6 +45,7 @@ import {
   type ShelfStarter,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { formatUsdcFromKrw, formatUsdcShort } from '@/lib/usdc'
 import { useUi, type Order } from '@/state/ui'
 
 /**
@@ -355,11 +356,11 @@ export default function Dashboard() {
             <Coins className="size-3.5" />
             {t('Earned today')}{' '}
             <span className="tabular-nums text-foreground">
-              ₩{earnedToday.toLocaleString()}
+              {formatUsdcFromKrw(earnedToday)} USDC
             </span>
             {balance ? (
               <span className="text-muted-foreground">
-                · {t('Off-chain call credit')} ₩{balance.availableKrw.toLocaleString()}
+                · {t('Call credit')} {formatUsdcShort(balance.availableAtomic) ?? '0.00'} USDC
               </span>
             ) : null}
           </div>
@@ -759,8 +760,8 @@ export default function Dashboard() {
                     <div className="flex items-baseline gap-1">
                       <span className="text-[15px] font-semibold tabular-nums text-foreground">
                         {order.unitPrice === 0
-                          ? '₩0'
-                          : `₩${order.unitPrice.toLocaleString()}`}
+                          ? '0 USDC'
+                          : `${formatUsdcFromKrw(order.unitPrice)} USDC`}
                       </span>
                       <span className="text-[11px] text-muted-foreground">
                         {t('Per answer')}
@@ -855,7 +856,7 @@ export default function Dashboard() {
                             size="monoSm"
                             onClick={() => void cancelOrder(order.id)}
                           >
-                            {t('Cancel')} · ₩{(order.escrowRemainingKrw ?? 0).toLocaleString()} {t('back to your wallet')}
+                            {t('Cancel')} · {formatUsdcFromKrw(order.escrowRemainingKrw ?? 0)} USDC {t('back to your wallet')}
                           </Button>
                         ) : null}
                       </div>
@@ -883,7 +884,7 @@ export default function Dashboard() {
                                     </span>
                                   ) : null}
                                   <span className="ml-auto tabular-nums">
-                                    ₩{answer.price.toLocaleString()} {t('settled')}
+                                    {formatUsdcFromKrw(answer.price)} USDC {t('settled')}
                                   </span>
                                 </div>
                                 <p className="mt-2 text-sm leading-relaxed text-foreground">
@@ -1009,7 +1010,7 @@ function QuestionPreviewModal({
         <p className="mt-3 border-t border-border/60 pt-3 font-mono text-xs text-muted-foreground">
           {t('Per answer')}{' '}
           <span className="text-foreground">
-            {order.unitPrice === 0 ? '₩0' : `₩${order.unitPrice.toLocaleString()}`}
+            {order.unitPrice === 0 ? '0 USDC' : `${formatUsdcFromKrw(order.unitPrice)} USDC`}
           </span>
         </p>
 
