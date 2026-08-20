@@ -1122,12 +1122,10 @@ impl Store {
                  SELECT 1 FROM prepaid_wallet_owners owner
                  WHERE owner.wallet = session.wallet AND owner.user_id = session.user_id
                )
-               UNION ALL
-               SELECT 1 FROM prepaid_accounts account
-               WHERE account.available_atomic > 0 AND NOT EXISTS (
-                 SELECT 1 FROM prepaid_wallet_owners owner
-                 WHERE owner.wallet = account.wallet
-               )
+               -- An ownerless prepaid balance (a top-up made before the wallet
+               -- onboards a prepaid session) is a legitimate pending state, not a
+               -- readiness failure; it reconciles when the wallet next authenticates.
+               -- The session-owner and bundle-quote invariants below stay strict.
                UNION ALL
                SELECT 1 FROM payment_bundle_quotes quote
                WHERE quote.funding_source = 'prepaid'
@@ -17319,9 +17317,16 @@ fn backfill_prepaid_wallet_owners(connection: &Connection) -> Result<(), StoreEr
         )
         .optional()?;
     if let Some(wallet) = ownerless_balance {
-        return Err(StoreError::Conflict(format!(
-            "prepaid wallet {wallet} has ownerless value; stop payment writes and reconcile"
-        )));
+        // A prepaid balance can exist before the wallet authenticates a prepaid
+        // session (e.g. an x402 top-up made before onboarding). That is a
+        // legitimate pending state, not corruption, so booting must not fail.
+        // The owner link is created automatically once the wallet next
+        // authenticates (the INSERT ... FROM prepaid_wallet_sessions above).
+        // The genuine-corruption guard (mismatched_owner) stays fatal.
+        tracing::warn!(
+            wallet = %wallet,
+            "prepaid wallet has an ownerless balance; booting anyway and awaiting session-based reconciliation"
+        );
     }
     Ok(())
 }
