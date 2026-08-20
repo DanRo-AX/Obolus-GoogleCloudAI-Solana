@@ -11460,9 +11460,53 @@ impl Store {
             |row| row.get::<_, String>(0),
         )?;
         if owner != user_id {
-            return Err(StoreError::Conflict(
-                "this wallet already owns prepaid value for another account".to_owned(),
-            ));
+            // A stale owner row must never lock a wallet's OWN login account out of
+            // it. `wallet_identities.wallet` is a 1:1 primary key: the account that
+            // holds it is the one that proved control by signing in *with* the
+            // wallet, and it is the wallet's canonical home. When the caller is that
+            // identity account, the current owner is therefore only a weaker
+            // payout-profile claim, and the prepaid reconcile (#80) surfaced how a
+            // stale such row locks the login account out: #80 zeroed unbacked
+            // balances but left `prepaid_wallet_owners` untouched, so the wallet's
+            // login account now 409s on every top-up even though the ledger holds
+            // nothing. Re-home the wallet to its identity account, but ONLY when
+            // there is no value to protect (available balance 0). This never lets a
+            // mere payout-profile account (no wallet identity) take a wallet from
+            // another account — that boundary (one custodial ledger per wallet)
+            // stays intact — and a funded wallet always keeps the hard conflict.
+            let caller_holds_identity = transaction
+                .query_row(
+                    "SELECT 1 FROM wallet_identities WHERE user_id = ?1 AND wallet = ?2",
+                    params![user_id, wallet],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            let available_atomic = prepaid_available(
+                &transaction,
+                wallet,
+                pay_to,
+                policy.network.trim(),
+                policy.asset.trim(),
+            )?;
+            if !caller_holds_identity || available_atomic != 0 {
+                return Err(StoreError::Conflict(
+                    "this wallet already owns prepaid value for another account".to_owned(),
+                ));
+            }
+            // Drop the displaced account's session rows for this wallet (all
+            // spend-nothing on a zero balance) so the boot readiness invariant
+            // (`backfill_prepaid_wallet_owners`) never sees the wallet as owned by
+            // multiple users after the re-home.
+            transaction.execute(
+                "DELETE FROM prepaid_wallet_sessions WHERE wallet = ?1 AND user_id <> ?2",
+                params![wallet, user_id],
+            )?;
+            transaction.execute(
+                "UPDATE prepaid_wallet_owners SET user_id = ?2, created_at = ?3
+                 WHERE wallet = ?1",
+                params![wallet, user_id, as_i64(now)?],
+            )?;
         }
         prepare_prepaid_wallet_switch(&transaction, user_id, wallet)?;
         transaction.execute(
@@ -22206,6 +22250,137 @@ mod tests {
 
     fn sign(signing_key: &SigningKey, message: &str) -> String {
         bs58::encode(signing_key.sign(message.as_bytes()).to_bytes()).into_string()
+    }
+
+    /// A stale `prepaid_wallet_owners` row (an earlier account) must not lock a
+    /// returning signer out of a wallet they control once the prepaid reconcile
+    /// (#80) has zeroed its balance. The proven signer re-homes the zero-value
+    /// wallet and gets a session — this is the live 충전 409 (POST
+    /// /api/v1/prepaid/session -> "this wallet already owns prepaid value for
+    /// another account") the fix targets.
+    #[test]
+    fn zero_value_prepaid_wallet_rehomes_to_the_proven_signer() {
+        let store = Store::in_memory().unwrap();
+        let stale_owner = "stale-owner-account";
+        let returning = "returning-signer-account";
+        ensure_user(&store, stale_owner);
+        ensure_user(&store, returning);
+
+        let wallet = bs58::encode(SigningKey::from_bytes(&[91; 32]).verifying_key().as_bytes())
+            .into_string();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[92; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = prepaid_test_policy(receiver);
+
+        // The returning signer controls the wallet exactly as wallet login records
+        // it (a wallet identity) ...
+        store.bind_wallet_identity(returning, &wallet).unwrap();
+        // ... but an earlier account still owns the now zero-value wallet, with a
+        // dead session left behind.
+        {
+            let connection = store.connection().unwrap();
+            connection
+                .execute(
+                    "INSERT INTO prepaid_wallet_owners (wallet, user_id, created_at)
+                     VALUES (?1, ?2, 1)",
+                    params![wallet, stale_owner],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO prepaid_wallet_sessions
+                     (id, user_id, wallet, token_hash, expires_at, revoked_at,
+                      last_used_at, created_at)
+                     VALUES ('dead-session', ?1, ?2, ?3, 1, 1, NULL, 1)",
+                    params![stale_owner, wallet, "a".repeat(64)],
+                )
+                .unwrap();
+        }
+
+        let session = store
+            .issue_prepaid_wallet_session(returning, &wallet, &"f".repeat(64), 300_000, &policy)
+            .unwrap();
+        assert_eq!(session.wallet, wallet);
+        assert_eq!(session.available_atomic, "0");
+
+        let connection = store.connection().unwrap();
+        let owner: String = connection
+            .query_row(
+                "SELECT user_id FROM prepaid_wallet_owners WHERE wallet = ?1",
+                [&wallet],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(owner, returning, "ownership re-homed to the proven signer");
+        let stale_sessions: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM prepaid_wallet_sessions
+                 WHERE wallet = ?1 AND user_id <> ?2",
+                params![wallet, returning],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            stale_sessions, 0,
+            "displaced account's sessions are cleared"
+        );
+        drop(connection);
+
+        // The balance now reads for the signer, and a boot readiness pass stays
+        // happy (no multi-user sessions, no owner/session mismatch).
+        let balance = store.prepaid_balance(returning, &policy).unwrap();
+        assert_eq!(balance.wallet, wallet);
+        store.migrate().unwrap();
+    }
+
+    /// The re-home is gated on there being nothing to protect: a wallet that
+    /// still holds real on-chain-backed prepaid value keeps the hard conflict so
+    /// value is never silently moved across accounts.
+    #[test]
+    fn funded_prepaid_wallet_never_rehomes_across_accounts() {
+        let store = Store::in_memory().unwrap();
+        let stale_owner = "funded-stale-owner";
+        let returning = "funded-returning";
+        ensure_user(&store, stale_owner);
+        ensure_user(&store, returning);
+
+        let wallet = bs58::encode(SigningKey::from_bytes(&[95; 32]).verifying_key().as_bytes())
+            .into_string();
+        let receiver = bs58::encode(SigningKey::from_bytes(&[96; 32]).verifying_key().as_bytes())
+            .into_string();
+        let policy = prepaid_test_policy(receiver.clone());
+
+        store.bind_wallet_identity(returning, &wallet).unwrap();
+        {
+            let connection = store.connection().unwrap();
+            connection
+                .execute(
+                    "INSERT INTO prepaid_wallet_owners (wallet, user_id, created_at)
+                     VALUES (?1, ?2, 1)",
+                    params![wallet, stale_owner],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO prepaid_accounts
+                     (wallet, pay_to, network, asset, available_atomic,
+                      total_deposited_atomic, updated_at, created_at)
+                     VALUES (?1, ?2, ?3, ?4, 5000000, 5000000, 1, 1)",
+                    params![wallet, receiver, policy.network, policy.asset],
+                )
+                .unwrap();
+        }
+
+        assert!(matches!(
+            store.issue_prepaid_wallet_session(
+                returning,
+                &wallet,
+                &"f".repeat(64),
+                300_000,
+                &policy
+            ),
+            Err(StoreError::Conflict(_))
+        ));
     }
 
     // GitHub issue #46: wallet_auth_challenges rows were purpose-less, so a
