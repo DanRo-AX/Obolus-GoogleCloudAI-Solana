@@ -8,8 +8,8 @@ use openshelf_api::{
     domain::{
         BindPayShChallengesRequest, ClaimPaymentAttemptRequest, CreateOpenCallRequest,
         CreatePaymentBundleRequest, PayShChallengeBindingRequest, PrepareDirectPayShPaymentRequest,
-        RecordChainSettlementRequest, ResolveQuestionRequest, ReviewDisputeRequest, SearchFilters,
-        UpsertProfileRequest,
+        RecordChainSettlementRequest, RecordPrepaidDepositRequest, ResolveQuestionRequest,
+        ReviewDisputeRequest, SearchFilters, UpsertProfileRequest,
     },
     rollback_audit::RollbackAuditIntent,
     rollback_sweep::{RollbackCoverage, RollbackSweepLedger},
@@ -20,9 +20,8 @@ use postgres::{Client, NoTls};
 
 use sha2::{Digest, Sha256};
 
-/// Shared payment policy for `create_open_call`. These races use zero-price
-/// calls, so no prepaid funding is drawn, but the store method still requires a
-/// policy since open calls are funded from prepaid USDC.
+/// Shared payment policy for `create_open_call`. Human open calls always use
+/// funded prepaid USDC, including concurrency tests.
 fn open_call_policy() -> PaymentQuotePolicy {
     PaymentQuotePolicy {
         fallback_recipient: Some(bs58::encode([71_u8; 32]).into_string()),
@@ -32,6 +31,40 @@ fn open_call_policy() -> PaymentQuotePolicy {
         krw_per_usdc: 1_350,
         ttl_ms: 300_000,
     }
+}
+
+fn fund_open_call_owner(store: &Store, owner_id: &str, amount_atomic: u64) {
+    let policy = open_call_policy();
+    let seed: [u8; 32] = Sha256::digest(format!("postgres-open-call:{owner_id}").as_bytes()).into();
+    let wallet = bs58::encode(seed).into_string();
+    let session_token = seed
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    store
+        .bind_wallet_identity(owner_id, &wallet)
+        .expect("open-call owner wallet should bind");
+    store
+        .issue_prepaid_wallet_session(owner_id, &wallet, &session_token, 300_000, &policy)
+        .expect("open-call owner prepaid session should persist");
+    store
+        .record_prepaid_deposit(
+            &RecordPrepaidDepositRequest {
+                transaction_signature: format!(
+                    "postgres-open-call-deposit-{owner_id}-{amount_atomic}"
+                ),
+                payer: wallet,
+                pay_to: policy
+                    .bundle_recipient
+                    .clone()
+                    .expect("test policy should configure the prepaid receiver"),
+                network: policy.network.clone(),
+                asset: policy.asset.clone(),
+                amount_atomic: amount_atomic.to_string(),
+            },
+            &policy,
+        )
+        .expect("open-call owner should receive prepaid USDC");
 }
 
 /// Exercises the production database engine with two independent application
@@ -1540,9 +1573,9 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
         .execute("DELETE FROM users WHERE id = $1", &[&wallet_users[0].0.id])
         .expect("wallet user fixture should clean up");
 
-    // Two contributors can submit against the last slot from separate API
-    // processes. A zero-price call is the sharpest reproducer because an
-    // aggregate balance deduction cannot accidentally serialize the race.
+    // Two contributors can submit against the last funded slot from separate
+    // API processes. The prepaid reservation happens before this race, so it
+    // cannot accidentally serialize the competing submissions.
     let answer_suffix = now_ms();
     let answer_setup = Store::open(&database_url).expect("answer-race setup should open");
     let owner = answer_setup
@@ -1551,6 +1584,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
             "postgres-answer-owner-hash",
         )
         .expect("answer-race owner should register");
+    fund_open_call_owner(&answer_setup, &owner.id, 2_000_000);
     let mut answerer_ids = Vec::new();
     for label in ["alpha", "bravo"] {
         let answerer = answer_setup
@@ -1587,7 +1621,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
             &CreateOpenCallRequest {
                 question: "Which Svalbard winter boots stayed warm during a full field day?"
                     .to_owned(),
-                unit_price: 0,
+                unit_price: 675,
                 target: 1,
                 chat_id: None,
                 shelf: "Svalbard field work".to_owned(),
@@ -1596,7 +1630,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
             },
             &open_call_policy(),
         )
-        .expect("zero-price last-slot call should be created");
+        .expect("funded last-slot call should be created");
     drop(answer_setup);
     let answer_barrier = Arc::new(Barrier::new(2));
     let answer_workers = answerer_ids
@@ -1793,9 +1827,9 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
     assert_eq!(surviving_quotes, 0);
 
     // Two administrators can approve the same pending dispute from different
-    // Cloud Run instances. The call deliberately has spare capacity and a
-    // zero price, so neither balance deductions nor a filled-call transition
-    // can accidentally serialize the race for us.
+    // Cloud Run instances. The prepaid call deliberately has spare capacity,
+    // so neither funding nor a filled-call transition can accidentally
+    // serialize the review race for us.
     let dispute_suffix = now_ms();
     let dispute_setup = Store::open(&database_url).expect("dispute-race setup should open");
     let dispute_owner = dispute_setup
@@ -1804,6 +1838,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
             "postgres-dispute-owner-hash",
         )
         .expect("dispute-race owner should register");
+    fund_open_call_owner(&dispute_setup, &dispute_owner.id, 2_000_000);
     let dispute_author = dispute_setup
         .register_user(
             &format!("dispute-author-{dispute_suffix}@example.com"),
@@ -1848,7 +1883,7 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
             &dispute_owner.id,
             &CreateOpenCallRequest {
                 question: "Which Svalbard boot claim needs a manual evidence ruling?".to_owned(),
-                unit_price: 0,
+                unit_price: 675,
                 target: 2,
                 chat_id: None,
                 shelf: "Svalbard field work".to_owned(),
