@@ -20565,12 +20565,19 @@ fn is_real_onchain_signature(reference_id: &str) -> bool {
 /// Idempotent: the recompute is pure over the ledger, and a marker row makes the
 /// whole pass a strict no-op on any subsequent boot/redeploy.
 fn reconcile_prepaid_real_coins(connection: &Connection) -> Result<(), StoreError> {
-    connection.execute(
+    // Create the marker table through the schema path (`execute_batch`), not the
+    // data path (`execute`), so PostgreSQL gets the same `INTEGER` -> `BIGINT`
+    // widening every other table receives. On the data path an `INTEGER` column
+    // stays int4, and binding `applied_at`'s millisecond `now` (an i64) into an
+    // int4 slot fails with "error serializing parameter 0" on boot (SQLite is
+    // unaffected — its INTEGER holds 64 bits — which is why this only crashed on
+    // prod Postgres). `execute_batch` also carries no bound parameters, matching
+    // this parameter-free DDL.
+    connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS reconcile_markers (
             name TEXT PRIMARY KEY,
             applied_at INTEGER NOT NULL
         )",
-        params![],
     )?;
     let already_applied = connection
         .query_row(
