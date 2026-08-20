@@ -20280,7 +20280,9 @@ fn seed_open_calls(transaction: &Transaction<'_>) -> Result<(), StoreError> {
         )?;
         transaction.execute(
             "UPDATE open_calls
-             SET status = 'open', escrow_remaining_krw = ?2 * (?3 - ?4),
+             SET status = 'open',
+                 escrow_remaining_krw = CAST(?2 AS BIGINT)
+                     * (CAST(?3 AS BIGINT) - CAST(?4 AS BIGINT)),
                  unit_price_atomic = ?5,
                  escrow_total_atomic = ?6,
                  escrow_remaining_atomic = ?7

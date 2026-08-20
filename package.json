@@ -41,7 +41,7 @@
     "pitch:verify-live": "node scripts/verify-pitch-readiness.mjs --require-live",
     "test:unit": "node --test src/lib/*.test.ts",
     "test:pages": "node --test cloudflare/*.test.mjs",
-    "typecheck:pages": "wrangler types --check && tsc -p tsconfig.functions.json",
+    "typecheck:pages": "wrangler types --check --env-file /dev/null && tsc -p tsconfig.functions.json",
     "build:pages": "VITE_API_BASE= VITE_X402_GATEWAY_BASE=/x402 npm run build",
     "verify:pages-bundle": "node scripts/verify-pages-bundle.mjs",
     "pages:dev": "npm run build:pages && wrangler pages dev dist",
