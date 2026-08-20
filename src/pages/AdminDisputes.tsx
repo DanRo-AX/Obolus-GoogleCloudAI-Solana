@@ -26,7 +26,7 @@ export default function AdminDisputes() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (account?.role !== 'admin') return
+    if (!account) return
     void Promise.all([listDisputes(), listDocumentFeedback()])
       .then(([disputes, reports]) => {
         setCases(disputes)
@@ -40,13 +40,13 @@ export default function AdminDisputes() {
         ),
       )
       .finally(() => setLoading(false))
-  }, [account?.role, t])
+  }, [account, t])
 
   if (authReady && authError && !account) {
     return <AuthUnavailable message={authError} onRetry={retryAuth} />
   }
-  if (authReady && account?.role !== 'admin') {
-    return <Navigate to="/dashboard" replace />
+  if (authReady && !account) {
+    return <Navigate to="/login" replace />
   }
 
   const decideDispute = async (

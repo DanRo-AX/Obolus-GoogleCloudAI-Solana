@@ -11,8 +11,6 @@ import { Splash } from '@/components/Splash'
 import { TooltipProvider } from '@/components/ui/primitives'
 import { UiProvider } from '@/state/ui'
 const Admin = lazy(() => import('@/pages/Admin'))
-const AdminDisputes = lazy(() => import('@/pages/AdminDisputes'))
-const AdminOperations = lazy(() => import('@/pages/AdminOperations'))
 const Archive = lazy(() => import('@/pages/Archive'))
 const Chat = lazy(() => import('@/pages/Chat'))
 const Coverage = lazy(() => import('@/pages/Coverage'))
@@ -40,8 +38,7 @@ const TITLES: Record<string, string> = {
   '/terms': 'Terms · Obolus',
   '/privacy': 'Privacy · Obolus',
   '/login': 'Obolus',
-  '/admin': 'Admin · Obolus',
-  '/admin/operations': 'Operations · Obolus',
+  '/admin': 'Admin Test · Obolus',
 }
 
 function DocumentTitle() {
@@ -72,8 +69,9 @@ export default function App() {
                 <Route path="/onboarding" element={<Onboarding />} />
                 <Route path="/answer/:orderId" element={<Survey />} />
                 <Route path="/admin" element={<Admin />} />
-                <Route path="/admin/disputes" element={<AdminDisputes />} />
-                <Route path="/admin/operations" element={<AdminOperations />} />
+                <Route path="/admin/disputes" element={<Navigate to="/admin" replace />} />
+                <Route path="/admin/data-pipeline" element={<Navigate to="/admin" replace />} />
+                <Route path="/admin/operations" element={<Navigate to="/admin" replace />} />
                 <Route path="/coverage" element={<Coverage />} />
                 <Route
                   path="/shelf"

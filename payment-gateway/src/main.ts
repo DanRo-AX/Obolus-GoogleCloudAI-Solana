@@ -46,7 +46,11 @@ import {
 } from "./pay-sh-finality.js";
 import "./root-env.js";
 import { independentRpcUrls } from "./rpc-policy.js";
-import { secureServiceOrigin, secureServiceUrl } from "./url-policy.js";
+import {
+  browserOriginAllowed,
+  secureServiceOrigin,
+  secureServiceUrl,
+} from "./url-policy.js";
 import { reconcilerReadiness } from "./reconciler-readiness.js";
 import { createReadyDependencyGuard } from "./dependency-readiness.js";
 import {
@@ -68,8 +72,10 @@ import {
   type PrepaidDepositRequest,
   type TopUpQuote,
 } from "./prepaid-top-up.js";
+import { isAllowedBrowserRpcRequest } from "./browser-rpc-policy.js";
 
 const DEVNET_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as Network;
+const DEVNET_USDC = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 const DEFAULT_DEVNET_RPC_URL = "https://api.devnet.solana.com";
 const MAX_BACKGROUND_RPC_RESPONSE_BYTES = 1024 * 1024;
 const MAX_ACCOUNT_PREFLIGHT_RESPONSE_BYTES = 128 * 1024;
@@ -88,6 +94,7 @@ const facilitatorUrl = secureServiceUrl(
   env("X402_FACILITATOR_URL", "https://x402.org/facilitator"),
 ).replace(/\/$/, "");
 const network = env("X402_NETWORK", env("OPENSHELF_X402_NETWORK", DEVNET_NETWORK)) as Network;
+const browserBalanceMint = env("OPENSHELF_X402_ASSET", DEVNET_USDC);
 const rpcUrl = process.env.X402_RPC_URL?.trim() || DEFAULT_DEVNET_RPC_URL;
 const chainReconciliationRpcUrls = independentRpcUrls([
   rpcUrl,
@@ -338,7 +345,6 @@ const pendingSettlements = new Map<string, PendingSettlement>();
 const settlementReplayGuard = new SettlementReplayGuard();
 const verifiedPaymentAttempts = new VerifiedPaymentAttemptTracker<PayableQuote>();
 const settlementQueue = DurableSettlementQueue.fromEnvironment(managedEnvironment, internalToken);
-const allowedBrowserRpcMethods = new Set(["getAccountInfo", "getLatestBlockhash"]);
 const rpcRateWindows = new Map<string, { startedAt: number; count: number }>();
 let chainReconciliationRunning = false;
 let lastChainReconciliationAt: number | null = null;
@@ -1340,7 +1346,9 @@ app.disable("x-powered-by");
 app.use(express.json({ limit: "32kb" }));
 app.use((request, response, next) => {
   const origin = request.headers.origin;
-  if (origin === allowedOrigin) response.setHeader("access-control-allow-origin", origin);
+  if (browserOriginAllowed(origin, allowedOrigin, managedEnvironment)) {
+    response.setHeader("access-control-allow-origin", origin as string);
+  }
   response.setHeader("vary", "Origin");
   response.setHeader("cache-control", "no-store");
   response.setHeader("x-content-type-options", "nosniff");
@@ -1402,7 +1410,10 @@ app.get(/^\/api\/v2\/pay-sh\/documents\/[^/]+\/[^/]+\/[^/]+$/, proxyDirectPaySh)
 // remain server-side and browser bursts can honor upstream Retry-After headers.
 app.post("/rpc", async (request, response, next) => {
   try {
-    if (managedEnvironment && request.headers.origin !== allowedOrigin) {
+    if (
+      request.headers.origin &&
+      !browserOriginAllowed(request.headers.origin, allowedOrigin, managedEnvironment)
+    ) {
       response.status(403).json({
         jsonrpc: "2.0",
         error: { code: -32003, message: "RPC browser origin is not allowed" },
@@ -1420,7 +1431,7 @@ app.post("/rpc", async (request, response, next) => {
       return;
     }
     const body = request.body as unknown;
-    if (!isAllowedBrowserRpcRequest(body)) {
+    if (!isAllowedBrowserRpcRequest(body, browserBalanceMint)) {
       response.status(400).json({
         jsonrpc: "2.0",
         error: { code: -32600, message: "RPC method is not allowed" },
@@ -2089,19 +2100,6 @@ function env(name: string, fallback: string): string {
 
 function safeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function isAllowedBrowserRpcRequest(
-  body: unknown,
-): body is { jsonrpc: "2.0"; id?: unknown; method: string; params?: unknown[] } {
-  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
-  const request = body as Record<string, unknown>;
-  return (
-    request.jsonrpc === "2.0" &&
-    typeof request.method === "string" &&
-    allowedBrowserRpcMethods.has(request.method) &&
-    (request.params === undefined || Array.isArray(request.params))
-  );
 }
 
 function rpcRequestId(body: unknown): unknown {

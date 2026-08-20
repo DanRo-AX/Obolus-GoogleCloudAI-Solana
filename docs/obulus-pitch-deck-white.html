@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Obolus — 인간 근거를 위한 검색·결제 인프라</title>
+    <style>
+      @font-face{font-family:Geist;src:url('../public/fonts/Geist_Variable-s.p.92592eb2.woff2') format('woff2');font-weight:100 900;font-display:swap}
+      @font-face{font-family:GeistMono;src:url('../public/fonts/GeistMono_Variable.p.2f937313.woff2') format('woff2');font-weight:100 900;font-display:swap}
+      :root{--ink:#101318;--muted:#56616c;--faint:#7f8a95;--line:#cfd7df;--teal:#0b9879;--teal2:#54d4b6;--violet:#745cc6;--amber:#c88618;--red:#c85a5a;--paper:#f8fafb;--scale:1}
+      *{box-sizing:border-box}
+      html{background:#111;scroll-behavior:smooth}
+      body{margin:0;overflow:hidden;background:#171717;color:var(--ink);font-family:Geist,Pretendard,'Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased}
+      .deck{height:100vh;overflow-y:auto;scroll-snap-type:y mandatory;scrollbar-width:none}
+      .deck::-webkit-scrollbar{display:none}
+      .shell{position:relative;width:100vw;height:100vh;overflow:hidden;scroll-snap-align:start;scroll-snap-stop:always;background:#171717}
+      .slide{position:absolute;left:50%;top:50%;width:1600px;height:900px;transform:translate(-50%,-50%) scale(var(--scale));transform-origin:center;overflow:hidden;isolation:isolate;background:#f8fafb}
+      .slide::before{content:'';position:absolute;inset:0;z-index:-3;background-image:linear-gradient(90deg,rgba(255,255,255,.97) 0%,rgba(255,255,255,.90) 48%,rgba(255,255,255,.48) 100%),url('pitch-final-assets/00-dream-weave-white.png');background-size:cover;background-position:center}
+      .slide.bg-left::before{transform:scaleX(-1)}
+      .slide.bg-soft::before{opacity:.52}
+      .slide.bg-clear::before{background-image:linear-gradient(rgba(255,255,255,.82),rgba(255,255,255,.82)),url('pitch-final-assets/00-dream-weave-white.png')}
+      .slide.bg-deep::before{background-image:linear-gradient(90deg,rgba(255,255,255,.98) 0%,rgba(255,255,255,.94) 68%,rgba(255,255,255,.76) 100%),url('pitch-final-assets/00-dream-weave-white.png')}
+      .pad{position:absolute;inset:0;padding:54px 68px 46px;display:flex;flex-direction:column}
+      h1,h2,h3,p{margin:0;word-break:keep-all}
+      .eyebrow{font:600 13px/1.25 GeistMono,monospace;letter-spacing:.13em;text-transform:uppercase;color:#6e7b87}
+      .eyebrow strong{color:var(--teal)}
+      .title{margin-top:22px;font-size:58px;line-height:1.02;letter-spacing:-.055em;font-weight:610;max-width:17ch}
+      .title.wide{max-width:24ch}
+      .hero{font-size:78px;line-height:.97;letter-spacing:-.065em;font-weight:610;max-width:12.2ch}
+      .subtitle{font-size:23px;line-height:1.48;letter-spacing:-.02em;color:var(--muted);max-width:46ch}
+      .caption{font-size:17px;line-height:1.45;color:var(--muted)}
+      .micro{font:500 12px/1.45 GeistMono,monospace;color:#77838f}
+      .page-no{position:absolute;right:68px;top:57px;font:500 12px GeistMono,monospace;color:#8a96a0;letter-spacing:.05em}
+      .footer{margin-top:auto;padding-top:14px;border-top:1px solid rgba(111,127,141,.35);display:flex;justify-content:space-between;gap:30px;font:500 11px/1.4 GeistMono,monospace;color:#76838e;letter-spacing:.045em}
+      .rule{height:3px;width:50px;background:var(--teal);margin:26px 0}
+      .columns{display:grid;grid-template-columns:1fr 1fr;gap:66px;min-height:0;flex:1}
+      .columns.narrow-wide{grid-template-columns:.78fr 1.22fr}
+      .columns.wide-narrow{grid-template-columns:1.18fr .82fr}
+      .vcenter{display:flex;flex-direction:column;justify-content:center}
+      .section-line{border-top:1px solid var(--line);padding-top:17px}
+      .section-line+.section-line{margin-top:18px}
+      .section-line b{font-size:19px;letter-spacing:-.02em}
+      .section-line p{margin-top:6px;font-size:15px;line-height:1.45;color:var(--muted)}
+      .shot{position:relative;overflow:hidden;background:#fff;border:1px solid rgba(123,139,153,.28);box-shadow:0 22px 70px rgba(30,48,65,.14)}
+      .shot img{display:block;width:100%;height:100%;object-fit:cover}
+      .shot.browser{border-radius:17px}
+      .shot.admin-trace{background:#f5f8fa;box-shadow:0 18px 54px rgba(30,48,65,.11)}
+      .shot.admin-trace img{object-fit:contain;object-position:center;background:#f5f8fa}
+      .shot .label{position:absolute;left:18px;bottom:16px;padding:8px 10px;background:rgba(16,19,24,.88);color:#fff;font:500 11px GeistMono,monospace;backdrop-filter:blur(8px)}
+      .shot .callout{position:absolute;right:22px;top:24px;width:220px;padding:13px 15px;background:rgba(255,255,255,.95);border-left:3px solid var(--teal);font-size:14px;line-height:1.4;box-shadow:0 12px 35px rgba(24,39,53,.12)}
+      .cover-copy{margin-top:92px;width:760px}
+      .cover-copy .subtitle{margin-top:28px;max-width:630px}
+      .cover-meta{position:absolute;left:68px;bottom:52px;display:flex;gap:44px;font:550 12px GeistMono,monospace;color:#596671}
+      .cover-meta b{color:var(--teal)}
+      .market-layout{display:grid;grid-template-columns:.72fr 1.28fr;gap:82px;margin-top:38px;flex:1;align-items:center}
+      .market-number{font-size:112px;line-height:.86;letter-spacing:-.075em;font-weight:610}
+      .market-number span{display:block;margin-top:20px;font:550 12px/1.5 GeistMono,monospace;letter-spacing:.08em;color:#78848f}
+      .problem-chain{border-top:2px solid #1b2026}
+      .problem-step{display:grid;grid-template-columns:170px 1fr;gap:28px;padding:23px 0;border-bottom:1px solid var(--line)}
+      .problem-step small{font:600 12px GeistMono,monospace;color:var(--teal)}
+      .problem-step strong{font-size:25px;letter-spacing:-.03em}
+      .problem-step p{font-size:16px;color:var(--muted);margin-top:6px;line-height:1.42}
+      .target-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:34px;margin-top:27px}
+      .target{padding-top:15px;border-top:2px solid #20252b}
+      .target strong{font-size:20px}.target p{margin-top:6px;font-size:14px;color:var(--muted)}
+      .reduction{margin-top:34px}
+      .reduction b{display:block;font-size:72px;line-height:.92;letter-spacing:-.065em;font-weight:580;white-space:nowrap}
+      .reduction span{display:block;margin-top:17px;font:550 12px GeistMono,monospace;color:#72808b}
+      .simple-steps{margin-top:30px;border-top:1px solid var(--line)}
+      .simple-step{display:grid;grid-template-columns:40px 1fr;gap:15px;padding:17px 0;border-bottom:1px solid var(--line)}
+      .simple-step i{font:600 12px GeistMono,monospace;color:var(--teal);font-style:normal;padding-top:4px}
+      .simple-step strong{font-size:19px}.simple-step p{font-size:14px;line-height:1.42;color:var(--muted);margin-top:5px}
+      .autonomy-copy{padding-right:20px}
+      .role-list{margin-top:28px;border-top:1px solid var(--line)}
+      .role{padding:18px 0;border-bottom:1px solid var(--line)}
+      .role b{font-size:19px}.role span{display:block;font-size:14px;color:var(--muted);margin-top:5px;line-height:1.4}
+      .role b.ai{color:var(--violet)}.role b.code{color:var(--teal)}
+      .role-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:28px;margin-top:18px}
+      .role-mini{padding-top:13px;border-top:2px solid #20252b}
+      .role-mini.ai{border-color:var(--violet)}.role-mini.code{border-color:var(--teal)}
+      .role-mini b{font-size:16px}.role-mini p{margin-top:5px;font-size:12px;line-height:1.36;color:var(--muted)}
+      .locked{margin-top:22px;font:600 12px/1.55 GeistMono,monospace;color:#46515c}
+      .payment-flow{margin-top:32px;border-left:2px solid #aeb8c1;padding-left:24px}
+      .payment-flow div{position:relative;padding:0 0 22px 14px}
+      .payment-flow div::before{content:'';position:absolute;left:-32px;top:4px;width:13px;height:13px;border-radius:50%;background:#fff;border:3px solid var(--teal)}
+      .payment-flow strong{font-size:19px}.payment-flow p{font-size:14px;color:var(--muted);margin-top:5px;line-height:1.4}
+      .truth-note{margin-top:18px;padding-top:15px;border-top:1px solid var(--line);font-size:14px;line-height:1.5;color:var(--muted)}
+      .truth-note b{color:var(--ink)}
+      .rank-stage{position:relative;height:390px;margin-top:20px;border-top:1px solid #bfc9d2;border-bottom:1px solid #bfc9d2}
+      .rank-stage svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+      .rnode{position:absolute;width:185px;height:108px;padding:12px 15px;background:rgba(255,255,255,.91);border-top:3px solid #9ca8b3;box-shadow:0 7px 20px rgba(44,61,76,.07);z-index:2}
+      .rnode.on{border-color:var(--teal)}
+      .rnode.blocked{opacity:.55;border-top-color:#b8c0c8}
+      .rnode::before,.rnode::after{content:'';position:absolute;top:50%;width:8px;height:8px;margin-top:-4px;border-radius:50%;background:#fff;border:2px solid #8b98a4}
+      .rnode::before{left:-5px}.rnode::after{right:-5px}.rnode.blocked::after{display:none}
+      .rnode small{font:600 10px GeistMono,monospace;color:#76828d}
+      .rnode strong{display:block;margin-top:7px;font-size:16px;line-height:1.24}
+      .rnode p{margin-top:6px;font-size:11px;line-height:1.3;color:var(--muted)}
+      .seed{position:absolute;left:10px;top:136px;width:118px;height:118px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#12171d;color:#fff;text-align:center;z-index:3}
+      .seed small{font:600 10px GeistMono,monospace;color:#7ee0c6}.seed strong{font-size:15px;line-height:1.25;margin-top:7px}
+      .ranking{position:absolute;right:0;top:18px;width:440px;padding-left:28px;border-left:1px solid var(--line);z-index:2}
+      .ranking::before{content:'';position:absolute;left:-5px;top:153px;width:8px;height:8px;border-radius:50%;background:#fff;border:2px solid var(--teal)}
+      .ranking h3{font-size:21px}.ranking-row{display:grid;grid-template-columns:34px 1fr 54px;gap:12px;padding:13px 0;border-bottom:1px solid var(--line);align-items:center}
+      .ranking-row b{font:600 13px GeistMono,monospace;color:var(--teal)}
+      .ranking-row strong{font-size:15px}.ranking-row span{font:600 13px GeistMono,monospace;text-align:right}
+      .rank-legend{display:flex;gap:24px;margin-top:10px;font:500 10px GeistMono,monospace;color:#6e7a85}
+      .rank-legend i{display:inline-block;width:20px;height:2px;margin-right:7px;vertical-align:middle;background:var(--teal)}
+      .rank-legend .gray i{background:#a9b3bc}.rank-legend .zero i{background:#bbb;border-top:2px dashed #888;height:0}
+      .abstraction{margin-top:22px;display:grid;grid-template-columns:1.35fr .42fr 1fr .42fr 1fr .42fr 1fr .42fr 1.08fr;align-items:center;gap:0}
+      .abstraction .ab{padding:13px 14px;border-top:2px solid #20252b;min-height:78px;background:rgba(255,255,255,.54)}
+      .abstraction .ab strong{display:block;font-size:15px}.abstraction .ab span{display:block;margin-top:6px;font-size:11px;line-height:1.35;color:var(--muted)}
+      .abstraction .ab.teal{border-color:var(--teal)}.abstraction .ab.violet{border-color:var(--violet)}
+      .thin-arrow{height:1px;background:#8995a0;position:relative}
+      .thin-arrow::after{content:'';position:absolute;right:-1px;top:-4px;border-left:7px solid #8995a0;border-top:4px solid transparent;border-bottom:4px solid transparent}
+      .arch-stage{position:relative;height:635px;margin-top:18px;border-top:1px solid rgba(130,145,158,.45);border-bottom:1px solid rgba(130,145,158,.45)}
+      .arch-stage svg{position:absolute;inset:0;width:100%;height:100%;z-index:0}
+      .plane-label{position:absolute;left:0;width:112px;font:600 11px GeistMono,monospace;color:#6f7c87;letter-spacing:.08em;text-transform:uppercase}
+      .anode{position:absolute;z-index:2;width:145px;min-height:70px;padding:12px 13px;background:rgba(255,255,255,.91);border-top:3px solid #9da8b2;box-shadow:0 7px 20px rgba(35,52,68,.07)}
+      .anode.ai{border-color:var(--violet)}.anode.data{border-color:var(--teal)}.anode.money{border-color:var(--amber)}
+      .anode small{font:600 9px GeistMono,monospace;color:#77838e}.anode strong{display:block;margin-top:6px;font-size:14px;line-height:1.18}.anode span{display:block;margin-top:5px;font-size:10px;line-height:1.3;color:var(--muted)}
+      .rail-key{position:absolute;right:0;top:-31px;display:flex;gap:22px;font:500 10px GeistMono,monospace;color:#6f7b86}.rail-key i{display:inline-block;width:24px;height:3px;margin-right:7px;vertical-align:middle}.rail-key .d i{background:var(--teal)}.rail-key .j i{background:var(--violet)}.rail-key .m i{background:var(--amber)}
+      .trust-rail{position:absolute;right:0;top:94px;width:150px;padding:14px 0 0 18px;border-left:1px solid #9aa6b1;font:500 10px/1.65 GeistMono,monospace;color:#65717c}
+      .trust-rail b{display:block;color:var(--ink);font-size:11px;margin-bottom:6px}
+      .close-layout{display:grid;grid-template-columns:.73fr 1.27fr;gap:72px;margin-top:30px;flex:1;min-height:0;align-items:center}
+      .poc{margin-top:28px;border-top:1px solid var(--line)}
+      .poc-row{display:grid;grid-template-columns:125px 1fr;gap:20px;padding:15px 0;border-bottom:1px solid var(--line)}
+      .poc-row b{font:600 12px GeistMono,monospace;color:var(--teal)}.poc-row span{font-size:17px}
+      .three-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:20px}.m{padding-top:13px;border-top:2px solid #1d2228}.m b{font-size:22px}.m span{display:block;margin-top:5px;font-size:12px;color:var(--muted)}
+      .flowline{display:grid;grid-template-columns:repeat(11,minmax(0,1fr));align-items:center;margin-top:34px}.fnode{padding:16px 15px;min-height:118px;border-top:3px solid #20252b;background:rgba(255,255,255,.72)}.fnode.teal{border-color:var(--teal)}.fnode.ai{border-color:var(--violet)}.fnode.money{border-color:var(--amber)}.fnode small{font:600 10px GeistMono,monospace;color:#78848f}.fnode strong{display:block;font-size:16px;margin-top:8px;line-height:1.25}.fnode p{font-size:11px;line-height:1.35;color:var(--muted);margin-top:6px}
+      .fork{display:grid;grid-template-columns:repeat(3,1fr);gap:34px;margin-top:34px}.fork-col{padding-top:18px;border-top:3px solid #20252b}.fork-col.teal{border-color:var(--teal)}.fork-col.ai{border-color:var(--violet)}.fork-col h3{font-size:28px}.fork-col p{font-size:16px;line-height:1.48;color:var(--muted);margin-top:13px}.fork-col ul{padding:0;margin:15px 0 0;list-style:none}.fork-col li{font-size:14px;padding:8px 0;border-bottom:1px solid rgba(170,182,192,.6)}
+      .compare{display:grid;grid-template-columns:1fr 1fr;gap:60px;margin-top:32px;flex:1}.compare-col{border-top:3px solid #20252b;padding-top:22px}.compare-col.teal{border-color:var(--teal)}.compare-col h3{font-size:31px}.compare-col>p{margin-top:11px;font-size:16px;color:var(--muted);line-height:1.48}
+      .clean-table{width:100%;border-collapse:collapse;margin-top:24px;background:rgba(255,255,255,.52)}.clean-table th,.clean-table td{padding:13px 12px;border-bottom:1px solid var(--line);text-align:left;font-size:14px;vertical-align:top}.clean-table th{font:600 10px GeistMono,monospace;color:#6f7b86;text-transform:uppercase}.clean-table td strong{font-weight:650}.clean-table .yes{color:var(--teal);font-weight:650}.clean-table .no{color:#9a5b58}
+      .formula-band{margin-top:24px;padding:18px 0;border-top:2px solid #20252b;border-bottom:1px solid var(--line);font:600 17px GeistMono,monospace}.formula-band b{color:var(--teal)}
+      .weight-grid{display:grid;grid-template-columns:1fr 1fr;gap:44px;margin-top:24px}.weight-grid h3{font-size:21px}.weight-grid dl{margin:15px 0 0}.weight-grid dl>div{display:grid;grid-template-columns:minmax(0,1fr) 120px;padding:10px 0;border-bottom:1px solid var(--line);font-size:13px}.weight-grid dd{margin:0;text-align:right;font:600 12px GeistMono,monospace;color:var(--teal)}
+      .lifecycle{display:grid;grid-template-columns:repeat(11,minmax(0,1fr));align-items:center;margin-top:48px}.life{min-height:178px;padding:19px 15px;border-top:3px solid #20252b;background:rgba(255,255,255,.72)}.life.teal{border-color:var(--teal)}.life.ai{border-color:var(--violet)}.life small{font:600 10px GeistMono,monospace;color:#78848f}.life strong{display:block;margin-top:11px;font-size:18px;line-height:1.28}.life p{font-size:12px;line-height:1.4;color:var(--muted);margin-top:8px}
+      .money-seq{display:grid;grid-template-columns:1fr .28fr 1fr .28fr 1fr .28fr 1fr .28fr 1fr;gap:0;align-items:center;margin-top:35px}.money-node{min-height:160px;padding:19px 17px;border-top:3px solid var(--amber);background:rgba(255,255,255,.72)}.money-node strong{display:block;margin-top:10px;font-size:17px;line-height:1.2}.money-node p{font-size:12px;line-height:1.4;color:var(--muted);margin-top:8px}.money-node small{font:600 10px GeistMono,monospace;color:var(--amber)}
+      .search-math .formula-band{margin-top:17px;padding:12px 0;font-size:15px;line-height:1.35}.search-math .weight-grid{margin-top:15px}.search-math .weight-grid dl{margin-top:8px}.search-math .weight-grid dl>div{padding:7px 0}.search-math .caption{font-size:14px!important;line-height:1.35!important;margin-top:12px!important}
+      .invoice-fields{display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin-top:26px;border-top:1px solid var(--line)}.ifield{padding:16px 18px 16px 0;border-bottom:1px solid var(--line)}.ifield b{font:600 11px GeistMono,monospace;color:var(--teal)}.ifield span{display:block;margin-top:6px;font-size:13px;line-height:1.42;color:var(--muted)}
+      .proofs{display:grid;grid-template-columns:repeat(4,1fr);gap:34px;margin-top:35px}.proof{padding-top:18px;border-top:3px solid #20252b}.proof b{font:600 11px GeistMono,monospace;color:var(--teal)}.proof h3{font-size:25px;margin-top:11px}.proof p{font-size:14px;line-height:1.46;color:var(--muted);margin-top:10px}.proof strong{display:block;margin-top:17px;font:600 12px GeistMono,monospace;color:#2c3640}
+      .privacy-map{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:center;gap:22px;margin-top:42px}.privacy-node{min-height:230px;padding:28px 24px;border-top:3px solid #20252b;background:rgba(255,255,255,.75)}.privacy-node.teal{border-color:var(--teal)}.privacy-node h3{font-size:28px}.privacy-node p{font-size:15px;line-height:1.5;color:var(--muted);margin-top:14px}.privacy-node b{font:600 11px GeistMono,monospace;color:var(--teal)}
+      .source-list{columns:2;column-gap:52px;margin-top:28px;padding:0;list-style:none}.source-list li{break-inside:avoid;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px;line-height:1.45;color:var(--muted)}.source-list b{display:block;color:var(--ink);font-size:14px;margin-bottom:3px}
+      nav{position:fixed;right:24px;bottom:20px;z-index:30;display:flex;gap:5px;background:rgba(20,22,25,.88);padding:7px;color:#fff;backdrop-filter:blur(12px)}
+      nav button{border:0;background:transparent;color:inherit;font:600 12px GeistMono,monospace;padding:9px 11px;cursor:pointer}nav button:hover{background:rgba(255,255,255,.12)}
+      @media print{@page{size:16in 9in;margin:0}html,body{background:#fff;overflow:visible}.deck{height:auto;overflow:visible}.shell{width:1600px;height:900px;page-break-after:always;background:#fff}.slide{position:relative;left:auto;top:auto;transform:none!important}nav{display:none}}
+    </style>
+  </head>
+  <body>
+    <main class="deck" id="deck">
+
+      <!-- 01 COVER -->
+      <section class="shell" data-title="표지"><article class="slide"><div class="pad">
+        <div class="eyebrow">Obolus · Google Cloud × Solana</div>
+        <div class="cover-copy"><h1 class="hero">AI는 웹을 검색합니다.<br>Obolus는 사람의<br>실제 경험을 검색합니다.</h1><p class="subtitle">공개 웹에 없는 인간 근거를 찾고, 필요한 원문만 열어 본 뒤, 사용한 사람에게 자동 정산하는 검색·결제 인프라입니다.</p></div>
+        <div class="cover-meta"><span><b>FREE</b> metadata discovery</span><span><b>PAID</b> selected evidence only</span><span><b>90%</b> target owner payout</span></div>
+        <div class="page-no"></div>
+      </div></article></section>
+
+      <!-- 02 PROBLEM -->
+      <section class="shell" data-title="문제와 타깃"><article class="slide bg-left bg-deep"><div class="pad">
+        <div class="eyebrow"><strong>01</strong> · 이미 산 답을 다음 질문에서 다시 찾을 수 없다</div>
+        <div class="market-layout">
+          <div><div class="market-number">$142B<span>2023 GLOBAL INSIGHTS INDUSTRY REVENUE<br>시장 크기가 아니라 반복 조사비가 존재하는 산업 맥락</span></div><div class="target-strip"><div class="target"><strong>은행·보험</strong><p>가입 포기·신뢰·이탈 이유</p></div><div class="target"><strong>소비재·F&amp;B</strong><p>출시·메뉴·사용 맥락</p></div><div class="target"><strong>프로덕트·리서치</strong><p>반복 A/B·정성 검증</p></div></div></div>
+          <div class="problem-chain"><div class="problem-step"><small>지금</small><div><strong>같은 cohort를 다시 모집합니다.</strong><p>설문·인터뷰·패널 비용이 질문마다 처음부터 발생합니다.</p></div></div><div class="problem-step"><small>누수</small><div><strong>개별 경험은 평균 보고서 안에서 사라집니다.</strong><p>원문·저자·시점·동의 범위가 다음 질문의 검색 자산이 되지 못합니다.</p></div></div><div class="problem-step"><small>Obolus</small><div><strong>기존 인간 근거를 먼저 검색하고, 빈칸만 모집합니다.</strong><p>구매자는 반복 비용을 줄이고, 기여자는 채택·재사용 때마다 정산받습니다.</p></div></div></div>
+        </div>
+        <div class="footer"><span>Source · ESOMAR Global Market Research 2024, 2023 industry revenue</span><span></span></div>
+      </div></article></section>
+
+      <!-- 03 PRODUCT -->
+      <section class="shell" data-title="제품 루프"><article class="slide bg-deep"><div class="pad">
+        <div class="eyebrow"><strong>02</strong> · 무료로 찾고, 필요한 근거만 엽니다</div>
+        <div class="columns narrow-wide" style="margin-top:25px">
+          <div class="vcenter"><h2 class="title">전체 설문을 다시 하지 않습니다.</h2><div class="reduction"><b>40 → 5 → 4 → ₩60</b><span>후보 · 관련 근거 · 독립 저자 · 선택 문서 총액 / 데모 가격</span></div><div class="simple-steps"><div class="simple-step"><i>01</i><div><strong>무료 후보 검색</strong><p>가격·버전·독립 저자 수·근거 범위만 공개합니다.</p></div></div><div class="simple-step"><i>02</i><div><strong>중복 없는 최소 bundle</strong><p>Rust가 관련성·동의·가격·저자 중복을 검증합니다.</p></div></div><div class="simple-step"><i>03</i><div><strong>빈칸만 Open Call</strong><p>HIT이면 검색으로 끝내고 PARTIAL일 때만 부족한 사람을 모집합니다.</p></div></div></div></div>
+          <div class="shot browser" style="height:660px"><img src="pitch-final-assets/03-ranked-evidence-4k.png" alt="실제 Obolus 질문 처리와 근거 검색 화면"><div class="label">ACTUAL PRODUCT · ranked evidence &amp; coverage decision</div></div>
+        </div>
+        <div class="footer"><span>질문자: 근거+영수증 · 기여자: 문서별 USDC · 채택 답변: versioned evidence로 재색인</span><span></span></div>
+      </div></article></section>
+
+      <!-- 04 AUTONOMY -->
+      <section class="shell" data-title="AI 자율성"><article class="slide bg-left bg-deep"><div class="pad">
+        <div class="eyebrow"><strong>03</strong> · Gemini가 다음 행동을 고르고 Rust가 경제 경계를 잠급니다</div>
+        <h2 class="title wide" style="max-width:none;font-size:48px;margin-top:14px">Plan → Retrieve → Observe → Choose.</h2>
+        <div class="shot browser admin-trace" style="height:490px;margin-top:17px"><img src="pitch-final-assets/04-admin-agent-flow-4k.png" alt="Obolus Admin Test의 Agent 요청, Rust 검증, 메모리, 검색, PageRank 실행 그래프"></div>
+        <div class="role-grid"><div class="role-mini ai"><b>Gemini planner</b><p>질문 해석 · 검색 필터 · 문서 수 · 도구 선택</p></div><div class="role-mini code"><b>Rust policy + retrieval</b><p>동의 · 가격 · 예산 · 중복 · PageRank · 상태 전이</p></div><div class="role-mini ai"><b>Gemini coverage decider</b><p>HIT/PARTIAL/MISS 뒤 purchase · hybrid · baseline · stop</p></div><div class="role-mini code"><b>Server revalidation</b><p>지갑 · 수취인 · 가격 · 예산 상향 · transaction bytes는 모델 밖</p></div></div>
+        <div class="footer"><span>두 역할의 Gemini Agent + 결정적 Rust core · 표준 A2A를 구현했다고 주장하지 않음</span><span></span></div>
+      </div></article></section>
+
+      <!-- 05 PAYMENT -->
+      <section class="shell" data-title="결제와 청구서"><article class="slide bg-deep"><div class="pad">
+        <div class="eyebrow"><strong>04</strong> · 매번 승인하지 않아도, 열린 문서와 정산은 모두 설명됩니다</div>
+        <div class="columns narrow-wide" style="margin-top:24px">
+          <div class="vcenter"><h2 class="title">SOL 없이 USDC로,<br>승인된 잔액 안에서만.</h2><div class="payment-flow"><div><strong>Phantom은 소유권·refill만 서명</strong><p>첫 로그인과 새 자금·권한이 필요할 때만 확인합니다.</p></div><div><strong>scoped capability가 자동결제 범위를 고정</strong><p>기간·scope·budget·expiry 밖 요청은 Rust가 거부합니다.</p></div><div><strong>x402는 HTTP 가격표, Pay.sh/KMS는 실행 권한</strong><p>facilitator가 network fee payer가 되어 구매자는 SOL이 필요 없습니다.</p></div><div><strong>두 RPC finalized 뒤 문서를 개방</strong><p>문서 ID·version·hash·수취인·atomic amount·signature를 청구서에 남깁니다.</p></div></div><p class="truth-note"><b>현재:</b> Solana Devnet hosted service wallet. 청구서는 승인·접근·정산을 증명하며, 답변의 진실성은 신뢰 그래프가 별도로 평가합니다.</p></div>
+          <div class="shot browser" style="height:650px"><img src="pitch-final-assets/05-wallet-memory-4k.png" alt="실제 Obolus 내 문서와 청구서 보기 화면"><div class="callout"><b>실제 제품의 ‘청구서 보기’</b><br>문서별 지급·트랜잭션·버전 근거로 이동합니다.</div><div class="label">ACTUAL PRODUCT · wallet balance, memory &amp; receipt entry</div></div>
+        </div>
+        <div class="footer"><span>현재 Devnet · 감사된 mainnet PDA escrow와 upgrade authority 고정은 상용화 로드맵</span><span></span></div>
+      </div></article></section>
+
+      <!-- 06 PAGERANK -->
+      <section class="shell" data-title="메모리와 PageRank"><article class="slide bg-clear"><div class="pad">
+        <div class="eyebrow"><strong>05</strong> · PageRank의 링크 권위를 ‘독립 인간 근거’ 관계로 바꿉니다</div>
+        <h2 class="title wide">무엇이 연결됐는지가 아니라, 왜 신뢰할 수 있는 연결인지 순위에 반영합니다.</h2>
+        <div class="rank-stage">
+          <svg viewBox="0 0 1464 390" aria-hidden="true"><defs><marker id="ra" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#0b9879"/></marker><marker id="ga" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#a9b3bc"/></marker></defs>
+            <path d="M128 195 C165 112 190 64 230 64" fill="none" stroke="#0b9879" stroke-width="2.5" marker-end="url(#ra)"/>
+            <path d="M128 195 C168 195 193 191 230 191" fill="none" stroke="#0b9879" stroke-width="2.5" marker-end="url(#ra)"/>
+            <path d="M128 195 C166 276 191 318 230 318" fill="none" stroke="#a9b3bc" stroke-width="2" marker-end="url(#ga)"/>
+            <path d="M415 64 C458 64 473 94 510 102" fill="none" stroke="#0b9879" stroke-width="2.5" marker-end="url(#ra)"/>
+            <path d="M415 191 C457 191 474 132 510 118" fill="none" stroke="#0b9879" stroke-width="2.5" marker-end="url(#ra)"/>
+            <path d="M415 318 C453 318 474 286 510 278" fill="none" stroke="#a9b3bc" stroke-width="2" marker-end="url(#ga)"/>
+            <path d="M720 102 C816 102 893 150 1024 171" fill="none" stroke="#0b9879" stroke-width="2.5" marker-end="url(#ra)"/>
+            <path d="M720 278 C814 278 900 222 1024 184" fill="none" stroke="#a9b3bc" stroke-width="2" marker-end="url(#ga)"/>
+            <text x="805" y="129" fill="#0b9879" font-family="GeistMono, monospace" font-size="10">teleport seed = rel² · coverage · trust</text>
+          </svg>
+          <div class="seed"><small>QUERY SEED</small><strong>파리에서 1년 산 사람이 다시 가는 저녁 식당</strong></div>
+          <div class="rnode on" style="left:230px;top:10px"><small>L0 · PARIS_11</small><strong>“19:30에는 바로 들어갔어요.”</strong><p>firsthand · 거주 6년 · consent v3</p></div>
+          <div class="rnode on" style="left:230px;top:137px"><small>L0 · PARIS_18</small><strong>“3월부터 예약 없이 못 앉아요.”</strong><p>independent corroboration · 거주 3년</p></div>
+          <div class="rnode blocked" style="left:230px;top:264px"><small>RAW UGC</small><strong>“파리 최고 맛집!”</strong><p>sponsored · authority 0</p></div>
+          <div class="rnode on" style="left:510px;top:48px;width:210px"><small>L1 · EXACT POINTERS</small><strong>평일 19시 전에는 대기가 짧다</strong><p>2 independent authors · outcome verified</p></div>
+          <div class="rnode" style="left:510px;top:224px;width:210px"><small>L1 · CONTEXT</small><strong>관광객 시간대와 현지 식사 시간은 다르다</strong><p>contextualizes · positive weight .35</p></div>
+          <div class="ranking"><h3>40 iterations 뒤, 질문별 순위</h3><div class="ranking-row"><b>01</b><strong>L1 · 평일 19시 전 패턴</strong><span>.842</span></div><div class="ranking-row"><b>02</b><strong>PARIS_11 · firsthand</strong><span>.791</span></div><div class="ranking-row"><b>03</b><strong>PARIS_18 · corroboration</strong><span>.754</span></div><div class="ranking-row"><b>—</b><strong>광고성 UGC</strong><span>0</span></div><p class="micro" style="margin-top:13px">score = relevance .60 + coverage .12 + authority .13 + trust .10 + freshness .05</p></div>
+        </div>
+        <div class="rank-legend"><span><i></i>독립 검증·교차 확인: authority 전달</span><span class="gray"><i></i>원문 pointer·맥락: 추적만 유지</span><span class="zero"><i></i>paid/self/sponsored/raw UGC: 0</span></div>
+        <div class="abstraction" style="margin-top:14px"><div class="ab teal"><strong>L0 원문 3개</strong><span>문장·시점·동의·exact child IDs</span></div><div class="thin-arrow"></div><div class="ab teal"><strong>L1 패턴</strong><span>원문을 대체하지 않는 인덱스</span></div><div class="thin-arrow"></div><div class="ab violet"><strong>L2 규칙</strong><span>패턴 3개</span></div><div class="thin-arrow"></div><div class="ab"><strong>L3–L5</strong><span>밀도에 따라 재귀</span></div><div class="thin-arrow"></div><div class="ab"><strong>원문 역추적</strong><span>철회 시 descendant 재계산</span></div></div>
+        <div class="footer"><span>현재 relevance는 768차원 deterministic feature hashing · 학습형 embedding은 recall benchmark 이후</span><span></span></div>
+      </div></article></section>
+
+      <!-- 07 ARCHITECTURE -->
+      <section class="shell" data-title="전체 아키텍처"><article class="slide bg-clear"><div class="pad">
+        <div class="eyebrow"><strong>06</strong> · 질문 하나가 데이터·판단·권위·돈의 네 경계를 통과합니다</div>
+        <h2 class="title wide" style="font-size:51px;margin-top:15px">Gemini의 자율 판단과 Solana의 정산 사이를, Rust와 Google Cloud가 검증 가능한 상태로 연결합니다.</h2>
+        <div class="arch-stage" data-diagram="D7">
+          <div class="rail-key"><span class="d"><i></i>data / evidence</span><span class="j"><i></i>judgment / authority</span><span class="m"><i></i>money / settlement</span></div>
+          <div class="plane-label" style="top:51px">① Clients</div><div class="plane-label" style="top:168px">② Agent control</div><div class="plane-label" style="top:296px">③ Evidence</div><div class="plane-label" style="top:424px">④ Settlement</div><div class="plane-label" style="top:558px">⑤ Closed loop</div>
+          <svg viewBox="0 0 1464 640" aria-hidden="true"><defs><marker id="dt" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8z" fill="#0b9879"/></marker><marker id="vt" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8z" fill="#745cc6"/></marker><marker id="at" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8z" fill="#c88618"/></marker></defs>
+            <g fill="none" stroke-width="3"><path d="M270 72H370" stroke="#0b9879" marker-end="url(#dt)"/><path d="M440 108V145" stroke="#745cc6" marker-end="url(#vt)"/><path d="M515 180H565" stroke="#745cc6" marker-end="url(#vt)"/><path d="M710 180H760" stroke="#0b9879" marker-end="url(#dt)"/><path d="M905 180H955" stroke="#745cc6" marker-end="url(#vt)"/><path d="M832 215V273" stroke="#0b9879" marker-end="url(#dt)"/><path d="M470 308H565" stroke="#0b9879" marker-end="url(#dt)"/><path d="M710 308H760" stroke="#0b9879" marker-end="url(#dt)"/><path d="M905 308H955" stroke="#0b9879" marker-end="url(#dt)"/><path d="M1030 343V401" stroke="#c88618" marker-end="url(#at)"/><path d="M410 438H455" stroke="#c88618" marker-end="url(#at)"/><path d="M600 438H645" stroke="#c88618" marker-end="url(#at)"/><path d="M790 438H835" stroke="#c88618" marker-end="url(#at)"/><path d="M980 438H1025" stroke="#c88618" marker-end="url(#at)"/><path d="M1170 438H1215" stroke="#c88618" marker-end="url(#at)"/><path d="M1290 473V535" stroke="#c88618" marker-end="url(#at)"/><path d="M1185 572H1115" stroke="#c88618" marker-end="url(#at)"/><path d="M970 572H900" stroke="#0b9879" marker-end="url(#dt)"/><path d="M755 572H685" stroke="#0b9879" marker-end="url(#dt)"/><path d="M540 572H470" stroke="#0b9879" marker-end="url(#dt)"/><path d="M395 536C260 485 230 327 370 308" stroke="#0b9879" stroke-dasharray="8 7" marker-end="url(#dt)"/></g>
+          </svg>
+          <div class="anode" style="left:120px;top:32px"><small>BUYER</small><strong>기업 Web</strong><span>질문·대상·예산</span></div><div class="anode" style="left:285px;top:32px"><small>AGENT</small><strong>Gemini·Codex MCP</strong><span>동일 검색·결제 도구</span></div><div class="anode" style="left:450px;top:32px"><small>SUPPLY</small><strong>기여자 UI</strong><span>동의 원문·철회·정정</span></div>
+          <div class="anode ai" style="left:370px;top:145px"><small>VERTEX AI</small><strong>Gemini planner</strong><span>filter·limit·tool 선택</span></div><div class="anode data" style="left:565px;top:145px"><small>DETERMINISTIC</small><strong>Rust policy core</strong><span>동의·가격·예산·상태</span></div><div class="anode data" style="left:760px;top:145px"><small>RUST SEARCH</small><strong>retrieval + gate</strong><span>HIT · PARTIAL · MISS</span></div><div class="anode ai" style="left:955px;top:145px"><small>VERTEX AI</small><strong>coverage decider</strong><span>purchase·hybrid·baseline</span></div>
+          <div class="anode data" style="left:325px;top:273px"><small>CLOUD SQL 16</small><strong>L0 + pointer graph</strong><span>원문·동의·version·hash</span></div><div class="anode data" style="left:565px;top:273px"><small>INDEX</small><strong>hybrid search</strong><span>어휘·해시·중복 제거</span></div><div class="anode data" style="left:760px;top:273px"><small>AUTHORITY</small><strong>Personalized PageRank</strong><span>질문별 teleport · 40 iter</span></div><div class="anode data" style="left:955px;top:273px"><small>BUNDLE</small><strong>독립 근거 선택</strong><span>버전·저자·총액 고정</span></div>
+          <div class="anode money" style="left:265px;top:403px"><small>AUTHORIZATION</small><strong>scoped capability</strong><span>scope·expiry·budget</span></div><div class="anode money" style="left:455px;top:403px"><small>CLOUD RUN</small><strong>x402 gateway</strong><span>HTTP 402 · quote</span></div><div class="anode money" style="left:645px;top:403px"><small>SIGNING</small><strong>Pay.sh + Cloud KMS</strong><span>non-exportable Ed25519</span></div><div class="anode money" style="left:835px;top:403px"><small>CHAIN</small><strong>Solana Devnet USDC</strong><span>facilitator = fee payer</span></div><div class="anode money" style="left:1025px;top:403px"><small>FINALITY</small><strong>2 independent RPC</strong><span>finalized 합의</span></div><div class="anode money" style="left:1215px;top:403px"><small>AUDIT</small><strong>canonical receipt</strong><span>문서·버전·금액·서명</span></div>
+          <div class="anode data" style="left:325px;top:536px"><small>REINDEX</small><strong>versioned evidence</strong><span>다음 질문의 HIT 증가</span></div><div class="anode data" style="left:540px;top:536px"><small>ANSWER</small><strong>근거 + citation</strong><span>열린 문서만 synthesis</span></div><div class="anode data" style="left:755px;top:536px"><small>ADOPTION</small><strong>채택·평가·분쟁</strong><span>신뢰 edge 갱신</span></div><div class="anode money" style="left:970px;top:536px"><small>OWNER</small><strong>기여자 정산</strong><span>목표 90% payout</span></div><div class="anode money" style="left:1185px;top:536px"><small>BUYER</small><strong>답변 + 영수증</strong><span>사용 내역 재현 가능</span></div>
+          <div class="trust-rail"><b>TRUST RAIL</b>consent version<br>document hash<br>budget ceiling<br>quote fingerprint<br>idempotency<br>dispute / withdrawal</div>
+        </div>
+        <div class="footer"><span>4 Cloud Run services · Cloud SQL · Cloud Tasks · Cloud KMS · Vertex AI · x402 · Pay.sh · Solana</span><span></span></div>
+      </div></article></section>
+
+      <!-- 08 BUSINESS / CLOSE -->
+      <section class="shell" data-title="진입 시장과 비전"><article class="slide bg-left bg-deep"><div class="pad">
+        <div class="eyebrow"><strong>07</strong> · 첫 시장은 ‘같은 소비자 결정을 반복 검증하는 팀’입니다</div>
+        <div class="close-layout"><div><h2 class="title">질문이 반복될수록 근거는 두꺼워지고, 다음 답은 더 빨라집니다.</h2><p class="subtitle" style="margin-top:24px;font-size:20px">국내 프로덕트·인사이트 팀의 좁은 cohort부터 시작해, 재사용 가능한 인간 근거의 시간·비용·정산률을 검증합니다.</p><div class="poc"><div class="poc-row"><b>6 WEEK POC</b><span>2–3개 조직 · 실제 구매 질문 20–50개</span></div><div class="poc-row"><b>SUPPLY</b><span>동의 기여자 30–100명 · 1–2개 cohort</span></div><div class="poc-row"><b>PASS / FAIL</b><span>time-to-evidence · usable evidence cost · reuse/payout rate</span></div></div><div class="three-metrics"><div class="m"><b>90%</b><span>목표 owner payout</span></div><div class="m"><b>10%</b><span>목표 protocol fee</span></div><div class="m"><b>↑ HIT</b><span>재색인으로 다음 질문 비용 감소</span></div></div></div><div class="shot browser" style="height:590px"><img src="pitch-final-assets/01-coverage-demand-4k.png" alt="실제 Obolus Coverage 화면"><div class="label">ACTUAL PRODUCT · live human demand &amp; open calls</div></div></div>
+        <div class="footer"><span>AI가 사람의 경험을 필요로 하는 순간, Obolus가 검색하고 사용한 사람에게 돌려줍니다.</span><span></span></div>
+      </div></article></section>
+
+      <!-- A1 CLOSED LOOP -->
+      <section class="shell" data-title="Appendix · 폐루프"><article class="slide bg-clear"><div class="pad"><div class="eyebrow"><strong>Appendix A1</strong> · 실제 도입 시나리오와 이해관계 폐루프</div><h2 class="title wide">기존 근거를 먼저 쓰고, 부족한 사람만 모집하며, 채택된 답은 다음 질문의 자산이 됩니다.</h2><div class="flowline"><div class="fnode"><small>BUYER</small><strong>질문·대상·최대 예산</strong><p>예: 첫 월급을 받은 20대가 적금을 포기한 실제 이유</p></div><div class="thin-arrow"></div><div class="fnode teal"><small>FREE</small><strong>metadata 후보 검색</strong><p>가격·버전·독립 저자 수만 공개</p></div><div class="thin-arrow"></div><div class="fnode teal"><small>RUST</small><strong>관련성·동의·중복·가격</strong><p>eligibility gate</p></div><div class="thin-arrow"></div><div class="fnode ai"><small>OBSERVE</small><strong>HIT / PARTIAL / MISS</strong><p>실제 coverage 상태</p></div><div class="thin-arrow"></div><div class="fnode money"><small>OPEN</small><strong>선택 문서만 결제</strong><p>x402 · Pay.sh</p></div><div class="thin-arrow"></div><div class="fnode teal"><small>OUTPUT</small><strong>근거·영수증·정산</strong><p>citation + owner payout</p></div></div><div class="fork"><div class="fork-col teal"><h3>HIT</h3><p>기존 근거만으로 충분합니다.</p><ul><li>새 설문 없음</li><li>최소 독립 bundle만 구매</li><li>바로 근거+영수증 전달</li></ul></div><div class="fork-col ai"><h3>PARTIAL</h3><p>있는 답은 재사용하고 빈칸만 묻습니다.</p><ul><li>기존 근거 보존</li><li>부족한 cohort만 Open Call</li><li>질문자가 인원·보상·채택 조건 결정</li></ul></div><div class="fork-col"><h3>MISS</h3><p>무조건 유료 모집으로 가지 않습니다.</p><ul><li>무료 general baseline</li><li>구매 없이 종료</li><li>funded Open Call은 명시적 선택</li></ul></div></div><div class="footer"><span>질문자: 비용·시간 절감 · 기여자: 반복 정산·철회권 · Obolus: 검색·품질·정산 운영</span><span></span></div></div></article></section>
+
+      <!-- A2 ACTION SCHEMA -->
+      <section class="shell" data-title="Appendix · Agent schema"><article class="slide bg-deep"><div class="pad"><div class="eyebrow"><strong>Appendix A2</strong> · Agent action schema와 fallback</div><div class="columns narrow-wide" style="margin-top:27px"><div><h2 class="title">자율성은 선택에 열고, 돈의 권한은 애초에 주지 않습니다.</h2><div class="compare" style="grid-template-columns:1fr 1fr;gap:30px;margin-top:30px"><div class="compare-col teal"><h3>Gemini가 선택</h3><p>query 해석<br>category·filter enum<br>requested documents ≤ ceiling<br>purchase·hybrid·open call·baseline·stop</p></div><div class="compare-col"><h3>Gemini가 못 바꿈</h3><p>wallet·private key<br>recipient·price·quote<br>budget 상향<br>transaction bytes·state transition</p></div></div><div class="formula-band"><b>timeout 5s</b> → allowlisted deterministic fallback → Rust 재검증</div></div><div class="shot browser admin-trace" style="height:505px;align-self:center"><img src="pitch-final-assets/04-admin-live-trace-core-4k.png" alt="실제 Agent 실행 trace"></div></div><div class="footer"><span>untrusted JSON input · allowlisted functions · private evidence는 도구 선택 단계에 노출하지 않음</span><span></span></div></div></article></section>
+
+      <!-- A3 HIT POLICY -->
+      <section class="shell" data-title="Appendix · Coverage policy"><article class="slide bg-left bg-deep"><div class="pad"><div class="eyebrow"><strong>Appendix A3</strong> · HIT / PARTIAL / MISS 정책</div><h2 class="title wide">근거가 없다는 이유만으로 곧바로 유료 설문을 만들지 않습니다.</h2><div class="fork" style="margin-top:54px"><div class="fork-col teal"><h3>HIT · 검색으로 종료</h3><p>관련성·독립 저자·예산 조건을 만족하는 근거가 충분합니다.</p><ul><li>selected bundle 구매 제안</li><li>새 모집 없음</li><li>열린 citation만 synthesis</li></ul></div><div class="fork-col ai"><h3>PARTIAL · 기존+빈칸</h3><p>일부 근거가 있으나 cohort 또는 사례 수가 부족합니다.</p><ul><li>기존 근거 재사용</li><li>부족분 Open Call 제안</li><li>사용자가 인원·답변값 결정</li></ul></div><div class="fork-col"><h3>MISS · baseline 또는 종료</h3><p>질문에 맞는 유료 근거를 아직 찾지 못했습니다.</p><ul><li>무료 일반 답변</li><li>지금은 안 함</li><li>자동 funded Open Call 금지</li></ul></div></div><table class="clean-table"><thead><tr><th>State</th><th>Allowed default</th><th>Always revalidated</th><th>Forbidden</th></tr></thead><tbody><tr><td><strong>HIT</strong></td><td>propose selected bundle</td><td>document version · author diversity · total</td><td>새 가격·수취인 생성</td></tr><tr><td><strong>PARTIAL</strong></td><td>existing evidence + missing cohort</td><td>coverage gap · budget · target</td><td>전체 설문 재모집</td></tr><tr><td><strong>MISS</strong></td><td>free baseline / stop</td><td>실제 candidate count = 0</td><td>자동 funded call</td></tr></tbody></table><div class="footer"><span>제품 언어: “사람에게 묻기”는 fallback이 아니라 사용자가 선택하는 마지막 수단</span><span></span></div></div></article></section>
+
+      <!-- A4 SEARCH MATH -->
+      <section class="shell" data-title="Appendix · 검색 수식"><article class="slide bg-clear search-math"><div class="pad"><div class="eyebrow"><strong>Appendix A4</strong> · Hybrid retrieval + Personalized PageRank</div><h2 class="title wide">관련성이 먼저 문을 열고, 독립 근거의 권위가 그 안에서 순서를 바꿉니다.</h2><div class="formula-band">eligible if relevance ≥ .22 · term coverage &gt; 0 · anchor match · consent · unlocked · filter · budget<br><b>final = relevance × .60 + coverage × .12 + authority × .13 + trust × .10 + freshness × .05</b></div><div class="weight-grid"><div><h3>Personalized PageRank</h3><dl><div><dt>damping</dt><dd>.85</dd></div><div><dt>iterations</dt><dd>40</dd></div><div><dt>teleport seed</dt><dd>rel²·cov·trust</dd></div><div><dt>dangling mass</dt><dd>→ query seed</dd></div></dl><p class="caption">현재 relevance는 768차원 word + 2~3자 character n-gram FNV-1a feature hashing과 cosine similarity입니다. 결정적·저비용·감사 가능하지만 semantic embedding은 아닙니다.</p></div><div><h3>질문별 순위가 필요한 이유</h3><dl><div><dt>인기 문서</dt><dd>무관하면 탈락</dd></div><div><dt>최신 문서</dt><dd>relevance gate 먼저</dd></div><div><dt>한 저자의 반복 문서</dt><dd>bundle 중복 제거</dd></div><div><dt>검증된 결과</dt><dd>authority 상승</dd></div></dl><p class="caption">“Google 검색 알고리즘 복제”가 아니라 PageRank의 query-personalized graph authority 원리를 인간 근거 그래프에 재설계했습니다.</p></div></div><div class="footer"><span>Freshness = 2^(-ageDays/90), floor .2 · 학습형 embedding은 recall benchmark 이후 도입</span><span></span></div></div></article></section>
+
+      <!-- A5 MEMORY -->
+      <section class="shell" data-title="Appendix · 메모리 추상화"><article class="slide bg-left bg-deep"><div class="pad"><div class="eyebrow"><strong>Appendix A5</strong> · 소셜 월드모델 메모리 — 현재와 고밀도 정책을 분리</div><h2 class="title wide">상위 통찰은 원문을 줄인 요약이 아니라, 원문까지 내려가는 검색 인덱스입니다.</h2><div class="lifecycle"><div class="life teal"><small>CURRENT · L0</small><strong>settled observation 3개</strong><p>원문·동의·시점·exact child IDs</p></div><div class="thin-arrow"></div><div class="life teal"><small>CURRENT · L1</small><strong>패턴 1개</strong><p>deterministic keyword/template reflection</p></div><div class="thin-arrow"></div><div class="life teal"><small>CURRENT · L2</small><strong>동일 level 3개</strong><p>L2→L3→L4→L5 재귀</p></div><div class="thin-arrow"></div><div class="life ai"><small>POINTER</small><strong>source coverage</strong><p>L5에서 L0까지 역추적</p></div><div class="thin-arrow"></div><div class="life"><small>WITHDRAWAL</small><strong>descendant recompute</strong><p>source 부족 시 invalid/hidden</p></div><div class="thin-arrow"></div><div class="life ai"><small>TARGET POLICY</small><strong>100개 / sum &gt;150</strong><p>고밀도에서 Gemini 질문 3개·expert lens</p></div></div><div class="compare"><div class="compare-col teal"><h3>현재 low-density 구현</h3><p>importance 0–1 deterministic heuristic · 답변 길이·숫자 specificity·interview depth·question depth · paid reuse는 새 관측으로 세지 않음 · L1 .8, 상위 최대 .98.</p></div><div class="compare-col"><h3>미래 high-density 정책</h3><p>recent window 100 · importance sum 150 · high-level question 3개 · expert lens + recursive reflection · threshold·prompt·model version artifact 기록.</p></div></div><div class="footer"><span>현재 오래된 원문은 자동 삭제되지 않음 · 검색에서 90일 반감 · retention/TTL은 상용화 정책</span><span></span></div></div></article></section>
+
+      <!-- A6 SPAM -->
+      <section class="shell" data-title="Appendix · 스팸과 담합"><article class="slide bg-clear"><div class="pad"><div class="eyebrow"><strong>Appendix A6</strong> · 돈으로 authority를 만들 수 없습니다</div><h2 class="title wide">결제는 접근 권한만 만들고, 독립 교차 확인과 실제 결과만 신뢰를 전달합니다.</h2><div class="weight-grid" style="margin-top:36px"><div><h3>Provenance weight</h3><dl><div><dt>outcome_verified</dt><dd>1.3</dd></div><div><dt>admin_verified</dt><dd>1.1</dd></div><div><dt>organic</dt><dd>1.0</dd></div><div><dt>sponsored · paid · self · UGC · agent</dt><dd>0</dd></div></dl></div><div><h3>Relation weight</h3><dl><div><dt>verified_outcome</dt><dd>1.2</dd></div><div><dt>corroborates</dt><dd>1.0</dd></div><div><dt>cites / endorses / contextualizes</dt><dd>.8/.7/.35</dd></div><div><dt>derived · contradicts · disputes · paid_open</dt><dd>0</dd></div></dl></div></div><div class="fork"><div class="fork-col teal"><h3>독립성</h3><p>같은 소유자의 반복 문서를 한 bundle에서 제거하고, verified outcome과 독립 corroboration만 권위를 올립니다.</p></div><div class="fork-col"><h3>담합 감쇠</h3><p>서로 주고받은 organic edge는 정상 weight의 20%만 인정하고, source lineage·contradiction·dispute는 감사 신호로 보존합니다.</p></div><div class="fork-col ai"><h3>다음 방어선</h3><p>지갑·기기·문체·시간 sybil cluster, reciprocal community 이상치, rank snapshot, 철회 시 descendant invalidation을 검증합니다.</p></div></div><div class="footer"><span>결제·출처·가격 투명성과 데이터 진실성 평가는 서로 다른 rail</span><span></span></div></div></article></section>
+
+      <!-- A7 PAYMENT SEQ -->
+      <section class="shell" data-title="Appendix · 결제 sequence"><article class="slide bg-deep"><div class="pad"><div class="eyebrow"><strong>Appendix A7</strong> · Solana Devnet 결제 sequence</div><h2 class="title wide">Phantom은 새 권한과 자금 이동만 승인하고, 문서별 정산은 고정된 capability 안에서 자동화됩니다.</h2><div class="money-seq"><div class="money-node"><small>01 · PHANTOM</small><strong>connect + signMessage</strong><p>소유권 증명. private key는 서버에 주지 않음.</p></div><div class="thin-arrow"></div><div class="money-node"><small>02 · CAPABILITY</small><strong>scope·expiry·budget</strong><p>30일 범위와 승인 한도를 고정.</p></div><div class="thin-arrow"></div><div class="money-node"><small>03 · REFILL</small><strong>Devnet USDC</strong><p>잔액 부족할 때만 사용자 서명.</p></div><div class="thin-arrow"></div><div class="money-node"><small>04 · QUOTE</small><strong>exact reserve</strong><p>문서·owner·hash·mint·amount.</p></div><div class="thin-arrow"></div><div class="money-node"><small>05 · PAY.SH</small><strong>KMS signer</strong><p>고정 service wallet · 요청마다 새 지갑 아님.</p></div></div><div class="money-seq" style="margin-top:22px"><div class="money-node"><small>06 · X402</small><strong>facilitator fee payer</strong><p>network fee 후원. evidence 가격은 구매자 부담.</p></div><div class="thin-arrow"></div><div class="money-node"><small>07 · POLICY</small><strong>transaction decode</strong><p>recipient ATA·mint·atomic amount 검증.</p></div><div class="thin-arrow"></div><div class="money-node"><small>08 · SOLANA</small><strong>submit</strong><p>Devnet USDC transfer.</p></div><div class="thin-arrow"></div><div class="money-node"><small>09 · FINALITY</small><strong>2 RPC finalized</strong><p>불일치 시 문서 미개방.</p></div><div class="thin-arrow"></div><div class="money-node"><small>10 · COMMIT</small><strong>open + receipt</strong><p>idempotency fence와 audit record.</p></div></div><div class="footer"><span>과거 실증 run: funding 7,408 atomic · payout 3,704 · refund 3,704 · duplicate charge 0</span><span></span></div></div></article></section>
+
+      <!-- A8 INVOICE -->
+      <section class="shell" data-title="Appendix · 청구서와 공격 모델"><article class="slide bg-left bg-deep"><div class="pad"><div class="eyebrow"><strong>Appendix A8</strong> · canonical receipt와 공격 모델</div><div class="columns narrow-wide" style="margin-top:25px"><div><h2 class="title">청구서는 진실을 증명하지 않습니다. 누가 무엇을 어떤 권한으로 열었는지 증명합니다.</h2><div class="invoice-fields"><div class="ifield"><b>IDENTITY</b><span>invoice·job·query·agent run IDs</span></div><div class="ifield"><b>APPROVAL</b><span>payer·capability·scope·limit·expiry</span></div><div class="ifield"><b>EVIDENCE</b><span>document·version·content hash·consent</span></div><div class="ifield"><b>PRICE</b><span>KRW quote·USDC atomic·decimals</span></div><div class="ifield"><b>NETWORK</b><span>mint·fee payer·programs·blockhash</span></div><div class="ifield"><b>FINALITY</b><span>RPC A/B·slot·timestamp·signature</span></div></div></div><div class="shot browser" style="height:535px"><img src="pitch-final-assets/05-wallet-memory-4k.png" alt="실제 청구서 진입점이 있는 Obolus 내 문서 화면"><div class="callout"><b>실제 UI 진입점</b><br>‘청구서 보기’에서 문서별 지급·버전·트랜잭션 근거를 확인합니다.</div><div class="label">ACTUAL PRODUCT · receipt entry</div></div></div><table class="clean-table" style="margin-top:22px"><thead><tr><th>Attack</th><th>Receipt / policy control</th><th>Still requires</th></tr></thead><tbody><tr><td>없던 거래·가격·수취인 조작</td><td>approval fingerprint · quote nonce · exact ATA/mint/amount</td><td>악성 UI 방지·KMS 최소 권한</td></tr><tr><td>중복 청구·재시도</td><td>idempotency key · attempt fence · chain reconciliation</td><td>운영 SLO·restore drill</td></tr><tr><td>문서 바꿔치기·미확정 개방</td><td>version/content hash · 2-RPC finalized</td><td>철회·정정·descendant recompute</td></tr></tbody></table><div class="footer"><span>사람의 거짓말·담합·편향은 receipt가 아니라 provenance·diversity·outcome·dispute가 다룸</span><span></span></div></div></article></section>
+
+      <!-- A9 GCP -->
+      <section class="shell" data-title="Appendix · GCP 운영 증거"><article class="slide bg-deep"><div class="pad"><div class="eyebrow"><strong>Appendix A9</strong> · Google Cloud 프로덕션 분리와 실제 운영 증거</div><div class="columns wide-narrow" style="margin-top:24px"><div class="shot browser" style="height:650px"><img src="pitch-final-assets/04b-admin-architecture-canvas.png" alt="실제 Obolus Admin Test 아키텍처 캔버스"><div class="label">ACTUAL PRODUCT · live architecture observatory</div></div><div><h2 class="title" style="font-size:49px">4개 실행 권한을 4개 서비스로 분리합니다.</h2><div class="proofs" style="grid-template-columns:1fr 1fr;gap:25px;margin-top:30px"><div class="proof"><b>COMPUTE</b><h3>Cloud Run</h3><p>API · x402 gateway · Agent orchestrator · Pay service. 독립 revision/service account/repository.</p></div><div class="proof"><b>STATE</b><h3>Cloud SQL 16</h3><p>quote·capability·consent·memory·agent run·idempotency. backup/PITR/ENCRYPTED_ONLY.</p></div><div class="proof"><b>RETRY</b><h3>Cloud Tasks</h3><p>settlement queue · max 20/s · concurrency 20 · bounded retry 7 days.</p></div><div class="proof"><b>KEY / MODEL</b><h3>KMS + Vertex AI</h3><p>non-exportable Ed25519 signer · Gemini 2.5 Flash planner/decider.</p></div></div><div class="formula-band"><b>77 / 77 checks passed</b><br><span class="micro">verified 2026-08-20 11:28 KST · sweetspot-ax · asia-northeast3</span></div></div></div><div class="footer"><span>독립 autoscale · durable state · at-least-once task + idempotent Rust state machine · least privilege IAM</span><span></span></div></div></article></section>
+
+      <!-- A10 PRIVACY -->
+      <section class="shell" data-title="Appendix · 개인정보와 중앙서버"><article class="slide bg-clear"><div class="pad"><div class="eyebrow"><strong>Appendix A10</strong> · 중앙서버를 쓰되, 신뢰 범위와 삭제 책임을 좁힙니다</div><h2 class="title wide">개인 원문은 체인에 올리지 않고, 결제 근거만 체인과 영수증으로 검증합니다.</h2><div class="privacy-map"><div class="privacy-node"><b>OFF-CHAIN PRIVATE</b><h3>암호화 원문</h3><p>동의 version·purpose·TTL·민감도·철회 상태. public chain에는 개인 원문을 쓰지 않습니다.</p></div><div class="thin-arrow"></div><div class="privacy-node teal"><b>SEARCHABLE CONTROL</b><h3>metadata + pointers</h3><p>pseudonymous handle·document version/hash·abstraction pointers·authority. 검색 전에 consent filter를 적용합니다.</p></div><div class="thin-arrow"></div><div class="privacy-node"><b>ON-CHAIN / AUDIT</b><h3>최소 결제 증거</h3><p>USDC transaction·finality·canonical message hash. 회계 감사에 필요 없는 개인정보는 배제합니다.</p></div></div><div class="compare"><div class="compare-col teal"><h3>서버가 보관하지 않음</h3><p>Phantom seed/private key · 평문 장기 signing key · 불필요한 SNS archive · 결제와 무관한 wallet tracking metadata.</p></div><div class="compare-col"><h3>철회·삭제 시</h3><p>L0 locked/void → descendant reflection 탐색 → 남은 source로 재계산 → 부족하면 상위 통찰 hidden → index/PageRank 갱신 → 영수증은 hash 중심 최소 보존.</p></div></div><div class="footer"><span>추상화도 개인 데이터 · purpose별 consent·export/delete·correction·reidentification threshold 필요</span><span></span></div></div></article></section>
+
+      <!-- A11 COLD START -->
+      <section class="shell" data-title="Appendix · 콜드 스타트"><article class="slide bg-left bg-deep"><div class="pad"><div class="eyebrow"><strong>Appendix A11</strong> · 콜드 스타트와 검증된 공급</div><h2 class="title wide">넓게 모으지 않고, 반복 질문이 있는 좁은 cohort를 먼저 두껍게 만듭니다.</h2><div class="lifecycle" style="margin-top:46px"><div class="life"><small>PHASE 0</small><strong>공인 질문 20–50개</strong><p>공개 benchmark로 schema와 metadata를 먼저 구성</p></div><div class="thin-arrow"></div><div class="life teal"><small>PHASE 1</small><strong>30–100명 기여자</strong><p>1–2 cohort · firsthand context 필수</p></div><div class="thin-arrow"></div><div class="life teal"><small>PHASE 2</small><strong>PARTIAL Open Call</strong><p>기존 근거를 살리고 빈칸만 모집</p></div><div class="thin-arrow"></div><div class="life"><small>PHASE 3</small><strong>local-first import</strong><p>preview·redaction·source pointer gate</p></div><div class="thin-arrow"></div><div class="life"><small>PHASE 4</small><strong>OAuth connector</strong><p>API 비용·권리·token 보안 gate 통과 시에만</p></div><div class="thin-arrow"></div><div class="life ai"><small>MOAT</small><strong>reuse + outcome</strong><p>채택·재사용·검증된 결과가 authority를 두껍게</p></div></div><div class="fork"><div class="fork-col teal"><h3>거짓 방지</h3><p>언제·어디서·어떤 상황·어떤 결과였는지 firsthand context를 요구합니다. 같은 소유자의 반복 문서는 독립 근거로 세지 않습니다.</p></div><div class="fork-col"><h3>SNS는 지금 보류</h3><p>API 비용이 마이크로페이보다 커질 수 있고, 장기 OAuth token·scope·revoke·삭제·재배포 권리가 핵심 검증보다 큰 책임을 만듭니다.</p></div><div class="fork-col ai"><h3>성공 신호</h3><p>질문당 독립 저자 수 · HIT/PARTIAL/MISS · Open Call 채택률 · usable evidence 비용 · 재사용 정산 · 분쟁/철회율.</p></div></div><div class="footer"><span>“SNS가 쓸모없다”가 아니라 핵심 가설 전에 더 큰 비용·권리·보안 문제를 끌어오지 않는 순서 결정</span><span></span></div></div></article></section>
+
+      <!-- A12 ECON / SOURCES -->
+      <section class="shell" data-title="Appendix · 단위경제와 검증"><article class="slide bg-deep"><div class="pad"><div class="eyebrow"><strong>Appendix A12</strong> · 단위경제·PoC·현재/로드맵 경계</div><div class="columns" style="margin-top:25px"><div><h2 class="title">6주 뒤에는 데모가 아니라, 반복 질문을 더 잘 풀었는지로 판단합니다.</h2><div class="formula-band"><b>GMV = D × P</b><br>owner payout = GMV × 90% · protocol revenue = GMV × 10%</div><table class="clean-table"><tbody><tr><th>데모 예시</th><td>8 docs × ₩15 = ₩120</td></tr><tr><th>목표 분배</th><td>owner ₩108 · protocol ₩12</td></tr><tr><th>비용</th><td>Cloud Run/SQL · Vertex · KMS/RPC · Tasks · dispute · contributor acquisition</td></tr><tr><th>핵심 지표</th><td>time-to-evidence · cost/evidence · reuse · citation · repeat purchase · dispute</td></tr></tbody></table></div><div><div class="compare" style="margin-top:0"><div class="compare-col teal"><h3>현재 구현</h3><p>Cloud Run 4 services<br>Cloud SQL 16 / Tasks / KMS<br>Vertex Gemini 2.5 Flash<br>Solana Devnet USDC<br>hosted KMS service wallet<br>deterministic feature hashing<br>L0→L5 pointer graph<br>MCP search·quote·open tools</p></div><div class="compare-col"><h3>상용화 과제</h3><p>audited mainnet PDA escrow<br>upgrade authority policy<br>Cloud SQL HA/private IP/pool<br>SLO·incident·restore drill<br>sybil/collusion benchmark<br>learned embedding recall test<br>retention/TTL/reidentification<br>실제 willingness-to-pay</p></div></div><div class="poc"><div class="poc-row"><b>1–2주</b><span>대상·동의·기존 데이터</span></div><div class="poc-row"><b>3–4주</b><span>실제 구매 질문 20–50개</span></div><div class="poc-row"><b>5–6주</b><span>결과 검증·가격·확장 결정</span></div></div></div></div><div class="footer"><span>정본 · OBULUS-FINAL-PITCH-COMPLETE-AUDIT.ko.md · 공식 출처와 코드 근거는 해당 문서 7–18절</span><span></span></div></div></article></section>
+
+    </main>
+    <nav><button id="prev">←</button><button id="counter">01 / 20</button><button id="next">→</button><button onclick="window.print()">PDF</button></nav>
+    <script>
+      const deck=document.getElementById('deck');const slides=[...document.querySelectorAll('.shell')];const counter=document.getElementById('counter');let active=0;
+      slides.forEach((slide,index)=>{const page=String(index+1).padStart(2,'0')+' / '+String(slides.length).padStart(2,'0');const p=slide.querySelector('.page-no');if(p)p.textContent=page;const f=slide.querySelector('.footer span:last-child');if(f)f.textContent=page});
+      function fit(){document.documentElement.style.setProperty('--scale',String(Math.min(innerWidth/1600,innerHeight/900)))}
+      function go(n){active=Math.max(0,Math.min(slides.length-1,n));slides[active].scrollIntoView({behavior:'smooth'});counter.textContent=String(active+1).padStart(2,'0')+' / '+String(slides.length).padStart(2,'0')}
+      addEventListener('resize',fit);document.getElementById('prev').onclick=()=>go(active-1);document.getElementById('next').onclick=()=>go(active+1);addEventListener('keydown',e=>{if(['ArrowRight','PageDown',' '].includes(e.key)){e.preventDefault();go(active+1)}if(['ArrowLeft','PageUp'].includes(e.key)){e.preventDefault();go(active-1)}});deck.addEventListener('scroll',()=>{active=Math.round(deck.scrollTop/innerHeight);counter.textContent=String(active+1).padStart(2,'0')+' / '+String(slides.length).padStart(2,'0')});fit();go(0);
+    </script>
+  </body>
+</html>

@@ -1385,8 +1385,8 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
     assert_eq!(final_state.get::<_, i64>(3), 0);
 
     // Two separate Cloud Run processes can consume different signed challenges
-    // for the same wallet simultaneously. User, signup credit, and wallet bind
-    // must commit as one unit and both callers must converge on that one user.
+    // for the same wallet simultaneously. User, zeroed prepaid balance, and wallet
+    // bind must commit as one unit and both callers must converge on that one user.
     let wallet_suffix = now_ms();
     let wallet_digest = Sha256::digest(format!("postgres-wallet-{wallet_suffix}").as_bytes());
     let concurrent_wallet = bs58::encode(&wallet_digest[..32]).into_string();
@@ -1431,8 +1431,8 @@ fn postgres_allows_exactly_one_concurrent_payment_claim_per_rail() {
             &[&concurrent_email, &wallet_users[0].0.id, &concurrent_wallet],
         )
         .expect("concurrent wallet state should load");
-    for index in 0..4 {
-        assert_eq!(wallet_state.get::<_, i64>(index), 1);
+    for (index, expected) in [1_i64, 1, 0, 1].into_iter().enumerate() {
+        assert_eq!(wallet_state.get::<_, i64>(index), expected);
     }
 
     // A password-reset link is a real externally visible side effect, not a

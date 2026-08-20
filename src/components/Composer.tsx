@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { ArrowUp, ChevronDown } from 'lucide-react'
+import { MultipleSelect, Tag, type TTag } from '@/components/ui/multiple-select'
 import { CATEGORIES, type CategoryId } from '@/data/categories'
 import { AGE_BANDS, HOUSEHOLDS, REGIONS } from '@/data/onboarding'
 import { useT } from '@/i18n'
@@ -58,11 +59,58 @@ export function Composer({
   const targetPanelRef = useRef<HTMLDivElement>(null)
   const activeBands = [ageBand, region, household, field].filter(Boolean).length
 
+  const targetTags: TTag[] = [
+    ...AGE_BANDS.map((option) => ({
+      key: `age:${option.value}`,
+      name: t(option.label),
+      group: 'age',
+      groupLabel: t('Age'),
+    })),
+    ...REGIONS.map((option) => ({
+      key: `region:${option.value}`,
+      name: t(option.label),
+      group: 'region',
+      groupLabel: t('Region'),
+    })),
+    ...HOUSEHOLDS.map((option) => ({
+      key: `household:${option.value}`,
+      name: t(option.label),
+      group: 'household',
+      groupLabel: t('Household'),
+    })),
+    ...CATEGORIES.map((option) => ({
+      key: `field:${option.id}`,
+      name: t(option.label),
+      group: 'field',
+      groupLabel: t('Field'),
+    })),
+  ]
+  const selectedTargetTags = targetTags.filter((tag) => {
+    const [group, value] = tag.key.split(':')
+    return (group === 'age' && value === ageBand)
+      || (group === 'region' && value === region)
+      || (group === 'household' && value === household)
+      || (group === 'field' && value === field)
+  })
+
+  const applyTargetTags = (items: TTag[]) => {
+    const selected = new Map(
+      items.map((item) => {
+        const [group, value] = item.key.split(':')
+        return [group, value]
+      }),
+    )
+    setAgeBand(selected.get('age') ?? '')
+    setRegion(selected.get('region') ?? '')
+    setHousehold(selected.get('household') ?? '')
+    setField((selected.get('field') ?? '') as CategoryId | '')
+  }
+
   const positionTarget = () => {
     const el = targetBtnRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    const width = Math.min(280, window.innerWidth - 24)
+    const width = Math.min(440, window.innerWidth - 24)
     const left = Math.min(Math.max(12, r.left), window.innerWidth - width - 12)
     setTargetRect({
       left,
@@ -207,7 +255,7 @@ export function Composer({
         )}
       >
         <div className="flex items-center justify-between gap-3 px-2.5 py-2">
-          <div className="flex items-center gap-1">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <button
               ref={targetBtnRef}
               type="button"
@@ -234,6 +282,14 @@ export function Composer({
                 )}
               />
             </button>
+            {selectedTargetTags.map((tag) => (
+              <Tag
+                key={tag.key}
+                name={tag.name}
+                tone={dark ? 'dark' : 'light'}
+                onRemove={() => applyTargetTags(selectedTargetTags.filter((item) => item.key !== tag.key))}
+              />
+            ))}
             {targetOpen && targetRect
               ? createPortal(
                   <>
@@ -247,7 +303,7 @@ export function Composer({
                       ref={targetPanelRef}
                       role="dialog"
                       aria-label={t('Who answers')}
-                      className="animate-modal-panel-in fixed z-50 grid gap-3 rounded-xl border border-white/10 bg-[#171717] p-3 text-white shadow-[0_18px_50px_rgba(0,0,0,0.34)]"
+                      className="animate-modal-panel-in fixed z-50 grid max-h-[min(70vh,560px)] gap-4 overflow-y-auto rounded-2xl border border-white/10 bg-[#171717] p-4 text-white shadow-[0_18px_50px_rgba(0,0,0,0.34)]"
                       style={{
                         left: targetRect.left,
                         bottom: targetRect.bottom,
@@ -257,14 +313,11 @@ export function Composer({
                       <p className="text-xs leading-relaxed text-white/55">
                         {t('Optional. A document must match every band you pick.')}
                       </p>
-                      <TargetSelect label="Age" value={ageBand} onChange={setAgeBand} options={AGE_BANDS} />
-                      <TargetSelect label="Region" value={region} onChange={setRegion} options={REGIONS} />
-                      <TargetSelect label="Household" value={household} onChange={setHousehold} options={HOUSEHOLDS} />
-                      <TargetSelect
-                        label="Field"
-                        value={field}
-                        onChange={(value) => setField(value as CategoryId | '')}
-                        options={CATEGORIES.map(({ id, label }) => ({ value: id, label }))}
+                      <MultipleSelect
+                        tags={targetTags}
+                        value={selectedTargetTags}
+                        onChange={applyTargetTags}
+                        singlePerGroup
                       />
                     </div>
                   </>,
@@ -302,42 +355,5 @@ export function Composer({
         </p>
       </div>
     </form>
-  )
-}
-
-function TargetSelect({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string
-  value: string
-  onChange: (value: string) => void
-  options: Array<{ value: string; label: string }>
-}) {
-  const t = useT()
-  return (
-    <label className="grid gap-1 text-[11px] text-white/55">
-      {t(label)}
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-11 rounded-lg border border-white/15 bg-white/[0.04] px-2 text-sm normal-case tracking-normal text-white outline-none transition-colors focus:border-white/35 sm:h-9 sm:text-xs"
-      >
-        <option value="" className="bg-[#171717] text-white">
-          {t('Any')}
-        </option>
-        {options.map((option) => (
-          <option
-            key={option.value}
-            value={option.value}
-            className="bg-[#171717] text-white"
-          >
-            {t(option.label)}
-          </option>
-        ))}
-      </select>
-    </label>
   )
 }

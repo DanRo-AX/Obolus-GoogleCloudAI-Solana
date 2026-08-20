@@ -159,7 +159,8 @@ Switch in the sidebar footer. The choice survives a reload.
 
 **Also included**
 
-- **[Antigravity plugin](integrations/antigravity/openshelf/README.md)**: the whole asker and contributor lifecycle as 24 `openshelf` MCP tools, plus the official Pay.sh MCP wallet behind a narrow handshake adapter.
+- **[Obulus Full MCP](apps/obulus-mcp/README.md)**: all 29 buyer, contributor, memory, invoice, settlement and recovery operations for Codex or Claude, with exact Pay.sh handoff boundaries.
+- **[Antigravity plugin](integrations/antigravity/openshelf/README.md)**: the original whole asker and contributor lifecycle as 24 `openshelf` MCP tools, plus the official Pay.sh MCP wallet behind a narrow handshake adapter.
 - **Prepaid credit with recovery**: prove wallet ownership once, top up when low. A browser that loses the response reconciles against the server and retries only the handles that were never paid.
 - **Open-call escrow**: a paid call reserves its full budget up front. Accepted answers release one unit each, and cancellation or account deletion returns the exact unused remainder as a payout claim.
 - **A conduct ladder stated before signup**: two upheld voids remove documents from auto-match and hold new earnings for 14 days; a third blocks new answers. One dispute can restore a wrongly voided answer through admin review.
@@ -484,9 +485,10 @@ requests never receive deployment credentials. See
 [`.github/workflows/deploy-cloud-run.yml`](.github/workflows/deploy-cloud-run.yml), and the
 [deployment runbook](docs/DEPLOYMENT.ko.md).
 
-The 2026-08-11 engineering baseline is **362/362 normal tests**: frontend 18, Pages
-proxy 3, Antigravity MCP 14, local agent 15, evidence tooling 13, gateway 97,
-orchestrator 50, and Rust 152. Build, bundle verification, typecheck, lint, and
+The 2026-08-20 local full-regression baseline is **435/435 normal tests**:
+frontend 25, Pages proxy 3, Antigravity MCP 14, local agent 24, standalone
+Obulus MCP 7, evidence tooling 13, gateway 102, orchestrator 53, Rust API 186,
+and the Solana settlement program 8. Build, bundle verification, typecheck, lint, and
 Clippy also pass, and all four npm production dependency audits report zero
 vulnerabilities. Gateway mutation testing kills 200/200 scoped mutants. The
 full Rust mutation baseline is deliberately not called a pass: 197 of 437 were
@@ -524,6 +526,7 @@ and the [engineering readiness record](docs/FINALIST-ENGINEERING-READINESS.ko.md
 | `agent-orchestrator/` | The deterministic Cloud Run payment/recovery worker that pays Pay.sh challenges, reconciles ambiguity, and prepares payouts/refunds. It contains no Gemini/Vertex planning loop. |
 | `pay/` | Pay.sh paywall definitions, Dockerfile, and the Cloud Build + GCP KMS deployment. |
 | `apps/obulus-local-agent/` | Accountless buyer MCP: local capabilities, privacy guard, exact quote validation, and Pay.sh handoff without Phantom. |
+| `apps/obulus-mcp/` | Full 29-tool MCP: buyer, contributor, memory, invoice, settlement recovery, earnings, and account operations. |
 | `integrations/antigravity/openshelf/` | The plugin: 24 MCP tools, skills, and the Pay handshake adapter. |
 | `deploy/cloudflare-pages/` + `deploy/cloud-run/` | Edge and GCP deployment contracts, promotion checks, and rollback runbooks. |
 | `docs/` | Threat model, account linking, Pay.sh deployment, code review, ranking notes. |

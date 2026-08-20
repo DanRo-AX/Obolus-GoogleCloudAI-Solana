@@ -2,9 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowUpRight,
-  Coins,
-  MessageSquare,
-  Receipt,
+  ChevronDown,
   Search,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -36,6 +34,7 @@ type Row = {
     txSigs: string[]
     network?: string
     partial?: boolean
+    mode?: NonNullable<Chat['messages'][number]['settlement']>['mode']
   }[]
 }
 
@@ -64,6 +63,7 @@ function summarise(chat: Chat): Row {
               : [],
           network: m.settlement.network,
           partial: m.settlement.partial,
+          mode: m.settlement.mode,
         })
       }
     }
@@ -109,37 +109,25 @@ export function ArchivePanel() {
   }, [chats])
 
   return (
-    <div className="space-y-6">
-      <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
-        <h1 className="font-sans text-base font-medium">{t('Receipts')}</h1>
-        <div className="flex items-center gap-5 font-mono text-xs uppercase tracking-[1px] text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <MessageSquare className="size-3.5" />
-            <span className="tabular-nums text-foreground">
-              {chats.length}
-            </span>
-            {t(' asked')}
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Receipt className="size-3.5" />
-            <span className="tabular-nums text-foreground">
-              {totals.docs}
-            </span>
-            {t(' opened')}
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Coins className="size-3.5" />
-            <span className="tabular-nums text-foreground">
-              {formatUsdcFromKrw(totals.spent)} USDC
-            </span>
-            {t(' spent')}
-          </span>
+    <div className="mt-8 space-y-7">
+      <div className="grid gap-5 border-b border-border/70 pb-7 lg:grid-cols-[1fr_auto] lg:items-end">
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-[1.3px] text-muted-foreground">
+            {t('Question history')}
+          </p>
+          <h1 className="mt-2 text-[28px] font-semibold tracking-[-0.035em]">
+            {t('My questions')}
+          </h1>
+          <p className="mt-3 max-w-2xl text-[15px] leading-7 text-muted-foreground">
+            {t('Return to any question. When evidence was purchased, its exact invoice and Solana proof remain attached to the same row.')}
+          </p>
         </div>
+        <dl className="grid grid-cols-3 gap-7 text-right">
+          <ArchiveTotal label={t('Questions')} value={chats.length.toString()} />
+          <ArchiveTotal label={t('Paid documents')} value={totals.docs.toString()} />
+          <ArchiveTotal label={t('Total spent')} value={`${formatUsdcFromKrw(totals.spent)} USDC`} />
+        </dl>
       </div>
-
-      <p className="max-w-2xl text-[15px] leading-7 text-muted-foreground">
-        {t('Every question you have asked, and the passages it paid for. You pay for an open once — the document stays readable here after that.')}
-      </p>
 
       {/* controls ----------------------------------------------------- */}
       <div className="flex flex-wrap items-center gap-2">
@@ -153,7 +141,7 @@ export function ArchivePanel() {
           />
         </div>
         <Chip active={paidOnly} onClick={() => setPaidOnly((v) => !v)}>
-          {t('With opens')}
+          {t('Receipts only')}
         </Chip>
         <span className="ml-auto font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
           {rows.length}{rows.length === 1 ? t(' question') : t(' questions')}
@@ -179,7 +167,7 @@ export function ArchivePanel() {
           ) : null}
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="border-y border-border/70">
           {rows.map((r) => (
             <ThreadCard key={r.chat.id} row={r} />
           ))}
@@ -206,68 +194,60 @@ function ThreadCard({ row }: { row: Row }) {
   const [open, setOpen] = useState(false)
 
   return (
-    <div className="rounded-[6px] border border-border bg-card">
-      <div className="flex flex-wrap items-start gap-3 p-5">
-        <div className="min-w-0 flex-1">
-          <p className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-            {relative(chat.createdAt, t)} · {chat.messages.length}{t(' messages')}
-          </p>
-          <p className="mt-1.5 text-[15px] leading-relaxed">{chat.title}</p>
+    <article className="border-b border-border/70 last:border-b-0">
+      <div className="grid gap-4 px-1 py-5 md:grid-cols-[120px_minmax(0,1fr)_auto] md:items-center md:gap-6">
+        <div className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+          <p>{relative(chat.createdAt, t)}</p>
+          <p className="mt-1">{chat.messages.length}{t(' messages')}</p>
         </div>
 
-        <div className="flex shrink-0 items-center gap-4">
+        <div className="min-w-0">
+          <p className="text-[15px] font-medium leading-6">{chat.title}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {docs.length
+              ? `${docs.length}${t(' opened')} · ${formatUsdcFromKrw(spent)} USDC · ${receipts.length ? t('On-chain receipt available') : t('Legacy payment record')}`
+              : t('No evidence was purchased for this question.')}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 md:justify-end">
+          {receipts.map((receipt) => (
+            <SettlementInvoiceDialog
+              key={receipt.invoice.invoiceHash}
+              invoice={receipt.invoice}
+              settled
+              partial={receipt.partial}
+              txSigs={receipt.txSigs}
+              network={receipt.network}
+              mode={receipt.mode}
+            />
+          ))}
           {docs.length ? (
-            <span className="font-mono text-xs tabular-nums text-muted-foreground">
-              {docs.length}{t(' opened')} ·{' '}
-              <span className="text-foreground">
-                {formatUsdcFromKrw(spent)} USDC
-              </span>
-            </span>
-          ) : (
-            <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
-              {t('Nothing opened')}
-            </span>
-          )}
+            <Button
+              type="button"
+              variant="monoGhost"
+              size="monoSm"
+              onClick={() => setOpen((value) => !value)}
+            >
+              {t('Evidence')}
+              <ChevronDown className={`size-3 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+            </Button>
+          ) : null}
           <Button asChild variant="monoGhost" size="monoSm">
             <Link to={`/chat/${chat.id}`}>
-              {t('Back to it')}
+              {t('Open')}
               <ArrowUpRight className="size-3.5" />
             </Link>
           </Button>
         </div>
       </div>
 
-      {docs.length ? (
-        <>
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="flex w-full cursor-pointer items-center gap-2 border-t border-border px-5 py-2.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground transition-colors hover:bg-foreground/[0.02] hover:text-foreground"
-          >
-            <Receipt className="size-3" />
-            {open ? t('Hide receipt') : t('Show receipt')}
-          </button>
-
-          {open ? (
-            <div className="border-t border-border">
-              {receipts.length ? (
-                <div className="flex flex-wrap gap-2 border-b border-border bg-muted-2/35 px-5 py-3">
-                  {receipts.map((receipt) => (
-                    <SettlementInvoiceDialog
-                      key={receipt.invoice.invoiceHash}
-                      invoice={receipt.invoice}
-                      settled
-                      partial={receipt.partial}
-                      txSigs={receipt.txSigs}
-                      network={receipt.network}
-                    />
-                  ))}
-                </div>
-              ) : null}
+      {docs.length && open ? (
+            <div className="mb-4 border-l border-border/70 bg-muted/[0.28] md:ml-[calc(120px+1.5rem)] md:mr-1">
               {docs.map((d, i) => (
                 <div
                   key={`${d.handle}-${i}`}
-                  className="flex items-baseline gap-3 border-b border-border/60 px-5 py-2.5 last:border-0"
+                  className="flex items-baseline gap-3 border-b border-border/60 px-4 py-3 last:border-0"
                 >
                   <span className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
                     {d.handle}
@@ -281,7 +261,7 @@ function ThreadCard({ row }: { row: Row }) {
                 </div>
               ))}
               {txSig ? (
-                <div className="flex flex-wrap items-center gap-2 bg-muted-2/50 px-5 py-2.5">
+                <div className="flex flex-wrap items-center gap-2 border-t border-border/60 px-4 py-3">
                   <span className="font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
                     {t('Settled')}
                   </span>
@@ -296,9 +276,16 @@ function ThreadCard({ row }: { row: Row }) {
                 </div>
               ) : null}
             </div>
-          ) : null}
-        </>
       ) : null}
+    </article>
+  )
+}
+
+function ArchiveTotal({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="font-mono text-[9px] uppercase tracking-[1px] text-muted-foreground">{label}</dt>
+      <dd className="mt-1 text-lg font-medium tabular-nums">{value}</dd>
     </div>
   )
 }

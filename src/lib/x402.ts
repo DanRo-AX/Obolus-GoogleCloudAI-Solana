@@ -56,8 +56,9 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 const BACKEND_ENABLED = import.meta.env.VITE_BACKEND_ENABLED !== 'false'
 export const X402_ENABLED = import.meta.env.VITE_X402_ENABLED !== 'false'
 const X402_GATEWAY_BASE = (
-  import.meta.env.VITE_X402_GATEWAY_BASE ??
-  (import.meta.env.PROD ? '/x402' : 'http://127.0.0.1:1402')
+  import.meta.env.PROD
+    ? '/x402'
+    : (import.meta.env.VITE_X402_GATEWAY_BASE ?? 'http://127.0.0.1:1402')
 ).replace(/\/$/, '')
 const RESOURCE = '/api/flash-research'
 const DEVNET_NETWORK = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'

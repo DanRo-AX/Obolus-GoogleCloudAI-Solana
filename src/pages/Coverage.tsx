@@ -1,36 +1,22 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowUpRight, Database, GitBranch, ShieldCheck } from 'lucide-react'
+import { Database } from 'lucide-react'
 import { CategoryIcon } from '@/components/CategoryIcon'
 import { Button } from '@/components/ui/button'
+import { AnimatedFeatureSpotlight } from '@/components/ui/feature-spotlight'
+import { GlassDemandCard } from '@/components/ui/glass-blog-card-shadcnui'
+import coverageHeroWordmark from '@/assets/product/coverage-hero-wordmark.png'
 import { CATEGORIES } from '@/data/categories'
 import { useT } from '@/i18n'
 import { formatUsdcFromKrw } from '@/lib/usdc'
 import { useUi } from '@/state/ui'
-
-const RANKING = [
-  {
-    Icon: Database,
-    title: 'Free discovery',
-    body: 'Seeing which questions have no answer costs nothing. You get an anonymous handle and the price — the answer itself only shows once you open one and pay.',
-  },
-  {
-    Icon: GitBranch,
-    title: 'Query-specific authority',
-    body: 'Once answers pile up, each question ranks whose answer fits it best — judged for that one question, not the whole field.',
-  },
-  {
-    Icon: ShieldCheck,
-    title: 'Paid boundary',
-    body: 'The price is fixed before you open. The answer unlocks only after payment clears — nothing moves before that.',
-  },
-] as const
 
 export default function Coverage() {
   const t = useT()
   const { orders } = useUi()
   const rows = useMemo(() => {
     return CATEGORIES.map((category) => {
+      const categoryOrders = orders.filter((order) => order.category === category.id)
       const calls = orders.filter(
         (order) => order.category === category.id && order.answered < order.target,
       )
@@ -44,7 +30,19 @@ export default function Coverage() {
         0,
       )
       const topRate = calls.reduce((top, order) => Math.max(top, order.unitPrice), 0)
-      return { ...category, calls: calls.length, remaining, budget, topRate }
+      const answered = categoryOrders.reduce((total, order) => total + order.answered, 0)
+      const contributorHandles = Array.from(
+        new Set(categoryOrders.flatMap((order) => order.contributorHandles ?? [])),
+      ).slice(0, 4)
+      return {
+        ...category,
+        calls: calls.length,
+        remaining,
+        budget,
+        topRate,
+        answered,
+        contributorHandles,
+      }
     }).sort((a, b) => b.budget - a.budget)
   }, [orders])
 
@@ -59,37 +57,33 @@ export default function Coverage() {
 
   return (
     <div className="page-enter flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-4xl space-y-8 p-4 sm:p-6">
-        <section>
-          <div className="flex min-h-8 flex-wrap items-center justify-between gap-4">
-            <h1 className="font-sans text-base font-medium">{t('Questions still waiting for an answer')}</h1>
-            <Button asChild variant="mono" size="mono">
-              <Link to="/">{t('Ask')}</Link>
+      <div className="w-full">
+        <AnimatedFeatureSpotlight
+          className="rounded-none border-x-0 border-t-0"
+          compact
+          preheaderIcon={<Database className="size-3.5" />}
+          preheaderText={t('Live demand for human evidence')}
+          heading={t('See where human answers are needed — and what each answer is worth.')}
+          description={t('Obulus searches existing human evidence before anyone pays. When the right answer is missing, the buyer sets the number of people and reward per answer. The figures below show what is still needed now.')}
+          action={(
+            <Button
+              asChild
+              size="monoLg"
+              className="bg-white text-black hover:bg-white/85"
+            >
+              <Link to="/">{t('Ask a question')}</Link>
             </Button>
-          </div>
+          )}
+          visual={(
+            <img
+              src={coverageHeroWordmark}
+              alt="OBOLUS"
+              className="h-full max-h-[235px] w-full object-cover object-center"
+            />
+          )}
+        />
 
-          <p className="mt-4 max-w-2xl text-[15px] leading-7 text-muted-foreground">
-            {t('Someone asked these, and no answer fits yet. The asker already set what one answer is worth, and people who would know are being found. You cannot read the answers here — opening one is what does that.')}
-          </p>
-
-          {/* Three floating cards. Lifted off the page with a gap between them so
-              each reads as its own card; a softened dark (not near-black) keeps
-              them elevated without going heavy. */}
-          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {RANKING.map(({ Icon, title, body }) => (
-              <article
-                key={title}
-                className="rounded-xl bg-[#34343a] p-5 text-primary-foreground shadow-[0_8px_24px_-8px_rgba(20,20,25,0.3)]"
-              >
-                <Icon className="size-4 text-primary-foreground/60" />
-                <h2 className="mt-4 text-sm font-medium">{t(title)}</h2>
-                <p className="mt-2 text-sm leading-6 text-primary-foreground/65">{t(body)}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section>
+        <section className="p-4 sm:p-6 lg:p-8">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 className="font-sans text-lg font-medium">
@@ -106,40 +100,32 @@ export default function Coverage() {
             </div>
           </div>
 
-          {/* Column headers ride above as a light label row; each field is then
-              its own white card — a hairline border and a soft, slightly-dark
-              shadow give it depth, with tighter corners than the cards above. */}
-          <div className="mt-6">
-            <div className="grid grid-cols-[1fr_auto] gap-3 px-4 pb-2.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground sm:grid-cols-[1fr_repeat(4,110px)]">
-              <span>{t('Area')}</span>
-              <span className="hidden text-right sm:block">{t('Open questions')}</span>
-              <span className="hidden text-right sm:block">{t('Answers wanted')}</span>
-              <span className="hidden text-right sm:block">{t('Top per answer')}</span>
-              <span className="text-right">{t('On the table')}</span>
-            </div>
-            <div className="flex flex-col gap-2">
-              {rows.map((row) => (
-                <Link
-                  key={row.id}
-                  to={`/dashboard?category=${row.id}`}
-                  className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-md border border-border/70 bg-background px-4 py-3.5 text-sm text-foreground shadow-[0_1px_2px_rgba(20,20,25,0.06),0_2px_6px_-2px_rgba(20,20,25,0.12)] transition-all hover:-translate-y-0.5 hover:border-border hover:shadow-[0_4px_14px_-2px_rgba(20,20,25,0.16)] sm:grid-cols-[1fr_repeat(4,110px)]"
-                >
-                  <span className="flex items-center gap-2 font-medium">
-                    <CategoryIcon
-                      id={row.id}
-                      className="size-3.5 shrink-0"
-                      style={{ color: row.accent }}
-                    />
-                    {t(row.label)}
-                    <ArrowUpRight className="size-3 text-muted-foreground" />
-                  </span>
-                  <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.calls}</span>
-                  <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.remaining}</span>
-                  <span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground sm:block">{row.topRate ? `${formatUsdcFromKrw(row.topRate)}` : '—'}</span>
-                  <span className="text-right font-mono text-xs tabular-nums text-foreground">{row.budget ? `${formatUsdcFromKrw(row.budget)}` : '—'}</span>
-                </Link>
-              ))}
-            </div>
+          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {rows.map((row, index) => (
+              <Link
+                key={row.id}
+                to={`/dashboard?category=${row.id}`}
+                aria-label={`${t(row.label)} · ${t('On the table')} ${row.budget ? `${formatUsdcFromKrw(row.budget)} USDC` : '—'}`}
+                className="block h-full rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2"
+              >
+                <GlassDemandCard
+                  title={t(row.label)}
+                  excerpt={t(row.blurb)}
+                  icon={<CategoryIcon id={row.id} className="size-9 stroke-[1.5]" />}
+                  seed={`coverage:${row.id}`}
+                  coverFilter={`hue-rotate(${index * 9}deg) saturate(${row.calls ? 1.06 : 0.82}) brightness(${row.calls ? 1.08 : 0.9})`}
+                  active={row.calls > 0}
+                  status={row.calls ? `${row.calls} ${t('Open questions')}` : t('No open calls yet')}
+                  amount={row.budget ? `${formatUsdcFromKrw(row.budget)} USDC` : '—'}
+                  actionLabel={t('View field')}
+                  contributorHandles={row.contributorHandles}
+                  contributorLabel={t('recorded contributors')}
+                  emptyContributorLabel={t('No recorded contributors yet')}
+                  answerCount={row.answered}
+                  answerCountLabel={t('answers recorded')}
+                />
+              </Link>
+            ))}
           </div>
         </section>
       </div>

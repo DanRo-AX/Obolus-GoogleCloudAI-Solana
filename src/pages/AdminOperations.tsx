@@ -44,14 +44,14 @@ export default function AdminOperations() {
   }, [t])
 
   useEffect(() => {
-    if (account?.role === 'admin') void load()
-  }, [account?.role, load])
+    if (account) void load()
+  }, [account, load])
 
   if (authReady && authError && !account) {
     return <AuthUnavailable message={authError} onRetry={retryAuth} />
   }
-  if (authReady && account?.role !== 'admin') {
-    return <Navigate to="/dashboard" replace />
+  if (authReady && !account) {
+    return <Navigate to="/login" replace />
   }
 
   const reviewBacklog = snapshot

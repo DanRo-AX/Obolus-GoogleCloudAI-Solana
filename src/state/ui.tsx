@@ -137,6 +137,8 @@ export type Order = {
   reservationExpiresAt?: number
   recommendationScore?: number
   recommendationReason?: string[]
+  /** Public handles whose answers have completed settlement for this call. */
+  contributorHandles?: string[]
 }
 
 /**

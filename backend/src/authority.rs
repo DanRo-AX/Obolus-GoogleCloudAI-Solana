@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use crate::domain::EvidenceEdge;
 
-const DAMPING: f32 = 0.85;
-const ITERATIONS: usize = 40;
+pub const DAMPING: f32 = 0.85;
+pub const ITERATIONS: usize = 40;
 
 /// Computes a query-personalized PageRank vector over the evidence graph.
 ///
@@ -93,7 +93,7 @@ pub fn personalized_page_rank(
     node_ids.iter().cloned().zip(rank).collect()
 }
 
-fn effective_weight(edge: &EvidenceEdge) -> f32 {
+pub(crate) fn effective_weight(edge: &EvidenceEdge) -> f32 {
     let provenance = match edge.provenance.as_str() {
         "organic" => 1.0,
         "admin_verified" => 1.1,

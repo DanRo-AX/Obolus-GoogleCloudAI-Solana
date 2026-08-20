@@ -1,13 +1,12 @@
 import { Fragment } from 'react'
 import { NavLink, Link } from 'react-router-dom'
 import {
-  Activity,
   ChevronDown,
   Languages,
   LogIn,
   LogOut,
   PanelLeft,
-  ShieldCheck,
+  Waypoints,
 } from 'lucide-react'
 import { Avatar } from '@/components/Avatar'
 import { BrandMark } from '@/components/ui/BrandMark'
@@ -29,6 +28,28 @@ import { useWallet } from '@/state/wallet'
 
 const MENU_BUTTON =
   'peer/menu-button flex w-full items-center gap-2 overflow-hidden text-left font-medium outline-hidden transition-[width,height,padding] focus-visible:ring-2 focus-visible:ring-sidebar-ring active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:shrink-0'
+
+function AdminMenu() {
+  return (
+    <li className="relative mt-1 border-t border-sidebar-border pt-2">
+      <NavLink
+        to="/admin"
+        className={({ isActive }) =>
+          cn(
+            MENU_BUTTON,
+            'flex h-8 items-center gap-2.5 rounded-[4px] px-2 text-[13px] tracking-[-0.006em] transition-colors [&>svg]:size-[15px]',
+            isActive
+              ? 'bg-background font-medium text-foreground shadow-[0_1px_2px_rgba(20,20,25,0.05)]'
+              : 'text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground',
+          )
+        }
+      >
+        <Waypoints className="opacity-70" />
+        <span>Admin Test</span>
+      </NavLink>
+    </li>
+  )
+}
 
 /**
  * Signed-in state. The strike counter sits here on purpose — a three-strike
@@ -311,43 +332,8 @@ export function AppSidebar() {
                   </li>
                 </Fragment>
               ))}
-              {account?.role === 'admin' ? (
-                <>
-                  <li className="relative">
-                    <NavLink
-                      to="/admin/operations"
-                      className={({ isActive }) =>
-                        cn(
-                          MENU_BUTTON,
-                          'group/nav flex h-8 items-center gap-2.5 rounded-[4px] px-2 text-[13px] tracking-[-0.006em] transition-colors [&>svg]:size-[15px] [&>svg]:shrink-0',
-                          isActive
-                            ? 'bg-background font-medium text-foreground shadow-[0_1px_2px_rgba(20,20,25,0.05)]'
-                            : 'text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground',
-                        )
-                      }
-                    >
-                      <Activity className="opacity-70" />
-                      <span>{t('Operations')}</span>
-                    </NavLink>
-                  </li>
-                  <li className="relative">
-                    <NavLink
-                      to="/admin/disputes"
-                      className={({ isActive }) =>
-                        cn(
-                          MENU_BUTTON,
-                          'group/nav flex h-8 items-center gap-2.5 rounded-[4px] px-2 text-[13px] tracking-[-0.006em] transition-colors [&>svg]:size-[15px] [&>svg]:shrink-0',
-                          isActive
-                            ? 'bg-background font-medium text-foreground shadow-[0_1px_2px_rgba(20,20,25,0.05)]'
-                            : 'text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground',
-                        )
-                      }
-                    >
-                      <ShieldCheck className="opacity-70" />
-                      <span>{t('Disputes')}</span>
-                    </NavLink>
-                  </li>
-                </>
+              {account ? (
+                <AdminMenu />
               ) : null}
               </ul>
             </div>

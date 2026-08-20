@@ -42,6 +42,12 @@ export const DEVNET_FAUCETS = {
   usdc: 'https://faucet.circle.com',
 }
 
+const X402_GATEWAY_BASE = (
+  import.meta.env.PROD
+    ? '/x402'
+    : (import.meta.env.VITE_X402_GATEWAY_BASE ?? 'http://127.0.0.1:1402')
+).replace(/\/$/, '')
+
 export type WalletState = {
   available: boolean
   connecting: boolean
@@ -113,6 +119,110 @@ export function useWallet() {
   }, [])
 
   return { ...state, connect, disconnect }
+}
+
+export type WalletUsdcBalance = {
+  amount: string | null
+  loading: boolean
+  error: string | null
+  refreshedAt: number | null
+  refresh: () => Promise<void>
+}
+
+/**
+ * Reads the connected wallet's Devnet USDC balance through the gateway's
+ * restricted RPC proxy. This is a public-chain read: no signature, private key,
+ * or wallet permission beyond knowing the already-connected public key.
+ */
+export function useDevnetUsdcBalance(owner: string | null): WalletUsdcBalance {
+  const [amount, setAmount] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [refreshedAt, setRefreshedAt] = useState<number | null>(null)
+
+  const refresh = useCallback(async () => {
+    if (!owner) {
+      setAmount(null)
+      setError(null)
+      return
+    }
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await fetch(`${X402_GATEWAY_BASE}/rpc`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'obulus-wallet-usdc-balance',
+          method: 'getTokenAccountsByOwner',
+          params: [
+            owner,
+            { mint: DEVNET_USDC },
+            { encoding: 'jsonParsed', commitment: 'confirmed' },
+          ],
+        }),
+      })
+      const payload = await response.json() as {
+        error?: { message?: string }
+        result?: {
+          value?: Array<{
+            account?: {
+              data?: {
+                parsed?: {
+                  info?: {
+                    tokenAmount?: { amount?: string; decimals?: number }
+                  }
+                }
+              }
+            }
+          }>
+        }
+      }
+      if (!response.ok || payload.error) {
+        throw new Error(payload.error?.message ?? `RPC returned ${response.status}`)
+      }
+
+      let atomic = 0n
+      let decimals = 6
+      for (const tokenAccount of payload.result?.value ?? []) {
+        const tokenAmount = tokenAccount.account?.data?.parsed?.info?.tokenAmount
+        if (!tokenAmount?.amount || !/^\d+$/.test(tokenAmount.amount)) continue
+        atomic += BigInt(tokenAmount.amount)
+        if (Number.isInteger(tokenAmount.decimals)) decimals = tokenAmount.decimals!
+      }
+      setAmount(formatTokenAmount(atomic, decimals))
+      setRefreshedAt(Date.now())
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to read wallet balance')
+    } finally {
+      setLoading(false)
+    }
+  }, [owner])
+
+  useEffect(() => {
+    if (!owner) {
+      setAmount(null)
+      setError(null)
+      return
+    }
+    void refresh()
+    const onFocus = () => void refresh()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [owner, refresh])
+
+  return { amount, loading, error, refreshedAt, refresh }
+}
+
+function formatTokenAmount(atomic: bigint, decimals: number): string {
+  const scale = 10n ** BigInt(decimals)
+  const whole = atomic / scale
+  const fraction = (atomic % scale)
+    .toString()
+    .padStart(decimals, '0')
+    .replace(/0+$/, '')
+  return fraction ? `${whole}.${fraction}` : whole.toString()
 }
 
 export function shortKey(k: string) {

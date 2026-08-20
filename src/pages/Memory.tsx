@@ -14,11 +14,14 @@ import {
   Trash2,
   Unlock,
   Wallet,
+  ReceiptText,
+  RefreshCw,
 } from 'lucide-react'
 import { AuthUnavailable } from '@/components/AuthUnavailable'
 import { Avatar } from '@/components/Avatar'
 import { AvatarPicker } from '@/components/AvatarPicker'
 import { CategoryIcon } from '@/components/CategoryIcon'
+import { AuroraCreditCard } from '@/components/ui/aurora-credit-card-bento'
 import { Button } from '@/components/ui/button'
 import {
   Badge,
@@ -51,7 +54,7 @@ import { cn } from '@/lib/utils'
 import { ArchivePanel } from '@/pages/Archive'
 import { TransactionsPanel } from '@/pages/Transactions'
 import { useUi } from '@/state/ui'
-import { getPhantom, shortKey, useWallet } from '@/state/wallet'
+import { getPhantom, shortKey, useDevnetUsdcBalance, useWallet } from '@/state/wallet'
 
 /**
  * Screen 03 — My memory / my-page hub. Everything you have answered piles up
@@ -164,6 +167,7 @@ export default function Memory() {
   }
 
   const wallet = useWallet()
+  const walletUsdc = useDevnetUsdcBalance(wallet.pubkey)
   const [verifying, setVerifying] = useState(false)
   const [withdrawing, setWithdrawing] = useState(false)
   const [walletError, setWalletError] = useState<string | null>(null)
@@ -351,10 +355,10 @@ export default function Memory() {
   if (!account) return <Navigate to="/login" replace />
 
   return (
-    <div className="page-enter flex-1 overflow-y-auto">
-      <div className="space-y-6 p-4 sm:p-6">
-        <div className="flex min-h-8 items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+    <div className="page-enter flex-1 overflow-y-auto bg-background">
+      <div className="mx-auto w-full max-w-[88rem] px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
+        <div className="flex flex-col gap-5 sm:min-h-10 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+          <div className="flex min-w-0 items-center gap-3">
             {profile ? (
               <button
                 type="button"
@@ -368,9 +372,16 @@ export default function Memory() {
                 />
               </button>
             ) : null}
-            <h1 className="font-sans text-base font-medium">{t('My shelf')}</h1>
+            <div className="min-w-0">
+              <h1 className="font-sans text-xl font-semibold tracking-[-0.02em]">
+                {t('My shelf')}
+              </h1>
+              <p className="mt-1 max-w-xl text-sm leading-6 text-muted-foreground">
+                {t('Manage the answers you own, their reuse, and every settlement.')}
+              </p>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 sm:shrink-0 sm:justify-end">
             <Button
               variant="monoGhost"
               size="monoSm"
@@ -388,7 +399,7 @@ export default function Memory() {
               <Button asChild variant="mono" size="monoSm">
                 <Link to="/admin">
                   <ShieldCheck className="size-3" />
-                  {t('Admin')}
+                  Admin Test
                 </Link>
               </Button>
             ) : null}
@@ -398,32 +409,29 @@ export default function Memory() {
           </div>
         </div>
 
-        {/* Tabs — the my-page hub. Same Chip/hairline grammar as the rest of
-            the app's filter rows (dashboard's Open to answer / Posted by me,
-            Archive's With opens), not a boxed sub-nav. */}
-        <div className="flex flex-wrap items-center gap-2">
-          <Chip active={tab === 'profile'} onClick={openProfilePanel}>
+        <div className="mt-8 flex items-center gap-7 overflow-x-auto border-b border-border/70 whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <MemoryTab active={tab === 'profile'} onClick={openProfilePanel}>
             {t('Profile')}
-          </Chip>
-          <Chip active={tab === 'answers'} onClick={() => setTab('answers')}>
+          </MemoryTab>
+          <MemoryTab active={tab === 'answers'} onClick={() => setTab('answers')}>
             {t('My answers & earnings')}
-          </Chip>
-          <Chip active={tab === 'questions'} onClick={() => setTab('questions')}>
-            {t('Receipts')}
-          </Chip>
-          <Chip active={tab === 'transactions'} onClick={() => setTab('transactions')}>
+          </MemoryTab>
+          <MemoryTab active={tab === 'questions'} onClick={() => setTab('questions')}>
+            {t('My questions')}
+          </MemoryTab>
+          <MemoryTab active={tab === 'transactions'} onClick={() => setTab('transactions')}>
             {t('Transactions')}
-          </Chip>
+          </MemoryTab>
         </div>
 
         {memoryActionError ? (
-          <p className="rounded-[4px] border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          <p className="mt-6 rounded-[4px] border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
             {memoryActionError}
           </p>
         ) : null}
 
         {tab === 'profile' && avatarDraft ? (
-          <Banner tone="neutral" className="overflow-hidden p-0">
+          <Banner tone="neutral" className="mt-8 overflow-hidden p-0">
             <div className="divide-y divide-border/60">
               <div className="p-4">
                 <p className="font-mono text-[11px] uppercase tracking-[1px] text-muted-foreground">
@@ -587,35 +595,69 @@ export default function Memory() {
         ) : null}
 
         {tab === 'answers' ? (
-          <>
-            {/* Overview — the three figures and the account lines beneath them
-                read as one open zone: whitespace between the figures, quiet
-                hairlines between the account rows, and no bordered boxes stacked
-                on each other. */}
-            <div>
-              <div className="grid grid-cols-1 gap-y-6 sm:grid-cols-3 sm:gap-x-8 sm:gap-y-0">
-                <Stat
-                  icon={<Coins className="size-3.5" />}
-                  label={t('Earned to date')}
-                  value={`${earnings?.accruedAtomic ? formatUsdcShort(earnings.accruedAtomic) : formatUsdcFromKrw(total)} USDC`}
-                  sub={`${earnings?.eventCount ?? settled.length}${t(' payouts')}${earnings?.heldAtomic && earnings.heldAtomic !== '0' ? ` · ${formatUsdc(earnings.heldAtomic)} USDC${t(' held 14 days')}` : ''}`}
-                />
-                <Stat
-                  icon={<Sparkles className="size-3.5" />}
-                  label={t('Earned via auto-match')}
-                  value={`${formatUsdcFromKrw(autoEarned)} USDC`}
-                  sub={`${total ? Math.round((autoEarned / total) * 100) : 0}%${t(' of your earnings')}`}
-                />
-                <Stat
-                  icon={<Flame className="size-3.5" />}
-                  label={t('Documents you wrote')}
-                  value={`${settled.length}`}
-                  sub={`${t('across')} ${shelves.length}${t(' shelves')}`}
-                />
-              </div>
+          <div className="mt-8 space-y-10">
+            <section className="grid items-center gap-10 border-b border-border/70 pb-10 lg:grid-cols-[minmax(340px,520px)_1fr] lg:gap-16">
+              <AuroraCreditCard
+                amount={`${earnings?.accruedAtomic ? formatUsdcShort(earnings.accruedAtomic) : formatUsdcFromKrw(total)} USDC`}
+                label={t('Earned to date')}
+                handle={profile?.handle ?? account.id}
+                wallet={profile?.wallet ? shortKey(profile.wallet) : t('payout wallet not set')}
+                verified={Boolean(profile?.walletVerified)}
+              />
 
-              {balance || profile ? (
-                <div className="mt-6 divide-y divide-border/60 border-t border-border/60">
+              <div className="min-w-0">
+                <p className="font-mono text-[10px] uppercase tracking-[1.4px] text-muted-foreground">
+                  {t('Evidence account')}
+                </p>
+                <h2 className="mt-3 max-w-xl text-balance text-[28px] font-semibold leading-[1.15] tracking-[-0.035em] sm:text-[34px]">
+                  {t('Your answers remain yours. Every qualified reuse is settled here.')}
+                </h2>
+                <p className="mt-4 max-w-xl text-[15px] leading-7 text-muted-foreground">
+                  {t('See what your documents earned, where each payout went, and whether auto-match can reuse them for a new question.')}
+                </p>
+
+                <div className="mt-5 flex flex-wrap items-center gap-2">
+                  <Button variant="mono" size="monoSm" onClick={() => setTab('questions')}>
+                    <ReceiptText className="size-3.5" />
+                    {t('Open invoices & receipts')}
+                  </Button>
+                  {wallet.pubkey ? (
+                    <Button
+                      variant="monoGhost"
+                      size="monoSm"
+                      disabled={walletUsdc.loading}
+                      onClick={() => void walletUsdc.refresh()}
+                      title={walletUsdc.error ?? undefined}
+                    >
+                      <RefreshCw className={cn('size-3', walletUsdc.loading && 'animate-spin')} />
+                      {t('Phantom USDC')} {walletUsdc.amount ?? '—'}
+                    </Button>
+                  ) : null}
+                </div>
+
+                <div className="mt-8 grid grid-cols-2 gap-x-8 gap-y-6 border-y border-border/70 py-6 sm:grid-cols-3">
+                  <Stat
+                    icon={<Coins className="size-3.5" />}
+                    label={t('Settlements')}
+                    value={`${earnings?.eventCount ?? settled.length}`}
+                    sub={earnings?.heldAtomic && earnings.heldAtomic !== '0' ? `${formatUsdc(earnings.heldAtomic)} USDC${t(' held 14 days')}` : t('No payout is held')}
+                  />
+                  <Stat
+                    icon={<Sparkles className="size-3.5" />}
+                    label={t('Auto-match')}
+                    value={`${formatUsdcFromKrw(autoEarned)} USDC`}
+                    sub={`${total ? Math.round((autoEarned / total) * 100) : 0}%${t(' of your earnings')}`}
+                  />
+                  <Stat
+                    icon={<Flame className="size-3.5" />}
+                    label={t('Documents')}
+                    value={`${settled.length}`}
+                    sub={`${t('across')} ${shelves.length}${t(' shelves')}`}
+                  />
+                </div>
+
+                {balance || profile ? (
+                  <div className="divide-y divide-border/60">
                   {balance ? (
                     <div className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
                       <span>{t('Call credit')} <strong className="text-foreground">{formatUsdc(balance.availableAtomic)} USDC</strong></span>
@@ -635,8 +677,24 @@ export default function Memory() {
                     </div>
                   ) : null}
 
+                  {wallet.pubkey ? (
+                    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 py-4 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1.5">
+                        <Wallet className="size-3.5" />
+                        {t('Phantom wallet balance')}{' '}
+                        <strong className="text-foreground">
+                          {walletUsdc.loading && walletUsdc.amount === null
+                            ? t('Reading…')
+                            : `${walletUsdc.amount ?? '—'} USDC`}
+                        </strong>
+                      </span>
+                      <span>{shortKey(wallet.pubkey)} · Devnet</span>
+                      <span className="ml-auto">{t('Read from Solana. Not Obulus credit.')}</span>
+                    </div>
+                  ) : null}
+
                   {profile ? (
-                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3.5 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 py-4 text-xs text-muted-foreground">
                       <span className="flex items-center gap-1.5">
                         <Wallet className="size-3.5" />
                         {t('Payouts to')}{' '}
@@ -677,9 +735,10 @@ export default function Memory() {
                       </span>
                     </div>
                   ) : null}
-                </div>
-              ) : null}
-            </div>
+                  </div>
+                ) : null}
+              </div>
+            </section>
 
             {earnings?.claimableKrw ? (
               <Banner tone="teal" className="px-4 py-3 font-mono text-[10px] uppercase tracking-[1px] text-muted-foreground">
@@ -710,7 +769,7 @@ export default function Memory() {
             {/* Auto-match — the line you leave in the water. A hairline-topped
                 row rather than a boxed banner, so it flows on from the account
                 lines instead of reading as another stacked block. */}
-            <div className="flex flex-wrap items-center gap-4 border-t border-border/60 pt-6">
+            <div className="flex flex-wrap items-center gap-4 rounded-[18px] bg-muted/45 px-5 py-5">
               <Switch
                 checked={autoMatch}
                 onCheckedChange={setAutoMatch}
@@ -1060,7 +1119,7 @@ export default function Memory() {
                 )}
               </div>
             </section>
-          </>
+          </div>
         ) : null}
 
         {tab === 'questions' ? <ArchivePanel /> : null}
@@ -1068,6 +1127,30 @@ export default function Memory() {
         {tab === 'transactions' ? <TransactionsPanel /> : null}
       </div>
     </div>
+  )
+}
+
+function MemoryTab({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean
+  children: React.ReactNode
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'relative cursor-pointer pb-3 text-sm text-muted-foreground transition-colors hover:text-foreground',
+        active &&
+          'font-medium text-foreground after:absolute after:inset-x-0 after:-bottom-px after:h-px after:bg-foreground',
+      )}
+    >
+      {children}
+    </button>
   )
 }
 

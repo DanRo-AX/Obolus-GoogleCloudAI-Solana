@@ -81,7 +81,9 @@ npm run dev
 ```
 
 The restricted `/rpc` proxy exposes only the read methods needed to construct
-a Phantom x402 refill. Production requires `OPENSHELF_SETTLEMENT_QUEUE`,
+a Phantom x402 refill and read the connected owner's configured USDC balance.
+The balance route is mint-bound and cannot submit transactions or scan arbitrary
+tokens. Production requires `OPENSHELF_SETTLEMENT_QUEUE`,
 `OPENSHELF_SETTLEMENT_QUEUE_LOCATION=asia-northeast3`, and
 `OPENSHELF_SETTLEMENT_TARGET_URL`.
 

@@ -59,7 +59,7 @@ for (const phrase of staleClaims) {
 }
 
 for (const phrase of [
-  '총 362개 테스트',
+  '총 435개 테스트',
   'summary.ready',
   'id="infraProofStatus"',
   'id="autonomyProofStatus"',
@@ -67,6 +67,20 @@ for (const phrase of [
   'id="liveProofStatus"',
 ]) {
   check(`deck.required-proof:${phrase}`, deck.includes(phrase), phrase)
+}
+
+for (const [diagram, marker] of [
+  ['D0', '질문부터 인간 근거 검색과 결제까지의 Obolus 미니 파이프라인'],
+  ['D1', '기업의 반복 조사 비용이 발생하는 현재 파이프라인'],
+  ['D2', '기존 근거의 커버리지에 따라 구매, 부분 조사, 공개 모집으로 분기하는 Obolus 제품 루프'],
+  ['D3', 'Vertex 함수 호출 두 번과 Rust 결정론적 도구 실행으로 구성된 에이전트 제어 루프'],
+  ['D4', 'Obolus x402와 Pay.sh 결제 시퀀스'],
+  ['D5+D6', 'data-includes-diagrams="D5 D6"'],
+  ['D7', 'Obolus 전체 기술 아키텍처와 Personalized PageRank, 신뢰 경계'],
+  ['D8', '제품, 기술, 자동화, 운영 증거를 연결한 발표 검증 지도'],
+  ['D9', '기업, 기관, 개인별 Obolus 도입 시나리오'],
+]) {
+  check(`deck.diagram:${diagram}`, deck.includes(marker), marker)
 }
 
 for (const token of ['id="modeBtn"', "event.key === '6'", "event.key.toLowerCase() === 'b'", "new URLSearchParams(window.location.search).get('mode')"]) {
@@ -151,7 +165,7 @@ if (requireLive) {
     probe('/x402/readyz', 'application/json'),
   ])
   check('published.app', app.ready, app.detail)
-  check('published.deck', deck.ready && deck.text?.includes('총 362개 테스트'), deck.detail)
+  check('published.deck', deck.ready && deck.text?.includes('총 435개 테스트'), deck.detail)
   check('published.api-proxy', api.ready && Array.isArray(api.body), api.detail)
   check('published.gateway-ready', gateway.ready && gateway.body?.status === 'ready', gateway.detail)
 }

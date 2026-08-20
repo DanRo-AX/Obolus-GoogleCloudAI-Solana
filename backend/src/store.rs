@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::Path,
     sync::{Arc, Mutex, MutexGuard},
     time::Duration,
@@ -14,23 +14,27 @@ use thiserror::Error;
 use crate::{
     db::{self, Connection, OptionalExtension, Transaction},
     domain::{
-        AccountControls, AdminOperationsSnapshot, AdminTablePage, AiBaseline, AiBaselineDraft,
-        AiLiquidityMetrics, AiSource, AnswerIssue, BalanceSummary, BeginResearchPaymentRequest,
-        BindPayShChallengesRequest, ChainSettlementReceipt, ChatAnswer, Citation,
-        ClaimPaymentAttemptRequest, ContributorManifest, ContributorMemoryLink,
-        ContributorNotification, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
-        CreateOpenCallRequest, CreatePaymentBundleRequest, DemographicBands,
-        DirectPayShPaymentReconciliation, DisputeCase, Document, DocumentFeedback, EarningEvent,
-        EarningsSummary, EvidenceContribution, EvidenceEdge, InterviewResponse, LiquidityState,
-        MarketplaceOperationsMetrics, MemoryAccessEvent, MemoryEntry, MemoryExport, OpenCall,
-        OpenCallFundingQuote, OpenCallFundingSnapshot, OpenCallReservation, OpenDocumentsResponse,
-        OperationsStatusCount, PaidDocument, PayShResource, PaymentAttemptFence,
-        PaymentAttemptReconciliation, PaymentAttemptRelease, PaymentBundleQuote,
-        PaymentBundleSnapshot, PaymentDocumentProgress, PaymentDocumentSnapshot, PaymentProgress,
-        PaymentQuote, PayoutClaim, PayoutClaimBacklog, PrepaidBalance, PrepaidWalletSession,
-        PrepareDirectPayShPaymentRequest, PrepareResearchPaymentRequest, PublicDocument,
-        PublicEvidenceRecord, RecordChainSettlementRequest, RecordPrepaidDepositRequest,
-        RecoveredPaidDocument, ReleaseResearchPaymentRequest, ResearchJobPlan, ResearchJobStatus,
+        AccountControls, AdminAuthorityContext, AdminAuthorityEdge, AdminAuthorityNode,
+        AdminDataPipelineSnapshot, AdminDeploymentInfo, AdminMemoryEdge, AdminMemoryNode,
+        AdminMemoryPipelineMetrics, AdminOperationsSnapshot, AdminRealtimeMetrics,
+        AdminSearchPipelineMetrics, AdminSourceCount, AdminSystemEvent, AdminTablePage, AiBaseline,
+        AiBaselineDraft, AiLiquidityMetrics, AiSource, AnswerIssue, BalanceSummary,
+        BeginResearchPaymentRequest, BindPayShChallengesRequest, ChainSettlementReceipt,
+        ChatAnswer, Citation, ClaimPaymentAttemptRequest, ContributorManifest,
+        ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
+        CreateEvidenceEdgeRequest, CreateOpenCallRequest, CreatePaymentBundleRequest,
+        DemographicBands, DirectPayShPaymentReconciliation, DisputeCase, Document,
+        DocumentFeedback, EarningEvent, EarningsSummary, EvidenceContribution, EvidenceEdge,
+        InterviewResponse, LiquidityState, MarketplaceOperationsMetrics, MemoryAccessEvent,
+        MemoryEntry, MemoryExport, OpenCall, OpenCallFundingQuote, OpenCallFundingSnapshot,
+        OpenCallReservation, OpenDocumentsResponse, OperationsStatusCount, PaidDocument,
+        PayShResource, PaymentAttemptFence, PaymentAttemptReconciliation, PaymentAttemptRelease,
+        PaymentBundleQuote, PaymentBundleSnapshot, PaymentDocumentProgress,
+        PaymentDocumentSnapshot, PaymentProgress, PaymentQuote, PayoutClaim, PayoutClaimBacklog,
+        PrepaidBalance, PrepaidWalletSession, PrepareDirectPayShPaymentRequest,
+        PrepareResearchPaymentRequest, PublicDocument, PublicEvidenceRecord,
+        RecordChainSettlementRequest, RecordPrepaidDepositRequest, RecoveredPaidDocument,
+        ReleaseResearchPaymentRequest, ResearchJobPlan, ResearchJobStatus,
         ResearchPaymentReconciliation, ResolveQuestionResponse, ReviewDisputeRequest,
         ReviewDocumentFeedbackRequest, SearchFilters, Settlement, SettlementOperationsMetrics,
         ShelfStarter, ShelfStarterDraft, SiwxPayload, SubmitAnswerResponse,
@@ -284,6 +288,11 @@ pub enum StoreError {
 /// Hard cap on an admin table page, regardless of the requested `limit`.
 const ADMIN_TABLE_MAX_PAGE: usize = 100;
 
+/// Temporary demo switch: while enabled, every active signed-in account may
+/// use the operations, dispute-review, and redacted database consoles. Flip
+/// this to `false` before production to restore the role/wallet admin gate.
+const OPEN_ADMIN_CONSOLE_TO_ALL_ACCOUNTS: bool = true;
+
 /// Curated, read-only tables exposed through the admin table viewer. Each
 /// variant maps to a fixed table, an explicit safe-column projection, and a
 /// deterministic ordering. The projections deliberately omit every credential,
@@ -466,6 +475,7 @@ impl StoredCall {
             reservation_expires_at: None,
             recommendation_score: 0.0,
             recommendation_reason: Vec::new(),
+            contributor_handles: Vec::new(),
         }
     }
 }
@@ -1693,6 +1703,21 @@ impl Store {
                 source_ids_json TEXT NOT NULL DEFAULT '[]'
             );
 
+            -- Privacy-safe operational telemetry shared by web, MCP clients,
+            -- Cloud Run workers, and local agents. It stores route classes and
+            -- timing only — never prompts, document text, wallets, tokens, or
+            -- transaction signatures.
+            CREATE TABLE IF NOT EXISTS system_events (
+                id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                instance TEXT NOT NULL DEFAULT '',
+                stage TEXT NOT NULL,
+                action TEXT NOT NULL,
+                status INTEGER NOT NULL,
+                latency_ms INTEGER NOT NULL,
+                occurred_at INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS settlements (
                 id TEXT PRIMARY KEY,
                 query_id TEXT NOT NULL REFERENCES queries(id),
@@ -2189,6 +2214,10 @@ impl Store {
                 ON open_call_funding_quotes(owner_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_memory_user
                 ON memory_entries(user_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_system_events_time
+                ON system_events(occurred_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_system_events_source
+                ON system_events(source, occurred_at DESC);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_one_answer_per_call
                 ON memory_entries(open_call_id, user_id)
                 WHERE open_call_id IS NOT NULL;
@@ -3993,6 +4022,8 @@ impl Store {
         let mut calls = Vec::with_capacity(stored_calls.len());
         for stored in stored_calls {
             let mut call = stored.public(user_id, profile.as_ref());
+            call.contributor_handles =
+                related_contributor_handles(&connection, &call.id, &call.category)?;
             call.reserved_slots = active_reservation_count(&connection, &call.id)?;
             if let Some(user_id) = user_id {
                 call.reservation_expires_at =
@@ -8196,6 +8227,20 @@ impl Store {
     }
 
     fn require_admin(&self, user_id: &str) -> Result<(), StoreError> {
+        if OPEN_ADMIN_CONSOLE_TO_ALL_ACCOUNTS {
+            let exists = self.connection()?.query_row(
+                "SELECT EXISTS(SELECT 1 FROM users WHERE id = ?1 AND deleted_at IS NULL)",
+                [user_id],
+                |row| row.get::<_, i64>(0),
+            )? != 0;
+            return if exists {
+                Ok(())
+            } else {
+                Err(StoreError::Unauthorized(
+                    "an active signed-in account is required".to_owned(),
+                ))
+            };
+        }
         if self.is_admin(user_id)? {
             Ok(())
         } else {
@@ -8205,9 +8250,9 @@ impl Store {
         }
     }
 
-    /// One page of a curated, read-only admin table. Admin-gated through the
-    /// same allowlist/role gate as the rest of the console — non-admins get
-    /// `StoreError::Unauthorized`. `limit` is clamped to
+    /// One page of a curated, read-only admin table. Access goes through the
+    /// shared console gate, which is temporarily open to every active account.
+    /// `limit` is clamped to
     /// `[1, ADMIN_TABLE_MAX_PAGE]`, and only the safe columns named by
     /// [`AdminTable::columns`] are read, so no credential, token, secret, or
     /// hash column can appear in the result.
@@ -8340,7 +8385,7 @@ impl Store {
         &self,
         user_id: &str,
     ) -> Result<AdminOperationsSnapshot, StoreError> {
-        // Reuse the stricter AI-liquidity invariant check as the admin gate.
+        // Reuse the AI-liquidity invariant check and shared console gate.
         // Acquire the operations connection only after that call releases its
         // mutex guard so this remains safe for both SQLite and PostgreSQL.
         let ai_liquidity = self.ai_liquidity_metrics(user_id)?;
@@ -8433,6 +8478,439 @@ impl Store {
                 oldest_unresolved_payment_at,
             },
             ai_liquidity,
+        })
+    }
+
+    /// Persist one privacy-safe pipeline event. Callers must pass already
+    /// classified labels; this method rejects unexpectedly large values so an
+    /// untrusted client header can never turn the telemetry table into a text
+    /// ingestion side channel.
+    pub fn record_system_event(
+        &self,
+        source: &str,
+        instance: &str,
+        stage: &str,
+        action: &str,
+        status: u16,
+        latency_ms: u64,
+    ) -> Result<(), StoreError> {
+        let valid = |value: &str, max: usize| {
+            !value.is_empty()
+                && value.len() <= max
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        };
+        if !valid(source, 48)
+            || (!instance.is_empty() && !valid(instance, 64))
+            || !valid(stage, 48)
+            || !valid(action, 64)
+        {
+            return Err(StoreError::Validation(
+                "invalid operational event label".to_owned(),
+            ));
+        }
+
+        let occurred_at = now_ms();
+        let connection = self.connection()?;
+        connection.execute(
+            "DELETE FROM system_events WHERE occurred_at < ?1",
+            [as_i64(
+                occurred_at.saturating_sub(7 * 24 * 60 * 60 * 1_000),
+            )?],
+        )?;
+        connection.execute(
+            "INSERT INTO system_events
+             (id, source, instance, stage, action, status, latency_ms, occurred_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                new_id("event"),
+                source,
+                instance,
+                stage,
+                action,
+                i64::from(status),
+                as_i64(latency_ms)?,
+                as_i64(occurred_at)?,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Build the live data-plane snapshot used by the shared, read-only graph.
+    /// The requester receives a bounded excerpt of their own memory stream so
+    /// they can inspect real abstraction steps. Every other contributor is
+    /// represented only by a structural label and one-way entity alias.
+    /// PageRank nodes expose stable document handles and quality metadata, never
+    /// the paid passage itself. Authentication is enforced at the API boundary.
+    pub fn admin_data_pipeline_snapshot(
+        &self,
+        user_id: &str,
+        mut deployment: AdminDeploymentInfo,
+    ) -> Result<AdminDataPipelineSnapshot, StoreError> {
+        let documents = self.documents()?;
+        let evidence_edges = self.evidence_edges()?;
+        let generated_at = now_ms();
+        let connection = self.connection()?;
+        let node_ids = documents
+            .iter()
+            .map(|document| document.id.clone())
+            .collect::<Vec<_>>();
+        let latest_query = connection
+            .query_row(
+                "SELECT id, created_at FROM queries ORDER BY created_at DESC LIMIT 1",
+                params![],
+                |row| Ok((row.get::<_, String>(0)?, as_u64(row.get(1)?)?)),
+            )
+            .optional()?;
+        let mut matched_documents = 0_u64;
+        let mut teleport = HashMap::new();
+        if let Some((query_id, _)) = latest_query.as_ref() {
+            let mut statement = connection.prepare(
+                "SELECT d.id, qm.rank
+                 FROM query_matches qm
+                 JOIN documents d ON d.handle = qm.document_handle
+                 WHERE qm.query_id = ?1
+                 ORDER BY qm.rank ASC",
+            )?;
+            for row in statement.query_map([query_id], |row| {
+                Ok((row.get::<_, String>(0)?, as_u64(row.get(1)?)?))
+            })? {
+                let (document_id, rank) = row?;
+                teleport.insert(document_id, 1.0 / (rank.saturating_add(1) as f32));
+                matched_documents = matched_documents.saturating_add(1);
+            }
+        }
+        if teleport.is_empty() {
+            teleport = documents
+                .iter()
+                .map(|document| {
+                    (
+                        document.id.clone(),
+                        (document.quality_score * document.reliability_score).max(0.01),
+                    )
+                })
+                .collect::<HashMap<_, _>>();
+        }
+        let authority =
+            crate::authority::personalized_page_rank(&node_ids, &evidence_edges, &teleport);
+        let mut authority_nodes = documents
+            .iter()
+            .map(|document| AdminAuthorityNode {
+                id: document.id.clone(),
+                handle: document.handle.clone(),
+                shelf: document.shelf.clone(),
+                category: document.category.clone(),
+                quality: document.quality_score,
+                reliability: document.reliability_score,
+                authority: authority.get(&document.id).copied().unwrap_or_default(),
+                teleport_weight: teleport.get(&document.id).copied().unwrap_or_default(),
+            })
+            .collect::<Vec<_>>();
+        authority_nodes.sort_by(|left, right| {
+            right
+                .authority
+                .total_cmp(&left.authority)
+                .then_with(|| left.handle.cmp(&right.handle))
+        });
+        authority_nodes.truncate(24);
+        let visible_ids = authority_nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<HashSet<_>>();
+        let authority_edges = evidence_edges
+            .iter()
+            .filter(|edge| {
+                visible_ids.contains(edge.source_document_id.as_str())
+                    && visible_ids.contains(edge.target_document_id.as_str())
+            })
+            .take(64)
+            .map(|edge| AdminAuthorityEdge {
+                source: edge.source_document_id.clone(),
+                target: edge.target_document_id.clone(),
+                relation: edge.relation.clone(),
+                provenance: edge.provenance.clone(),
+                topic: edge.topic.clone(),
+                weight: edge.weight,
+                propagates_authority: crate::authority::effective_weight(edge) > 0.0,
+            })
+            .collect::<Vec<_>>();
+
+        deployment.database = if connection.is_sqlite() {
+            "SQLite (local)".to_owned()
+        } else {
+            "Cloud SQL / PostgreSQL".to_owned()
+        };
+
+        let (
+            total_entries,
+            entities,
+            raw_observations,
+            derived_entries,
+            interview_backed_entries,
+            importance_total,
+        ) = connection.query_row(
+            "SELECT
+                COUNT(*),
+                COUNT(DISTINCT user_id),
+                COALESCE(SUM(CASE WHEN memory_type <> 'reflection' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN memory_type = 'reflection' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN interview_json <> '[]' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(importance), 0.0)
+             FROM memory_entries
+             WHERE locked = 0 AND status <> 'voided'",
+            params![],
+            |row| {
+                Ok((
+                    as_u64(row.get(0)?)?,
+                    as_u64(row.get(1)?)?,
+                    as_u64(row.get(2)?)?,
+                    as_u64(row.get(3)?)?,
+                    as_u64(row.get(4)?)?,
+                    row.get::<_, f64>(5)?,
+                ))
+            },
+        )?;
+        let reflection_ready_entities = connection.query_row(
+            "SELECT COUNT(*) FROM (
+                SELECT user_id
+                FROM memory_entries
+                WHERE locked = 0 AND status <> 'voided' AND memory_type = 'observation'
+                GROUP BY user_id
+                HAVING SUM(importance * 10.0) > 150
+             ) reflection_ready",
+            params![],
+            |row| as_u64(row.get(0)?),
+        )?;
+
+        let mut memory_statement = connection.prepare(
+            "SELECT id, user_id, shelf, memory_type, importance,
+                    reliability_score, created_at, source_ids_json, answer
+             FROM memory_entries
+             WHERE locked = 0 AND status <> 'voided'
+             ORDER BY created_at DESC
+             LIMIT 60",
+        )?;
+        let viewer_user_id = user_id.to_owned();
+        let mut memory_records = memory_statement
+            .query_map(params![], |row| {
+                let id = row.get::<_, String>(0)?;
+                let user_id = row.get::<_, String>(1)?;
+                let source_ids_json = row.get::<_, String>(7)?;
+                let source_ids =
+                    serde_json::from_str::<Vec<String>>(&source_ids_json).unwrap_or_default();
+                let entity_hash = sha256_hex(&user_id);
+                let owned_by_viewer = user_id == viewer_user_id;
+                let answer = row.get::<_, String>(8)?;
+                Ok((
+                    AdminMemoryNode {
+                        id,
+                        entity: format!("person-{}", &entity_hash[..7]),
+                        shelf: row.get(2)?,
+                        memory_type: row.get(3)?,
+                        level: 0,
+                        display_text: if owned_by_viewer {
+                            observatory_excerpt(&answer, 220)
+                        } else {
+                            String::new()
+                        },
+                        owned_by_viewer,
+                        importance: row.get(4)?,
+                        reliability: row.get(5)?,
+                        source_count: source_ids.len() as u64,
+                        created_at: as_u64(row.get(6)?)?,
+                    },
+                    source_ids,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        for _ in 0..4 {
+            let levels = memory_records
+                .iter()
+                .map(|(node, _)| (node.id.clone(), node.level))
+                .collect::<HashMap<_, _>>();
+            for (node, source_ids) in &mut memory_records {
+                if node.memory_type == "reflection" {
+                    node.level = 1 + source_ids
+                        .iter()
+                        .filter_map(|source_id| levels.get(source_id))
+                        .copied()
+                        .max()
+                        .unwrap_or(0);
+                }
+            }
+        }
+        for (node, _) in &mut memory_records {
+            if !node.owned_by_viewer {
+                node.display_text = if node.level == 0 {
+                    format!("{} 분야의 검증된 원문 관측", node.shelf)
+                } else {
+                    format!("L{} 추상화 · 근거 {}개 연결", node.level, node.source_count)
+                };
+            }
+        }
+        let visible_memory_ids = memory_records
+            .iter()
+            .map(|(node, _)| node.id.as_str())
+            .collect::<HashSet<_>>();
+        let memory_edges = memory_records
+            .iter()
+            .flat_map(|(node, source_ids)| {
+                source_ids
+                    .iter()
+                    .filter(|source_id| visible_memory_ids.contains(source_id.as_str()))
+                    .map(|source_id| AdminMemoryEdge {
+                        source: source_id.clone(),
+                        target: node.id.clone(),
+                    })
+            })
+            .collect::<Vec<_>>();
+        let memory_nodes = memory_records
+            .into_iter()
+            .map(|(node, _)| node)
+            .collect::<Vec<_>>();
+
+        let (query_count, query_matches, agent_runs, agent_steps) = connection.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM queries),
+                (SELECT COUNT(*) FROM query_matches),
+                (SELECT COUNT(*) FROM agent_runs),
+                (SELECT COUNT(*) FROM agent_steps)",
+            params![],
+            |row| {
+                Ok((
+                    as_u64(row.get(0)?)?,
+                    as_u64(row.get(1)?)?,
+                    as_u64(row.get(2)?)?,
+                    as_u64(row.get(3)?)?,
+                ))
+            },
+        )?;
+
+        // The observatory deliberately excludes generic request/auth traffic.
+        // Polling this endpoint must not create a wall of self-referential HTTP
+        // logs; only business-significant workflow stages are visualized.
+        let visible_event_filter =
+            "stage IN ('orchestration','generation','retrieval','coverage','memory','settlement')";
+        let event_count_since = |since: u64| -> Result<u64, StoreError> {
+            Ok(connection.query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM system_events WHERE occurred_at >= ?1 AND {visible_event_filter}"
+                ),
+                [as_i64(since)?],
+                |row| as_u64(row.get(0)?),
+            )?)
+        };
+        let mut source_statement = connection.prepare(&format!(
+            "SELECT source, COUNT(*)
+             FROM system_events
+             WHERE occurred_at >= ?1 AND {visible_event_filter}
+             GROUP BY source
+             ORDER BY COUNT(*) DESC, source ASC"
+        ))?;
+        let sources = source_statement
+            .query_map(
+                [as_i64(generated_at.saturating_sub(60 * 60 * 1_000))?],
+                |row| {
+                    Ok(AdminSourceCount {
+                        source: row.get(0)?,
+                        count: as_u64(row.get(1)?)?,
+                    })
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut event_statement = connection.prepare(&format!(
+            "SELECT id, source, instance, stage, action, status, latency_ms, occurred_at
+             FROM system_events
+             WHERE {visible_event_filter}
+             ORDER BY occurred_at DESC
+             LIMIT 40"
+        ))?;
+        let recent_events = event_statement
+            .query_map(params![], |row| {
+                let status = as_u64(row.get(5)?)?;
+                Ok(AdminSystemEvent {
+                    id: row.get(0)?,
+                    source: row.get(1)?,
+                    instance: row.get(2)?,
+                    stage: row.get(3)?,
+                    action: row.get(4)?,
+                    status: u16::try_from(status)
+                        .map_err(|error| db::Error::Conversion(error.to_string()))?,
+                    latency_ms: as_u64(row.get(6)?)?,
+                    occurred_at: as_u64(row.get(7)?)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(AdminDataPipelineSnapshot {
+            generated_at,
+            deployment,
+            memory: AdminMemoryPipelineMetrics {
+                total_entries,
+                entities,
+                average_entries_per_entity: if entities == 0 {
+                    0.0
+                } else {
+                    total_entries as f64 / entities as f64
+                },
+                raw_observations,
+                derived_entries,
+                interview_backed_entries,
+                importance_total,
+                reflection_ready_entities,
+                reflection_threshold: 150,
+                reflection_window: 100,
+                active_reflection_interval: 3,
+                active_importance_scale_max: 1.0,
+            },
+            memory_nodes,
+            memory_edges,
+            search: AdminSearchPipelineMetrics {
+                documents: documents.len() as u64,
+                evidence_edges: evidence_edges.len() as u64,
+                queries: query_count,
+                query_matches,
+                agent_runs,
+                agent_steps,
+                embedding_dimensions: 768,
+                page_rank_iterations: crate::authority::ITERATIONS as u64,
+                page_rank_damping_bps: (crate::authority::DAMPING * 10_000.0) as u64,
+            },
+            authority_context: AdminAuthorityContext {
+                mode: if matched_documents > 0 {
+                    "latest_query".to_owned()
+                } else {
+                    "quality_baseline".to_owned()
+                },
+                query_ref: latest_query.as_ref().map(|(query_id, _)| {
+                    let suffix = query_id
+                        .chars()
+                        .rev()
+                        .take(7)
+                        .collect::<String>()
+                        .chars()
+                        .rev()
+                        .collect::<String>();
+                    format!("q-{suffix}")
+                }),
+                matched_documents,
+                computed_at: latest_query
+                    .as_ref()
+                    .map(|(_, created_at)| *created_at)
+                    .unwrap_or(generated_at),
+            },
+            authority_nodes,
+            authority_edges,
+            realtime: AdminRealtimeMetrics {
+                events_last_minute: event_count_since(generated_at.saturating_sub(60_000))?,
+                events_last_five_minutes: event_count_since(
+                    generated_at.saturating_sub(5 * 60_000),
+                )?,
+                events_last_hour: event_count_since(generated_at.saturating_sub(60 * 60_000))?,
+                sources,
+                recent_events,
+            },
         })
     }
 
@@ -13969,6 +14447,51 @@ fn active_reservation_count(
     )?)
 }
 
+fn related_contributor_handles(
+    connection: &Connection,
+    open_call_id: &str,
+    category: &str,
+) -> Result<Vec<String>, StoreError> {
+    let mut statement = connection.prepare(
+        "SELECT COALESCE(p.handle, d.handle), MAX(m.created_at)
+         FROM memory_entries m
+         JOIN documents d ON d.id = m.document_id
+         LEFT JOIN profiles p ON p.user_id = m.user_id
+         WHERE m.open_call_id = ?1 AND m.status = 'settled'
+         GROUP BY COALESCE(p.handle, d.handle)
+         ORDER BY MAX(m.created_at) DESC",
+    )?;
+    let mut handles = statement
+        .query_map([open_call_id], |row| row.get::<_, String>(0))?
+        .take(4)
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+
+    if handles.len() < 4 {
+        let mut fallback = connection.prepare(
+            "SELECT p.handle, MAX(d.created_at)
+             FROM documents d
+             JOIN profiles p ON p.user_id = d.author_id
+             WHERE d.category = ?1 AND d.locked = 0
+             GROUP BY p.handle
+             ORDER BY MAX(d.created_at) DESC",
+        )?;
+        for handle in fallback
+            .query_map([category], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+        {
+            if !handles.iter().any(|existing| existing == &handle) {
+                handles.push(handle);
+            }
+            if handles.len() == 4 {
+                break;
+            }
+        }
+    }
+
+    Ok(handles)
+}
+
 fn active_reservation_expiry(
     connection: &Connection,
     open_call_id: &str,
@@ -18607,14 +19130,11 @@ fn maybe_create_reflection(
         .iter()
         .map(|source| source.0.clone())
         .collect::<Vec<_>>();
-    let summary = sources
+    let summary_sources = sources
         .iter()
-        .map(|(_, question, answer)| {
-            let excerpt = answer.chars().take(180).collect::<String>();
-            format!("{question}: {excerpt}")
-        })
-        .collect::<Vec<_>>()
-        .join(" | ");
+        .map(|(_, question, answer)| format!("{question}: {answer}"))
+        .collect::<Vec<_>>();
+    let summary = compose_reflection_summary(1, &summary_sources, source_ids.len());
     transaction.execute(
         "INSERT INTO memory_entries
          (id, user_id, question, answer, shelf, earned_krw, created_at, via, status,
@@ -18633,7 +19153,219 @@ fn maybe_create_reflection(
             reliability,
         ],
     )?;
+    maybe_create_recursive_reflections(transaction, user_id, reliability)?;
     Ok(())
+}
+
+/// Promote completed groups of three reflections into a real recursive tree.
+/// Every parent stores the exact child ids, so the observatory can show an
+/// L3 statement and still walk all the way down to the original L0 answers.
+fn maybe_create_recursive_reflections(
+    transaction: &Transaction<'_>,
+    user_id: &str,
+    reliability: f32,
+) -> Result<(), StoreError> {
+    for source_level in 1_u64..=4 {
+        let records = {
+            let mut statement = transaction.prepare(
+                "SELECT id, answer, memory_type, source_ids_json, created_at
+                 FROM memory_entries
+                 WHERE user_id = ?1 AND status = 'settled'
+                 ORDER BY created_at ASC, id ASC",
+            )?;
+            statement
+                .query_map([user_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        serde_json::from_str::<Vec<String>>(&row.get::<_, String>(3)?)
+                            .unwrap_or_default(),
+                        as_u64(row.get(4)?)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        let mut levels = records
+            .iter()
+            .filter(|(_, _, memory_type, _, _)| memory_type != "reflection")
+            .map(|(id, _, _, _, _)| (id.clone(), 0_u64))
+            .collect::<HashMap<_, _>>();
+        for _ in 0..8 {
+            for (id, _, memory_type, source_ids, _) in &records {
+                if memory_type != "reflection" {
+                    continue;
+                }
+                let level = 1 + source_ids
+                    .iter()
+                    .filter_map(|source_id| levels.get(source_id))
+                    .copied()
+                    .max()
+                    .unwrap_or(0);
+                levels.insert(id.clone(), level);
+            }
+        }
+
+        let sources = records
+            .iter()
+            .filter(|(id, _, memory_type, _, _)| {
+                memory_type == "reflection" && levels.get(id).copied() == Some(source_level)
+            })
+            .collect::<Vec<_>>();
+        if sources.len() < 3 {
+            continue;
+        }
+
+        let existing_source_sets = records
+            .iter()
+            .filter(|(id, _, memory_type, _, _)| {
+                memory_type == "reflection"
+                    && levels.get(id).copied() == Some(source_level.saturating_add(1))
+            })
+            .map(|(_, _, _, source_ids, _)| source_ids.clone())
+            .collect::<Vec<_>>();
+
+        for chunk in sources.chunks_exact(3) {
+            let source_ids = chunk
+                .iter()
+                .map(|(id, _, _, _, _)| id.clone())
+                .collect::<Vec<_>>();
+            if existing_source_sets
+                .iter()
+                .any(|existing| existing == &source_ids)
+            {
+                continue;
+            }
+            let parent_level = source_level.saturating_add(1);
+            let source_texts = chunk
+                .iter()
+                .map(|(_, answer, _, _, _)| answer.clone())
+                .collect::<Vec<_>>();
+            let summary = compose_reflection_summary(parent_level, &source_texts, source_ids.len());
+            let created_at = chunk
+                .iter()
+                .map(|(_, _, _, _, timestamp)| *timestamp)
+                .max()
+                .unwrap_or_else(now_ms)
+                .saturating_add(1);
+            let question = match parent_level {
+                2 => "Which decision rule repeats across these experience patterns?",
+                3 => "Which stable preference explains these repeated decision rules?",
+                _ => "Which higher-order tendency connects these prior reflections?",
+            };
+            transaction.execute(
+                "INSERT INTO memory_entries
+                 (id, user_id, question, answer, shelf, earned_krw, created_at, via, status,
+                  flags_json, interview_json, memory_type, importance, source_ids_json,
+                  content_hash, reliability_score)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, 'Recursive reflection', 'settled',
+                         '[]', '[]', 'reflection', ?7, ?8, ?9, ?10)",
+                params![
+                    new_id("reflection"),
+                    user_id,
+                    question,
+                    summary,
+                    format!("L{parent_level} contributor abstraction"),
+                    as_i64(created_at)?,
+                    (0.8 + parent_level as f32 * 0.04).min(0.98),
+                    serde_json::to_string(&source_ids).expect("source ids are serialisable"),
+                    sha256_hex(&summary),
+                    reliability,
+                ],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn compose_reflection_summary(level: u64, sources: &[String], source_count: usize) -> String {
+    let keywords = abstraction_keywords(sources);
+    let focus = if keywords.is_empty() {
+        "반복되는 상황과 선택 기준".to_owned()
+    } else {
+        keywords.join(" · ")
+    };
+    match level {
+        1 => format!(
+            "1차 패턴 — {focus}. 서로 다른 {source_count}개 관측에서 같은 맥락이 반복됩니다. {}",
+            sources
+                .iter()
+                .take(3)
+                .map(|source| observatory_excerpt(source, 72))
+                .collect::<Vec<_>>()
+                .join(" / ")
+        ),
+        2 => format!(
+            "2차 규칙 — {focus}. 여러 경험 묶음을 비교하면 상황이 바뀌어도 이 선택 기준이 유지됩니다."
+        ),
+        3 => format!(
+            "3차 성향 가설 — {focus}. 반복된 선택 규칙을 설명하는 안정적인 상위 성향이며 모든 하위 관측으로 역추적할 수 있습니다."
+        ),
+        _ => format!(
+            "L{level} 상위 통찰 — {focus}. 하위 통찰 {source_count}개가 같은 방향을 가리키며 원문 포인터를 유지합니다."
+        ),
+    }
+}
+
+fn abstraction_keywords(sources: &[String]) -> Vec<String> {
+    const STOP_WORDS: &[&str] = &[
+        "그리고",
+        "하지만",
+        "에서",
+        "으로",
+        "하는",
+        "했다",
+        "있습니다",
+        "됩니다",
+        "the",
+        "and",
+        "that",
+        "with",
+        "this",
+        "from",
+        "what",
+        "when",
+        "where",
+        "recent",
+        "experience",
+        "patterns",
+        "관측",
+        "근거",
+        "최근",
+        "패턴",
+    ];
+    let mut counts = HashMap::<String, usize>::new();
+    for source in sources {
+        for token in source
+            .split(|character: char| !character.is_alphanumeric())
+            .map(str::trim)
+            .filter(|token| token.chars().count() >= 2)
+        {
+            let normalized = token.to_lowercase();
+            if STOP_WORDS.contains(&normalized.as_str()) {
+                continue;
+            }
+            *counts.entry(normalized).or_default() += 1;
+        }
+    }
+    let mut ranked = counts.into_iter().collect::<Vec<_>>();
+    ranked.sort_by(|(left_word, left_count), (right_word, right_count)| {
+        right_count
+            .cmp(left_count)
+            .then_with(|| right_word.chars().count().cmp(&left_word.chars().count()))
+            .then_with(|| left_word.cmp(right_word))
+    });
+    ranked.into_iter().take(4).map(|(word, _)| word).collect()
+}
+
+fn observatory_excerpt(text: &str, max_chars: usize) -> String {
+    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= max_chars {
+        compact
+    } else {
+        format!("{}…", compact.chars().take(max_chars).collect::<String>())
+    }
 }
 
 fn author_reliability(transaction: &Transaction<'_>, user_id: &str) -> Result<f32, StoreError> {
@@ -19548,7 +20280,9 @@ fn seed_open_calls(transaction: &Transaction<'_>) -> Result<(), StoreError> {
         )?;
         transaction.execute(
             "UPDATE open_calls
-             SET status = 'open', escrow_remaining_krw = ?2 * (?3 - ?4),
+             SET status = 'open',
+                 escrow_remaining_krw = CAST(?2 AS BIGINT)
+                     * (CAST(?3 AS BIGINT) - CAST(?4 AS BIGINT)),
                  unit_price_atomic = ?5,
                  escrow_total_atomic = ?6,
                  escrow_remaining_atomic = ?7
@@ -19810,10 +20544,10 @@ mod tests {
 
     use crate::{
         domain::{
-            AiBaselineDraft, BeginResearchPaymentRequest, BindPayShChallengesRequest,
-            ClaimPaymentAttemptRequest, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
-            CreateOpenCallRequest, CreatePaymentBundleRequest, Decision, EvidenceContribution,
-            InterviewResponse, LiquidityState, PayShChallengeBindingRequest,
+            AdminDeploymentInfo, AiBaselineDraft, BeginResearchPaymentRequest,
+            BindPayShChallengesRequest, ClaimPaymentAttemptRequest, CorrectMemoryRequest,
+            CreateEvidenceEdgeRequest, CreateOpenCallRequest, CreatePaymentBundleRequest, Decision,
+            EvidenceContribution, InterviewResponse, LiquidityState, PayShChallengeBindingRequest,
             PrepareDirectPayShPaymentRequest, PrepareResearchPaymentRequest,
             RecordChainSettlementRequest, ReleaseResearchPaymentRequest, ResolveQuestionRequest,
             ReviewDisputeRequest, ReviewDocumentFeedbackRequest, SearchFilters, ShelfStarterDraft,
@@ -20338,16 +21072,22 @@ mod tests {
     }
 
     #[test]
-    fn admin_table_page_rejects_non_admins() {
+    fn admin_table_page_allows_regular_accounts_in_open_console_mode() {
         let store = Store::in_memory().unwrap();
         ensure_user(&store, "plain-user");
 
         assert!(!store.is_admin("plain-user").unwrap());
+        let page = store
+            .admin_table_page("plain-user", AdminTable::Users, 50, 0)
+            .unwrap();
+        assert!(!page.rows.is_empty());
+        // The temporary switch does not turn a regular account into an admin.
+        assert!(!store.is_admin("plain-user").unwrap());
+        // Unknown or deleted identities still cannot reach the console.
         assert!(matches!(
-            store.admin_table_page("plain-user", AdminTable::Users, 50, 0),
+            store.admin_table_page("ghost", AdminTable::Users, 50, 0),
             Err(StoreError::Unauthorized(_))
         ));
-        // An unknown user id is never admin either.
         assert!(!store.is_admin("ghost").unwrap());
     }
 
@@ -23453,7 +24193,7 @@ mod tests {
     }
 
     #[test]
-    fn only_admins_can_create_independent_verified_authority_edges() {
+    fn regular_accounts_can_create_verified_edges_in_open_console_mode() {
         let store = Store::in_memory().unwrap();
         ensure_user(&store, "curator");
         let request = CreateEvidenceEdgeRequest {
@@ -23464,10 +24204,9 @@ mod tests {
             topic: "travel".to_owned(),
             weight: 1.0,
         };
-        assert!(store.create_evidence_edge("curator", &request).is_err());
-        store.set_user_role("curator", "admin").unwrap();
         let edge = store.create_evidence_edge("curator", &request).unwrap();
         assert_eq!(edge.provenance, "admin_verified");
+        assert!(!store.is_admin("curator").unwrap());
 
         let mut self_owned = request;
         self_owned.source_handle = "PARISR_12".to_owned();
@@ -23546,6 +24285,56 @@ mod tests {
         let export = store.export_account("reflective-user").unwrap();
         assert_eq!(export.profile.unwrap().handle, profile.handle);
         assert_eq!(export.memories.len(), 5);
+    }
+
+    #[test]
+    fn reflection_tree_promotes_observations_into_traceable_second_order_rules() {
+        let store = Store::in_memory().unwrap();
+        let answers = [
+            "In January near Longyearbyen I chose insulated Baffin boots after measuring wind chill. The longer preparation kept my feet dry for six hours, so safety mattered more than reaching the ridge early.",
+            "On a February coastal survey I delayed the snowmobile route until the tide table and visibility agreed. We arrived later, but avoided the exposed ice where another team had turned back that morning.",
+            "During a March camp I packed a second stove and divided fuel between two sleds. The extra weight slowed us down, yet dinner and hot water remained available when the primary pump failed.",
+            "For an April glacier crossing I rejected the shortest line after probing a weak snow bridge. I documented the detour and selected a roped route even though it added nearly forty minutes.",
+            "Before a May boat transfer I waited for a newer marine forecast instead of following the original timetable. The updated wind warning justified staying in harbour until the following morning.",
+            "At a June equipment check I replaced a light radio battery with a heavier cold-rated pack. Its verified runtime mattered more than saving space because the team would be outside the repeater network.",
+            "On a September hike I turned the group around when two independent thermometers showed a rapid drop. The summit was close, but the recorded threshold in our field plan had already been crossed.",
+            "During an October interview trip I booked the flexible return ticket rather than the cheapest fare. A storm cancellation later proved that preserving an exit option was worth the added cost.",
+            "For a November night shift I chose the experienced local guide over the faster contractor. Their knowledge of recent ice movement reduced uncertainty and kept the sampling schedule recoverable.",
+        ];
+        for (index, answer) in answers.iter().enumerate() {
+            let call =
+                create_svalbard_call(&store, &format!("recursive-reflection-buyer-{index}"), 1);
+            submit(&store, &call.id, "recursive-reflection-user", answer).unwrap_or_else(|error| {
+                panic!("recursive reflection submission {index}: {error:?}")
+            });
+        }
+
+        let memories = store.list_memory("recursive-reflection-user").unwrap();
+        let first_order = memories
+            .iter()
+            .filter(|memory| {
+                memory.memory_type == "reflection" && memory.answer.starts_with("1차 패턴")
+            })
+            .collect::<Vec<_>>();
+        let second_order = memories
+            .iter()
+            .find(|memory| {
+                memory.memory_type == "reflection" && memory.answer.starts_with("2차 규칙")
+            })
+            .expect("three first-order reflections should produce an L2 rule");
+        let first_order_ids = first_order
+            .iter()
+            .map(|memory| memory.id.as_str())
+            .collect::<HashSet<_>>();
+
+        assert_eq!(first_order.len(), 3);
+        assert_eq!(second_order.source_ids.len(), 3);
+        assert!(
+            second_order
+                .source_ids
+                .iter()
+                .all(|source_id| first_order_ids.contains(source_id.as_str()))
+        );
     }
 
     #[test]
@@ -25312,6 +26101,13 @@ mod tests {
         assert_eq!(answers[0].handle, "SVALBARD_01");
         assert!(answers[0].excerpt.contains("Longyearbyen"));
         assert_eq!(answers[0].demographics.as_ref().unwrap().region, "abroad");
+        let public_call = store
+            .list_open_calls(Some("someone-else"))
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == call.id)
+            .unwrap();
+        assert_eq!(public_call.contributor_handles, vec!["SVALBARD_01"]);
         assert!(
             store
                 .chat_answers("someone-else", "chat-targeted")
@@ -27168,14 +27964,8 @@ mod tests {
     #[test]
     fn ai_liquidity_metrics_keep_ai_out_of_priced_inventory_and_authority() {
         let store = Store::in_memory().unwrap();
-        ensure_user(&store, "metrics-admin");
         ensure_user(&store, "metrics-user");
-        store.set_user_role("metrics-admin", "admin").unwrap();
-        assert!(matches!(
-            store.ai_liquidity_metrics("metrics-user"),
-            Err(StoreError::Unauthorized(_))
-        ));
-        let metrics = store.ai_liquidity_metrics("metrics-admin").unwrap();
+        let metrics = store.ai_liquidity_metrics("metrics-user").unwrap();
         assert_eq!(metrics.priced_ai_documents, 0);
         assert_eq!(metrics.ai_authority_edges, 0);
         assert!(metrics.human_documents > 0);
@@ -27184,18 +27974,10 @@ mod tests {
     }
 
     #[test]
-    fn operations_snapshot_is_admin_only_and_aggregate_only() {
+    fn operations_snapshot_is_available_to_regular_accounts_and_aggregate_only() {
         let store = Store::in_memory().unwrap();
-        ensure_user(&store, "operations-admin");
         ensure_user(&store, "operations-user");
-        store.set_user_role("operations-admin", "admin").unwrap();
-
-        assert!(matches!(
-            store.admin_operations_snapshot("operations-user"),
-            Err(StoreError::Unauthorized(_))
-        ));
-
-        let snapshot = store.admin_operations_snapshot("operations-admin").unwrap();
+        let snapshot = store.admin_operations_snapshot("operations-user").unwrap();
         assert!(snapshot.marketplace.human_documents > 0);
         assert!(snapshot.marketplace.independent_contributors > 0);
         assert_eq!(snapshot.ai_liquidity.priced_ai_documents, 0);
@@ -27206,6 +27988,80 @@ mod tests {
             "walletAddress",
             "transactionSignature",
             "sessionToken",
+            "documentText",
+            "privateKey",
+            "credential",
+        ] {
+            assert!(!serialized.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn data_pipeline_snapshot_shows_only_the_requesters_memory_text() {
+        let store = Store::in_memory().unwrap();
+        ensure_user(&store, "pipeline-admin");
+        ensure_user(&store, "pipeline-user");
+        let own_call = create_svalbard_call(&store, "pipeline-own-buyer", 1);
+        submit(
+            &store,
+            &own_call.id,
+            "pipeline-user",
+            "In January 2025 I used a cobalt compass during a six-hour Svalbard route. I checked it against the paper map at every ridge and recorded each correction before continuing through the snow.",
+        )
+        .unwrap();
+        let foreign_call = create_svalbard_call(&store, "pipeline-foreign-buyer", 1);
+        submit(
+            &store,
+            &foreign_call.id,
+            "pipeline-foreign-user",
+            "In February 2025 I carried a private amber notebook during a seven-hour coastal survey. I wrote every route choice and weather change before the team returned to camp.",
+        )
+        .unwrap();
+        store
+            .record_system_event(
+                "gemini-mcp",
+                "gemini-cli",
+                "retrieval",
+                "resolve_question",
+                200,
+                37,
+            )
+            .unwrap();
+
+        let deployment = AdminDeploymentInfo {
+            runtime: "Cloud Run".to_owned(),
+            environment: "test".to_owned(),
+            service: Some("obulus-api".to_owned()),
+            revision: Some("obulus-api-00001".to_owned()),
+            project: Some("test-project".to_owned()),
+            location: Some("asia-northeast3".to_owned()),
+            vertex_model: "gemini-test".to_owned(),
+            database: "pending".to_owned(),
+        };
+
+        let snapshot = store
+            .admin_data_pipeline_snapshot("pipeline-user", deployment)
+            .unwrap();
+        assert_eq!(snapshot.deployment.runtime, "Cloud Run");
+        assert_eq!(snapshot.memory.active_reflection_interval, 3);
+        assert_eq!(snapshot.memory.active_importance_scale_max, 1.0);
+        assert_eq!(snapshot.search.embedding_dimensions, 768);
+        assert_eq!(snapshot.search.page_rank_iterations, 40);
+        assert!(
+            snapshot
+                .realtime
+                .sources
+                .iter()
+                .any(|source| source.source == "gemini-mcp")
+        );
+
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+        assert!(serialized.contains("cobalt compass"));
+        assert!(!serialized.contains("private amber notebook"));
+        for forbidden in [
+            "session-secret",
+            "walletAddress",
+            "transactionSignature",
             "documentText",
             "privateKey",
             "credential",
