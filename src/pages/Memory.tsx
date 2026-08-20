@@ -304,19 +304,20 @@ export default function Memory() {
   const total =
     earnings?.accruedKrw ?? settled.reduce((sum, entry) => sum + entry.earned, 0)
   /**
-   * Headline balance card figure: prepaid available balance + accrued
-   * earnings, combined as exact atomic USDC (both are independent 6-decimal
-   * ledgers, so add them as bigints rather than floats). `null` only when
-   * neither atomic field has loaded yet, so the legacy KRW-derived `total`
-   * fallback below still covers the case where atomic data is entirely
-   * absent.
+   * Headline balance card figure ("Total USDC held") — the user's REAL USDC:
+   * the prepaid pot (`prepaid_accounts.available_atomic`, funded by on-chain
+   * top-ups) plus accrued, claimable earnings. Both are independent 6-decimal
+   * atomic ledgers, so add them as bigints rather than floats. We deliberately
+   * do NOT read the internal KRW_SANDBOX ledger (`balance.availableAtomic`):
+   * it is not real USDC (it carried the phantom signup credit), and it already
+   * folds accrued earnings in, which would double-count them here. `null` only
+   * when neither atomic field has loaded yet, so the legacy KRW-derived `total`
+   * fallback below still covers the case where atomic data is entirely absent.
    */
   const headlineAtomicUsdc =
-    balance?.availableAtomic != null || earnings?.accruedAtomic != null
+    prepaidAtomic != null || earnings?.accruedAtomic != null
       ? formatUsdcShort(
-          (
-            parseUsdcAtomic(balance?.availableAtomic) + parseUsdcAtomic(earnings?.accruedAtomic)
-          ).toString(),
+          (parseUsdcAtomic(prepaidAtomic) + parseUsdcAtomic(earnings?.accruedAtomic)).toString(),
         )
       : null
   const answeredViaAutoMatch = settled
