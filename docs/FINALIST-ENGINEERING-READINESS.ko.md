@@ -1,6 +1,6 @@
 # Obolus 결선 기술·상용화 준비도
 
-기준일: 2026-08-11
+기준일: 2026-08-20
 검토 범위: 웹, Rust API, 검색·메모리·품질 로직, Gemini/Vertex AI, MCP/CLI,
 x402 gateway, Pay.sh orchestrator, Solana Devnet, Cloud Run·Cloud SQL·Cloud
 Tasks·Cloud KMS·Secret Manager, 테스트 및 현재 GCP 서빙 상태
@@ -15,7 +15,7 @@ Obolus의 가장 강한 포지션은 **B. Autonomous On-chain Settlement**다. �
 정산한다는 점이다. 현재 코드에는 A2A 프로토콜이나 Passkey가 구현돼 있지 않으므로
 그 둘을 사용했다고 주장해서는 안 된다.
 
-소스 코드 기준 핵심 제품 흐름은 구현됐고 전체 자동 검증 362개가 통과한다. 다만 이
+소스 코드 기준 핵심 제품 흐름은 구현됐고 로컬 전체 자동 검증 435개가 통과한다. 다만 이
 revision의 두 단계 Vertex 흐름은 아직 현재 서빙 API와 공개 autonomy artifact에
 승격·재기록되지 않았다. 따라서 `npm run pitch:verify-live`가 최신 인프라 revision,
 Cloud Run 실행 로그, autonomy v2와 Devnet v2의 24시간 신선도·2시간 상호 시각 범위를
@@ -342,18 +342,20 @@ flowchart LR
 
 ## 검증 결과
 
-- frontend unit: 18/18
+- frontend unit: 25/25
 - Cloudflare Pages proxy: 3/3
 - Antigravity MCP runtime: 14/14
-- 로컬 Agent MCP/CLI: 15/15
+- 로컬 Agent MCP/CLI: 24/24
+- 독립 Obulus MCP: 7/7
 - 결선 evidence tooling: 13/13
-- x402 payment gateway: 97/97
-- Pay.sh orchestrator: 50/50
-- Rust library/API: 141/141
+- x402 payment gateway: 102/102
+- Pay.sh orchestrator: 53/53
+- Rust library/API: 176/176
 - Rust API main: 1/1
 - Rust agent autonomy contract: 7/7
 - Rust contract/PostgreSQL concurrency: 2/2
-- 총 362개 테스트 통과
+- Solana settlement program: 8/8
+- 총 435개 테스트 통과
 - TypeScript build/typecheck, Vite production build, Pages bundle verification, oxlint,
   Rust fmt, Clippy `-D warnings`, `git diff --check` 통과
 - root/payment-gateway/agent-orchestrator/local-agent npm production dependency audit: 취약점 0

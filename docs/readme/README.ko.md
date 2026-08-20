@@ -477,9 +477,10 @@ PR에는 배포 자격증명을 주지 않습니다.
 [`deploy-cloud-run.yml`](../../.github/workflows/deploy-cloud-run.yml),
 [운영 배포 런북](../DEPLOYMENT.ko.md)을 참고하세요.
 
-2026-08-11 engineering 기준선은 **일반 테스트 362/362**입니다. frontend 18, Pages proxy 3,
-Antigravity MCP 14, local agent 15, evidence tooling 13, gateway 97, orchestrator 50,
-Rust 152개가 통과했습니다. build, bundle 검증, typecheck, lint, Clippy도 통과했고
+2026-08-20 로컬 전체 회귀 기준선은 **일반 테스트 435/435**입니다. frontend 25,
+Pages proxy 3, Antigravity MCP 14, local agent 24, 독립 Obulus MCP 7,
+evidence tooling 13, gateway 102, orchestrator 53, Rust API 186,
+Solana settlement program 8개가 통과했습니다. build, bundle 검증, typecheck, lint, Clippy도 통과했고
 네 npm workspace의 production dependency audit은 취약점 0입니다. Gateway mutation은
 범위 내 200/200을 모두 kill했습니다. Rust 전체 mutation은 통과로 부르지 않습니다.
 437개 중 197 caught, 221 survived, 19 unviable이며 RustSec과 survivor 축소는 Mainnet

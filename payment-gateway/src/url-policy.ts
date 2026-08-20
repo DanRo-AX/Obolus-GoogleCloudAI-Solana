@@ -25,3 +25,38 @@ export function secureServiceOrigin(name: string, value: string): string {
   }
   return url.origin;
 }
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * Production origins remain an exact allowlist. During local development only,
+ * localhost, 127.0.0.1, and ::1 may stand in for one another when their scheme
+ * and port are identical.
+ */
+export function browserOriginAllowed(
+  candidate: string | undefined,
+  configured: string,
+  managedEnvironment: boolean,
+): boolean {
+  if (!candidate) return false;
+  if (candidate === configured) return true;
+  if (managedEnvironment) return false;
+
+  try {
+    const actual = new URL(candidate);
+    const expected = new URL(configured);
+    return (
+      LOOPBACK_HOSTS.has(actual.hostname) &&
+      LOOPBACK_HOSTS.has(expected.hostname) &&
+      actual.protocol === expected.protocol &&
+      actual.port === expected.port &&
+      actual.username === "" &&
+      actual.password === "" &&
+      actual.pathname === "/" &&
+      actual.search === "" &&
+      actual.hash === ""
+    );
+  } catch {
+    return false;
+  }
+}

@@ -22,14 +22,14 @@ use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_kn
 
 use crate::{
     domain::{
-        AccountControls, AdminOperationsSnapshot, AdminTablePage, AgentAuthResponse, AgentRun,
-        AgentStep,
-        AgentStepStatus, AgentTool, AiLiquidityMetrics, AuthResponse, BalanceSummary,
-        BeginResearchPaymentRequest, BindPayShChallengesRequest, ChainSettlementReceipt,
-        ChatAnswer, ClaimPaymentAttemptRequest, CompletePayoutClaimRequest, ContributorManifest,
-        ContributorMemoryLink, ContributorNotification, CorrectMemoryRequest,
-        CreateEvidenceEdgeRequest, CreateOpenCallRequest, CreatePaymentBundleRequest,
-        CreatePrepaidSessionRequest, CreatePrepaidWithdrawalRequest, DeferResearchPaymentRequest,
+        AccountControls, AdminDataPipelineSnapshot, AdminDeploymentInfo, AdminOperationsSnapshot,
+        AdminTablePage, AgentAuthResponse, AgentRun, AgentStep, AgentStepStatus, AgentTool,
+        AiLiquidityMetrics, AuthResponse, BalanceSummary, BeginResearchPaymentRequest,
+        BindPayShChallengesRequest, ChainSettlementReceipt, ChatAnswer, ClaimPaymentAttemptRequest,
+        CompletePayoutClaimRequest, ContributorManifest, ContributorMemoryLink,
+        ContributorNotification, CorrectMemoryRequest, CreateEvidenceEdgeRequest,
+        CreateOpenCallRequest, CreatePaymentBundleRequest, CreatePrepaidSessionRequest,
+        CreatePrepaidWithdrawalRequest, DeferResearchPaymentRequest,
         DirectPayShPaymentReconciliation, DisputeCase, DocumentFeedback, EarningsSummary,
         EvidenceEdge, FailPayoutClaimRequest, FailResearchJobRequest, ForgotPasswordRequest,
         GenerateAiBaselineResponse, GenerateShelfStartersResponse, LeasePayoutClaimsRequest,
@@ -285,6 +285,43 @@ impl AppState {
         &self.frontend_origin
     }
 
+    /// Store a classified, content-free request event for the administrator
+    /// data-plane view. Failures are intentionally left to the caller to log:
+    /// observability must never change the product request's response.
+    pub(crate) fn record_system_event(
+        &self,
+        source: &str,
+        instance: &str,
+        stage: &str,
+        action: &str,
+        status: u16,
+        latency_ms: u64,
+    ) -> Result<(), StoreError> {
+        self.store
+            .record_system_event(source, instance, stage, action, status, latency_ms)
+    }
+
+    fn deployment_info(&self) -> AdminDeploymentInfo {
+        let cloud_run_service = std::env::var("K_SERVICE").ok();
+        AdminDeploymentInfo {
+            runtime: if cloud_run_service.is_some() {
+                "Cloud Run".to_owned()
+            } else {
+                "Local runtime".to_owned()
+            },
+            environment: self.environment.clone(),
+            service: cloud_run_service,
+            revision: std::env::var("K_REVISION").ok(),
+            project: std::env::var("GOOGLE_CLOUD_PROJECT")
+                .or_else(|_| std::env::var("GCLOUD_PROJECT"))
+                .ok(),
+            location: std::env::var("GOOGLE_CLOUD_LOCATION").ok(),
+            vertex_model: std::env::var("OPENSHELF_VERTEX_MODEL")
+                .unwrap_or_else(|_| "gemini-2.5-flash".to_owned()),
+            database: String::new(),
+        }
+    }
+
     async fn deliver_pending_emails(&self) {
         let (Some(endpoint), Some(api_key), Some(from)) = (
             self.email_endpoint.as_deref(),
@@ -478,6 +515,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(ai_liquidity_metrics),
         )
         .route("/api/v1/admin/operations", get(admin_operations))
+        .route("/api/v1/admin/data-pipeline", get(admin_data_pipeline))
         .route("/api/v1/admin/tables/users", get(admin_table_users))
         .route("/api/v1/admin/tables/balances", get(admin_table_balances))
         .route(
@@ -1935,6 +1973,17 @@ async fn admin_operations(
     Ok(Json(state.store.admin_operations_snapshot(&user.id)?))
 }
 
+async fn admin_data_pipeline(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<AdminDataPipelineSnapshot>, ApiError> {
+    let user = authenticated(&state, &headers)?;
+    Ok(Json(state.store.admin_data_pipeline_snapshot(
+        &user.id,
+        state.deployment_info(),
+    )?))
+}
+
 /// Pagination for the admin table viewers. `limit` defaults to
 /// [`ADMIN_TABLE_DEFAULT_PAGE`] and is hard-capped server-side at 100;
 /// `offset` defaults to 0.
@@ -1947,8 +1996,8 @@ struct AdminTablePageQuery {
 
 const ADMIN_TABLE_DEFAULT_PAGE: usize = 50;
 
-/// Serve one paginated, admin-gated, redacted page of a curated table. Shared
-/// by every `/api/v1/admin/tables/*` route so the gate, the pagination
+/// Serve one paginated, authenticated, redacted page of a curated table. Shared
+/// by every `/api/v1/admin/tables/*` route so the account gate, the pagination
 /// defaults, and the redacted projection live in exactly one place.
 async fn admin_table_page(
     state: &Arc<AppState>,
@@ -1956,7 +2005,7 @@ async fn admin_table_page(
     table: AdminTable,
     query: AdminTablePageQuery,
 ) -> Result<Json<AdminTablePage>, ApiError> {
-    let user = authenticated_admin(state, headers)?;
+    let user = authenticated(state, headers)?;
     Ok(Json(state.store.admin_table_page(
         &user.id,
         table,
@@ -3381,18 +3430,6 @@ fn authenticated(state: &AppState, headers: &HeaderMap) -> Result<UserAccount, A
     Ok(state.store.authenticate_session(&token_hash(&token))?)
 }
 
-/// Authenticate the caller and require administrator access. Returns 403 for
-/// any signed-in non-admin (and 401 for an unauthenticated caller, via
-/// [`authenticated`]). Admin status is the allowlist-aware
-/// [`Store::is_admin`] — the persisted role OR an allowlisted wallet binding.
-fn authenticated_admin(state: &AppState, headers: &HeaderMap) -> Result<UserAccount, ApiError> {
-    let user = authenticated(state, headers)?;
-    if !state.store.is_admin(&user.id)? {
-        return Err(ApiError::forbidden("administrator access is required"));
-    }
-    Ok(user)
-}
-
 fn optional_authenticated(
     state: &AppState,
     headers: &HeaderMap,
@@ -3856,7 +3893,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn admin_table_endpoint_forbids_non_admins() {
+    async fn admin_table_endpoint_serves_regular_signed_in_accounts() {
         let app = demo_app();
         let cookie = register(&app, "not-admin@example.com").await;
         let response = app
@@ -3868,7 +3905,12 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(body["table"], "users");
+        assert!(!body["rows"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]

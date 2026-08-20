@@ -1,6 +1,10 @@
 import { Fragment } from 'react'
 import { Link, NavLink } from 'react-router-dom'
-import { Activity, LogIn, LogOut, ShieldCheck } from 'lucide-react'
+import {
+  LogIn,
+  LogOut,
+  Waypoints,
+} from 'lucide-react'
 import { BrandMark } from '@/components/ui/BrandMark'
 import { Button } from '@/components/ui/button'
 import { NAV_ITEMS } from '@/data/nav'
@@ -8,6 +12,26 @@ import { cn } from '@/lib/utils'
 import { useT } from '@/i18n'
 import { useUi } from '@/state/ui'
 import { useWallet } from '@/state/wallet'
+
+function MobileAdminMenu({ onNavigate }: { onNavigate: () => void }) {
+  return (
+    <li className="relative mt-1 border-t border-sidebar-border pt-2">
+      <NavLink
+        to="/admin"
+        onClick={onNavigate}
+        className={({ isActive }) =>
+          cn(
+            'flex h-11 w-full items-center gap-2 rounded-md p-2 text-left text-sm font-medium transition-colors hover:bg-sidebar-accent [&>svg]:size-4',
+            isActive && 'bg-foreground/4 text-foreground',
+          )
+        }
+      >
+        <Waypoints className="text-muted-foreground/60" />
+        <span>Admin Test</span>
+      </NavLink>
+    </li>
+  )
+}
 
 /** Sheet version of the sidebar for viewports below md. */
 export function MobileSidebar() {
@@ -75,39 +99,10 @@ export function MobileSidebar() {
                   </li>
                 </Fragment>
               ))}
-              {account?.role === 'admin' ? (
-                <>
-                  <li className="relative">
-                    <NavLink
-                      to="/admin/operations"
-                      onClick={() => setMobileSidebar(false)}
-                      className={({ isActive }) =>
-                        cn(
-                          'flex h-11 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm font-medium transition-colors hover:bg-sidebar-accent [&>svg]:size-4',
-                          isActive && 'bg-foreground/4',
-                        )
-                      }
-                    >
-                      <Activity className="text-muted-foreground/60" />
-                      <span>{t('Operations')}</span>
-                    </NavLink>
-                  </li>
-                  <li className="relative">
-                    <NavLink
-                      to="/admin/disputes"
-                      onClick={() => setMobileSidebar(false)}
-                      className={({ isActive }) =>
-                        cn(
-                          'flex h-11 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm font-medium transition-colors hover:bg-sidebar-accent [&>svg]:size-4',
-                          isActive && 'bg-foreground/4',
-                        )
-                      }
-                    >
-                      <ShieldCheck className="text-muted-foreground/60" />
-                      <span>{t('Disputes')}</span>
-                    </NavLink>
-                  </li>
-                </>
+              {account ? (
+                <MobileAdminMenu
+                  onNavigate={() => setMobileSidebar(false)}
+                />
               ) : null}
             </ul>
           </div>

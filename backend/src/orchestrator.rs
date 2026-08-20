@@ -225,25 +225,30 @@ pub async fn plan_human_evidence_search(
     provider_allowed: bool,
 ) -> PlannedSearch {
     let body = search_plan_body(request);
+    // The deployed global Vertex endpoint can spend a little over five seconds
+    // on the first function-call schema. Two eight-second provider budgets plus
+    // deterministic retrieval still remain inside the API's 22-second fence.
     if provider_allowed
         && let Some((payload, model)) =
-            vertex_generate_with_timeout(&body, Duration::from_secs(5)).await
-        && let Some(arguments) = parse_search_tool_call(&payload)
+            vertex_generate_with_timeout(&body, Duration::from_secs(8)).await
     {
-        let planned = apply_search_plan(request, arguments);
-        return PlannedSearch {
-            step: AgentStep {
-                sequence: 1,
-                agent: "research_planner".to_owned(),
-                tool: AgentTool::SearchHumanEvidence,
-                status: AgentStepStatus::Completed,
-                summary: search_plan_summary(&planned),
-                artifact_ref: None,
-            },
-            request: planned,
-            model,
-            mode: "vertex_function_call".to_owned(),
-        };
+        if let Some(arguments) = parse_search_tool_call(&payload) {
+            let planned = apply_search_plan(request, arguments);
+            return PlannedSearch {
+                step: AgentStep {
+                    sequence: 1,
+                    agent: "research_planner".to_owned(),
+                    tool: AgentTool::SearchHumanEvidence,
+                    status: AgentStepStatus::Completed,
+                    summary: search_plan_summary(&planned),
+                    artifact_ref: None,
+                },
+                request: planned,
+                model,
+                mode: "vertex_function_call".to_owned(),
+            };
+        }
+        warn_invalid_tool_response(&payload, "research_planner");
     }
 
     PlannedSearch {
@@ -274,7 +279,7 @@ pub async fn plan_next_market_action(
     let body = next_action_body(response);
     if provider_allowed
         && let Some((payload, model)) =
-            vertex_generate_with_timeout(&body, Duration::from_secs(5)).await
+            vertex_generate_with_timeout(&body, Duration::from_secs(8)).await
         && let Some(tool) = parse_next_action_tool_call(&payload)
         && next_action_allowed(response, tool)
     {
@@ -352,7 +357,17 @@ fn search_plan_body(request: &ResolveQuestionRequest) -> Value {
             }
         }]}],
         "toolConfig": {"functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": ["search_human_evidence"]}},
-        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 512}
+        // Gemini 2.5 Flash can spend its response budget producing an internal
+        // thought before a constrained function call. With Korean research
+        // prompts Vertex may then return MALFORMED_FUNCTION_CALL with no
+        // callable part. This stage only maps the request into a bounded tool,
+        // so disabling thinking makes the contract both faster and reliable;
+        // Rust still validates every argument and owns all economic authority.
+        "generationConfig": {
+            "temperature": 0.0,
+            "maxOutputTokens": 512,
+            "thinkingConfig": {"thinkingBudget": 0}
+        }
     })
 }
 
@@ -365,6 +380,30 @@ fn function_call(payload: &Value) -> Option<(&str, &Value)> {
             let call = part.get("functionCall")?;
             Some((call.get("name")?.as_str()?, call.get("args")?))
         })
+}
+
+fn warn_invalid_tool_response(payload: &Value, stage: &str) {
+    let finish_reason = payload
+        .pointer("/candidates/0/finishReason")
+        .and_then(Value::as_str)
+        .unwrap_or("missing");
+    let candidate_count = payload
+        .get("candidates")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let part_count = payload
+        .pointer("/candidates/0/content/parts")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    // Do not log the provider payload, prompt, generated text, function
+    // arguments, or finishMessage: any of them may contain user data.
+    warn!(
+        stage,
+        finish_reason,
+        candidate_count,
+        part_count,
+        "Vertex response did not contain an allowed, valid tool call"
+    );
 }
 
 fn parse_search_tool_call(payload: &Value) -> Option<SearchToolArguments> {
@@ -405,7 +444,11 @@ fn next_action_body(response: &ResolveQuestionResponse) -> Value {
         // Gemini 2.5 Flash counts internal thinking against this ceiling. A
         // 128-token ceiling can end with MAX_TOKENS before the model emits its
         // tiny function call, so keep the same bounded ceiling as stage one.
-        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 512}
+        "generationConfig": {
+            "temperature": 0.0,
+            "maxOutputTokens": 512,
+            "thinkingConfig": {"thinkingBudget": 0}
+        }
     })
 }
 
@@ -1075,6 +1118,10 @@ mod tests {
     fn search_planner_can_only_call_a_non_spending_metadata_tool() {
         let body = search_plan_body(&resolve_request());
         let tools = body["tools"].to_string();
+        assert_eq!(
+            body["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            0
+        );
         assert!(tools.contains("search_human_evidence"));
         assert!(!tools.contains("payment"));
         assert!(!tools.contains("wallet"));
@@ -1182,6 +1229,10 @@ mod tests {
         };
         let body = next_action_body(&response);
         assert_eq!(body["generationConfig"]["maxOutputTokens"], 512);
+        assert_eq!(
+            body["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            0
+        );
         let tools = body["tools"].to_string();
         assert!(tools.contains("propose_open_call"));
         assert!(tools.contains("generate_general_baseline"));

@@ -497,6 +497,91 @@
         color: rgba(255, 255, 255, 0.035);
       }
 
+      .micro-flow {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+        align-items: center;
+        gap: 0.42rem;
+      }
+
+      .micro-node {
+        min-width: 0;
+        padding: 0.72rem 0.62rem;
+        border: 1px solid var(--line);
+        border-radius: 0.45rem;
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: clamp(7px, 0.62cqw, 11px);
+        line-height: 1.25;
+        text-align: center;
+        color: rgba(255,255,255,.82);
+        background: rgba(255,255,255,.035);
+      }
+
+      .micro-arrow {
+        color: rgba(255,255,255,.4);
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: clamp(10px, 0.9cqw, 16px);
+      }
+
+      .light .micro-node {
+        border-color: var(--line-dark);
+        color: var(--black);
+        background: rgba(0,0,0,.025);
+      }
+
+      .light .micro-arrow { color: rgba(0,0,0,.35); }
+
+      .target-strip {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.55rem;
+        margin: 1rem 0 0.45rem;
+      }
+
+      .target-pill {
+        padding: 0.55rem 0.68rem;
+        border: 1px solid var(--line-dark);
+        border-radius: 100px;
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: clamp(7px, 0.62cqw, 11px);
+        text-align: center;
+        white-space: nowrap;
+      }
+
+      .problem-shift {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 0.55rem;
+        align-items: stretch;
+        margin-top: 1.1rem;
+      }
+
+      .problem-shift .shift-block {
+        padding: 0.8rem;
+        border: 1px solid rgba(255,255,255,.18);
+        border-radius: 0.45rem;
+        background: rgba(255,255,255,.04);
+      }
+
+      .problem-shift .shift-block strong {
+        display: block;
+        margin-bottom: 0.35rem;
+        font-size: clamp(10px, 0.82cqw, 14px);
+      }
+
+      .problem-shift .shift-block span {
+        display: block;
+        color: rgba(255,255,255,.58);
+        font-size: clamp(7px, 0.63cqw, 11px);
+        line-height: 1.35;
+      }
+
+      .problem-shift .shift-arrow {
+        align-self: center;
+        color: rgba(255,255,255,.45);
+        font-family: "GeistMono", ui-monospace, monospace;
+      }
+
       .problem-slide .split-heading {
         grid-template-columns: 1.18fr 0.82fr;
         margin-top: 2.6%;
@@ -720,6 +805,68 @@
       .product-solution .experience-card strong {
         margin-bottom: 0.2rem;
       }
+
+      .product-visual {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr) auto;
+        gap: 0.85rem;
+        min-height: 0;
+        align-self: stretch;
+      }
+
+      .product-visual .browser-frame {
+        width: 100%;
+        height: auto;
+        max-height: 425px;
+        aspect-ratio: 16 / 8.1;
+        align-self: end;
+      }
+
+      .coverage-branch {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.55rem;
+        position: relative;
+      }
+
+      .coverage-branch::before {
+        content: "Rust coverage decision";
+        position: absolute;
+        left: 50%;
+        top: -1.2rem;
+        transform: translateX(-50%);
+        padding: 0 .45rem;
+        color: rgba(255,255,255,.45);
+        background: var(--black);
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: clamp(6px, .55cqw, 10px);
+        letter-spacing: .08em;
+        text-transform: uppercase;
+      }
+
+      .coverage-node {
+        padding: 0.75rem 0.7rem;
+        border: 1px solid var(--line);
+        border-radius: 0.45rem;
+        background: rgba(255,255,255,.035);
+      }
+
+      .coverage-node strong,
+      .coverage-node span { display: block; }
+
+      .coverage-node strong {
+        margin-bottom: .28rem;
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: clamp(8px, .72cqw, 12px);
+      }
+
+      .coverage-node span {
+        color: rgba(255,255,255,.56);
+        font-size: clamp(7px, .62cqw, 11px);
+        line-height: 1.3;
+      }
+
+      .coverage-node.miss { border-style: dashed; }
 
       .timeline {
         display: grid;
@@ -1975,6 +2122,59 @@
         border: 1px solid var(--line);
       }
 
+      .market-column .scenario-flow {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr auto 1fr;
+        align-items: center;
+        gap: .38rem;
+        margin: 1rem 0 1.15rem;
+      }
+
+      .scenario-flow span:not(.scenario-arrow) {
+        min-height: 4.1rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: .55rem .4rem;
+        border: 1px solid var(--line);
+        border-radius: .35rem;
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: clamp(6px, .55cqw, 10px);
+        line-height: 1.25;
+        text-align: center;
+      }
+
+      .scenario-arrow {
+        color: rgba(255,255,255,.36);
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: clamp(9px, .75cqw, 13px);
+      }
+
+      .adoption-loop {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        margin-top: 1.1rem;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .adoption-loop div {
+        min-height: 4.6rem;
+        padding: .75rem;
+        border-right: 1px solid var(--line);
+        font-size: clamp(7px, .63cqw, 11px);
+        line-height: 1.3;
+      }
+
+      .adoption-loop div:last-child { border-right: 0; }
+
+      .adoption-loop strong {
+        display: block;
+        margin-bottom: .24rem;
+        font-family: "GeistMono", ui-monospace, monospace;
+        font-size: clamp(7px, .65cqw, 11px);
+      }
+
       .market-column h3 {
         margin-bottom: 1.2rem;
         font-size: clamp(16px, 1.65vw, 30px);
@@ -2368,6 +2568,12 @@
                   <span class="badge">Solana</span><span class="badge">x402</span>
                   <span class="badge">Pay.sh</span><span class="badge">MCP</span>
                 </div>
+                <div class="micro-flow" data-diagram="D0" aria-label="질문부터 인간 근거 검색과 결제까지의 Obolus 미니 파이프라인" style="margin-top:1.35rem">
+                  <div class="micro-node">질문</div><span class="micro-arrow">→</span>
+                  <div class="micro-node">인간 DB 검색</div><span class="micro-arrow">→</span>
+                  <div class="micro-node">선택 근거 결제</div><span class="micro-arrow">→</span>
+                  <div class="micro-node">인용 답변</div>
+                </div>
               </div>
             </div>
             <div class="cover-media">
@@ -2402,7 +2608,12 @@
                 <div class="card-pad">
                   <div class="card-kicker">기업이 지금 답을 얻는 방법</div>
                   <h3 class="problem-card-heading">원하는 질문이 생길 때마다 조사를 처음부터 다시 만듭니다.</h3>
-                  <div class="research-flow">
+                  <div class="target-strip" aria-label="Obolus의 세 핵심 도입 대상">
+                    <div class="target-pill">은행·보험</div>
+                    <div class="target-pill">소비재·F&amp;B</div>
+                    <div class="target-pill">리서치 기관</div>
+                  </div>
+                  <div class="research-flow" data-diagram="D1" aria-label="기업의 반복 조사 비용이 발생하는 현재 파이프라인">
                     <div class="research-stage"><span class="step-number">01</span><strong>패널<br />모집</strong></div>
                     <div class="research-stage"><span class="step-number">02</span><strong>설문·<br />인터뷰</strong></div>
                     <div class="research-stage"><span class="step-number">03</span><strong>중앙<br />데이터셋</strong></div>
@@ -2418,6 +2629,11 @@
                   <div class="card-kicker">기업이 실제로 알고 싶은 것</div>
                   <h3 class="problem-card-heading">평균적인 AI 추정이 아니라, 조건에 맞는 사람들의 최근 실제 경험이 필요합니다.</h3>
                   <p class="big-quote question-copy"><span>“파리 현지 20대는 최근</span><span>평일 저녁에 무엇을 선택하고,</span><span>왜 관광객용 메뉴를 피하는가?”</span></p>
+                  <div class="problem-shift" aria-label="반복 패널 조사에서 Obolus 근거 재사용 구조로의 전환">
+                    <div class="shift-block"><strong>현재</strong><span>매 질문마다 전원 모집<br />응답은 일회성 보고서로 종료</span></div>
+                    <div class="shift-arrow">→</div>
+                    <div class="shift-block"><strong>Obolus</strong><span>기존 근거를 먼저 검색<br />공백만 모집·재사용마다 정산</span></div>
+                  </div>
                 </div>
                 <div style="margin-top:auto">
                   <div class="experience-card"><span class="step-number">공백</span><div><strong>이 답은 공개 웹에도, 범용 모델에도 충분히 없습니다.</strong><span class="small muted">지역 · 직군 · 경험 · 시점이 결합된 실제 인간 응답이 필요합니다.</span></div></div>
@@ -2477,9 +2693,16 @@
                   <div class="experience-card"><span class="step-number">04</span><div><strong>결제된 근거로 답변</strong><span class="small muted">열린 passage만 Gemini가 인용·비교·합성</span></div></div>
                 </div>
               </div>
-              <div class="browser-frame" style="width:100%; height:auto; aspect-ratio:16/10; align-self:center">
-                <div class="browser-bar"><i class="browser-dot"></i><i class="browser-dot"></i><i class="browser-dot"></i></div>
-                <div role="img" aria-label="채팅에서 인간 DB 후보와 정확한 결제 견적을 확인하는 화면" style="height:92.5%; background:#fff url('pitch-deck-assets/10-chat-hit-exact-quote.png') 62% 22% / 132% auto no-repeat; filter:grayscale(1) contrast(1.04)"></div>
+              <div class="product-visual" data-diagram="D2" aria-label="기존 근거의 커버리지에 따라 구매, 부분 조사, 공개 모집으로 분기하는 Obolus 제품 루프">
+                <div class="browser-frame">
+                  <div class="browser-bar"><i class="browser-dot"></i><i class="browser-dot"></i><i class="browser-dot"></i></div>
+                  <div role="img" aria-label="채팅에서 인간 DB 후보와 정확한 결제 견적을 확인하는 화면" style="height:92.5%; background:#fff url('pitch-deck-assets/10-chat-hit-exact-quote.png') 62% 22% / 132% auto no-repeat; filter:grayscale(1) contrast(1.04)"></div>
+                </div>
+                <div class="coverage-branch">
+                  <div class="coverage-node"><strong>HIT · 기존 근거 충분</strong><span>선택 문서만 구매 → 인용 답변</span></div>
+                  <div class="coverage-node"><strong>PARTIAL · 일부 부족</strong><span>기존 근거 사용 + 부족 집단만 조사</span></div>
+                  <div class="coverage-node miss"><strong>MISS · 근거 없음</strong><span>조건·보상 확정 → Open Call</span></div>
+                </div>
               </div>
             </div>
             <div class="footer-note"><span>검색은 무료 · 인간 경험 원문만 유료</span><span>04</span></div>
@@ -2633,7 +2856,7 @@
               <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(27px,2.95vw,49px)"><span>Gemini가 검색을 계획하고 결과를 관측한 뒤,</span><span>다음 비결제 행동을 다시 선택합니다.</span></h2>
               <p class="lead" style="max-width:34ch">두 번의 실제 Vertex 함수 호출 사이에서 Rust가 검색을 실행합니다. 모델에는 결제 권한과 비공개 원문이 없습니다.</p>
             </div>
-            <div class="ai-lanes">
+            <div class="ai-lanes" data-diagram="D3" aria-label="Vertex 함수 호출 두 번과 Rust 결정론적 도구 실행으로 구성된 에이전트 제어 루프">
               <div class="ai-lane"><span class="num">01 / VERTEX CALL 1</span><div><h3>자연어 → 제한된 검색 metadata</h3><p class="small muted">Gemini는 대상·지역·근거 수를 enum 범위 안에서 보완하고 <code>search_human_evidence</code>를 한 번 호출합니다. 사용자가 정한 예산은 바꿀 수 없습니다.</p><div class="ai-lane-example">질문 → search_human_evidence<br />filters · requestedDocuments</div><div style="margin-top:1rem"><span class="badge">Gemini · Function Call</span></div></div></div>
               <div class="ai-lane"><span class="num">02 / RUST TOOL EXECUTION</span><div><h3>검색·랭킹 → 실제 coverage 관측</h3><p class="small muted">Rust가 동의·hash·신뢰·예산 규칙으로 후보를 실행하고 HIT/PARTIAL/MISS와 선택 수만 만듭니다. 이 단계는 LLM 역할명이 아니라 결정적 코드입니다.</p><div class="ai-lane-example">Server observation<br />decision · candidates · selected</div><div style="margin-top:1rem"><span class="badge">Deterministic · Audited</span></div></div></div>
               <div class="ai-lane"><span class="num">03 / VERTEX CALL 2</span><div><h3>관측 결과 → 다음 tool 선택</h3><p class="small muted">Gemini가 구매 제안·부분 조사·Open Call·무료 baseline·종료 중 하나를 고릅니다. 서버가 coverage와 맞지 않으면 거부하고, 지출 제안은 사용자 승인에서 멈춥니다.</p><div class="ai-lane-example">MISS + selected 0<br />→ propose_open_call</div><div style="margin-top:1rem"><span class="badge">Allowlist · Approval Stop</span></div></div></div>
@@ -2658,7 +2881,7 @@
             <div class="eyebrow">가격 전략 / 마이크로페이</div>
             <div style="display:flex; justify-content:space-between; align-items:end; margin-top:2.8%">
               <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(29px,3.55vw,61px)"><span>80개 후보를 먼저 비교하고,</span><span>선택한 8개 원문에만 120원을 지불합니다.</span></h2>
-              <div style="text-align:right"><span class="badge fill">현재 코드 기준</span><p class="small muted" style="margin-top:.8rem">Devnet·데모 가격 · 상용 가격 아님</p></div>
+              <div style="text-align:right"><span class="badge fill">데모 가격 기준</span><p class="small muted" style="margin-top:.8rem">Devnet·목표 수수료 정책 · 상용 가격 아님</p></div>
             </div>
             <div class="price-grid">
               <div class="price-card"><div class="card-kicker">검색·랭킹</div><div class="price-value">0원</div><div class="price-unit">원문 없는 메타데이터 검색</div><p class="small muted" style="margin-top:1.3rem">후보, 가격, 커버리지와 신뢰 신호는 무료</p></div>
@@ -2670,7 +2893,7 @@
               <div class="card card-pad" style="display:flex; flex-direction:column; justify-content:space-between">
                 <div><div class="card-kicker">한 질문의 예시</div><div class="metric">80개 후보 → 8개 구매</div></div>
                 <div class="unit-stack"><div style="width:100%; background:var(--black); color:#fff">평균 ₩15 × 8개 = 총 ₩120</div></div>
-                <p class="small muted">현재 코드와 UI는 문서별 결제액의 90%를 근거 소유자에게, 10%를 프로토콜에 정확히 배분합니다.</p>
+                <p class="small muted">목표 정책은 소유자 약 90%·프로토콜 10%입니다. atomic 반올림과 hosted Pay.sh 직접 경로의 실제 배분은 canonical receipt로 따로 검증합니다.</p>
               </div>
               <div class="card card-pad" style="display:flex; flex-direction:column; justify-content:space-between">
                 <div><div class="card-kicker">상용 수익화 방향</div><div class="metric">소액 거래 × Agent 규모</div></div>
@@ -2692,7 +2915,7 @@
               <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(28px,3vw,49px)"><span>무료 검색부터 유료 원문 공개까지,</span><span>하나의 검증 가능한 상태 흐름입니다.</span></h2>
               <p class="lead" style="max-width:35ch">Agent는 먼저 랭킹하고, 정확한 문서·가격·수취인을 확정한 뒤에만 결제합니다.</p>
             </div>
-            <div class="protocol-wrap" aria-label="Obolus x402와 Pay.sh 결제 시퀀스">
+            <div class="protocol-wrap" data-diagram="D4" aria-label="Obolus x402와 Pay.sh 결제 시퀀스">
               <svg class="protocol-svg" viewBox="0 0 1500 550" role="img" aria-labelledby="payment-sequence-title">
                 <title id="payment-sequence-title">구매자 질문부터 Solana USDC 정산과 결제된 근거 반환까지의 시퀀스</title>
                 <defs>
@@ -2703,7 +2926,7 @@
 
                 <rect x="35" y="16" width="175" height="48" class="diagram-node dark-node" /><text x="122" y="46" text-anchor="middle" class="diagram-title inverse">구매자 / Agent</text>
                 <rect x="275" y="16" width="175" height="48" class="diagram-node" /><text x="362" y="46" text-anchor="middle" class="diagram-title">Rust Core</text>
-                <rect x="515" y="16" width="175" height="48" class="diagram-node" /><text x="602" y="39" text-anchor="middle" class="diagram-title">유료 DB URL</text><text x="602" y="56" text-anchor="middle" class="diagram-small">x402 / MPP</text>
+                <rect x="515" y="16" width="175" height="48" class="diagram-node" /><text x="602" y="39" text-anchor="middle" class="diagram-title">유료 DB URL</text><text x="602" y="56" text-anchor="middle" class="diagram-small">x402 QUOTE / MPP</text>
                 <rect x="755" y="16" width="175" height="48" class="diagram-node" /><text x="842" y="39" text-anchor="middle" class="diagram-title">Pay.sh Agent</text><text x="842" y="56" text-anchor="middle" class="diagram-small">CLOUD RUN</text>
                 <rect x="995" y="16" width="175" height="48" class="diagram-node" /><text x="1082" y="39" text-anchor="middle" class="diagram-title">Cloud KMS</text><text x="1082" y="56" text-anchor="middle" class="diagram-small">NON-EXPORTABLE KEY</text>
                 <rect x="1235" y="16" width="105" height="48" class="diagram-node" /><text x="1287" y="39" text-anchor="middle" class="diagram-title">Solana</text><text x="1287" y="56" text-anchor="middle" class="diagram-small">DEVNET</text>
@@ -2723,10 +2946,10 @@
 
                 <rect x="768" y="341" width="148" height="49" class="diagram-note" /><text x="842" y="360" text-anchor="middle" class="diagram-small">08 VERIFY EXACT INTENT</text><text x="842" y="378" text-anchor="middle" class="diagram-label">amount · asset · network</text>
                 <line x1="850" y1="405" x2="1074" y2="405" class="diagram-payment-line" /><text x="962" y="396" text-anchor="middle" class="diagram-label">09 제한된 서명 요청</text>
-                <line x1="1090" y1="438" x2="1279" y2="438" class="diagram-payment-line" /><text x="1184" y="429" text-anchor="middle" class="diagram-label">10 USDC transaction</text>
+                <line x1="1090" y1="438" x2="1279" y2="438" class="diagram-payment-line" /><text x="1184" y="429" text-anchor="middle" class="diagram-label">10 구매자 USDC 가격 · fee는 facilitator</text>
                 <line x1="1295" y1="462" x2="1414" y2="462" class="diagram-payment-line" /><text x="1354" y="452" text-anchor="middle" class="diagram-label">11 정산</text>
 
-                <line x1="1279" y1="486" x2="850" y2="486" class="diagram-trust-line" /><text x="1064" y="477" text-anchor="middle" class="diagram-label">12 confirmed receipt</text>
+                <line x1="1279" y1="486" x2="850" y2="486" class="diagram-trust-line" /><text x="1064" y="477" text-anchor="middle" class="diagram-label">12 두 RPC FINALIZED → canonical receipt</text>
                 <line x1="834" y1="510" x2="609" y2="510" class="diagram-data-line" /><text x="721" y="501" text-anchor="middle" class="diagram-label">13 결제 증명 포함 재요청</text>
                 <line x1="594" y1="528" x2="370" y2="528" class="diagram-data-line" /><text x="482" y="519" text-anchor="middle" class="diagram-label">14 paid callback · 확정 passage</text>
                 <path d="M 354 535 H 130" class="diagram-data-line" /><text x="242" y="547" text-anchor="middle" class="diagram-small">15 PAID EVIDENCE ONLY → GEMINI CITED ANSWER</text>
@@ -2734,7 +2957,7 @@
             </div>
             <div class="architecture-legend">
               <div class="legend-lines"><span class="legend-line">질문·데이터</span><span class="legend-line payment">결제·정산</span><span class="legend-line trust">영수증·검증</span></div>
-              <span>직접 x402와 hosted Pay.sh/MPP 경로는 같은 quote·hash·version 불변조건을 공유</span>
+              <span>구매자는 USDC 근거 가격만 지불 · facilitator는 network fee만 후원 · receipt는 hash·version·amount·recipient·signature·slot 고정</span>
             </div>
             <div class="footer-note"><span>결제는 진실이 아니라 어떤 문서 버전이 누구에게 정산되어 열렸는지를 증명합니다.</span><span>12</span></div>
           </div>
@@ -2804,7 +3027,7 @@
               <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(28px,3.05vw,51px)"><span>Gemini는 답변을 만들고, Rust 코어는</span><span>읽을 원문과 지급 대상을 강제합니다.</span></h2>
               <p class="lead" style="max-width:35ch">React·CLI/MCP에서 들어온 질문은 Rust/Axum이 검색·동의·가격을 확정하고, Vertex AI는 결제된 원문만 요약합니다. 개인 원문은 오프체인에 남습니다.</p>
             </div>
-            <div class="system-architecture-wrap" aria-label="Obolus 전체 기술 아키텍처">
+            <div class="system-architecture-wrap" data-diagram="D7" data-includes-diagrams="D5 D6" aria-label="Obolus 전체 기술 아키텍처와 Personalized PageRank, 신뢰 경계">
               <svg class="system-architecture-svg" viewBox="0 0 1500 570" role="img" aria-labelledby="system-architecture-title">
                 <title id="system-architecture-title">사용자 인터페이스, Rust 코어, 인간 메모리 데이터, Gemini, Pay.sh와 Solana 정산을 연결한 Obolus 전체 구조</title>
 
@@ -2868,7 +3091,7 @@
             </div>
             <div class="architecture-legend">
               <div class="legend-lines"><span class="legend-line">질문·데이터</span><span class="legend-line payment">결제·정산</span><span class="legend-line trust">신뢰·복구</span></div>
-              <span>확률적 AI는 해석 · 결정론적 시스템은 권한과 돈을 집행</span>
+              <span>인프라 검증 77/77 · 2026-08-20 11:28 KST · 부하/SLO/mainnet 감사와는 별도</span>
             </div>
             <div class="footer-note"><span>RAW PERSONAL DATA STAYS OFF-CHAIN</span><span>14</span></div>
           </div>
@@ -2885,10 +3108,32 @@
               <h2 class="title wide fixed-title-lines" style="margin:0; font-size:clamp(29px,3.15vw,52px)"><span>첫 목표 고객군은 소비재·F&amp;B 기업의</span><span>소비자 인사이트 팀입니다.</span></h2>
               <p class="lead" style="max-width:35ch">이들은 지역·세대·상황이 좁은 질문이 생길 때마다 패널을 다시 모집하고, 비슷한 인터뷰 비용을 반복해서 지불합니다.</p>
             </div>
-            <div class="market-grid">
-              <div class="market-column"><div class="card-kicker">가장 비싼 미해결 질문</div><h3>공개 웹과 기존 패널 사이</h3><div class="market-row"><strong>지역의 최근 선택</strong><br />파리 20대 직장인의 평일 저녁 행동</div><div class="market-row"><strong>접근하기 어려운 집단</strong><br />특정 직군·생활환경·구매 경험</div><div class="market-row"><strong>출시 전 판단</strong><br />콘셉트·가격·메뉴·광고 문구의 실제 반응</div></div>
-              <div class="market-column"><div class="card-kicker">제안할 첫 유료 PoC</div><h3>한 질문에서 의사결정까지</h3><div class="market-row"><strong>1. 기존 근거 검색</strong><br />조건에 맞는 기존 답변 원문만 선택</div><div class="market-row"><strong>2. 부족한 집단만 모집</strong><br />검색 공백을 Open Call로 정확히 충원</div><div class="market-row"><strong>3. 결과 비교</strong><br />6주 안에 비용·속도·재사용률과 결정 변화를 측정</div></div>
-              <div class="market-column"><div class="card-kicker">확장 순서</div><h3>동일한 인프라, 더 큰 구매자</h3><div class="market-row"><strong>시장조사 기관</strong><br />기존 인터뷰를 고객 전용 검색 DB로 전환</div><div class="market-row"><strong>소셜 월드모델 기업</strong><br />합성 결과를 최신 인간 근거로 학습·검증</div><div class="market-row"><strong>연구·공공기관</strong><br />대학·정책연구·지방정부의 반복 패널</div><div class="market-row"><strong>외부 AI Agent</strong><br />CLI·MCP로 인간 근거를 검색하고 자동 구매</div></div>
+            <div class="market-grid" data-diagram="D9" aria-label="기업, 기관, 개인별 Obolus 도입 시나리오" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+              <div class="market-column">
+                <div class="card-kicker">TARGET 01 / 기업</div><h3>은행·보험 · 소비재·F&amp;B</h3>
+                <div class="scenario-flow"><span>좁은 고객 질문</span><span class="scenario-arrow">→</span><span>기존 근거 검색</span><span class="scenario-arrow">→</span><span>의사결정</span></div>
+                <div class="market-row"><strong>도입 문제</strong><br />사용자 선호, 이탈 이유, 콘셉트·가격 반응을 물을 때마다 패널을 다시 모집합니다.</div>
+                <div class="market-row"><strong>성공 지표</strong><br />조사 리드타임 · 신규 모집률 · 근거 재사용률 · 결정 변경률</div>
+              </div>
+              <div class="market-column">
+                <div class="card-kicker">TARGET 02 / 기관</div><h3>시장조사 · 연구 · 공공기관</h3>
+                <div class="scenario-flow"><span>기존 인터뷰</span><span class="scenario-arrow">→</span><span>검색 DB 전환</span><span class="scenario-arrow">→</span><span>반복 활용</span></div>
+                <div class="market-row"><strong>도입 문제</strong><br />검증된 인터뷰 원문이 프로젝트 종료와 함께 묻혀 다음 연구에서 다시 비용이 듭니다.</div>
+                <div class="market-row"><strong>성공 지표</strong><br />검색 적중률 · 중복 조사 감소 · 근거 추적성 · 데이터 수명 가치</div>
+              </div>
+              <div class="market-column">
+                <div class="card-kicker">TARGET 03 / 개인과 Agent</div><h3>기여자 · 외부 AI Agent</h3>
+                <div class="scenario-flow"><span>동의한 경험</span><span class="scenario-arrow">→</span><span>MCP로 발견</span><span class="scenario-arrow">→</span><span>USDC 정산</span></div>
+                <div class="market-row"><strong>도입 문제</strong><br />개인은 한 번만 보상받고, Agent는 웹에 없는 인간 근거를 합법적으로 살 방법이 없습니다.</div>
+                <div class="market-row"><strong>성공 지표</strong><br />소유자 수익 · 재사용 횟수 · 동의 철회 반영 · 결제 영수증 완결성</div>
+              </div>
+            </div>
+            <div class="adoption-loop" aria-label="기업 질문이 검색 공백을 만들고 개인 응답과 재사용 수익으로 순환하는 도입 루프">
+              <div><strong>01 / 질문</strong>기업·기관이 좁은 조건의 판단 질문 입력</div>
+              <div><strong>02 / 기존 근거</strong>동의된 답변과 가격을 먼저 무료 검색</div>
+              <div><strong>03 / 공백 충원</strong>부족한 집단에만 보상형 Open Call</div>
+              <div><strong>04 / 정산·영수증</strong>선택 문서 소유자에게 USDC 정산</div>
+              <div><strong>05 / 재색인</strong>새 답변이 다음 질문의 검색 자산으로 누적</div>
             </div>
             <div class="footer-note"><span>초기 wedge: 반복 조사비가 크고 결과를 빠르게 의사결정에 써야 하는 팀</span><span>15</span></div>
           </div>
@@ -3036,11 +3281,11 @@
           <div class="pad">
             <div class="eyebrow">검증 기준선 / 코드 · 운영 · AI · Devnet 분리 검증</div>
             <h2 class="title wide fixed-title-lines" style="margin-top:2.5%; font-size:clamp(28px,3vw,50px)"><span>코드 검증과 운영 증거를 분리해 보여드립니다.</span><span>라이브 주장은 운영·AI·Devnet 세 게이트가 통과할 때만 합니다.</span></h2>
-            <div class="validation-layout">
+            <div class="validation-layout" data-diagram="D8" aria-label="제품, 기술, 자동화, 운영 증거를 연결한 발표 검증 지도">
               <div class="validation-column">
                 <div class="validation-row"><strong>제품 흐름</strong><p>자연어 질문 → 무료 메타데이터 검색 → 질문별 랭킹 → 정확한 견적 → HIT 또는 Open Call → 결제된 근거 합성 → 개인 메모리와 수익 적재</p></div>
                 <div class="validation-row"><strong>기술 구조</strong><p>React 웹, Rust/Axum 코어, 버전형 Memory DB, Vertex AI/Gemini, x402 게이트웨이, Pay.sh/MPP 결제·복구 워커, Cloud KMS, Solana Devnet USDC, CLI/MCP 도구</p></div>
-                <div class="validation-row"><strong>자동화 검증</strong><p>2026-08-11 엔지니어링 감사 기준선은 프런트·프록시·MCP/CLI·evidence tooling·gateway·orchestrator·Rust API 총 362개 테스트와 build·lint·typecheck·clippy 통과입니다.</p></div>
+                <div class="validation-row"><strong>자동화 검증</strong><p>2026-08-20 로컬 전체 회귀 기준선은 프런트·프록시·Antigravity·로컬 Agent·독립 Obulus MCP·evidence tooling·gateway·orchestrator·Rust API·Solana 프로그램 총 435개 테스트와 build·lint·typecheck·clippy 통과입니다.</p></div>
                 <div class="validation-row"><strong>현재 운영 증거</strong><p><span id="infraProofStatus">Infrastructure evidence를 확인하는 중입니다.</span><br /><span id="autonomyProofStatus">Autonomy evidence를 확인하는 중입니다.</span><br /><span id="devnetProofStatus">Devnet evidence를 확인하는 중입니다.</span></p></div>
               </div>
               <div class="validation-ask">

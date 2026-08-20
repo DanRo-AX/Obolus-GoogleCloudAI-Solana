@@ -222,6 +222,10 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     response = await fetch(`${API_BASE}${path}`, {
       ...init,
       credentials: 'include',
+      headers: {
+        'x-obulus-client': 'web',
+        ...init?.headers,
+      },
     })
   } catch {
     throw new ApiError(
@@ -817,6 +821,107 @@ export type AdminOperationsSnapshot = {
 
 export function getAdminOperations(): Promise<AdminOperationsSnapshot> {
   return apiFetch('/api/v1/admin/operations')
+}
+
+export type AdminDataPipelineSnapshot = {
+  generatedAt: number
+  deployment: {
+    runtime: string
+    environment: string
+    service: string | null
+    revision: string | null
+    project: string | null
+    location: string | null
+    vertexModel: string
+    database: string
+  }
+  memory: {
+    totalEntries: number
+    entities: number
+    averageEntriesPerEntity: number
+    rawObservations: number
+    derivedEntries: number
+    interviewBackedEntries: number
+    importanceTotal: number
+    reflectionReadyEntities: number
+    reflectionThreshold: number
+    reflectionWindow: number
+    activeReflectionInterval: number
+    activeImportanceScaleMax: number
+  }
+  memoryNodes: Array<{
+    id: string
+    entity: string
+    shelf: string
+    memoryType: string
+    level: number
+    displayText: string
+    ownedByViewer: boolean
+    importance: number
+    reliability: number
+    sourceCount: number
+    createdAt: number
+  }>
+  memoryEdges: Array<{
+    source: string
+    target: string
+  }>
+  search: {
+    documents: number
+    evidenceEdges: number
+    queries: number
+    queryMatches: number
+    agentRuns: number
+    agentSteps: number
+    embeddingDimensions: number
+    pageRankIterations: number
+    pageRankDampingBps: number
+  }
+  authorityContext: {
+    mode: string
+    queryRef: string | null
+    matchedDocuments: number
+    computedAt: number
+  }
+  authorityNodes: Array<{
+    id: string
+    handle: string
+    shelf: string
+    category: string
+    quality: number
+    reliability: number
+    authority: number
+    teleportWeight: number
+  }>
+  authorityEdges: Array<{
+    source: string
+    target: string
+    relation: string
+    provenance: string
+    topic: string
+    weight: number
+    propagatesAuthority: boolean
+  }>
+  realtime: {
+    eventsLastMinute: number
+    eventsLastFiveMinutes: number
+    eventsLastHour: number
+    sources: Array<{ source: string; count: number }>
+    recentEvents: Array<{
+      id: string
+      source: string
+      instance: string
+      stage: string
+      action: string
+      status: number
+      latencyMs: number
+      occurredAt: number
+    }>
+  }
+}
+
+export function getAdminDataPipeline(): Promise<AdminDataPipelineSnapshot> {
+  return apiFetch('/api/v1/admin/data-pipeline')
 }
 
 /**

@@ -207,8 +207,8 @@ npm run pitch:verify
 npm run pitch:verify-live
 ```
 
-`pitch:verify`는 슬라이드 순서, 문구 drift, 로컬 자산, 24개 MCP 도구와 런북 필수
-구성만 검사한다. 362개 전체 테스트를 다시 실행하거나 실제 발표 시간을 재거나
+`pitch:verify`는 슬라이드 순서, 문구 drift, 로컬 자산, 24개 마켓플레이스 도구와 런북 필수
+구성만 검사한다. 435개 전체 회귀 테스트를 다시 실행하거나 실제 발표 시간을 재거나
 내용의 진실성을 독립적으로 판정하지 않는다. `pitch:verify-live`는 공개 네트워크와
 두 단계 Vertex 증거 구조까지 확인하지만 운영·AI·온체인 판정은 별도 수집기가 만든
 세 evidence JSON에 의존한다. 발표 시간은 세 번의 실제 리허설로

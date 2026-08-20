@@ -284,6 +284,166 @@ pub struct AdminOperationsSnapshot {
     pub ai_liquidity: AiLiquidityMetrics,
 }
 
+/// Safe, aggregate-only deployment metadata for the live data-pipeline console.
+/// Values come from Cloud Run/GCP environment markers and never include URLs,
+/// credentials, wallet addresses, signatures, or database connection strings.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminDeploymentInfo {
+    pub runtime: String,
+    pub environment: String,
+    pub service: Option<String>,
+    pub revision: Option<String>,
+    pub project: Option<String>,
+    pub location: Option<String>,
+    pub vertex_model: String,
+    pub database: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminMemoryPipelineMetrics {
+    pub total_entries: u64,
+    pub entities: u64,
+    pub average_entries_per_entity: f64,
+    pub raw_observations: u64,
+    pub derived_entries: u64,
+    pub interview_backed_entries: u64,
+    pub importance_total: f64,
+    pub reflection_ready_entities: u64,
+    pub reflection_threshold: u64,
+    pub reflection_window: u64,
+    pub active_reflection_interval: u64,
+    pub active_importance_scale_max: f64,
+}
+
+/// A privacy-safe memory node for the live abstraction viewer. The source
+/// answer and the account identifier never leave the store; `entity` is a
+/// stable, one-way alias used only to show that memories belong together.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminMemoryNode {
+    pub id: String,
+    pub entity: String,
+    pub shelf: String,
+    pub memory_type: String,
+    pub level: u64,
+    /// A bounded observability excerpt. Only the requesting contributor sees
+    /// their own text; every other person's row is replaced with a structural
+    /// label so the shared console never becomes a private-data browser.
+    pub display_text: String,
+    pub owned_by_viewer: bool,
+    pub importance: f32,
+    pub reliability: f32,
+    pub source_count: u64,
+    pub created_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminMemoryEdge {
+    pub source: String,
+    pub target: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminAuthorityContext {
+    pub mode: String,
+    pub query_ref: Option<String>,
+    pub matched_documents: u64,
+    pub computed_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminSearchPipelineMetrics {
+    pub documents: u64,
+    pub evidence_edges: u64,
+    pub queries: u64,
+    pub query_matches: u64,
+    pub agent_runs: u64,
+    pub agent_steps: u64,
+    pub embedding_dimensions: u64,
+    pub page_rank_iterations: u64,
+    pub page_rank_damping_bps: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminAuthorityNode {
+    pub id: String,
+    pub handle: String,
+    pub shelf: String,
+    pub category: String,
+    pub quality: f32,
+    pub reliability: f32,
+    pub authority: f32,
+    /// Query-specific teleport seed before PageRank propagation. This is safe
+    /// ranking metadata and never contains the query or paid document text.
+    pub teleport_weight: f32,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminAuthorityEdge {
+    pub source: String,
+    pub target: String,
+    pub relation: String,
+    pub provenance: String,
+    pub topic: String,
+    pub weight: f32,
+    pub propagates_authority: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminSystemEvent {
+    pub id: String,
+    pub source: String,
+    pub instance: String,
+    pub stage: String,
+    pub action: String,
+    pub status: u16,
+    pub latency_ms: u64,
+    pub occurred_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminSourceCount {
+    pub source: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminRealtimeMetrics {
+    pub events_last_minute: u64,
+    pub events_last_five_minutes: u64,
+    pub events_last_hour: u64,
+    pub sources: Vec<AdminSourceCount>,
+    pub recent_events: Vec<AdminSystemEvent>,
+}
+
+/// Read model for the temporary administrator data-pipeline tab. The graph is
+/// intentionally metadata-only: document text, interview transcripts, user
+/// identifiers, credentials, and settlement capabilities never cross this API.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminDataPipelineSnapshot {
+    pub generated_at: u64,
+    pub deployment: AdminDeploymentInfo,
+    pub memory: AdminMemoryPipelineMetrics,
+    pub memory_nodes: Vec<AdminMemoryNode>,
+    pub memory_edges: Vec<AdminMemoryEdge>,
+    pub search: AdminSearchPipelineMetrics,
+    pub authority_context: AdminAuthorityContext,
+    pub authority_nodes: Vec<AdminAuthorityNode>,
+    pub authority_edges: Vec<AdminAuthorityEdge>,
+    pub realtime: AdminRealtimeMetrics,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubmitShelfStarterAnswerRequest {
@@ -469,6 +629,10 @@ pub struct OpenCall {
     /// Server-side ranking signal. Zero means the viewer is not eligible.
     pub recommendation_score: f32,
     pub recommendation_reason: Vec<String>,
+    /// Public marketplace handles with settled answers on this call, followed
+    /// by contributors who already hold active documents in the same field.
+    /// Answer text and account identifiers remain private to the buyer.
+    pub contributor_handles: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

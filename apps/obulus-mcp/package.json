@@ -1,0 +1,28 @@
+{
+  "name": "@obulus/full-mcp",
+  "private": true,
+  "version": "1.1.0",
+  "type": "module",
+  "description": "Complete Obulus marketplace MCP for buyers, contributors, memory, settlement and recovery.",
+  "exports": {
+    ".": "./src/server.mjs",
+    "./tools": "./src/tools.mjs",
+    "./config": "./src/config.mjs",
+    "./installer": "./src/installer.mjs"
+  },
+  "bin": {
+    "obulus-mcp": "./src/cli.mjs"
+  },
+  "engines": {
+    "node": ">=20.18"
+  },
+  "scripts": {
+    "auth": "node src/cli.mjs auth",
+    "call": "node src/cli.mjs call",
+    "doctor": "node src/cli.mjs doctor",
+    "install-mcp": "node src/cli.mjs install-mcp",
+    "mcp": "node src/cli.mjs mcp",
+    "test": "node --test test/*.test.mjs",
+    "tools": "node src/cli.mjs tools"
+  }
+}

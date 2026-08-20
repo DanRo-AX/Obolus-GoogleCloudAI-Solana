@@ -67,7 +67,7 @@ const filtersSchema = {
 export const tools = [
   {
     name: 'account_status',
-    description: 'Check the locally authenticated OPENSHELF account and KRW balance.',
+    description: 'Check an already wallet-authenticated Obulus account and balance. Do not call this before free ask_people, search_public_evidence, AI baseline, invoice preview, payment progress, or paid-document recovery. If no wallet session exists, use connect_wallet; never request email or password.',
     inputSchema: objectSchema(),
   },
   {

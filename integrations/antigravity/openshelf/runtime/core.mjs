@@ -12,6 +12,8 @@ export function runtimeConfig(env = process.env) {
     throw new Error('OPENSHELF_AGENT_PROFILE must use 1-64 letters, numbers, underscores, or hyphens')
   }
   const defaultStateName = profile ? `agent-session-${profile}.json` : 'agent-session.json'
+  const client = eventLabel(env.OPENSHELF_AGENT_CLIENT, 'agent-mcp', 48)
+  const instance = eventLabel(env.OPENSHELF_AGENT_INSTANCE, profile || 'default', 64)
   return {
     apiOrigin: origin(env.OPENSHELF_API_URL || 'http://127.0.0.1:8787', 'OPENSHELF_API_URL'),
     gatewayOrigin: origin(
@@ -21,7 +23,17 @@ export function runtimeConfig(env = process.env) {
     statePath: resolve(
       env.OPENSHELF_AGENT_STATE || `${homedir()}/.config/openshelf/${defaultStateName}`,
     ),
+    client,
+    instance,
   }
+}
+
+function eventLabel(value, fallback, max) {
+  const label = String(value || fallback).trim()
+  if (!new RegExp(`^[A-Za-z0-9_-]{1,${max}}$`).test(label)) {
+    throw new Error('Agent client labels must use letters, numbers, underscores, or hyphens')
+  }
+  return label
 }
 
 function origin(value, label) {
@@ -231,10 +243,12 @@ export async function apiRequest(path, init = {}, options = {}) {
   const config = options.config || runtimeConfig()
   const state = options.state || (await readState(config))
   const headers = new Headers(init.headers || {})
+  headers.set('x-obulus-client', config.client || 'agent-mcp')
+  headers.set('x-obulus-instance', config.instance || 'default')
   if (options.auth !== false) {
     if (!state.token) {
       throw new AgentError(
-        'Sign in locally first with `node integrations/antigravity/openshelf/runtime/server.mjs auth login --email YOU@example.com`.',
+        'This protected action requires an Obulus wallet session. Use the connect_wallet MCP tool for a free Pay.sh SIWX ownership signature. Do not request an email, password, seed phrase, or private key. Free search and public evidence do not require sign-in.',
         'authentication_required',
         401,
       )

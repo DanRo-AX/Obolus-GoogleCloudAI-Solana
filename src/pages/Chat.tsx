@@ -239,14 +239,14 @@ export default function Chat() {
     () =>
       [...new Set([openCallDraft?.answersNeeded, ...COUNT_CHOICES])].filter(
         (value): value is number => typeof value === 'number' && value > 0,
-      ),
+      ).sort((left, right) => left - right),
     [openCallDraft?.answersNeeded],
   )
   const priceChoices = useMemo(
     () =>
       [...new Set([openCallDraft?.suggestedUnitPriceKrw, ...PRICE_CHOICES])].filter(
         (value): value is number => typeof value === 'number' && value >= 0,
-      ),
+      ).sort((left, right) => left - right),
     [openCallDraft?.suggestedUnitPriceKrw],
   )
 
@@ -716,6 +716,7 @@ export default function Chat() {
                             ? [m.settlement.txSig]
                             : []}
                         network={m.settlement.network}
+                        mode={m.settlement.mode}
                       />
                     ) : null}
                   </div>
