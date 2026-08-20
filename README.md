@@ -23,7 +23,7 @@
 
 <h3 align="center"><a href="#getting-started"><ins>Getting started</ins></a></h3>
 
-> **Live Devnet deployment (2026-08-11):** the public app runs on
+> **Live Devnet deployment (2026-08-20):** the public app runs on
 > [Cloudflare Pages](https://obolus-9qi.pages.dev), while the API and payment
 > services run separately on Google Cloud. The
 > [finalist deck](https://obolus-9qi.pages.dev/pitch/?mode=final) and its
@@ -31,9 +31,16 @@
 > [bounded Gemini loop](https://obolus-9qi.pages.dev/artifacts/finalist-evidence/autonomy.json), and
 > [Solana Devnet](https://obolus-9qi.pages.dev/artifacts/finalist-evidence/devnet.json)
 > evidence are public. This is a production-shaped Devnet system, not a Solana Mainnet launch.
+>
+> The ledger is now denominated in on-chain USDC atomic units. Balances, the
+> open-calls board, earnings, receipts and the coverage index all read in USDC;
+> the prepaid balance can be topped up on its own over x402, without buying a
+> document first. Landing and chat still quote a document in won, because that
+> is the unit the people on the shelves price in — see
+> [the transaction unit](#the-transaction-unit-and-current-economics).
 
 <p align="center">
-  <img src="docs/assets/hero.png" alt="Obolus asking a question, with the shelf search box on the landing page" width="960" />
+  <img src="docs/assets/hero.png" alt="The Obolus landing page: the SHELF search box over the shelf field, with the sidebar showing a USDC payout balance and the number of open calls" width="960" />
 </p>
 
 ## Features
@@ -50,7 +57,7 @@ Searching and ranking are free. You are billed only for the documents that end u
 
 </td>
 <td width="50%">
-  <img src="docs/assets/feature-thesis.png" alt="A free general model's generic answer beside four paid passages from people who live in Paris" width="100%" />
+  <img src="docs/assets/feature-thesis.png" alt="A free general model's generic answer about Paris beside four paid passages from people who live there, each author paid in USDC on Solana" width="100%" />
 </td>
 </tr>
 <tr>
@@ -60,12 +67,13 @@ Searching and ranking are free. You are billed only for the documents that end u
 
 If nothing on the shelves fits, the answer is not "no results". Name what one answer is worth, and the question goes out as a paid call to people who would know.
 
-- Eleven fields on a vertical rail
-- Filters by pay, fit, and remaining slots
+- Eleven fields, each with its open count
+- Sort by newest, popularity, pay, or fit
+- Reward per answer reads in USDC, and the escrow decrements one answer at a time
 
 </td>
 <td width="50%">
-  <img src="docs/assets/feature-board.png" alt="The open-calls board with a field rail and pay filters" width="100%" />
+  <img src="docs/assets/feature-board.png" alt="The open-calls board sorted by highest pay, showing per-answer rewards in USDC and how many answers each call still needs" width="100%" />
 </td>
 </tr>
 <tr>
@@ -75,11 +83,29 @@ If nothing on the shelves fits, the answer is not "no results". Name what one an
 
 HTTP already had [a reserved status code for this](https://www.rfc-editor.org/rfc/rfc9110.html#name-402-payment-required). The server answers `402` with an exact quote. The buyer reviews one aggregate preview and confirms once; Phantom appears only when the chosen prepaid balance needs a refill, not for every document.
 
-Prices read in won because that is what the people on the shelves think in. USDC is what moves on Solana.
+A document is quoted in won, because that is what the people on the shelves price in. Everything that moves — the deposit, the per-document settlement, the payout, the refund — is USDC on Solana, and every balance in the app reads in USDC.
 
 </td>
 <td width="50%">
-  <img src="docs/assets/feature-settlement.png" alt="An example settlement receipt: four documents opened for a total of ₩38" width="100%" />
+  <img src="docs/assets/feature-settlement.png" alt="The landing section explaining the 402 exchange: billed only for what was opened, one bounded deposit then document-level settlement, 90/10, and no SOL required from the buyer" width="100%" />
+</td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
+### Prepaid USDC you can top up on its own
+
+Proving the wallet once opens a revocable prepaid session. From then on, opening documents and funding open calls draw down that balance, and the buyer is never asked to approve a payment per document.
+
+Topping up is now its own rail: establish the prepaid session, ask the gateway for a whole-USDC quote, sign one exact transfer in Phantom, and the credit lands only after the gateway confirms the finalized transfer on two independent RPC providers. The browser never touches the internal deposit route, so it cannot credit itself.
+
+- 1 / 5 / 10 / 25 USDC steps, capped at 1,000 USDC per top-up
+- Idempotent by transaction signature: a retried top-up credits once
+- Unused credit stays withdrawable to the verified wallet
+
+</td>
+<td width="50%">
+  <img src="docs/assets/feature-topup.png" alt="The top-up control on My shelf: a low-balance prompt, 1 / 5 / 10 / 25 USDC steps, the current prepaid balance, and a single Top up button" width="100%" />
 </td>
 </tr>
 <tr>
@@ -100,15 +126,20 @@ USDC but no SOL. The USDC faucet link is available before wallet connection.
 <tr>
 <td width="50%" valign="middle">
 
-### Priced per document, not per panel
+### A live view of the machine, not a diagram of it
 
-What people know has only ever traded whole: a panel study, an annual licence, three hundred responses compressed into one report.
+`/admin` is a running trace, not an architecture drawing. Every node reports its
+own live counter — how many documents are indexed, how many memory entries have
+landed, which PageRank seed and iteration count answered the last query, which
+Gemini model reflected — and the terminal underneath streams the real Cloud Run
+settlement events with their status codes and latencies.
 
-Here the unit is one document, one open, one answer. It stays yours and keeps earning.
+Below the canvas: the memory stream as it fills, abstraction climbing from L0 to
+L1, and the personalized PageRank graph for one specific query.
 
 </td>
 <td width="50%">
-  <img src="docs/assets/feature-panel.png" alt="A row-by-row comparison between a survey panel and Obolus" width="100%" />
+  <img src="docs/assets/feature-observatory.png" alt="The Obolus system observatory: a live canvas from client intake through the Rust policy core, memory abstraction, evidence index, hybrid retrieval and personalized PageRank to x402 settlement, with a live memory stream and PageRank graph underneath" width="100%" />
 </td>
 </tr>
 <tr>
@@ -132,13 +163,13 @@ financial audit rows and public-chain receipts remain.
 
 ### Public coverage for thin shelves
 
-The public index shows aggregate supply and observed search misses without exposing the documents themselves. A raw document count is a coverage signal, not proof that a question can be answered.
+The public index shows aggregate demand and observed search misses without exposing the documents themselves. Reading across one field: how many questions are still open, how many answers they will take, the most anyone pays for one answer, and the money still on the table — that last figure in USDC.
 
-What is public: where questions come back empty, and what somebody has already offered to fill it.
+A raw document count is a coverage signal, not proof that a question can be answered. What is public is where questions come back empty, and what somebody has already offered to fill it.
 
 </td>
 <td width="50%">
-  <img src="docs/assets/feature-coverage.png" alt="The thin-shelves page explaining free discovery, query-specific authority, and the paid boundary" width="100%" />
+  <img src="docs/assets/feature-coverage.png" alt="The thin-shelves page showing live demand: open questions, answers wanted, and the total USDC on the table, broken down by field" width="100%" />
 </td>
 </tr>
 <tr>
@@ -177,7 +208,9 @@ Switch in the sidebar footer. The choice survives a reload.
 | Human document | One quality-checked, versioned final answer created from an accepted open-call response or an opted-in shelf-starter. Warm-up interview responses remain private and are not separately searchable or sold. |
 | Search and open | Search is free and returns only handles, prices, and matching metadata. One paid open delivers the immutable passage version and citation bound to that query and receipt; it does not transfer the contributor's copyright. A later correction or lock does not change the delivered version. |
 | Contributor price | An accepted open-call answer inherits that call's price per answer. For an opted-in shelf-starter, the contributor chooses a future price. The hosted Pay.sh rail currently accepts the fixed test bands ₩5, ₩10, ₩15, ₩25, ₩100, ₩300, ₩500, ₩700, ₩800, and ₩1,000. |
-| Browser approval | The UI shows the selected documents, complete KRW total, and exact Devnet USDC amount once. Clicking **Open with prepaid balance** reserves only that quoted amount. Phantom signs only a buyer-chosen refill when credit is low; unused credit remains withdrawable and Obolus cannot pull more from the wallet. |
+| Ledger denomination | The internal ledger is USDC atomic units (six decimals), serialized as JSON strings so a browser cannot lose precision. Balances, earnings, escrow, receipts and the coverage totals all read in USDC. The legacy `*_krw` columns are kept alongside as nullable history and are no longer the source of truth for money movement. A document's list price is still stored in won, and won is still what the landing page and the ask flow quote. |
+| Browser approval | The UI shows the selected documents, the complete total, and the exact Devnet USDC amount once. Clicking **Open with prepaid balance** reserves only that quoted amount. Phantom signs only a buyer-chosen refill when credit is low; unused credit remains withdrawable and Obolus cannot pull more from the wallet. |
+| Standalone top-up | Prepaid credit can also be added without buying anything. The browser asks the gateway for a whole-USDC quote (1–1,000 USDC), pays it over the same x402 exact scheme, and the gateway posts the verified transfer to an internal, `require_internal` deposit route only after two independent RPC providers agree the transfer to `OPENSHELF_BUNDLE_RECEIVER` is finalized. The deposit is idempotent by transaction signature, so a retry credits once. |
 | Agent approval | The local buyer agent stores one exact intent and requires an interactive, one-time approval for its aggregate atomic amount. The model cannot substitute a URL, recipient, mint, network, or amount. |
 | Conversion | Managed quotes use a fixed test rate of **1 USDC = ₩1,350**, not a live FX feed. Each document is rounded up independently to six-decimal USDC atomic units: `ceil(priceKrw × 1,000,000 / 1,350)`. |
 | Current split | The product UI presents a 90% owner / 10% protocol policy with no checkout surcharge. The hosted Devnet Pay.sh endpoints currently send all but one atomic unit to the owner because their primary split must stay positive. A same-receipt on-chain 90/10 split is therefore still a pre-Mainnet gate, not a claimed commercial take rate. |
@@ -229,8 +262,8 @@ This Devnet transport is not yet the same-receipt on-chain implementation of the
 
 1. Rust searches private documents and returns only safe handles and KRW prices.
 2. It commits the exact handles, content hashes, beneficiary wallets, per-document atomic prices, total, mint, network, and expiry into one job.
-3. It atomically reserves the job cost from verified prepaid credit. If credit is low, an unpaid refill resource returns x402 v2 `402 Payment Required` and Phantom tops up once.
-4. A confirmed refill credits the ledger and funds the job. It does not reveal passages or accrue earnings.
+3. It atomically reserves the job cost from verified prepaid credit. If credit is low, an unpaid refill resource returns x402 v2 `402 Payment Required` and Phantom tops up once. The same credit can be raised ahead of time from **My shelf** through the standalone top-up rail, which is the identical 402 exchange against a whole-USDC quote and no document.
+4. A confirmed refill credits the ledger and funds the job. It does not reveal passages or accrue earnings. Credit is applied only after the gateway independently confirms the finalized transfer, and the browser never reaches the internal deposit route.
 5. The server agent runs Pay.sh/MPP per document, and Rust releases only that exact paid snapshot, idempotently.
 6. Rust reloads only server-proven opened passages, then Gemini on Vertex AI writes a cited synthesis. With no provider configured the UI shows an evidence-only result rather than inventing an answer.
 7. A permanent partial failure restores the exact unpaid atomic remainder to prepaid credit.
@@ -331,6 +364,11 @@ The deployment reuses the shared `ax-apps-db` and `ax-apps-storage` resources un
 
 ### Current deployment and evidence
 
+Verified live on 2026-08-20: `obolus-api` and `obolus-gateway` both serve 100% of
+traffic from the revision built for the current `main`, and the Pages build
+deployed at that hostname is the same revision. The prepaid top-up route answers
+a whole-USDC quote at `POST /x402/api/v1/prepaid/top-ups`.
+
 | Surface | Current deployed entrypoint |
 | --- | --- |
 | App and same-origin API | [`https://obolus-9qi.pages.dev`](https://obolus-9qi.pages.dev) |
@@ -351,7 +389,7 @@ The published [infrastructure](https://obolus-9qi.pages.dev/artifacts/finalist-e
 ## Tech stack
 
 <p>
-  <kbd>React&nbsp;19</kbd> &nbsp; <kbd>TypeScript&nbsp;5.9</kbd> &nbsp; <kbd>Vite&nbsp;8</kbd> &nbsp; <kbd>Tailwind&nbsp;v4</kbd> &nbsp; <kbd>React&nbsp;Router&nbsp;7</kbd> &nbsp; <kbd>three.js</kbd> &nbsp;
+  <kbd>React&nbsp;19</kbd> &nbsp; <kbd>TypeScript&nbsp;5.9</kbd> &nbsp; <kbd>Vite&nbsp;8</kbd> &nbsp; <kbd>Tailwind&nbsp;v4</kbd> &nbsp; <kbd>React&nbsp;Router&nbsp;7</kbd> &nbsp; <kbd>three.js</kbd> &nbsp; <kbd>React&nbsp;Flow</kbd> &nbsp; <kbd>Framer&nbsp;Motion</kbd> &nbsp;
   <kbd>Rust&nbsp;1.89&nbsp;/&nbsp;Axum</kbd> &nbsp; <kbd>Cloud SQL&nbsp;/&nbsp;PostgreSQL</kbd> &nbsp;
   <kbd>x402&nbsp;v2&nbsp;—&nbsp;exact&nbsp;/&nbsp;SVM</kbd> &nbsp; <kbd>Solana&nbsp;Devnet</kbd> &nbsp; <kbd>USDC</kbd> &nbsp; <kbd>Phantom</kbd> &nbsp;
   <kbd>Pay.sh&nbsp;+&nbsp;MPP</kbd> &nbsp; <kbd>GCP&nbsp;KMS</kbd> &nbsp; <kbd>Cloud&nbsp;Run</kbd> &nbsp; <kbd>Gemini&nbsp;on&nbsp;Vertex&nbsp;AI</kbd>
@@ -505,13 +543,15 @@ and the [engineering readiness record](docs/FINALIST-ENGINEERING-READINESS.ko.md
 | `/` | **Ask** | The front door. Ask, and SHELF searches the shelves; a miss becomes an open call. |
 | `/chat/:id` | Chat | One question's thread, including the hit/miss dialogue and the settlement preview. |
 | `/dashboard` | **Open calls** | The answerer's board. Calls arrive with a price per answer; pick one, answer, get paid. |
-| `/memory` | **My shelf** | Everything you have answered. The thicker it gets, the better auto-match sticks. |
-| `/archive` | Receipts | Chats, purchased documents, and transaction links. |
-| `/coverage` | Thin shelves | Where questions come back empty, and what has been offered to fill them. |
+| `/memory` | **My shelf** | Everything you have answered, what it earned, the evidence account, and the prepaid USDC top-up control. The headline figure is total USDC held — prepaid balance plus accrued earnings, added as exact atomic units. It also shows the Phantom wallet's own Devnet USDC balance, read from Solana and labelled as separate from Obolus credit. |
+| `/archive` | My questions | Question history, the documents each one paid for, total spent, and which receipts are on-chain. |
+| `/transactions` | Receipts | Every settlement and payout, with its transaction link. |
+| `/coverage` | Thin shelves | Live demand: open questions per field, answers still wanted, and the USDC still on the table. |
 | `/answer/:orderId` | Answer | One screen, one question, a few warm-ups first. |
 | `/onboarding` | Set-up | Handle, bands, fields, payout wallet, and the three-strike conduct ladder. |
 | `/whitepaper` | The argument | The long-form case for the thing. |
-| `/login` `/terms` `/privacy` `/admin/disputes` `/admin/operations` | | Wallet sign-in, legal, admin review, and an aggregate-only read operations console. |
+| `/admin` | Admin Test | The system observatory: the live request-to-settlement canvas, the memory stream, abstraction growth, personalized PageRank, and the read-only operations tables. `/admin/disputes`, `/admin/operations` and `/admin/data-pipeline` all redirect here. |
+| `/login` `/terms` `/privacy` | | Wallet sign-in and legal. |
 
 ---
 
@@ -529,6 +569,7 @@ and the [engineering readiness record](docs/FINALIST-ENGINEERING-READINESS.ko.md
 | `apps/obulus-mcp/` | Full 29-tool MCP: buyer, contributor, memory, invoice, settlement recovery, earnings, and account operations. |
 | `integrations/antigravity/openshelf/` | The plugin: 24 MCP tools, skills, and the Pay handshake adapter. |
 | `deploy/cloudflare-pages/` + `deploy/cloud-run/` | Edge and GCP deployment contracts, promotion checks, and rollback runbooks. |
+| `artifacts/` + `docs/pitch-final-assets/` | Captured product evidence for the finalist deck, with a manifest stating which shots are usable and which are held back because their state is empty. |
 | `docs/` | Threat model, account linking, Pay.sh deployment, code review, ranking notes. |
 | `architecture.html` | Detailed application, data-model, and ERD view. This README summarizes the deployment; the linked evidence and deploy runbooks hold observed state and operator contracts. |
 
@@ -546,6 +587,13 @@ paid-customer launch.
 - Wallet challenge/SIWX is the launch authentication path. Sessions are server-issued HttpOnly cookies, client-supplied identities are rejected, and email/password remains test-only behind a disabled flag.
 - Deterministic code owns search/ranking, immutable quotes, the database-backed custodial escrow ledger, settlement fences, recovery, payouts, refunds, and AI approval boundaries. In the API's bounded two-call loop, Gemini plans metadata, observes Rust retrieval, and selects one non-spending proposal before user approval; it separately synthesizes only paid evidence afterward. This is not A2A or a multi-agent claim.
 - A hosted Devnet evidence run records real test-USDC funding, owner payout, exact remainder refund, matching finality from two independent RPC providers, and zero duplicate settlement.
+- The ledger is denominated in USDC atomic units end to end. Open calls are funded from the prepaid USDC balance rather than an internal won pot, there is no signup credit, and the standalone top-up route credits only after independently confirmed finality, idempotent by transaction signature.
+
+### Known gaps in this revision
+
+- The landing page and the ask flow still quote a document in won while every balance, board and receipt reads in USDC. That split is a product decision to make, not a rendering bug, but the two conventions are visible on adjacent screens.
+- The landing hero fails closed rather than degrading: `src/components/ui/liquid-shader.tsx` constructs a `THREE.WebGLRenderer` without a guard, and there is no error boundary in `src/`, so a browser with no usable WebGL renders `/` blank. Every other route survives.
+- `scripts/mock-backend.mjs` predates the USDC work, so `npm run demo:record` and anything captured against the mock still show the pre-USDC interface.
 
 ### Deliberately not claimed
 

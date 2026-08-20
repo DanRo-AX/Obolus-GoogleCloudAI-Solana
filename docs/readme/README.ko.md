@@ -23,16 +23,22 @@
 
 <h3 align="center"><a href="#시작하기"><ins>시작하기</ins></a></h3>
 
-> **Devnet 운영 배포 (2026-08-11):** 공개 앱은
+> **Devnet 운영 배포 (2026-08-20):** 공개 앱은
 > [Cloudflare Pages](https://obolus-9qi.pages.dev)에 있고 API와 결제 서비스는
 > Google Cloud에서 별도로 실행됩니다. [결선 발표자료](https://obolus-9qi.pages.dev/pitch/?mode=final)와
 > [인프라](https://obolus-9qi.pages.dev/artifacts/finalist-evidence/infrastructure.json),
 > [제한된 Gemini 루프](https://obolus-9qi.pages.dev/artifacts/finalist-evidence/autonomy.json),
 > [Solana Devnet](https://obolus-9qi.pages.dev/artifacts/finalist-evidence/devnet.json)
 > 증거를 공개했습니다. 프로덕션형 Devnet 시스템이며 Solana Mainnet 출시는 아닙니다.
+>
+> 원장은 이제 온체인 USDC atomic 단위로 표기합니다. 잔액, 답변 모집 보드, 수익,
+> 영수증, 커버리지 지표가 모두 USDC로 읽힙니다. 문서를 사지 않고 선불 잔액만
+> 따로 충전하는 경로도 x402로 열려 있습니다. 랜딩과 질문 화면은 문서 단가를
+> 여전히 원으로 표시하는데, 서가에 있는 사람들이 값을 매기는 단위가 원이기
+> 때문입니다. [거래 단위](#거래-단위와-현재-경제-조건)를 참고하세요.
 
 <p align="center">
-  <img src="../assets/hero.png" alt="Obolus 랜딩 페이지의 질문 입력창" width="960" />
+  <img src="../assets/hero.png" alt="Obolus 랜딩 페이지. SHELF 질문 입력창과, 사이드바의 USDC 정산액·열린 공고 수" width="960" />
 </p>
 
 ## 주요 기능
@@ -49,7 +55,7 @@
 
 </td>
 <td width="50%">
-  <img src="../assets/feature-thesis.png" alt="무료 일반 모델의 뻔한 답변과, 파리에 사는 네 사람의 유료 문단 비교" width="100%" />
+  <img src="../assets/feature-thesis.png" alt="파리에 대한 무료 일반 모델의 뻔한 답변과, 실제로 사는 네 사람의 유료 문단 비교. 저자 네 명 모두 솔라나 USDC로 정산" width="100%" />
 </td>
 </tr>
 <tr>
@@ -64,7 +70,7 @@
 
 </td>
 <td width="50%">
-  <img src="../assets/feature-board.png" alt="분야 레일과 단가 필터가 있는 답변 모집 보드" width="100%" />
+  <img src="../assets/feature-board.png" alt="단가 높은 순으로 정렬한 답변 모집 보드. 답변 하나당 보상이 USDC로 표시되고 남은 답변 수가 함께 보인다" width="100%" />
 </td>
 </tr>
 <tr>
@@ -74,11 +80,29 @@
 
 HTTP에는 이미 [이 용도로 예약된 상태 코드](https://www.rfc-editor.org/rfc/rfc9110.html#name-402-payment-required)가 있습니다. 서버가 `402`와 exact quote를 돌려주면 질문자가 선택 문서와 합산 금액을 한 번 확인하고 승인합니다. Phantom은 선택한 선불 잔액이 부족해 충전할 때만 나타나며 문서마다 반복하지 않습니다.
 
-가격을 원으로 표시하는 이유는 서가에 있는 사람들이 원으로 생각하기 때문입니다. 솔라나 위에서 실제로 움직이는 자산은 USDC입니다.
+문서 단가를 원으로 표시하는 이유는 서가에 있는 사람들이 원으로 값을 매기기 때문입니다. 실제로 움직이는 것 — 예치, 문서별 정산, 정산금 지급, 환불 — 은 전부 솔라나 위의 USDC이고, 앱 안의 모든 잔액도 USDC로 읽힙니다.
 
 </td>
 <td width="50%">
-  <img src="../assets/feature-settlement.png" alt="문서 4건을 열어 총 ₩38이 나간 정산 영수증 예시" width="100%" />
+  <img src="../assets/feature-settlement.png" alt="402 교환을 설명하는 랜딩 섹션. 연 것만 청구, 예치 한 번 뒤 문서 단위 정산, 90/10 배분, 구매자에게 SOL 불필요" width="100%" />
+</td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
+### 따로 충전하는 선불 USDC
+
+지갑 소유를 한 번 증명하면 철회 가능한 선불 세션이 열립니다. 그 다음부터 문서를 열거나 공고를 발주할 때 이 잔액에서 차감하고, 문서마다 결제를 승인받지 않습니다.
+
+충전은 이제 독립된 경로입니다. 선불 세션을 먼저 세운 뒤 게이트웨이에 정수 USDC 견적을 요청하고 Phantom으로 정확한 송금 하나에 서명하면, 게이트웨이가 독립 RPC 두 곳에서 확정(finalized)을 확인한 뒤에야 잔액에 반영합니다. 브라우저는 내부 적립 경로에 닿지 못하므로 스스로 잔액을 올릴 수 없습니다.
+
+- 1 / 5 / 10 / 25 USDC 단위, 1회 최대 1,000 USDC
+- 트랜잭션 서명 기준 멱등 — 재시도해도 한 번만 적립
+- 쓰지 않은 잔액은 검증된 지갑으로 출금 가능
+
+</td>
+<td width="50%">
+  <img src="../assets/feature-topup.png" alt="내 서가의 충전 컨트롤. 잔액 부족 안내, 1 / 5 / 10 / 25 USDC 단위 선택, 현재 선불 잔액, 충전 버튼" width="100%" />
 </td>
 </tr>
 <tr>
@@ -98,15 +122,19 @@ x402 facilitator가 Devnet 네트워크 수수료를 부담하므로 구매자 �
 <tr>
 <td width="50%" valign="middle">
 
-### 문서 한 건 단위 거래
+### 그림이 아니라 돌아가는 것을 보여주는 화면
 
-사람이 아는 내용은 지금까지 통째로만 거래됐습니다. 패널 조사, 연간 라이선스, 삼백 명의 응답을 보고서 한 편으로 압축한 형태입니다.
+`/admin`은 아키텍처 그림이 아니라 실행 중인 trace입니다. 노드마다 자기 수치를
+직접 보고합니다 — 색인된 문서 수, 적재된 메모리 엔트리 수, 마지막 질문에 쓰인
+PageRank seed와 iteration, 반영에 쓰인 Gemini 모델. 아래 터미널에는 실제 Cloud Run
+정산 이벤트가 상태 코드와 지연 시간과 함께 흘러갑니다.
 
-Obolus의 거래 단위는 문서 하나, 열람 한 번, 답변 하나입니다. 답변의 소유권은 작성자에게 남고, 열릴 때마다 계속 정산됩니다.
+캔버스 아래에는 채워지는 메모리 스트림, L0에서 L1로 올라가는 추상화, 그리고
+특정 질문 하나에 대한 personalized PageRank 그래프가 있습니다.
 
 </td>
 <td width="50%">
-  <img src="../assets/feature-panel.png" alt="설문 패널과 Obolus를 항목별로 비교한 표" width="100%" />
+  <img src="../assets/feature-observatory.png" alt="Obolus 시스템 관측 화면. 클라이언트 요청부터 Rust 정책 코어, 메모리 추상화, 증거 색인, 하이브리드 검색, personalized PageRank를 거쳐 x402 정산까지 이어지는 실시간 캔버스" width="100%" />
 </td>
 </tr>
 <tr>
@@ -130,13 +158,13 @@ Obolus의 거래 단위는 문서 하나, 열람 한 번, 답변 하나입니다
 
 ### 부족한 분야를 공개하는 커버리지 지표
 
-공개 인덱스는 문서 본문을 노출하지 않고 분야별 공급량과 실제 검색 miss를 aggregate로 보여 줍니다. 단순 문서 수는 coverage 신호이지 질문에 답할 수 있다는 보증이 아닙니다.
+공개 인덱스는 문서 본문을 노출하지 않고 분야별 수요와 실제 검색 miss를 aggregate로 보여 줍니다. 한 분야를 가로로 읽으면 아직 열려 있는 질문 수, 앞으로 더 받을 답변 수, 답변 하나에 붙은 최고 단가, 그리고 아직 테이블에 남아 있는 금액이 나옵니다. 마지막 금액은 USDC로 표시합니다.
 
-공개되는 정보는 질문이 빈손으로 돌아오는 자리, 그리고 그 자리를 채우겠다고 이미 붙은 값입니다.
+단순 문서 수는 coverage 신호이지 질문에 답할 수 있다는 보증이 아닙니다. 공개되는 정보는 질문이 빈손으로 돌아오는 자리, 그리고 그 자리를 채우겠다고 이미 붙은 값입니다.
 
 </td>
 <td width="50%">
-  <img src="../assets/feature-coverage.png" alt="무료 탐색, 질의별 권위, 유료 경계를 설명하는 빈 곳 페이지" width="100%" />
+  <img src="../assets/feature-coverage.png" alt="실시간 수요를 보여주는 빈 곳 페이지. 열린 질문 수, 더 받을 답변 수, 테이블에 남은 USDC를 분야별로 표시" width="100%" />
 </td>
 </tr>
 <tr>
@@ -157,6 +185,7 @@ Obolus의 거래 단위는 문서 하나, 열람 한 번, 답변 하나입니다
 
 **그 외 포함된 기능**
 
+- **[Obulus Full MCP](../../apps/obulus-mcp/README.md)**: 구매·기여·메모리·인보이스·정산·복구 작업 29개를 Codex나 Claude에서 그대로 쓸 수 있게 묶은 MCP 서버입니다. Pay.sh 인계 경계는 그대로 유지합니다.
 - **[Antigravity 플러그인](../../integrations/antigravity/openshelf/README.md)**: 질문자와 기여자의 전체 흐름을 `openshelf` MCP 툴 24개로 제공합니다. 공식 Pay.sh MCP 지갑도 얇은 핸드셰이크 어댑터를 통해 함께 붙습니다.
 - **선불 크레딧과 복구**: 지갑 소유는 한 번만 증명하고, 잔액이 부족할 때만 충전합니다. 브라우저가 응답을 잃으면 서버와 대조해 이미 결제된 건은 복구하고 결제되지 않은 핸들만 재시도합니다.
 - **공고 에스크로**: 유료 공고는 최대 예산을 먼저 잡아 둡니다. 채택된 답변마다 한 몫씩 풀리고, 공고를 취소하거나 계정을 삭제하면 쓰지 않은 잔액이 그대로 지급 청구로 돌아갑니다.
@@ -174,7 +203,9 @@ Obolus의 거래 단위는 문서 하나, 열람 한 번, 답변 하나입니다
 | 인간 문서 | 채택된 open-call 답변이나 opt-in shelf-starter 답변에서 만들어진 quality-checked, versioned 최종 답변 한 건입니다. 몸풀기 interview 답변은 비공개로 남고 별도 검색·판매하지 않습니다. |
 | 검색과 열람 | 검색은 무료이며 handle·가격·matching metadata만 돌려줍니다. 유료 열람 한 번은 해당 query와 receipt에 묶인 immutable passage version과 citation을 전달하며 기여자의 저작권을 이전하지 않습니다. 이후 correction이나 lock이 생겨도 이미 전달된 version은 바뀌지 않습니다. |
 | 기여자 가격 | 채택된 Open Call 답변은 해당 공고의 답변당 가격을 이어받습니다. Opt-in shelf-starter는 기여자가 향후 가격을 정합니다. 현재 hosted Pay.sh rail은 test 고정 band ₩5·₩10·₩15·₩25·₩100·₩300·₩500·₩700·₩800·₩1,000만 받습니다. |
-| 브라우저 승인 | UI가 선택 문서, 전체 원화 가격, exact Devnet USDC를 한 번에 보여 줍니다. **선불 잔액으로 열기**를 누르면 해당 견적만 예약합니다. Phantom은 잔액이 부족할 때 질문자가 고른 충전액만 서명합니다. 미사용 잔액은 출금할 수 있고 Obolus는 지갑에서 추가 금액을 가져올 수 없습니다. |
+| 원장 표기 단위 | 내부 원장은 USDC atomic 단위(소수점 6자리)이며, 브라우저에서 정밀도가 깨지지 않도록 JSON 문자열로 직렬화합니다. 잔액·수익·에스크로·영수증·커버리지 합계가 모두 USDC로 읽힙니다. 기존 `*_krw` 컬럼은 nullable 이력으로 남겨 두었고 더 이상 자금 이동의 기준이 아닙니다. 문서의 표시 단가는 여전히 원으로 저장하며, 랜딩과 질문 화면이 인용하는 것도 원입니다. |
+| 브라우저 승인 | UI가 선택 문서, 전체 금액, exact Devnet USDC를 한 번에 보여 줍니다. **선불 잔액으로 열기**를 누르면 해당 견적만 예약합니다. Phantom은 잔액이 부족할 때 질문자가 고른 충전액만 서명합니다. 미사용 잔액은 출금할 수 있고 Obolus는 지갑에서 추가 금액을 가져올 수 없습니다. |
+| 단독 충전 | 문서를 사지 않고도 선불 크레딧만 채울 수 있습니다. 브라우저가 게이트웨이에 정수 USDC 견적(1~1,000 USDC)을 요청하고 같은 x402 exact 스킴으로 결제하면, 게이트웨이는 독립 RPC 두 곳이 `OPENSHELF_BUNDLE_RECEIVER`로의 송금 확정에 동의한 뒤에야 검증된 결과를 `require_internal` 내부 적립 경로로 보냅니다. 트랜잭션 서명 기준 멱등이라 재시도해도 한 번만 적립됩니다. |
 | Agent 승인 | 로컬 구매 Agent는 exact intent 하나를 저장하고 aggregate atomic amount에 대해 interactive one-time 승인을 요구합니다. 모델은 URL·수취인·mint·network·금액을 바꿀 수 없습니다. |
 | 환산 | 운영 견적은 실시간 환율이 아닌 test 고정값 **1 USDC = ₩1,350**을 사용합니다. 각 문서를 six-decimal USDC atomic으로 따로 올림합니다: `ceil(priceKrw × 1,000,000 / 1,350)`. |
 | 현재 split | 제품 UI는 checkout 추가금 없이 소유자 90% / 프로토콜 10% 정책을 표시합니다. 현재 hosted Devnet Pay.sh endpoint는 primary split이 양수여야 해서 1 atomic만 남기고 나머지를 소유자에게 보냅니다. 따라서 동일 receipt의 온체인 90/10 split은 Mainnet 전 gate이며 구현된 상용 take rate로 주장하지 않습니다. |
@@ -346,7 +377,7 @@ flowchart LR
 ## 기술 스택
 
 <p>
-  <kbd>React&nbsp;19</kbd> &nbsp; <kbd>TypeScript&nbsp;5.9</kbd> &nbsp; <kbd>Vite&nbsp;8</kbd> &nbsp; <kbd>Tailwind&nbsp;v4</kbd> &nbsp; <kbd>React&nbsp;Router&nbsp;7</kbd> &nbsp; <kbd>three.js</kbd> &nbsp;
+  <kbd>React&nbsp;19</kbd> &nbsp; <kbd>TypeScript&nbsp;5.9</kbd> &nbsp; <kbd>Vite&nbsp;8</kbd> &nbsp; <kbd>Tailwind&nbsp;v4</kbd> &nbsp; <kbd>React&nbsp;Router&nbsp;7</kbd> &nbsp; <kbd>three.js</kbd> &nbsp; <kbd>React&nbsp;Flow</kbd> &nbsp; <kbd>Framer&nbsp;Motion</kbd> &nbsp;
   <kbd>Rust&nbsp;1.89&nbsp;/&nbsp;Axum</kbd> &nbsp; <kbd>Cloud SQL&nbsp;/&nbsp;PostgreSQL</kbd> &nbsp;
   <kbd>x402&nbsp;v2&nbsp;—&nbsp;exact&nbsp;/&nbsp;SVM</kbd> &nbsp; <kbd>Solana&nbsp;Devnet</kbd> &nbsp; <kbd>USDC</kbd> &nbsp; <kbd>Phantom</kbd> &nbsp;
   <kbd>Pay.sh&nbsp;+&nbsp;MPP</kbd> &nbsp; <kbd>GCP&nbsp;KMS</kbd> &nbsp; <kbd>Cloud&nbsp;Run</kbd> &nbsp; <kbd>Gemini&nbsp;on&nbsp;Vertex&nbsp;AI</kbd>
@@ -496,13 +527,15 @@ gate입니다. [`docs/MUTATION-TESTING.md`](../MUTATION-TESTING.md)와
 | `/` | **질문하기** | 정문. 질문하면 SHELF가 서가를 탐색하고, 결과가 없으면 공고로 넘어갑니다. |
 | `/chat/:id` | 대화 | 질문 한 건의 스레드. 있음/없음 대화와 결제 미리보기를 포함합니다. |
 | `/dashboard` | **답변 모집** | 답변자용 보드. 답변당 단가가 붙은 공고를 골라 답하고 정산받습니다. |
-| `/memory` | **내 서가** | 지금까지 답한 문서가 쌓이는 곳. 쌓일수록 자동 매칭이 잘 붙습니다. |
-| `/archive` | 영수증 | 대화, 구매한 문서, 트랜잭션 링크. |
-| `/coverage` | 빈 곳 | 질문이 빈손으로 돌아오는 자리와 그 자리에 붙은 값. |
+| `/memory` | **내 서가** | 지금까지 답한 문서와 그 수익, 증거 계정, 그리고 선불 USDC 충전 컨트롤. 대표 숫자는 보유 USDC 합계 — 선불 잔액과 누적 수익을 atomic 단위로 더한 값입니다. Phantom 지갑 자체의 Devnet USDC 잔액도 솔라나에서 직접 읽어 Obolus 크레딧과 구분해 보여 줍니다. |
+| `/archive` | 내 질문 | 질문 이력, 각 질문이 값을 치른 문서, 총 지출, 온체인 영수증 여부. |
+| `/transactions` | 영수증 | 모든 정산과 지급 내역, 트랜잭션 링크. |
+| `/coverage` | 빈 곳 | 실시간 수요 — 분야별 열린 질문, 더 받을 답변 수, 아직 남은 USDC. |
 | `/answer/:orderId` | 답변 | 한 화면에 질문 하나. 앞에 몸풀기 문항 몇 개. |
 | `/onboarding` | 설정 | 핸들, 구간, 분야, 정산 지갑, 3진 아웃 규칙. |
 | `/whitepaper` | 왜 만들었나 | 이 프로젝트를 만드는 이유를 정리한 긴 글. |
-| `/login` `/terms` `/privacy` `/admin/disputes` `/admin/operations` | | 지갑 로그인, 법적 고지, 관리자 분쟁 검토, aggregate-only 읽기 전용 운영 콘솔. |
+| `/admin` | Admin Test | 시스템 관측 화면. 요청부터 정산까지의 실시간 캔버스, 메모리 스트림, 추상화 성장, personalized PageRank, 읽기 전용 운영 테이블. `/admin/disputes`, `/admin/operations`, `/admin/data-pipeline`은 모두 여기로 넘어옵니다. |
+| `/login` `/terms` `/privacy` | | 지갑 로그인과 법적 고지. |
 
 ---
 
@@ -517,8 +550,10 @@ gate입니다. [`docs/MUTATION-TESTING.md`](../MUTATION-TESTING.md)와
 | `agent-orchestrator/` | Pay.sh challenge 결제, 불확실성 대사, 지급·환불 준비를 담당하는 결정적 Cloud Run 결제·복구 워커입니다. Gemini/Vertex 계획 루프는 없습니다. |
 | `pay/` | Pay.sh 페이월 정의, Dockerfile, Cloud Build + GCP KMS 배포. |
 | `apps/obulus-local-agent/` | Phantom 없는 구매자 MCP. 로컬 capability, privacy guard, 정확한 견적 검증, Pay.sh handoff. |
+| `apps/obulus-mcp/` | 29개 툴을 갖춘 전체 MCP. 구매·기여·메모리·인보이스·정산 복구·수익·계정 작업. |
 | `integrations/antigravity/openshelf/` | 플러그인. MCP 툴 24개, 스킬, Pay 핸드셰이크 어댑터. |
 | `deploy/cloudflare-pages/` + `deploy/cloud-run/` | Edge와 GCP 배포 계약, 승격 검사, rollback runbook. |
+| `artifacts/` + `docs/pitch-final-assets/` | 결선 발표용으로 실제 촬영한 제품 증거. 어떤 컷을 쓰고 어떤 컷은 빈 상태라 보류하는지 manifest에 적혀 있습니다. |
 | `docs/` | 위협 모델, 계정 연동, Pay.sh 배포, 코드 리뷰, 랭킹 노트. |
 | `architecture.html` | 애플리케이션·데이터 모델·ERD 상세 보기. 이 README는 배포를 요약하고, 연결된 evidence와 deploy runbook이 실측 상태·운영 계약을 보유합니다. |
 
@@ -536,6 +571,13 @@ gate입니다. [`docs/MUTATION-TESTING.md`](../MUTATION-TESTING.md)와
 - 출시 인증 경로는 지갑 challenge/SIWX입니다. 서버 발급 HttpOnly session을 사용하고 client가 보낸 identity는 거부합니다. 이메일/비밀번호는 비활성 flag 뒤의 test-only 기능입니다.
 - 결정적 코드가 검색·랭킹, 불변 견적, DB 기반 커스터디얼 escrow 원장, settlement fence, 복구, 지급·환불, AI 승인 경계를 소유합니다. API의 제한된 두 호출 루프에서 Gemini는 metadata를 계획하고 Rust 검색 결과를 관측한 뒤 비결제 제안 하나를 고릅니다. 이후 결제된 근거만 별도로 합성합니다. A2A나 multi-agent 구현이라고 주장하지 않습니다.
 - Hosted Devnet evidence 실행으로 실제 test-USDC funding, 소유자 지급, 정확한 나머지 환불, 서로 독립적인 RPC 두 곳의 일치하는 finality, 중복 정산 0건을 기록했습니다.
+- 원장이 처음부터 끝까지 USDC atomic 단위로 표기됩니다. 공고 발주는 내부 원화 pot이 아니라 선불 USDC 잔액에서 나가고, 가입 크레딧은 없으며, 단독 충전 경로는 독립적으로 확인된 finality 뒤에만 적립하고 트랜잭션 서명 기준으로 멱등합니다.
+
+### 이 리비전의 알려진 빈틈
+
+- 랜딩과 질문 화면은 문서 단가를 원으로 인용하는데, 잔액·보드·영수증은 전부 USDC로 읽힙니다. 렌더링 버그가 아니라 아직 정하지 않은 제품 결정이지만, 인접한 화면에서 두 표기가 동시에 보입니다.
+- 랜딩 히어로가 degrade하지 않고 그대로 실패합니다. `src/components/ui/liquid-shader.tsx`가 `THREE.WebGLRenderer`를 가드 없이 만들고 `src/`에 error boundary가 없어서, WebGL을 못 쓰는 브라우저에서는 `/`가 백지로 뜹니다. 다른 라우트는 모두 정상입니다.
+- `scripts/mock-backend.mjs`는 USDC 작업 이전 상태라 `npm run demo:record` 결과물과 mock으로 찍은 캡처는 아직 예전 화면을 보여 줍니다.
 
 ### 주장하지 않는 것
 
