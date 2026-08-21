@@ -8,7 +8,7 @@ import {
 
 test("prepaid and one-shot agent funding are explicit, mutually exclusive contracts", () => {
   assert.deepEqual(
-    bundleFundingMode({ walletSession: "  wallet-session  ", topUpAtomic: "5000000" }),
+    bundleFundingMode({ walletSession: "  wallet-session  " }),
     { kind: "prepaid", walletSession: "wallet-session" },
   );
   assert.deepEqual(
@@ -31,6 +31,11 @@ test("prepaid and one-shot agent funding are explicit, mutually exclusive contra
       input: { walletSession: "wallet", agentProtocol: AGENT_BUNDLE_PROTOCOL },
       status: 400,
       code: "ambiguous_funding_mode",
+    },
+    {
+      input: { walletSession: "wallet", topUpAtomic: "5000000" },
+      status: 400,
+      code: "automatic_top_up_forbidden",
     },
     {
       input: { agentProtocol: AGENT_BUNDLE_PROTOCOL, topUpAtomic: "1" },

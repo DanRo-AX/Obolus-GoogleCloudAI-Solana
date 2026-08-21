@@ -45,7 +45,7 @@ import { useUi, type Citation, type PaymentContext } from '@/state/ui'
  *
  * Step 4 is the whole service. A human hit ends as paid search; a miss may add
  * a free public-model orientation while keeping the human gap open for a paid call.
- * Phantom approves a reusable prepaid balance refill only when funds are low. The server agent then pays the
+ * Document opens spend only existing prepaid USDC. The server agent pays the
  * selected DBs independently through Pay.sh and returns only paid evidence.
  */
 
@@ -132,6 +132,7 @@ export default function Chat() {
     orders,
     refreshLedger,
     account,
+    authWallet,
     createChat,
     setMobileSidebar,
   } = useUi()
@@ -187,11 +188,12 @@ export default function Chat() {
   )
   const paymentSession = chat?.paymentSession
   const paymentUsesLegacyPaySh = paymentSession?.payer === 'pay.sh'
+  const prepaidPayer = authWallet ?? wallet.pubkey
   const paymentPayerMismatch = Boolean(
     paymentSession?.payer &&
       !paymentUsesLegacyPaySh &&
-      wallet.pubkey &&
-      paymentSession.payer !== wallet.pubkey,
+      prepaidPayer &&
+      paymentSession.payer !== prepaidPayer,
   )
   const paymentIncomplete = phase === 'failed' && Boolean(paymentSession?.docs.length)
 
@@ -292,19 +294,18 @@ export default function Chat() {
         setPhase('failed')
         return
       }
-      if (!wallet.pubkey) {
+      const payer = session.payer ?? authWallet ?? wallet.pubkey
+      if (!payer) {
         await wallet.connect()
         return
       }
-      if (session.payer && session.payer !== wallet.pubkey) {
+      if (session.payer && authWallet && session.payer !== authWallet) {
         setPayError(
-          `${t('This question was started from')} ${shortKey(session.payer)}. ${t('The connected wallet is')} ${shortKey(wallet.pubkey)}. ${t('Switch back to open what you already paid for.')}`,
+          `${t('This question was started from')} ${shortKey(session.payer)}. ${t('The connected wallet is')} ${shortKey(authWallet)}. ${t('Switch back to open what you already paid for.')}`,
         )
         setPhase('failed')
         return
       }
-      const payer = wallet.pubkey
-      if (!payer) return
       if (!session.payer) {
         patchChat(chatId, {
           paymentSession: { ...session, payer },
@@ -392,6 +393,7 @@ export default function Chat() {
     },
     [
       account,
+      authWallet,
       appendAssistant,
       chat?.paymentSession,
       chatId,
@@ -435,6 +437,30 @@ export default function Chat() {
         setResolutionReason(resolution.reason)
         setOpenCallDraft(resolution.openCall ?? null)
         setAgentRun(resolution.agentRun ?? null)
+
+        // Gemini is the default conversational layer, not a fallback that is
+        // available only after the human index misses. Start the free general
+        // answer for every question. Paid persona databases remain a separate
+        // grounded comparison layer that the user may open afterwards.
+        setAiBaselineStatus('loading')
+        void generateAiBaseline(
+          resolution.queryId,
+          resolution.paymentAccessToken,
+        ).then(
+          (result) => {
+            if (cancelled) return
+            if (result.baseline) {
+              setAiBaseline(result.baseline)
+              setAiBaselineStatus('ready')
+              patchChat(chatId, { aiBaseline: result.baseline })
+            } else {
+              setAiBaselineStatus('unavailable')
+            }
+          },
+          () => {
+            if (!cancelled) setAiBaselineStatus('unavailable')
+          },
+        )
         const seen = new Set<string>()
         const ranked = resolution.matches.flatMap((match) => {
           if (seen.has(match.shelfId)) return []
@@ -463,27 +489,6 @@ export default function Chat() {
         )
         if (resolution.decision === 'miss') {
           setPhase(branch.phase)
-          if (branch.generateBaseline) {
-            setAiBaselineStatus('loading')
-            void generateAiBaseline(
-              resolution.queryId,
-              resolution.paymentAccessToken,
-            ).then(
-              (result) => {
-                if (cancelled) return
-                if (result.baseline) {
-                  setAiBaseline(result.baseline)
-                  setAiBaselineStatus('ready')
-                  patchChat(chatId, { aiBaseline: result.baseline })
-                } else {
-                  setAiBaselineStatus('unavailable')
-                }
-              },
-              () => {
-                if (!cancelled) setAiBaselineStatus('unavailable')
-              },
-            )
-          }
           return
         }
         if (branch.phase === 'declined') {
@@ -608,6 +613,12 @@ export default function Chat() {
             ) : (
               <div key={m.id} className="flex flex-col gap-3">
                 <AgentLabel />
+                {m.citations?.length && m.settlement ? (
+                  <p className="font-mono text-[10px] uppercase tracking-[0.9px] text-emerald-700">
+                    {t('Grounded persona answer')} · {m.citations.length}{' '}
+                    {m.citations.length === 1 ? t('paid record') : t('paid records')}
+                  </p>
+                ) : null}
                 <p className="text-[15px] leading-7 text-foreground">
                   {t(m.content)}
                 </p>
@@ -718,10 +729,10 @@ export default function Chat() {
               {phase === 'confirm' ? (
                 <Branch
                   title={`${pending.length} ${t('documents already answer this.')}`}
-                  body={`${t('No open call needed. Opening all')} ${pending.length} ${t('costs')} ${totalUsdc} ${t('USDC on Solana.')} ${paymentUsesLegacyPaySh ? t('This old local Pay.sh session cannot continue. Ask again to start a new one.') : t('That amount is reserved from your prepaid USDC balance. Phantom appears only for the first refill, or when the balance runs low; Obolus then pays each author through Pay.sh.')}`}
+                  body={`${t('No open call needed. Opening all')} ${pending.length} ${t('costs')} ${totalUsdc} ${t('USDC on Solana.')} ${paymentUsesLegacyPaySh ? t('This old local Pay.sh session cannot continue. Ask again to start a new one.') : t('That amount is reserved only from your existing prepaid USDC balance. If it is insufficient, top up from My Database and retry; opening documents never pulls funds from Phantom.')}`}
                 >
                   <div className="w-full rounded-[4px] bg-foreground/[0.04] px-3 py-2 font-mono text-[10px] uppercase leading-relaxed tracking-[0.8px] text-muted-foreground">
-                    {t('Gas-sponsored Devnet payment · no SOL required · refill only when low · no token delegate. Verify Devnet USDC mint')}{' '}
+                    {t('Gas-sponsored Devnet settlement · no SOL required · prepaid balance only · no token delegate. Verify Devnet USDC mint')}{' '}
                     <span className="text-foreground" title={DEVNET_USDC}>
                       {shortKey(DEVNET_USDC)}
                     </span>.
@@ -804,7 +815,7 @@ export default function Chat() {
                     >
                       {t('Sign in to pay')}
                     </Button>
-                  ) : !paymentUsesLegacyPaySh && wallet.pubkey && !paymentPayerMismatch ? (
+                  ) : !paymentUsesLegacyPaySh && prepaidPayer && !paymentPayerMismatch ? (
                     <Button
                       variant="mono"
                       size="mono"
@@ -1038,7 +1049,7 @@ export default function Chat() {
               {phase === 'settling' ? (
                 <Branch
                   title={t('Obolus is opening the documents…')}
-                  body={t('The question is reserved against your prepaid balance. Obolus checks each 402 price and recipient, pays the author, and returns only the passages it paid for. Phantom appears only if the balance needs a refill. You can close this tab — the job keeps running.')}
+                  body={t('The question is reserved against your existing prepaid balance. Obolus checks each 402 price and recipient, pays the author, and returns only the passages it paid for. No wallet transfer is requested while documents open. You can close this tab — the job keeps running.')}
                 />
               ) : null}
 
@@ -1092,7 +1103,20 @@ export default function Chat() {
                       ? t('It proposed no purchase or Open Call for this result. Nothing left your wallet; you can ask again with different filters or a different budget.')
                       : t('No call was posted and nothing left your wallet. Ask again at a different price any time.')
                   }
-                />
+                >
+                  {aiBaselineStatus === 'loading' ? (
+                    <div className="flex w-full items-center gap-2 rounded-[4px] border border-border px-3 py-2 text-xs text-muted-foreground">
+                      <Loader2 className="size-3 animate-spin" />
+                      {t('Preparing a free general answer')}
+                    </div>
+                  ) : null}
+                  {aiBaseline ? <AiBaselineCard baseline={aiBaseline} /> : null}
+                  {aiBaselineStatus === 'unavailable' ? (
+                    <div className="w-full rounded-[4px] border border-border px-3 py-2 text-xs leading-5 text-muted-foreground">
+                      {t('The free general answer could not be prepared. Nothing was purchased or posted. You can ask another question, or choose human research when firsthand experience is necessary.')}
+                    </div>
+                  ) : null}
+                </Branch>
               ) : null}
             </div>
           ) : null}
@@ -1122,7 +1146,7 @@ function AiBaselineCard({ baseline }: { baseline: AiBaseline }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[1px] text-[#5540BE]">
           <Sparkles className="size-3" />
-          {t('Obulus public answer')}
+          {t('Obulus general answer')}
         </div>
         <span className="rounded-full border border-[#6D5BD0]/20 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.7px] text-[#6D5BD0]">
           {t('Free · public sources · not human evidence')}

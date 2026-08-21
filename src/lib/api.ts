@@ -676,12 +676,14 @@ export function getPrepaidBalance(): Promise<PrepaidBalance> {
 export function getPaymentBundleQuote(
   quoteId: string,
   queryAccessToken: string,
-  walletSessionToken: string,
+  walletSessionToken?: string,
 ): Promise<PaymentBundleQuote> {
   return apiFetch(`/api/v1/payment-bundles/${encodeURIComponent(quoteId)}`, {
     headers: {
       'x-openshelf-query-token': queryAccessToken,
-      'x-openshelf-wallet-session': walletSessionToken,
+      ...(walletSessionToken
+        ? { 'x-openshelf-wallet-session': walletSessionToken }
+        : {}),
     },
   })
 }

@@ -185,11 +185,11 @@ export const SECTIONS: Section[] = [
     blocks: [
       {
         kind: 'p',
-        text: 'Per-open pricing works only when a small USDC payment needs no manual gas step. Phantom authorizes a bounded USDC refill only when prepaid credit runs low; the x402 facilitator sponsors the network fee and a KMS-protected agent settles each selected database through Pay.sh.',
+        text: 'Per-open pricing works only when a small USDC payment needs no manual gas step. The user explicitly tops up a bounded prepaid balance from My Database; the x402 facilitator sponsors the network fee and a KMS-protected agent settles each selected database through Pay.sh.',
       },
       {
         kind: 'p',
-        text: 'HTTP already has the status code for this. A request arrives, the server answers 402 with a price, the payment is presented, and the document opens. Phantom signs the balance refills and nothing else; the server agent settles 402 machine to machine, with no user delegate in the middle.',
+        text: 'HTTP already has the status code for this. A request arrives, the server answers 402 with a price, the payment is presented, and the document opens. Phantom appears only for an explicit top-up or withdrawal; the server agent settles ordinary 402 opens from prepaid USDC, with no user delegate in the middle.',
       },
       {
         kind: 'code',
@@ -204,7 +204,7 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'p',
-        text: 'Settlement runs on Solana Devnet in USDC. Phantom proves the wallet and refills prepaid credit only when it runs low; a non-exportable KMS service key pays each selected database through Pay.sh. The asker sees how many documents opened and the exact USDC total. A failed open returns to prepaid credit instead of becoming author earnings.',
+        text: 'Settlement runs on Solana Devnet in USDC. Phantom proves the wallet and signs only a top-up the user explicitly starts; a non-exportable KMS service key pays each selected database through Pay.sh from the existing prepaid balance. The asker sees how many documents opened and the exact USDC total. A failed open returns to prepaid credit instead of becoming author earnings.',
       },
       {
         kind: 'p',

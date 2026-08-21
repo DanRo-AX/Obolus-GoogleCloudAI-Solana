@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -1195,6 +1197,13 @@ pub struct SynthesizeAnswerRequest {
     pub query_id: String,
     pub question: String,
     pub citations: Vec<Citation>,
+    /// Canonical paid-document handle -> consented contributor profile handle.
+    /// The synthesis model uses this boundary to keep each personal database
+    /// as a distinct grounded perspective instead of treating a topic shelf as
+    /// a fictional person. Older callers may omit it; document handles then
+    /// remain the conservative persona boundary.
+    #[serde(default)]
+    pub persona_databases: BTreeMap<String, String>,
 }
 
 /// Client input for synthesis. The client identifies already-opened passages,

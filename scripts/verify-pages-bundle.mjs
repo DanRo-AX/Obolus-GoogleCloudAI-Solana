@@ -16,13 +16,24 @@ for (const assetName of assetNames) {
 }
 
 const pitch = await readFile('dist/pitch/index.html', 'utf8')
-for (const marker of ['data-title="표지"', 'id="liveProofStatus"', '총 435개 테스트']) {
+for (const marker of [
+  'data-title="표지"',
+  'data-title="진입 시장과 비전"',
+  'data-title="Appendix · 실제 배포 아키텍처"',
+  '공개 웹에 없는 인간 근거',
+  'Phantom에서 매번 출금하지 않고',
+  '77 / 77 checks passed',
+]) {
   if (!pitch.includes(marker)) throw new Error(`staged pitch is missing ${marker}`)
 }
 for (const path of [
-  'dist/pitch/assets/hero.png',
-  'dist/pitch/pitch-deck-assets/10-chat-hit-exact-quote.png',
-  'dist/pitch/pitch-deck-assets/11-cli-mcp-agent-interface.png',
+  'dist/pitch/pitch-final-assets/00-dream-weave-white.png',
+  'dist/pitch/pitch-final-assets/03-ranked-evidence-4k.png',
+  'dist/pitch/pitch-final-assets/04b-admin-architecture-canvas.png',
+  'dist/pitch/pitch-final-assets/05-wallet-memory-4k.png',
+  'dist/pitch/pitch-final-assets/brand-assets/gemini.png',
+  'dist/pitch/pitch-final-assets/brand-assets/rust.png',
+  'dist/pitch/pitch-final-assets/brand-assets/solana.png',
 ]) {
   if (!(await stat(path)).isFile()) throw new Error(`staged pitch asset is missing: ${path}`)
 }

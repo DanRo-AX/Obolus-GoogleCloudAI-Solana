@@ -28,7 +28,7 @@ export const HOME_FAQ: Faq[] = [
   },
   {
     q: 'Do I need SOL or a Phantom approval for every document?',
-    a: 'No. Phantom proves ownership and signs only a bounded Devnet USDC refill when the service balance is low. The x402 facilitator sponsors the network fee, and a KMS-protected Pay.sh worker settles selected documents from that prepaid balance. Obolus never receives a seed phrase, private key, or wallet-wide token allowance.',
+    a: 'No. Phantom proves ownership and signs only a top-up or withdrawal that you explicitly start from My Database. Ordinary document opens spend the existing prepaid balance, while the x402 facilitator sponsors the network fee and a KMS-protected Pay.sh worker settles selected documents. Obolus never receives a seed phrase, private key, or wallet-wide token allowance.',
   },
   {
     q: 'How is an open call funded?',

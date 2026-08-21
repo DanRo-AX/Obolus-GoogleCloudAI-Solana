@@ -100,22 +100,21 @@ function ProfileChip({ onSignOut }: { onSignOut: () => Promise<void> }) {
 }
 
 /**
- * The two numbers that bring somebody back: what the personal database has earned, and how
- * many open calls are sitting in the fields they claimed. Both are links —
+ * The two numbers that bring somebody back: USDC currently available to spend without
+ * another wallet transfer, and open calls in the fields they claimed. Both are links —
  * a figure you cannot act on is decoration.
  */
 function LiveStrip() {
-  const { earnings, orders, profile } = useUi()
+  const { prepaidBalance, orders, profile } = useUi()
   const t = useT()
 
   const open = orders.filter((o) => !o.mine && o.answered < o.target)
   const fits = profile
     ? open.filter((o) => profile.speaksTo.includes(o.category)).length
     : open.length
-  const earned = formatUsdcShort(earnings?.accruedAtomic ?? '0') ?? '0.00'
-  const held = earnings?.heldAtomic && earnings.heldAtomic !== '0'
-    ? formatUsdcShort(earnings.heldAtomic)
-    : null
+  const available = prepaidBalance
+    ? formatUsdcShort(prepaidBalance.availableAtomic) ?? '0.00'
+    : '—'
 
   return (
     <div className="grid grid-cols-2 border-t border-border pt-2">
@@ -124,15 +123,13 @@ function LiveStrip() {
         className="flex min-w-0 flex-col gap-1 rounded-lg px-2 py-2 transition-colors hover:bg-foreground/[0.045]"
       >
         <span className="text-[10px] text-muted-foreground">
-          {profile ? t('Earned') : t('Paid out')}
+          {t('Prepaid balance')}
         </span>
-        <span className="truncate text-[14px] font-medium leading-none tabular-nums text-foreground">
-          {earned} USDC
-          {held ? (
-            <span className="ml-1 text-[9px] font-normal text-muted-foreground">
-              · {held} USDC {t('held')}
-            </span>
-          ) : null}
+        <span
+          className="truncate text-[14px] font-medium leading-none tabular-nums text-foreground"
+          title={prepaidBalance ? `${available} USDC` : undefined}
+        >
+          {available}{prepaidBalance ? ' USDC' : ''}
         </span>
       </Link>
       <Link
@@ -215,7 +212,7 @@ export function AppSidebar() {
     profile,
     account,
     signOut,
-    balance,
+    prepaidBalance,
   } = useUi()
   const wallet = useWallet()
   const t = useT()
@@ -356,7 +353,7 @@ export function AppSidebar() {
                 ) : account ? (
                   <div className="space-y-2 border-t border-border pt-2.5">
                     <p className="px-1 text-xs leading-5 text-muted-foreground">
-                      {formatUsdcShort(balance?.availableAtomic ?? '0') ?? '0.00'} USDC {t('available for evidence opens')}
+                      {formatUsdcShort(prepaidBalance?.availableAtomic ?? '0') ?? '0.00'} USDC {t('available for evidence opens')}
                     </p>
                     <div className="flex gap-2">
                       <Button asChild variant="mono" size="monoSm" className="flex-1">

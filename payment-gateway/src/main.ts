@@ -1510,12 +1510,18 @@ app.get("/readyz", async (_request, response) => {
   }
 });
 
-// Preparing a research job is free. Phantom later funds the exact sum of the
-// independent Pay.sh charges with one transfer to the bounded agent wallet.
+// Preparing a browser research job is free and spends existing prepaid USDC.
+// Wallet transfers are accepted only by the separate, explicit top-up route.
 app.post("/api/v1/payment-bundles", async (request, response, next) => {
   try {
     const accessToken = request.header("x-openshelf-query-token")?.trim();
-    const walletSession = request.header("x-openshelf-wallet-session")?.trim();
+    // In production /api and /x402 are same-origin proxies. Reuse the
+    // HttpOnly prepaid session cookie set by the Rust API so ordinary document
+    // opens do not need to reopen Phantom after a refresh. Local cross-origin
+    // development and agent clients can still send the explicit header.
+    const walletSession =
+      request.header("x-openshelf-wallet-session")?.trim() ||
+      cookieValue(request, "openshelf_prepaid_session");
     const agentProtocol = request.header("x-openshelf-agent-payment-mode")?.trim();
     if (!accessToken) {
       response.status(401).json({
@@ -1579,7 +1585,6 @@ app.post("/api/v1/payment-bundles", async (request, response, next) => {
         body: JSON.stringify({
           queryId: body.queryId,
           handles: body.handles,
-          ...(fundingMode.kind === "prepaid" ? { topUpAtomic: body.topUpAtomic } : {}),
           ...(body.expectedInvoiceHash
             ? { expectedInvoiceHash: body.expectedInvoiceHash }
             : {}),
@@ -1597,6 +1602,19 @@ app.post("/api/v1/payment-bundles", async (request, response, next) => {
     next(error);
   }
 });
+
+function cookieValue(request: Request, name: string): string | undefined {
+  const header = request.header("cookie");
+  if (!header) return undefined;
+  for (const item of header.split(";")) {
+    const [key, ...parts] = item.trim().split("=");
+    if (key === name) {
+      const value = parts.join("=").trim();
+      return value || undefined;
+    }
+  }
+  return undefined;
+}
 
 // Preparing a standalone top-up is free and needs no research context: the
 // browser asks for a whole-USDC amount, and the gateway returns an exact x402

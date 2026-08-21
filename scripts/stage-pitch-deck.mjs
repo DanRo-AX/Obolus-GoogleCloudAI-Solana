@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { assertSecretFree } from './lib/finalist-evidence.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const deckSource = join(root, 'docs', 'obulus-pitch-deck.html')
+const deckSource = join(root, 'docs', 'obulus-pitch-deck-white.html')
 const pitchRoot = join(root, 'dist', 'pitch')
 const deck = readFileSync(deckSource, 'utf8')
 const stageDeckSource = join(root, 'docs', 'obulus-stage-pitch.html')
@@ -16,7 +16,7 @@ const stageDeck = readFileSync(stageDeckSource, 'utf8')
 copy(deckSource, join(pitchRoot, 'index.html'))
 
 const assetRefs = new Set(
-  [...deck.matchAll(/(?:src=|url\()["']?((?:pitch-deck-assets|assets)\/[^"')\s]+)/g)]
+  [...deck.matchAll(/(?:src=|url\()["']?((?:pitch-final-assets|pitch-deck-assets|assets)\/[^"')\s]+)/g)]
     .map((match) => match[1]),
 )
 for (const assetRef of assetRefs) {

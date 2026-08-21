@@ -134,7 +134,7 @@ export function FlowDiagram({ className }: { className?: string }) {
           <Edge d="M820 474 V503" tone="branch" label={t('insufficient')} labelX={831} labelY={494} />
           <Edge d="M820 601 V618" tone="branch" label={t('firsthand evidence is essential')} labelX={690} labelY={616} />
 
-          <Node x={30} y={805} step={t('USER KEY BOUNDARY')} title={t('Bounded funding authority')} detail={[t('Phantom signs only when prepaid credit is low'), t('the server never receives the user private key')]} accent={SETTLEMENT} />
+          <Node x={30} y={805} step={t('USER KEY BOUNDARY')} title={t('Bounded funding authority')} detail={[t('Phantom signs only explicit top-ups and withdrawals'), t('the server never receives the user private key')]} accent={SETTLEMENT} />
           <Node x={360} y={805} step={t('HTTP 402 · PAY.SH · CLOUD KMS')} title={t('Verify and settle each document')} detail={[t('quote-bound, idempotent and recoverable'), t('unopened documents cost nothing')]} accent={SETTLEMENT} />
           <Node x={690} y={805} step={t('SOLANA · USDC')} title={t('Onchain settlement and receipt')} detail={[t('facilitator sponsors the network fee'), t('90% to owner · 10% protocol · explorer proof')]} accent={SETTLEMENT} />
           <Edge d="M490 601 V803" tone="settlement" label={t('pay selected URLs')} labelX={502} labelY={748} />

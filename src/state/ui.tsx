@@ -20,6 +20,7 @@ import {
   disputeMemory,
   getBalance,
   getEarnings,
+  getPrepaidBalance,
   getProfile,
   getSession,
   listMemory,
@@ -36,6 +37,7 @@ import {
   type AiBaseline,
   type Account,
   type BalanceSummary,
+  type PrepaidBalance,
   type DemographicBands,
   type ContributorNotification,
   type ServerProfile,
@@ -44,7 +46,6 @@ import {
 } from '@/lib/api'
 import { shouldClearAuthentication } from '@/lib/authBootstrap'
 import type { Issue } from '@/lib/quality'
-import { fundOpenCall, X402_ENABLED } from '@/lib/x402'
 
 /** One quoted MD. Once the open is confirmed it becomes the settlement unit. */
 export type Citation = {
@@ -125,7 +126,7 @@ export type Order = {
   filters?: TargetFilters
   eligible?: boolean
   escrowRemainingKrw?: number
-  escrowMode?: 'sandbox' | 'x402_solana_escrow'
+  escrowMode?: 'sandbox' | 'prepaid' | 'x402_solana_escrow'
   escrowWallet?: string
   escrowAsset?: string
   escrowNetwork?: string
@@ -230,6 +231,8 @@ type UiValue = {
   notifications: ContributorNotification[]
   markNotificationsRead: (ids?: string[]) => Promise<void>
   balance: BalanceSummary | null
+  /** On-chain-backed USDC available to Obolus/Pay.sh without another Phantom transfer. */
+  prepaidBalance: PrepaidBalance | null
   account: Account | null
   authWallet: string | null
   authReady: boolean
@@ -381,6 +384,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
   const [account, setAccount] = useState<Account | null>(null)
   const [authWallet, setAuthWallet] = useState<string | null>(null)
   const [balance, setBalance] = useState<BalanceSummary | null>(null)
+  const [prepaidBalance, setPrepaidBalance] = useState<PrepaidBalance | null>(null)
   const [authReady, setAuthReady] = useState(!BACKEND_ENABLED)
   const [authError, setAuthError] = useState<string | null>(null)
   const [authAttempt, setAuthAttempt] = useState(0)
@@ -394,6 +398,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     setNotifications([])
     notifiedIds.current.clear()
     setBalance(null)
+    setPrepaidBalance(null)
     setAuthWallet(null)
   }, [])
 
@@ -440,17 +445,19 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
               chat.ownerId ? chat : { ...chat, ownerId: session.user.id },
             ),
         )
-        const [remoteMemory, remoteProfile, remoteEarnings, remoteNotifications] =
+        const [remoteMemory, remoteProfile, remoteEarnings, remoteNotifications, remotePrepaidBalance] =
           await Promise.all([
             listMemory(),
             getProfile(),
             getEarnings(),
             listNotifications(),
+            getPrepaidBalance().catch(() => null),
           ])
         if (cancelled) return
         setMemory(remoteMemory)
         setEarnings(remoteEarnings)
         setNotifications(remoteNotifications)
+        setPrepaidBalance(remotePrepaidBalance)
         remoteNotifications.forEach((notification) => notifiedIds.current.add(notification.id))
         if (remoteProfile) {
           setProfile(profileFromServer(remoteProfile))
@@ -531,18 +538,20 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
 
   const refreshLedger = useCallback(async () => {
     if (!BACKEND_ENABLED) return
-    const [remoteMemory, remoteEarnings, remoteBalance, remoteOrders, remoteNotifications] = await Promise.all([
+    const [remoteMemory, remoteEarnings, remoteBalance, remoteOrders, remoteNotifications, remotePrepaidBalance] = await Promise.all([
       listMemory(),
       getEarnings(),
       getBalance(),
       listOpenCalls(),
       listNotifications(),
+      getPrepaidBalance().catch(() => null),
     ])
     setMemory(remoteMemory)
     setEarnings(remoteEarnings)
     setBalance(remoteBalance)
     setOrders(remoteOrders)
     setNotifications(remoteNotifications)
+    setPrepaidBalance(remotePrepaidBalance)
   }, [])
 
   const createChat = useCallback((prompt: string, filters?: TargetFilters) => {
@@ -622,11 +631,9 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
         if (order.unitPrice <= 0) {
           throw new Error('Open calls require a positive prepaid USDC budget.')
         }
-        // One bounded Devnet USDC reservation funds the whole target. Accepted
-        // answers fan out as durable, auditable payout claims.
-        const created = X402_ENABLED
-          ? await fundOpenCall(input)
-          : await createOpenCall(input)
+        // Reserve the whole target from the account's existing prepaid USDC.
+        // Phantom is used only by the explicit top-up action in My Database.
+        const created = await createOpenCall(input)
         setOrders((prev) => [created, ...prev.filter((item) => item.id !== created.id)])
         setBalance(await getBalance())
         return created.id
@@ -918,13 +925,14 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
         signature,
         ageConfirmed14,
       )
-      const [remoteOrders, remoteMemory, remoteProfile, remoteEarnings, remoteNotifications] =
+      const [remoteOrders, remoteMemory, remoteProfile, remoteEarnings, remoteNotifications, remotePrepaidBalance] =
         await Promise.all([
           listOpenCalls(),
           listMemory(),
           getProfile(),
           getEarnings(),
           listNotifications(),
+          getPrepaidBalance().catch(() => null),
         ])
       setAccount(session.user)
       setAuthError(null)
@@ -934,6 +942,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       setMemory(remoteMemory)
       setEarnings(remoteEarnings)
       setNotifications(remoteNotifications)
+      setPrepaidBalance(remotePrepaidBalance)
       remoteNotifications.forEach((notification) => notifiedIds.current.add(notification.id))
       setChats((current) =>
         current
@@ -961,6 +970,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     setAccount(null)
     setAuthWallet(null)
     setBalance(null)
+    setPrepaidBalance(null)
     setProfile(null)
     setMemory([])
     setEarnings(null)
@@ -980,6 +990,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     setAccount(null)
     setAuthWallet(null)
     setBalance(null)
+    setPrepaidBalance(null)
     setProfile(null)
     setMemory([])
     setEarnings(null)
@@ -1041,6 +1052,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       notifications,
       markNotificationsRead,
       balance,
+      prepaidBalance,
       account,
       authWallet,
       authReady,
@@ -1080,6 +1092,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
       notifications,
       markNotificationsRead,
       balance,
+      prepaidBalance,
       account,
       authWallet,
       authReady,
