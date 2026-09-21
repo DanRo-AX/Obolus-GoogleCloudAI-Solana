@@ -3,6 +3,11 @@
 </h1>
 
 <p align="center">
+  <a href="https://sudo-sail.github.io/obolus"><b>Read the write-up → sudo-sail.github.io/obolus</b></a><br/>
+  <sub>Team SAIL project site — demo video, architecture and the technical report.</sub>
+</p>
+
+<p align="center">
   <a href="https://github.com/DanRo-AX/Obolus-GoogleCloudAI-Solana"><img src="https://img.shields.io/github/stars/DanRo-AX/Obolus-GoogleCloudAI-Solana?style=flat&amp;label=%E2%98%85&amp;color=08C" alt="GitHub stars" /></a>
   <a href="https://github.com/DanRo-AX/Obolus-GoogleCloudAI-Solana/actions/workflows/ci.yml"><img src="https://github.com/DanRo-AX/Obolus-GoogleCloudAI-Solana/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/Solana-Devnet-9945FF?style=flat" alt="Settles on Solana Devnet" />
