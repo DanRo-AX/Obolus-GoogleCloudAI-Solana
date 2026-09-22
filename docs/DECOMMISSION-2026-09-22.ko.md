@@ -44,6 +44,7 @@ Cloud Run 요청 로그에서는 `node` 프로세스가 아래 내부 경로를 
 - `gs://ax-apps-storage/obolus/` 감사 경로의 held object
 - Obolus 전용 Secret 7개, 서비스 계정 7개, GitHub Workload Identity provider
 - `solana-service-wallet` KMS 키 버전 1: 비활성화 후 파기 예약
+- Cloud SQL `obolus` 사용자, rollback-audit 커스텀 IAM 역할, GitHub production의 Cloudflare 토큰과 GCP 배포 변수
 
 Cloud Run·Pages·대기열·데이터베이스·이미지 저장소·Secret·서비스 계정·감사 경로가
 조회에서 사라진 것을 재확인했다. KMS 키 버전은 복구 유예 기간 뒤 영구 파기된다.
