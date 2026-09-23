@@ -2567,6 +2567,7 @@ impl Store {
         backfill_content_hashes(connection)?;
         backfill_usdc_atomic_columns(connection)?;
         reconcile_prepaid_real_coins(connection)?;
+        reconcile_legacy_krw_signup_credit(connection)?;
         seed_public_evidence(connection)?;
         transaction.commit()?;
         Ok(())
@@ -20863,6 +20864,70 @@ fn reconcile_prepaid_real_coins(connection: &Connection) -> Result<(), StoreErro
     Ok(())
 }
 
+/// Second run-once pass (marker `prepaid_real_coins_v2`). v1 zeroed the USDC
+/// *atomic* mirror of the legacy KRW signup credit, but the live "Total USDC
+/// held" headline derives from `balances.available_krw` (`formatUsdcFromKrw`),
+/// which v1 deliberately preserved — so the card still rendered 74.074074 USDC
+/// (`100000 KRW / 1350`). This pass zeroes the legacy KRW signup credit itself.
+///
+/// It targets exactly the pure signup-credit accounts v1 cleaned: a positive
+/// legacy `available_krw`, no reserved/held KRW, and — critically — **no real
+/// earnings accrual** (`earning_events`). An account that ever earned from a
+/// real document reuse keeps every KRW column untouched; only unbacked signup
+/// promo is cleared. All three KRW columns and their atomic mirrors are floored
+/// to 0 (the atomic mirrors are already 0 after v1 / were never backfilled).
+///
+/// It has its OWN marker so it runs once even though v1's marker is already set
+/// in prod (v1 early-returns on its marker before this pass could be reached, so
+/// this is a sibling migrate() step, not code inside v1). The marker table is
+/// created via `execute_batch` for the same `INTEGER` -> `BIGINT` Postgres
+/// widening the marker `INSERT`'s i64 `applied_at` requires (see #81).
+fn reconcile_legacy_krw_signup_credit(connection: &Connection) -> Result<(), StoreError> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS reconcile_markers (
+            name TEXT PRIMARY KEY,
+            applied_at INTEGER NOT NULL
+        )",
+    )?;
+    let already_applied = connection
+        .query_row(
+            "SELECT 1 FROM reconcile_markers WHERE name = 'prepaid_real_coins_v2'",
+            params![],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if already_applied {
+        return Ok(());
+    }
+    let now = now_ms();
+
+    let krw_zeroed = connection.execute(
+        "UPDATE balances
+         SET available_krw = 0, reserved_krw = 0, held_krw = 0,
+             available_atomic = 0, reserved_atomic = 0, held_atomic = 0,
+             updated_at = ?1
+         WHERE available_krw > 0
+           AND reserved_krw = 0
+           AND held_krw = 0
+           AND NOT EXISTS (
+             SELECT 1 FROM earning_events earner
+             WHERE earner.author_id = balances.user_id
+           )",
+        params![as_i64(now)?],
+    )?;
+    tracing::info!(
+        rows = krw_zeroed,
+        "reconcile v2: zeroed legacy KRW signup credit for pure-signup accounts"
+    );
+
+    connection.execute(
+        "INSERT INTO reconcile_markers (name, applied_at) VALUES ('prepaid_real_coins_v2', ?1)",
+        params![as_i64(now)?],
+    )?;
+    Ok(())
+}
+
 fn valid_email(email: &str) -> bool {
     let mut parts = email.split('@');
     let local = parts.next().unwrap_or_default();
@@ -21265,7 +21330,9 @@ mod tests {
         store.migrate().unwrap();
 
         let connection = store.connection().unwrap();
-        // Legacy KRW credit zeroed; KRW preserved.
+        // v1 zeroes the atomic mirror; the v2 pass (also run by migrate) then
+        // zeroes the legacy KRW itself for this pure signup-credit account (no
+        // earning_events), so both columns end at 0.
         let (available_atomic, available_krw): (i64, i64) = connection
             .query_row(
                 "SELECT available_atomic, available_krw FROM balances WHERE user_id = ?1",
@@ -21274,7 +21341,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(available_atomic, 0);
-        assert_eq!(available_krw, 100000);
+        assert_eq!(available_krw, 0);
         // Prepaid: only the real 3.0 USDC deposit backs the account, minus the
         // 1.0 USDC reservation -> 2.0 USDC available, 3.0 USDC total deposited.
         let (avail, deposited): (i64, i64) = connection
@@ -21300,6 +21367,82 @@ mod tests {
             )
             .unwrap();
         assert_eq!(avail_again, 2_000_000);
+    }
+
+    #[test]
+    fn reconcile_v2_zeroes_legacy_krw_but_preserves_real_earners() {
+        let store = Store::in_memory().unwrap();
+        ensure_user(&store, "signup-user");
+        ensure_user(&store, "earner-user");
+        let connection = store.connection().unwrap();
+
+        // A pure legacy signup-credit account: 100000 KRW backfilled to atomic,
+        // no earnings.
+        connection
+            .execute(
+                "UPDATE balances
+                 SET available_krw = 100000, available_atomic = 74074074
+                 WHERE user_id = ?1",
+                ["signup-user"],
+            )
+            .unwrap();
+        // A real earner that also carries a legacy KRW balance. `available_atomic`
+        // is left off the v1 fingerprint so v1 ignores it; the earning_events row
+        // is what must protect its KRW from v2.
+        connection
+            .execute(
+                "UPDATE balances
+                 SET available_krw = 100000, available_atomic = 0
+                 WHERE user_id = ?1",
+                ["earner-user"],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO earning_events
+                 (id, settlement_id, memory_id, document_id, author_id, source,
+                  amount_krw, recipient_wallet, payout_status, available_at, created_at)
+                 VALUES (?1, NULL, NULL, NULL, ?2, 'reuse', 1350, NULL, 'accrued', 1, 1)",
+                params![new_id("earning"), "earner-user"],
+            )
+            .unwrap();
+        // The in-memory store already ran migrate() once over empty tables, so
+        // both markers are set; clear them to reconcile this seeded data as a
+        // pre-reconcile prod binary would on first boot.
+        connection
+            .execute("DELETE FROM reconcile_markers", params![])
+            .unwrap();
+        drop(connection);
+
+        store.migrate().unwrap();
+
+        let connection = store.connection().unwrap();
+        let read_krw = |user: &str| -> i64 {
+            connection
+                .query_row(
+                    "SELECT available_krw FROM balances WHERE user_id = ?1",
+                    [user],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        // Pure signup credit: KRW itself is zeroed (the headline source).
+        assert_eq!(read_krw("signup-user"), 0);
+        // Real earner: legacy KRW is preserved — never zero an account that accrued.
+        assert_eq!(read_krw("earner-user"), 100000);
+        drop(connection);
+
+        // Idempotent across a redeploy (v2 marker present).
+        store.migrate().unwrap();
+        let connection = store.connection().unwrap();
+        let signup_krw: i64 = connection
+            .query_row(
+                "SELECT available_krw FROM balances WHERE user_id = ?1",
+                ["signup-user"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(signup_krw, 0);
     }
 
     #[test]
